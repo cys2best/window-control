@@ -11,7 +11,8 @@ def detect_tailscale_ip():
     except (FileNotFoundError, subprocess.CalledProcessError):
         # ipconfig not available on Mac
         return None
-    match = re.search(r'100\.\d{1,3}\.\d{1,3}\.\d{1,3}', output)
+    # Tailscale uses CGNAT 100.64.0.0/10 (second octet 64-127); Windows only
+    match = re.search(r'\b100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}\b', output)
     return match.group(0) if match else None
 
 

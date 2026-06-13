@@ -29,7 +29,7 @@ def normalize_to_abs(nx: float, ny: float, rect: tuple) -> tuple[int, int]:
 
 
 def make_lparam(x: int, y: int) -> int:
-    return (y << 16) | (x & 0xFFFF)
+    return ((y & 0xFFFF) << 16) | (x & 0xFFFF)
 
 
 def handle_click(hwnd, nx: float, ny: float):

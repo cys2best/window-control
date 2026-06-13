@@ -1,9 +1,5 @@
-import base64
-import io
-import os
 import sys
-from dataclasses import dataclass, field
-from typing import Optional
+from dataclasses import dataclass
 
 if sys.platform == "win32":
     import win32gui
@@ -15,12 +11,6 @@ else:
     win32con = win32gui
 
 from config import SYSTEM_WINDOW_TITLES
-
-try:
-    import psutil
-    _OWN_PID = os.getpid()
-except ImportError:
-    _OWN_PID = None
 
 
 @dataclass
