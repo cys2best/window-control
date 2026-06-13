@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="/static/manifest.json">
+  <title>WindowControl</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+  <div id="stream-container">
+    <img id="stream-img" alt="stream" draggable="false">
+  </div>
+
+  <div id="hud">
+    <span class="hud-pill" id="fps-pill">-- fps</span>
+    <span class="hud-pill" id="status-pill">Connecting…</span>
+  </div>
+
+  <button id="keyboard-btn">⌨</button>
+  <input id="keyboard-input" type="text" autocomplete="off" autocorrect="off" autocapitalize="off">
+
+  <div id="drawer-handle"></div>
+
+  <div id="drawer">
+    <div id="drawer-title">Windows</div>
+    <div id="windows-list"></div>
+  </div>
+
+  <div id="unavailable-overlay">
+    <p style="color:#aaa;font-size:16px">Window unavailable</p>
+    <button id="reconnect-btn">Reconnect</button>
+  </div>
+
+  <script src="/static/windows_panel.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>
