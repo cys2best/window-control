@@ -46,7 +46,6 @@ def create_app(
         if match is None:
             raise HTTPException(status_code=404, detail="Window not found")
         state.set_hwnd(req.id)
-        state.window_available = True
         return {"ok": True, "id": req.id}
 
     @app.get("/stream")
@@ -78,15 +77,18 @@ def create_app(
                 hwnd = state.active_hwnd
                 if hwnd is None:
                     continue
-                t = data.get("type")
-                if t == "click":
-                    handle_click(hwnd, data["x"], data["y"])
-                elif t == "move":
-                    handle_move(hwnd, data["x"], data["y"])
-                elif t == "scroll":
-                    handle_scroll(hwnd, data.get("dx", 0), data.get("dy", 0))
-                elif t == "key":
-                    handle_key(hwnd, data["key"])
+                try:
+                    t = data.get("type")
+                    if t == "click":
+                        handle_click(hwnd, data["x"], data["y"])
+                    elif t == "move":
+                        handle_move(hwnd, data["x"], data["y"])
+                    elif t == "scroll":
+                        handle_scroll(hwnd, data.get("dx", 0), data.get("dy", 0))
+                    elif t == "key":
+                        handle_key(hwnd, data["key"])
+                except (KeyError, TypeError):
+                    pass
         except WebSocketDisconnect:
             pass
 
