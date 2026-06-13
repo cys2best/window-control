@@ -10,6 +10,7 @@ QUALITY_MAP = {
     "high": 85,
 }
 DEFAULT_QUALITY = "high"
+assert DEFAULT_QUALITY in QUALITY_MAP, f"DEFAULT_QUALITY '{DEFAULT_QUALITY}' not in QUALITY_MAP"
 
 SYSTEM_WINDOW_TITLES = {
     "Program Manager", "Desktop", "Taskbar",
