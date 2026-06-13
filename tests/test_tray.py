@@ -25,10 +25,11 @@ def test_tray_icon_construction():
 
 def test_load_tray_icon_fallback(tmp_path, monkeypatch):
     """Falls back to blue square when tray_icon.png missing."""
-    monkeypatch.setattr('gui.tray.ASSETS_DIR', str(tmp_path))
     from gui import tray as tray_mod
     import importlib
     importlib.reload(tray_mod)
+    # Patch ASSETS_DIR after reload so the monkeypatch isn't undone by the reload
+    monkeypatch.setattr(tray_mod, 'ASSETS_DIR', str(tmp_path))
     img = tray_mod._load_tray_icon()
     assert img.size == (64, 64)
     assert img.mode == "RGB"
