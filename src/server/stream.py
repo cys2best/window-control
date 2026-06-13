@@ -68,10 +68,11 @@ def _make_black_frame() -> bytes:
 
 
 def _encode_frame(arr: np.ndarray, quality: int) -> bytes:
+    rgb = arr[:, :, 2::-1]  # BGRA → RGB
     if _jpeg is not None:
-        return _jpeg.encode(arr[:, :, :3], quality=quality)
+        return _jpeg.encode(rgb, quality=quality)
     buf = io.BytesIO()
-    Image.fromarray(arr[:, :, :3], "RGB").save(buf, format="JPEG", quality=quality)
+    Image.fromarray(rgb, "RGB").save(buf, format="JPEG", quality=quality)
     return buf.getvalue()
 
 
@@ -87,8 +88,7 @@ def capture_loop(state: CaptureState, frame_queue: FrameQueue):
             continue
 
         if not is_window_alive(hwnd):
-            state.set_hwnd(None)
-            state.window_available = False
+            state.set_hwnd(None)  # sets window_available=False inside lock
             frame_queue.put(_BLACK_FRAME)
             time.sleep(0.05)
             continue

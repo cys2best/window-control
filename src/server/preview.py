@@ -25,7 +25,7 @@ def capture_preview(hwnd) -> bytes:
         with mss_lib.mss() as sct:
             shot = sct.grab(monitor)
             arr = np.frombuffer(shot.raw, dtype=np.uint8).reshape((shot.height, shot.width, 4))
-        img = Image.fromarray(arr[:, :, :3], "RGB")
+        img = Image.fromarray(arr[:, :, 2::-1], "RGB")  # BGRA → RGB
         img.thumbnail((PREVIEW_WIDTH, PREVIEW_HEIGHT), Image.LANCZOS)
         buf = io.BytesIO()
         img.save(buf, format="JPEG", quality=60)
