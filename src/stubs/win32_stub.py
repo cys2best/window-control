@@ -1,5 +1,3 @@
-import os
-
 GCL_HICONSM = -14
 WM_LBUTTONDOWN = 0x0201
 WM_LBUTTONUP = 0x0202
@@ -50,8 +48,8 @@ def GetClassLong(hwnd, index):
     return 0
 
 
-def GetWindowThreadProcessId(hwnd, pid_ptr):
-    return 0
+def GetWindowThreadProcessId(hwnd):
+    return (0, 0)
 
 
 def PostMessage(hwnd, msg, wparam, lparam):
