@@ -209,24 +209,29 @@ def _remove_service_if_exists():
 
 def _set_failure_actions():
     """Configure 3x auto-restart with 60s delay."""
-    hscm = win32service.OpenSCManager(None, None, win32service.SC_MANAGER_ALL_ACCESS)
-    hsvc = win32service.OpenService(hscm, SERVICE_NAME, win32service.SERVICE_ALL_ACCESS)
-    win32service.ChangeServiceConfig2(
-        hsvc,
-        win32service.SERVICE_CONFIG_FAILURE_ACTIONS,
-        {
-            "ResetPeriod": 86400,
-            "RebootMsg": "",
-            "Command": "",
-            "Actions": [
-                (win32service.SC_ACTION_RESTART, 60000),
-                (win32service.SC_ACTION_RESTART, 60000),
-                (win32service.SC_ACTION_RESTART, 60000),
-            ],
-        }
-    )
-    win32service.CloseServiceHandle(hsvc)
-    win32service.CloseServiceHandle(hscm)
+    try:
+        hscm = win32service.OpenSCManager(None, None, win32service.SC_MANAGER_ALL_ACCESS)
+        hsvc = win32service.OpenService(hscm, SERVICE_NAME, win32service.SERVICE_ALL_ACCESS)
+        try:
+            win32service.ChangeServiceConfig2(
+                hsvc,
+                win32service.SERVICE_CONFIG_FAILURE_ACTIONS,
+                {
+                    "ResetPeriod": 86400,
+                    "RebootMsg": "",
+                    "Command": "",
+                    "Actions": [
+                        (win32service.SC_ACTION_RESTART, 60000),
+                        (win32service.SC_ACTION_RESTART, 60000),
+                        (win32service.SC_ACTION_RESTART, 60000),
+                    ],
+                }
+            )
+        finally:
+            win32service.CloseServiceHandle(hsvc)
+            win32service.CloseServiceHandle(hscm)
+    except Exception:
+        pass
 
 
 def main():
