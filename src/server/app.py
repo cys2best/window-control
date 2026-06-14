@@ -12,6 +12,7 @@ from config import CLIENT_DIR, QUALITY_MAP
 from server.input_handler import handle_click, handle_move, handle_scroll, handle_key
 from server.preview import capture_preview
 from server.stream import CaptureState, FrameQueue, mjpeg_generator
+from server.window_manager import focus_window
 
 
 class SelectRequest(BaseModel):
@@ -46,6 +47,7 @@ def create_app(
         if match is None:
             raise HTTPException(status_code=404, detail="Window not found")
         state.set_hwnd(req.id)
+        focus_window(req.id)
         return {"ok": True, "id": req.id}
 
     @app.get("/stream")

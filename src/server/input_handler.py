@@ -22,10 +22,16 @@ KEY_MAP = {
 }
 
 
-def normalize_to_abs(nx: float, ny: float, rect: tuple) -> tuple[int, int]:
+def _client_coords(hwnd, nx: float, ny: float) -> tuple[int, int]:
+    """Convert normalized (0-1) stream coords to window client-area pixel coords."""
+    rect = win32gui.GetWindowRect(hwnd)
     x0, y0, x1, y1 = rect
     w, h = x1 - x0, y1 - y0
-    return int(x0 + nx * w), int(y0 + ny * h)
+    # Absolute screen position of the click
+    ax, ay = int(x0 + nx * w), int(y0 + ny * h)
+    # Convert to client coords (what WM_LBUTTONDOWN expects)
+    cx, cy = win32gui.ScreenToClient(hwnd, (ax, ay))
+    return cx, cy
 
 
 def make_lparam(x: int, y: int) -> int:
@@ -33,17 +39,15 @@ def make_lparam(x: int, y: int) -> int:
 
 
 def handle_click(hwnd, nx: float, ny: float):
-    rect = win32gui.GetWindowRect(hwnd)
-    ax, ay = normalize_to_abs(nx, ny, rect)
-    lp = make_lparam(ax, ay)
+    cx, cy = _client_coords(hwnd, nx, ny)
+    lp = make_lparam(cx, cy)
     win32api.PostMessage(hwnd, 0x0201, 0x0001, lp)  # WM_LBUTTONDOWN
     win32api.PostMessage(hwnd, 0x0202, 0, lp)       # WM_LBUTTONUP
 
 
 def handle_move(hwnd, nx: float, ny: float):
-    rect = win32gui.GetWindowRect(hwnd)
-    ax, ay = normalize_to_abs(nx, ny, rect)
-    lp = make_lparam(ax, ay)
+    cx, cy = _client_coords(hwnd, nx, ny)
+    lp = make_lparam(cx, cy)
     win32api.PostMessage(hwnd, 0x0200, 0, lp)  # WM_MOUSEMOVE
 
 

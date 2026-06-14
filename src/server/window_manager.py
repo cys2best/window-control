@@ -60,3 +60,13 @@ def get_window_rect(hwnd) -> tuple[int, int, int, int]:
 
 def is_window_alive(hwnd) -> bool:
     return bool(win32gui.IsWindow(hwnd)) and not bool(win32gui.IsIconic(hwnd))
+
+
+def focus_window(hwnd) -> None:
+    """Restore minimized window and bring it to foreground."""
+    try:
+        if win32gui.IsIconic(hwnd):
+            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+        win32gui.SetForegroundWindow(hwnd)
+    except Exception:
+        pass
