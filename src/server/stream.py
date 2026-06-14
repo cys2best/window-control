@@ -1,4 +1,5 @@
 import asyncio
+import ctypes
 import io
 import queue
 import sys
@@ -11,12 +12,18 @@ from PIL import Image
 if sys.platform == "win32":
     import mss as mss_lib
     try:
+        import dxcam
+        _dxcam_available = True
+    except ImportError:
+        _dxcam_available = False
+    try:
         from turbojpeg import TurboJPEG
         _jpeg = TurboJPEG()
     except (RuntimeError, OSError, ImportError):
         _jpeg = None
 else:
     from stubs import mss_stub as mss_lib
+    _dxcam_available = False
     _jpeg = None
 
 from server.window_manager import get_window_rect, is_window_alive
@@ -49,6 +56,7 @@ class CaptureState:
         self.quality: int = 85
         self.running: bool = False
         self.window_available: bool = True
+        self.desktop: str = "Default"
         self._lock = threading.Lock()
 
     def set_hwnd(self, hwnd):
@@ -59,6 +67,10 @@ class CaptureState:
     def set_quality(self, q: int):
         with self._lock:
             self.quality = q
+
+    def set_desktop(self, name: str):
+        with self._lock:
+            self.desktop = name
 
 
 _BLACK_FRAME: bytes = b""
@@ -80,11 +92,90 @@ def _encode_frame(arr: np.ndarray, quality: int) -> bytes:
     return buf.getvalue()
 
 
+def _switch_thread_desktop(name: str):
+    """Switch this thread to named desktop so mss can grab its pixels."""
+    if sys.platform != "win32":
+        return
+    try:
+        flags = 0x0200  # DESKTOP_WRITEOBJECTS
+        hdesk = ctypes.windll.user32.OpenDesktopW(name, 0, False, flags)
+        if hdesk:
+            ctypes.windll.user32.SetThreadDesktop(hdesk)
+            ctypes.windll.user32.CloseDesktop(hdesk)
+    except Exception:
+        pass
+
+
+def _grab_dxgi(camera, rect: tuple) -> np.ndarray | None:
+    """Grab a region via DXGI. Returns BGR ndarray or None on error."""
+    try:
+        frame = camera.grab(region=rect)  # (left, top, right, bottom)
+        return frame  # dxcam returns BGR ndarray directly
+    except Exception:
+        return None
+
+
+def _grab_mss(rect: tuple) -> np.ndarray | None:
+    """Grab a region via mss/GDI (works during lock with SetThreadDesktop)."""
+    try:
+        x0, y0, x1, y1 = rect
+        monitor = {"left": x0, "top": y0, "width": max(x1 - x0, 1), "height": max(y1 - y0, 1)}
+        with mss_lib.mss() as sct:
+            shot = sct.grab(monitor)
+            return np.frombuffer(shot.raw, dtype=np.uint8).reshape(
+                (shot.height, shot.width, 4)
+            )
+    except Exception:
+        return None
+
+
 def capture_loop(state: CaptureState, frame_queue: FrameQueue):
     global _BLACK_FRAME
     _BLACK_FRAME = _make_black_frame()
+    current_desktop = "Default"
+
+    # Create dxcam camera once — reused across frames (GPU resource)
+    camera = None
+    if _dxcam_available:
+        try:
+            camera = dxcam.create(output_color="BGR")
+        except Exception:
+            camera = None
 
     while state.running:
+        desktop = state.desktop
+
+        if desktop != current_desktop:
+            _switch_thread_desktop(desktop)
+            current_desktop = desktop
+            # Reinitialize dxcam after desktop switch (GPU context changed)
+            if camera is not None and desktop == "Default":
+                try:
+                    camera.release()
+                except Exception:
+                    pass
+                try:
+                    camera = dxcam.create(output_color="BGR")
+                except Exception:
+                    camera = None
+
+        if desktop == "Winlogon":
+            # Lock screen: DXGI is blocked from Winlogon desktop.
+            # Use mss/GDI (SetThreadDesktop already switched above).
+            try:
+                with mss_lib.mss() as sct:
+                    monitor = sct.monitors[1]  # primary monitor full screen
+                    shot = sct.grab(monitor)
+                    arr = np.frombuffer(shot.raw, dtype=np.uint8).reshape(
+                        (shot.height, shot.width, 4)
+                    )
+                jpeg_bytes = _encode_frame(arr, state.quality)
+                frame_queue.put(jpeg_bytes)
+            except Exception:
+                frame_queue.put(_BLACK_FRAME)
+            time.sleep(1 / 30)
+            continue
+
         hwnd = state.active_hwnd
         if hwnd is None:
             frame_queue.put(_BLACK_FRAME)
@@ -92,27 +183,38 @@ def capture_loop(state: CaptureState, frame_queue: FrameQueue):
             continue
 
         if not is_window_alive(hwnd):
-            state.set_hwnd(None)  # sets window_available=False inside lock
+            state.set_hwnd(None)
             frame_queue.put(_BLACK_FRAME)
             time.sleep(0.05)
             continue
 
         try:
-            rect = get_window_rect(hwnd)
-            x0, y0, x1, y1 = rect
-            w, h = max(x1 - x0, 1), max(y1 - y0, 1)
-            monitor = {"left": x0, "top": y0, "width": w, "height": h}
-            with mss_lib.mss() as sct:
-                shot = sct.grab(monitor)
-                arr = np.frombuffer(shot.raw, dtype=np.uint8).reshape(
-                    (shot.height, shot.width, 4)
-                )
-            jpeg_bytes = _encode_frame(arr, state.quality)
-            frame_queue.put(jpeg_bytes)
+            rect = get_window_rect(hwnd)  # (x0, y0, x1, y1)
+            arr = None
+
+            # Primary: DXGI — GPU-side, monitor power state irrelevant
+            if camera is not None:
+                arr = _grab_dxgi(camera, rect)
+
+            # Fallback: mss/GDI (monitor must be on, but always works)
+            if arr is None:
+                arr = _grab_mss(rect)
+
+            if arr is None:
+                frame_queue.put(_BLACK_FRAME)
+            else:
+                jpeg_bytes = _encode_frame(arr, state.quality)
+                frame_queue.put(jpeg_bytes)
         except Exception:
             frame_queue.put(_BLACK_FRAME)
 
-        time.sleep(1 / 30)  # ~30 fps cap
+        time.sleep(1 / 30)
+
+    if camera is not None:
+        try:
+            camera.release()
+        except Exception:
+            pass
 
 
 async def mjpeg_generator(frame_queue: FrameQueue):

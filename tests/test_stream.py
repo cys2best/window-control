@@ -24,3 +24,18 @@ def test_capture_state_quality_set():
     state = CaptureState()
     state.quality = 40
     assert state.quality == 40
+
+def test_capture_state_default_desktop():
+    s = CaptureState()
+    assert s.desktop == "Default"
+
+def test_capture_state_set_desktop():
+    s = CaptureState()
+    s.set_desktop("Winlogon")
+    assert s.desktop == "Winlogon"
+
+def test_capture_state_set_desktop_roundtrip():
+    s = CaptureState()
+    s.set_desktop("Winlogon")
+    s.set_desktop("Default")
+    assert s.desktop == "Default"
