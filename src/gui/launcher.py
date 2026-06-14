@@ -249,16 +249,18 @@ class LauncherWindow(QMainWindow):
         self._service_dot.setStyleSheet("color: #f59e0b;")
         self._service_status_label.setText("Installing…")
         self._install_btn.setEnabled(False)
-        subprocess.Popen(
-            [sys.executable, "--install"],
-            creationflags=0x00000008 if sys.platform == "win32" else 0
-        )
+        self._run_elevated(sys.executable, "--install")
         QTimer.singleShot(3000, self._refresh_service_status)
 
     def _on_uninstall_service(self):
         from PyQt5.QtCore import QTimer
-        subprocess.Popen(
-            [sys.executable, "--uninstall"],
-            creationflags=0x00000008 if sys.platform == "win32" else 0
-        )
+        self._run_elevated(sys.executable, "--uninstall")
         QTimer.singleShot(3000, self._refresh_service_status)
+
+    def _run_elevated(self, exe: str, arg: str):
+        """Run exe with arg elevated (UAC prompt on Windows)."""
+        if sys.platform == "win32":
+            import ctypes
+            ctypes.windll.shell32.ShellExecuteW(None, "runas", exe, arg, None, 1)
+        else:
+            subprocess.Popen([exe, arg])

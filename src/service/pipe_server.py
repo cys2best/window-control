@@ -58,13 +58,14 @@ if sys.platform == "win32":
             self._running = False
 
         def _serve_loop(self):
+            import time
             while self._running:
                 try:
                     handle = _create_pipe_handle()
                     win32pipe.ConnectNamedPipe(handle, None)
                     self._handle_client(handle)
                 except Exception:
-                    pass
+                    time.sleep(0.1)
 
         def _handle_client(self, handle):
             try:
