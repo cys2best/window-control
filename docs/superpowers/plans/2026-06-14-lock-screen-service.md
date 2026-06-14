@@ -6,7 +6,7 @@
 
 **Architecture:** The existing `main.py` is split: a new `src/service_main.py` entry point hosts the FastAPI server + capture loop as a `win32serviceutil.ServiceFramework` running as LOCAL_SYSTEM (Session 0). The existing GUI tray app (`main.py`) becomes a thin client that connects to the service via a named pipe (`\\.\pipe\WindowControlPipe`) to send commands (select window, quality, start/stop) and receive state (lock status, window list). A `DesktopMonitor` thread in the service watches for WTS_SESSION_LOCK/UNLOCK events and switches the capture thread to the Winlogon desktop when locked.
 
-**Tech Stack:** `win32serviceutil`, `win32service`, `win32ts`, `win32security`, `win32event`, `win32pipe`, `win32file`, `ctypes` (SendInput + SetThreadDesktop), `mss` (BitBlt capture, works from SYSTEM during lock), existing FastAPI/uvicorn stack.
+**Tech Stack:** `win32serviceutil`, `win32service`, `win32ts`, `win32security`, `win32event`, `win32pipe`, `win32file`, `ctypes` (SendInput + SetThreadDesktop), `dxcam` (DXGI DuplicateOutput — GPU-side capture, monitor stays off), `mss` (GDI BitBlt fallback during lock screen only), `keyring` (Windows Credential Manager for auto-unlock password), existing FastAPI/uvicorn stack.
 
 ---
 
@@ -20,13 +20,13 @@
 - `src/service/__init__.py` — Empty
 
 **Modified files:**
-- `src/server/stream.py` — Add `set_desktop(name)` to `CaptureState`; `capture_loop` switches mss capture to Winlogon desktop on lock
+- `src/server/stream.py` — Add `set_desktop(name)` to `CaptureState`; `capture_loop` uses DXGI (`dxcam`) as primary (no monitor wake), falls back to `mss`+`SetThreadDesktop` only when `desktop == "Winlogon"` (DXGI blocked during lock)
 - `src/server/input_handler.py` — `handle_click/key` switch thread desktop before `SendInput` when locked
 - `src/gui/launcher.py` — Add "Service" group box with Install/Uninstall/status indicator; wire to pipe client
 - `src/main.py` — Add `--install`/`--uninstall` arg dispatch; when service running, GUI talks pipe instead of running FastAPI inline
 - `build/window_control.spec` — Add `service_main.py` as second EXE (`WindowControlService.exe`); add `win32service`, `win32serviceutil`, `win32ts`, `win32security` to hiddenimports
 - `build/installer.iss` — Install service on install, uninstall on uninstall; add `WindowControlService.exe` to `[Files]`
-- `pyproject.toml` — No new deps (pywin32 already listed); `dxcam` added as optional Windows-only dep
+- `pyproject.toml` — Add `dxcam` (Windows-only, DXGI capture) and `keyring` (Credential Manager for auto-unlock password)
 
 **Test files:**
 - `tests/test_pipe_protocol.py` — Tests for pipe message serialization/deserialization
@@ -471,17 +471,32 @@ git commit -m "feat: desktop monitor for WTS lock/unlock session events"
 
 ---
 
-### Task 3: Lock-aware capture in stream.py
+### Task 3: DXGI capture (primary) + mss fallback for lock screen
 
 **Files:**
 - Modify: `src/server/stream.py`
+- Modify: `pyproject.toml`
 
-Add `desktop` field to `CaptureState`. When `desktop == "Winlogon"`, the capture loop switches mss to capture the full screen (lock screen is full-screen, no window rect). Uses ctypes `SetThreadDesktop` so mss can grab Winlogon desktop pixels.
+Normal capture uses `dxcam` (DXGI DuplicateOutput) — reads directly from GPU compositor, monitor can be completely off. When `desktop == "Winlogon"` (PC locked), DXGI is blocked by Windows security boundary; fall back to `mss` with `SetThreadDesktop` for the lock screen only.
 
-- [ ] **Step 1: Write failing test**
+- [ ] **Step 1: Add dxcam to pyproject.toml**
+
+In `pyproject.toml`, add to `dependencies`:
+```toml
+"dxcam>=0.0.5; sys_platform == 'win32'",
+"keyring>=24.0.0",
+```
+
+Run:
+```bash
+uv lock
+```
+Expected: lock file updated
+
+- [ ] **Step 2: Write failing tests**
 
 ```python
-# Add to tests/test_stream.py (create if not exists)
+# tests/test_stream.py
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
@@ -496,25 +511,77 @@ def test_capture_state_set_desktop():
     s.set_desktop("Winlogon")
     assert s.desktop == "Winlogon"
 
-def test_capture_state_set_desktop_default():
+def test_capture_state_set_desktop_roundtrip():
     s = CaptureState()
     s.set_desktop("Winlogon")
     s.set_desktop("Default")
     assert s.desktop == "Default"
 ```
 
-- [ ] **Step 2: Run to verify fails**
+- [ ] **Step 3: Run to verify fails**
 
 ```bash
 uv run pytest tests/test_stream.py -v
 ```
 Expected: `AttributeError: 'CaptureState' object has no attribute 'desktop'`
 
-- [ ] **Step 3: Add `desktop` field and `set_desktop` to `CaptureState` in `src/server/stream.py`**
+- [ ] **Step 4: Update `src/server/stream.py` — DXGI primary + mss lock fallback**
 
-Replace the `CaptureState` class:
+Replace the entire file content:
 
 ```python
+import asyncio
+import ctypes
+import io
+import queue
+import sys
+import threading
+import time
+
+import numpy as np
+from PIL import Image
+
+if sys.platform == "win32":
+    import mss as mss_lib
+    try:
+        import dxcam
+        _dxcam_available = True
+    except ImportError:
+        _dxcam_available = False
+    try:
+        from turbojpeg import TurboJPEG
+        _jpeg = TurboJPEG()
+    except (RuntimeError, OSError, ImportError):
+        _jpeg = None
+else:
+    from stubs import mss_stub as mss_lib
+    _dxcam_available = False
+    _jpeg = None
+
+from server.window_manager import get_window_rect, is_window_alive
+
+BOUNDARY = b"--frame"
+
+
+class FrameQueue:
+    def __init__(self, maxsize=2):
+        self._q = queue.Queue(maxsize=maxsize)
+
+    def put(self, frame: bytes):
+        if self._q.full():
+            try:
+                self._q.get_nowait()
+            except queue.Empty:
+                pass
+        self._q.put_nowait(frame)
+
+    def get(self, timeout=1.0) -> bytes | None:
+        try:
+            return self._q.get(timeout=timeout)
+        except queue.Empty:
+            return None
+
+
 class CaptureState:
     def __init__(self):
         self.active_hwnd = None
@@ -536,19 +603,32 @@ class CaptureState:
     def set_desktop(self, name: str):
         with self._lock:
             self.desktop = name
-```
 
-- [ ] **Step 4: Update `capture_loop` to switch desktop context on lock**
 
-Replace the `capture_loop` function in `src/server/stream.py`:
+_BLACK_FRAME: bytes = b""
 
-```python
+
+def _make_black_frame() -> bytes:
+    img = Image.new("RGB", (1280, 720), color=(0, 0, 0))
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=40)
+    return buf.getvalue()
+
+
+def _encode_frame(arr: np.ndarray, quality: int) -> bytes:
+    rgb = arr[:, :, 2::-1]  # BGRA → RGB
+    if _jpeg is not None:
+        return _jpeg.encode(rgb, quality=quality)
+    buf = io.BytesIO()
+    Image.fromarray(rgb, "RGB").save(buf, format="JPEG", quality=quality)
+    return buf.getvalue()
+
+
 def _switch_thread_desktop(name: str):
-    """Switch this thread to the named desktop so mss can grab its pixels."""
+    """Switch this thread to named desktop so mss can grab its pixels."""
     if sys.platform != "win32":
         return
     try:
-        import ctypes
         flags = 0x0200  # DESKTOP_WRITEOBJECTS
         hdesk = ctypes.windll.user32.OpenDesktopW(name, 0, False, flags)
         if hdesk:
@@ -558,24 +638,65 @@ def _switch_thread_desktop(name: str):
         pass
 
 
+def _grab_dxgi(camera, rect: tuple) -> np.ndarray | None:
+    """Grab a region via DXGI. Returns BGRA ndarray or None on error."""
+    try:
+        frame = camera.grab(region=rect)  # (left, top, right, bottom)
+        return frame  # dxcam returns RGB ndarray directly
+    except Exception:
+        return None
+
+
+def _grab_mss(rect: tuple) -> np.ndarray | None:
+    """Grab a region via mss/GDI (works during lock with SetThreadDesktop)."""
+    try:
+        x0, y0, x1, y1 = rect
+        monitor = {"left": x0, "top": y0, "width": max(x1 - x0, 1), "height": max(y1 - y0, 1)}
+        with mss_lib.mss() as sct:
+            shot = sct.grab(monitor)
+            return np.frombuffer(shot.raw, dtype=np.uint8).reshape(
+                (shot.height, shot.width, 4)
+            )
+    except Exception:
+        return None
+
+
 def capture_loop(state: CaptureState, frame_queue: FrameQueue):
     global _BLACK_FRAME
     _BLACK_FRAME = _make_black_frame()
     current_desktop = "Default"
 
+    # Create dxcam camera once — reused across frames (GPU resource)
+    camera = None
+    if _dxcam_available:
+        try:
+            camera = dxcam.create(output_color="BGR")
+        except Exception:
+            camera = None
+
     while state.running:
         desktop = state.desktop
 
-        # Switch thread desktop if it changed (lock/unlock)
         if desktop != current_desktop:
             _switch_thread_desktop(desktop)
             current_desktop = desktop
+            # Reinitialize dxcam after desktop switch (GPU context changed)
+            if camera is not None and desktop == "Default":
+                try:
+                    camera.release()
+                except Exception:
+                    pass
+                try:
+                    camera = dxcam.create(output_color="BGR")
+                except Exception:
+                    camera = None
 
         if desktop == "Winlogon":
-            # Lock screen: capture full screen, no window needed
+            # Lock screen: DXGI is blocked from Winlogon desktop.
+            # Use mss/GDI (SetThreadDesktop already switched above).
             try:
                 with mss_lib.mss() as sct:
-                    monitor = sct.monitors[1]  # primary monitor
+                    monitor = sct.monitors[1]  # primary monitor full screen
                     shot = sct.grab(monitor)
                     arr = np.frombuffer(shot.raw, dtype=np.uint8).reshape(
                         (shot.height, shot.width, 4)
@@ -600,24 +721,47 @@ def capture_loop(state: CaptureState, frame_queue: FrameQueue):
             continue
 
         try:
-            rect = get_window_rect(hwnd)
-            x0, y0, x1, y1 = rect
-            w, h = max(x1 - x0, 1), max(y1 - y0, 1)
-            monitor = {"left": x0, "top": y0, "width": w, "height": h}
-            with mss_lib.mss() as sct:
-                shot = sct.grab(monitor)
-                arr = np.frombuffer(shot.raw, dtype=np.uint8).reshape(
-                    (shot.height, shot.width, 4)
-                )
-            jpeg_bytes = _encode_frame(arr, state.quality)
-            frame_queue.put(jpeg_bytes)
+            rect = get_window_rect(hwnd)  # (x0, y0, x1, y1)
+            arr = None
+
+            # Primary: DXGI — GPU-side, monitor power state irrelevant
+            if camera is not None:
+                arr = _grab_dxgi(camera, rect)
+
+            # Fallback: mss/GDI (monitor must be on, but always works)
+            if arr is None:
+                arr = _grab_mss(rect)
+
+            if arr is None:
+                frame_queue.put(_BLACK_FRAME)
+            else:
+                jpeg_bytes = _encode_frame(arr, state.quality)
+                frame_queue.put(jpeg_bytes)
         except Exception:
             frame_queue.put(_BLACK_FRAME)
 
         time.sleep(1 / 30)
+
+    if camera is not None:
+        try:
+            camera.release()
+        except Exception:
+            pass
+
+
+async def mjpeg_generator(frame_queue: FrameQueue):
+    loop = asyncio.get_event_loop()
+    while True:
+        frame = await loop.run_in_executor(None, frame_queue.get, 1.0)
+        if frame is None:
+            continue
+        yield (
+            b"--frame\r\n"
+            b"Content-Type: image/jpeg\r\n\r\n" + frame + b"\r\n"
+        )
 ```
 
-- [ ] **Step 5: Run tests to verify pass**
+- [ ] **Step 5: Run tests**
 
 ```bash
 uv run pytest tests/test_stream.py -v
@@ -627,8 +771,262 @@ Expected: 3 passed
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/server/stream.py tests/test_stream.py
-git commit -m "feat: lock-aware capture — stream Winlogon desktop on PC lock"
+git add src/server/stream.py pyproject.toml uv.lock tests/test_stream.py
+git commit -m "feat: DXGI primary capture (no monitor wake) + mss fallback for lock screen"
+```
+
+---
+
+### Task 3b: Auto-unlock + monitor-off after unlock
+
+**Files:**
+- Create: `src/service/auto_unlock.py`
+- Modify: `src/service_main.py` (wire into `_on_lock` / `_on_unlock`)
+- Modify: `src/gui/launcher.py` (add "Set unlock password" button)
+
+On lock: service waits 1.5s for Winlogon to render, reads stored password from Windows Credential Manager, types it + Enter via `SendInput` on Winlogon desktop. On unlock: sends `SC_MONITORPOWER` message to turn monitor off again so physical screen stays dark.
+
+- [ ] **Step 1: Write failing tests**
+
+```python
+# tests/test_auto_unlock.py
+import sys, os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+
+from service.auto_unlock import CREDENTIAL_SERVICE, get_stored_password, store_password
+
+def test_credential_service_name():
+    assert CREDENTIAL_SERVICE == "WindowControl"
+
+def test_store_and_get_password():
+    # Uses real keyring on Windows, memory keyring stub on Mac/Linux
+    store_password("test_pass_123")
+    result = get_stored_password()
+    assert result == "test_pass_123"
+
+def test_get_password_returns_none_if_not_set():
+    # Clear and verify
+    import keyring
+    keyring.delete_password(CREDENTIAL_SERVICE, "unlock")
+    result = get_stored_password()
+    assert result is None
+```
+
+- [ ] **Step 2: Run to verify fails**
+
+```bash
+uv run pytest tests/test_auto_unlock.py -v
+```
+Expected: `ModuleNotFoundError: No module named 'service.auto_unlock'`
+
+- [ ] **Step 3: Create `src/service/auto_unlock.py`**
+
+```python
+# src/service/auto_unlock.py
+import sys
+import time
+import threading
+
+import keyring
+
+CREDENTIAL_SERVICE = "WindowControl"
+CREDENTIAL_USER = "unlock"
+
+
+def store_password(password: str) -> None:
+    keyring.set_password(CREDENTIAL_SERVICE, CREDENTIAL_USER, password)
+
+
+def get_stored_password() -> str | None:
+    try:
+        return keyring.get_password(CREDENTIAL_SERVICE, CREDENTIAL_USER)
+    except Exception:
+        return None
+
+
+def delete_password() -> None:
+    try:
+        keyring.delete_password(CREDENTIAL_SERVICE, CREDENTIAL_USER)
+    except Exception:
+        pass
+
+
+def _turn_monitor_off():
+    """Send SC_MONITORPOWER to turn display off (2 = power off)."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        HWND_BROADCAST = 0xFFFF
+        WM_SYSCOMMAND = 0x0112
+        SC_MONITORPOWER = 0xF170
+        ctypes.windll.user32.PostMessageW(HWND_BROADCAST, WM_SYSCOMMAND, SC_MONITORPOWER, 2)
+    except Exception:
+        pass
+
+
+def _type_password_to_winlogon(password: str):
+    """Switch thread to Winlogon desktop and type password + Enter via SendInput."""
+    if sys.platform != "win32":
+        return
+    import ctypes
+    import ctypes.wintypes
+
+    DESKTOP_ALL_ACCESS = 0x01FF
+    KEYEVENTF_KEYUP = 0x0002
+    INPUT_KEYBOARD = 1
+    VK_RETURN = 0x0D
+    KEYEVENTF_UNICODE = 0x0004
+
+    class KEYBDINPUT(ctypes.Structure):
+        _fields_ = [
+            ("wVk",         ctypes.c_ushort),
+            ("wScan",       ctypes.c_ushort),
+            ("dwFlags",     ctypes.c_ulong),
+            ("time",        ctypes.c_ulong),
+            ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
+        ]
+
+    class _UNION(ctypes.Union):
+        _fields_ = [("ki", KEYBDINPUT)]
+
+    class INPUT(ctypes.Structure):
+        _fields_ = [("type", ctypes.c_ulong), ("_u", _UNION)]
+
+    user32 = ctypes.windll.user32
+
+    hdesk = user32.OpenDesktopW("Winlogon", 0, False, DESKTOP_ALL_ACCESS)
+    if not hdesk:
+        return
+    user32.SetThreadDesktop(hdesk)
+
+    def _send_char(ch: str):
+        scan = ord(ch)
+        for flags in (KEYEVENTF_UNICODE, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP):
+            ki = KEYBDINPUT(wVk=0, wScan=scan, dwFlags=flags, time=0, dwExtraInfo=None)
+            inp = INPUT(type=INPUT_KEYBOARD, _u=_UNION(ki=ki))
+            user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(inp))
+            time.sleep(0.02)
+
+    def _send_vk(vk: int):
+        for flags in (0, KEYEVENTF_KEYUP):
+            ki = KEYBDINPUT(wVk=vk, wScan=0, dwFlags=flags, time=0, dwExtraInfo=None)
+            inp = INPUT(type=INPUT_KEYBOARD, _u=_UNION(ki=ki))
+            user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(inp))
+            time.sleep(0.02)
+
+    for ch in password:
+        _send_char(ch)
+
+    _send_vk(VK_RETURN)
+
+    # Restore Default desktop
+    hdefault = user32.OpenDesktopW("Default", 0, False, DESKTOP_ALL_ACCESS)
+    if hdefault:
+        user32.SetThreadDesktop(hdefault)
+        user32.CloseDesktop(hdefault)
+    user32.CloseDesktop(hdesk)
+
+
+def auto_unlock_on_lock():
+    """
+    Called when WTS_SESSION_LOCK fires.
+    Waits for Winlogon to render, then types stored password.
+    After unlock detected, turns monitor off.
+    Run in a daemon thread — do not block the caller.
+    """
+    password = get_stored_password()
+    if not password:
+        return  # no password stored, user must type manually
+
+    def _run():
+        time.sleep(1.5)  # wait for Winlogon desktop to fully render
+        _type_password_to_winlogon(password)
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
+def turn_monitor_off_after_unlock():
+    """
+    Called when WTS_SESSION_UNLOCK fires.
+    Brief delay so desktop finishes rendering, then kills monitor.
+    """
+    def _run():
+        time.sleep(0.5)
+        _turn_monitor_off()
+
+    threading.Thread(target=_run, daemon=True).start()
+```
+
+- [ ] **Step 4: Run tests**
+
+```bash
+uv run pytest tests/test_auto_unlock.py -v
+```
+Expected: 3 passed
+
+- [ ] **Step 5: Wire into `service_main.py` — update `_on_lock` and `_on_unlock`**
+
+In `src/service_main.py`, add import at top:
+```python
+from service.auto_unlock import auto_unlock_on_lock, turn_monitor_off_after_unlock
+```
+
+Replace `_on_lock` and `_on_unlock` methods:
+```python
+def _on_lock(self):
+    self._state.set_desktop("Winlogon")
+    servicemanager.LogInfoMsg("WindowControl: session locked")
+    auto_unlock_on_lock()  # types stored password after 1.5s
+
+def _on_unlock(self):
+    self._state.set_desktop("Default")
+    self._available_windows.clear()
+    self._available_windows.extend(_build_windows())
+    servicemanager.LogInfoMsg("WindowControl: session unlocked")
+    turn_monitor_off_after_unlock()  # kills monitor 0.5s after unlock
+```
+
+- [ ] **Step 6: Add "Set Unlock Password" button to `src/gui/launcher.py`**
+
+In the service group box setup (`_setup_service_group`), add after the btn_row:
+
+```python
+pw_row = QHBoxLayout()
+self._set_pw_btn = QPushButton("Set Unlock Password")
+self._set_pw_btn.clicked.connect(self._on_set_unlock_password)
+self._clear_pw_btn = QPushButton("Clear Password")
+self._clear_pw_btn.clicked.connect(self._on_clear_unlock_password)
+pw_row.addWidget(self._set_pw_btn)
+pw_row.addWidget(self._clear_pw_btn)
+service_layout.addLayout(pw_row)
+```
+
+Add methods to `LauncherWindow`:
+```python
+def _on_set_unlock_password(self):
+    from PyQt5.QtWidgets import QInputDialog, QLineEdit
+    pw, ok = QInputDialog.getText(
+        self, "Set Unlock Password",
+        "Enter your Windows password for auto-unlock:",
+        QLineEdit.Password
+    )
+    if ok and pw:
+        from service.auto_unlock import store_password
+        store_password(pw)
+        self._status_label.setText("Unlock password saved.")
+
+def _on_clear_unlock_password(self):
+    from service.auto_unlock import delete_password
+    delete_password()
+    self._status_label.setText("Unlock password cleared.")
+```
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add src/service/auto_unlock.py src/service_main.py src/gui/launcher.py tests/test_auto_unlock.py
+git commit -m "feat: auto-unlock on lock + monitor-off after unlock"
 ```
 
 ---
@@ -1269,7 +1667,12 @@ The full updated `hiddenimports` block:
         'service.pipe_server',
         'service.pipe_client',
         'service.desktop_monitor',
+        'service.auto_unlock',
         'service_main',
+        'dxcam',
+        'keyring',
+        'keyring.backends',
+        'keyring.backends.Windows',
     ] + win32_hiddenimports + win32api_hiddenimports + pywintypes_hiddenimports,
 ```
 
@@ -1372,8 +1775,12 @@ git commit -m "chore: bump to 1.2.0 — lock screen service release"
 | Auto-restart on failure (3x) | Task 5 |
 | `--install` / `--uninstall` | Tasks 5, 7 |
 | Event Log logging | Task 5 (servicemanager.LogMsg) |
-| DXGI/mss capture during lock | Task 3 (mss with SetThreadDesktop) |
+| DXGI capture normal use (no monitor wake) | Task 3 (dxcam primary) |
+| mss fallback during lock | Task 3 (SetThreadDesktop + mss) |
 | Survives lock screen | Task 3 + Task 5 |
+| Auto-unlock (types password) | Task 3b |
+| Monitor off after unlock | Task 3b |
+| Store password in Credential Manager | Task 3b |
 | WTS_SESSION_LOCK / UNLOCK events | Task 2 |
 | Desktop switch handling | Task 2 |
 | Notify iPhone: locked indicator | Task 3 (state.desktop propagated to stream) |
@@ -1385,6 +1792,6 @@ git commit -m "chore: bump to 1.2.0 — lock screen service release"
 | Installer service lifecycle | Task 9 |
 
 **Gaps addressed:**
-- `dxcam` removed from plan — `mss` with `SetThreadDesktop` is the correct approach for Python. dxcam wraps DXGI which denies access from locked sessions even as SYSTEM. mss uses BitBlt/GDI which works from SYSTEM.
+- `dxcam` (DXGI) used as primary capture — GPU-side, monitor stays off. `mss` fallback only during Winlogon desktop (DXGI blocked during lock by Windows security boundary; GDI/mss works from SYSTEM on Winlogon desktop).
 - iPhone "PC Locked" indicator: handled implicitly — when `state.desktop == "Winlogon"`, stream shows lock screen content instead of app window. Client JS `status-pill` already shows the stream state. A future enhancement could add an explicit overlay.
 - Named pipe read/write in `PipeServer._handle_client` uses blocking `ReadFile` — this is correct since each client gets its own `_handle_client` call from the accept loop.
