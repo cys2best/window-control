@@ -1,0 +1,48 @@
+name: Build Windows Installer
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Install Inno Setup 6
+        run: choco install innosetup --version 6.2.2 -y
+        shell: cmd
+
+      - name: Build EXE with PyInstaller
+        run: uv run pyinstaller build/window_control.spec --distpath dist --workpath build/work --noconfirm
+        shell: cmd
+
+      - name: Build installer with Inno Setup
+        run: |
+          mkdir release
+          "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" build\installer.iss
+        shell: cmd
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WindowControlInstaller
+          path: release/WindowControlInstaller.exe
+          retention-days: 30
+
+      - name: Upload to release (on tag)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/WindowControlInstaller.exe
