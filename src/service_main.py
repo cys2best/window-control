@@ -225,13 +225,15 @@ def main():
     elif "--stop" in sys.argv:
         win32serviceutil.StopService(SERVICE_NAME)
     else:
+        # SCM starts exe with no args — use dispatcher directly for frozen exe compatibility
         try:
-            win32serviceutil.HandleCommandLine(WindowControlService)
+            servicemanager.Initialize()
+            servicemanager.PrepareToHostSingle(WindowControlService)
+            servicemanager.StartServiceCtrlDispatcher()
         except Exception as exc:
-            import traceback
+            import traceback, os
             log_path = r"C:\ProgramData\WindowControl\service_crash.log"
             try:
-                import os
                 os.makedirs(r"C:\ProgramData\WindowControl", exist_ok=True)
                 with open(log_path, "a") as f:
                     f.write(traceback.format_exc())
