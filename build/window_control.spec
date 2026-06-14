@@ -5,15 +5,17 @@ from pathlib import Path
 
 block_cipher = None
 
-src_dir = str(Path('../src').resolve())
+# SPECPATH is set by PyInstaller to the directory containing this spec file
+_root = Path(SPECPATH).parent
+src_dir = str(_root / 'src')
 
 a = Analysis(
-    [str(Path('../src/main.py').resolve())],
+    [str(_root / 'src' / 'main.py')],
     pathex=[src_dir],
     binaries=[],
     datas=[
-        (str(Path('../src/client').resolve()), 'client'),
-        (str(Path('../src/assets').resolve()), 'assets'),
+        (str(_root / 'src' / 'client'), 'client'),
+        (str(_root / 'src' / 'assets'), 'assets'),
     ],
     hiddenimports=[
         'uvicorn.logging',
@@ -70,5 +72,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=str(Path('../src/assets/icon.ico').resolve()),
+    icon=str(_root / 'src' / 'assets' / 'icon.ico'),
 )
