@@ -14,13 +14,14 @@ import os
 
 # Log import crashes — service process dying here produces error 1053 with no other trace
 def _log_crash(msg: str):
-    try:
-        _p = r"C:\ProgramData\WindowControl"
-        os.makedirs(_p, exist_ok=True)
-        with open(os.path.join(_p, "service_crash.log"), "a") as _f:
-            _f.write(msg + "\n")
-    except Exception:
-        pass
+    for _p in [r"C:\ProgramData\WindowControl", r"C:\Windows\Temp", r"C:\Temp"]:
+        try:
+            os.makedirs(_p, exist_ok=True)
+            with open(os.path.join(_p, "service_crash.log"), "a") as _f:
+                _f.write(msg + "\n")
+            return
+        except Exception:
+            continue
 
 try:
     import threading
