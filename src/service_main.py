@@ -48,13 +48,18 @@ if sys.platform == "win32":
         def __init__(self, args):
             win32serviceutil.ServiceFramework.__init__(self, args)
             self._stop_event = win32event.CreateEvent(None, 0, 0, None)
-            self._state = CaptureState()
-            self._state.set_quality(QUALITY_MAP[DEFAULT_QUALITY])
-            self._frame_queue = FrameQueue()
-            self._available_windows = []
-            self._server = None
-            self._pipe_server = None
-            self._desktop_monitor = None
+            try:
+                self._state = CaptureState()
+                self._state.set_quality(QUALITY_MAP[DEFAULT_QUALITY])
+                self._frame_queue = FrameQueue()
+                self._available_windows = []
+                self._server = None
+                self._pipe_server = None
+                self._desktop_monitor = None
+            except Exception as exc:
+                import traceback
+                servicemanager.LogErrorMsg(f"WindowControl __init__ crashed: {exc}\n{traceback.format_exc()}")
+                raise
 
         def SvcDoRun(self):
             self.ReportServiceStatus(win32service.SERVICE_RUNNING)
@@ -63,7 +68,12 @@ if sys.platform == "win32":
                 servicemanager.PYS_SERVICE_STARTED,
                 (self._svc_name_, "")
             )
-            self._run()
+            try:
+                self._run()
+            except Exception as exc:
+                import traceback
+                servicemanager.LogErrorMsg(f"WindowControl SvcDoRun crashed: {exc}\n{traceback.format_exc()}")
+                raise
             servicemanager.LogMsg(
                 servicemanager.EVENTLOG_INFORMATION_TYPE,
                 servicemanager.PYS_SERVICE_STOPPED,
@@ -215,7 +225,20 @@ def main():
     elif "--stop" in sys.argv:
         win32serviceutil.StopService(SERVICE_NAME)
     else:
-        win32serviceutil.HandleCommandLine(WindowControlService)
+        try:
+            win32serviceutil.HandleCommandLine(WindowControlService)
+        except Exception as exc:
+            import traceback
+            log_path = r"C:\ProgramData\WindowControl\service_crash.log"
+            try:
+                import os
+                os.makedirs(r"C:\ProgramData\WindowControl", exist_ok=True)
+                with open(log_path, "a") as f:
+                    f.write(traceback.format_exc())
+            except Exception:
+                pass
+            servicemanager.LogErrorMsg(f"WindowControl service crashed: {exc}")
+            raise
 
 
 if __name__ == "__main__":
