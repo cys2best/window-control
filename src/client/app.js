@@ -4,7 +4,7 @@ let wsRetryDelay = 1000;
 let frameCount = 0;
 let lastFrameTime = Date.now();
 let fpsInterval = null;
-let streamStallTimer = null;
+// stream stall detection via _streamPoll interval (see initStream)
 
 // Pinch zoom state
 let lastDist = null;
@@ -32,15 +32,25 @@ function sendInput(obj) {
 
 function initStream() {
   const img = document.getElementById('stream-img');
-  img.src = '/stream';
+  img.src = '/stream?' + Date.now();
 
-  img.onload = () => {
-    frameCount++;
-    resetStallTimer();
-    clearUnavailable();
-  };
+  // MJPEG: onload fires once on first frame; use naturalWidth poll to detect stall
+  let lastW = 0, lastCheck = Date.now();
+  clearInterval(window._streamPoll);
+  window._streamPoll = setInterval(() => {
+    const w = img.naturalWidth;
+    if (w > 0) {
+      frameCount++;
+      clearUnavailable();
+      lastW = w;
+      lastCheck = Date.now();
+    } else if (Date.now() - lastCheck > 2000) {
+      showUnavailable();
+    }
+  }, 100);
 
   img.onerror = () => {
+    clearInterval(window._streamPoll);
     scheduleStreamReconnect();
   };
 }
@@ -50,11 +60,6 @@ function scheduleStreamReconnect() {
     const img = document.getElementById('stream-img');
     img.src = '/stream?' + Date.now();
   }, 2000);
-}
-
-function resetStallTimer() {
-  clearTimeout(streamStallTimer);
-  streamStallTimer = setTimeout(() => showUnavailable(), 2000);
 }
 
 function showUnavailable() {

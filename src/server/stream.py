@@ -1,3 +1,4 @@
+import asyncio
 import io
 import queue
 import sys
@@ -114,9 +115,10 @@ def capture_loop(state: CaptureState, frame_queue: FrameQueue):
         time.sleep(1 / 30)  # ~30 fps cap
 
 
-def mjpeg_generator(frame_queue: FrameQueue):
+async def mjpeg_generator(frame_queue: FrameQueue):
+    loop = asyncio.get_event_loop()
     while True:
-        frame = frame_queue.get(timeout=1.0)
+        frame = await loop.run_in_executor(None, frame_queue.get, 1.0)
         if frame is None:
             continue
         yield (
