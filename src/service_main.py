@@ -200,7 +200,7 @@ def main():
         sys.argv = [sys.argv[0], "install"]
         win32serviceutil.HandleCommandLine(WindowControlService)
         _set_failure_actions()
-        win32serviceutil.StartService(SERVICE_NAME, waitSecs=30)
+        win32serviceutil.StartService(SERVICE_NAME)
         print(f"Service '{SERVICE_NAME}' installed and started.")
     elif "--uninstall" in sys.argv:
         try:
@@ -211,7 +211,7 @@ def main():
         sys.argv = [sys.argv[0], "remove"]
         win32serviceutil.HandleCommandLine(WindowControlService)
     elif "--start" in sys.argv:
-        win32serviceutil.StartService(SERVICE_NAME, waitSecs=30)
+        win32serviceutil.StartService(SERVICE_NAME)
     elif "--stop" in sys.argv:
         win32serviceutil.StopService(SERVICE_NAME)
     else:
