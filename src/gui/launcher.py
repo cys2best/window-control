@@ -6,7 +6,7 @@ from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QComboBox, QGroupBox, QSizePolicy, QScrollArea
 )
-from PyQt5.QtCore import Qt, pyqtSignal, QThread, pyqtSlot
+from PyQt5.QtCore import Qt, pyqtSignal, QThread, pyqtSlot, QTimer
 from PyQt5.QtGui import QPixmap, QImage
 import qrcode
 import io
@@ -14,26 +14,27 @@ import io
 from config import PORT, QUALITY_MAP, DEFAULT_QUALITY, VERSION, GITHUB_REPO
 from server.tailscale import get_best_ip, has_tailscale
 from server.stream import CaptureState
-from gui.window_list import WindowListWidget
-from gui.service_status import get_service_status
 from updater import check_for_update
 
 
 class LauncherWindow(QMainWindow):
     server_start_requested = pyqtSignal()
     server_stop_requested = pyqtSignal()
-    quality_changed = pyqtSignal(int)  # emits QUALITY_MAP value (int)
-    window_selected = pyqtSignal(int, str)  # hwnd, title
+    quality_changed = pyqtSignal(int)
+    window_selected = pyqtSignal(int, str)
 
     def __init__(self, state: CaptureState, parent=None):
         super().__init__(parent)
         self._state = state
         self._server_running = False
         self.setWindowTitle(f"WindowControl v{VERSION}")
-        self.setMinimumWidth(320)
+        self.setMinimumWidth(420)
+        self.resize(460, 600)
         self._setup_ui()
         self._refresh_ip()
         check_for_update(self._on_update_available)
+        # Auto-install service on first launch if not installed
+        QTimer.singleShot(1500, self._auto_install_service)
 
     def _setup_ui(self):
         scroll = QScrollArea()
@@ -44,30 +45,34 @@ class LauncherWindow(QMainWindow):
         central = QWidget()
         scroll.setWidget(central)
         layout = QVBoxLayout(central)
-        layout.setSpacing(12)
-        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(16)
+        layout.setContentsMargins(20, 20, 20, 20)
 
-        # --- Lock Screen Service group ---
-        self._setup_service_group(layout)
+        self._setup_style()
 
-        # --- Server status group ---
+        # --- Server group ---
         server_group = QGroupBox("Server")
         server_layout = QVBoxLayout(server_group)
+        server_layout.setSpacing(10)
 
         self._ip_label = QLabel("IP: detecting…")
         self._ip_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self._ip_label.setStyleSheet("font-size: 14px; color: #333;")
         server_layout.addWidget(self._ip_label)
 
         self._url_label = QLabel("")
         self._url_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self._url_label.setStyleSheet("font-size: 13px; color: #555;")
         server_layout.addWidget(self._url_label)
 
         self._qr_label = QLabel()
         self._qr_label.setAlignment(Qt.AlignCenter)
-        self._qr_label.setFixedHeight(180)
+        self._qr_label.setFixedHeight(200)
         server_layout.addWidget(self._qr_label)
 
         self._start_stop_btn = QPushButton("Start Server")
+        self._start_stop_btn.setMinimumHeight(44)
+        self._start_stop_btn.setStyleSheet(self._btn_style("#2563eb", "#1d4ed8"))
         self._start_stop_btn.clicked.connect(self._on_start_stop)
         server_layout.addWidget(self._start_stop_btn)
 
@@ -76,10 +81,12 @@ class LauncherWindow(QMainWindow):
         # --- Quality group ---
         quality_group = QGroupBox("Stream Quality")
         quality_layout = QHBoxLayout(quality_group)
+        quality_layout.setContentsMargins(12, 12, 12, 12)
         self._quality_combo = QComboBox()
+        self._quality_combo.setMinimumHeight(36)
+        self._quality_combo.setStyleSheet("font-size: 14px;")
         for label in QUALITY_MAP:
             self._quality_combo.addItem(label.capitalize(), label)
-        # Set default
         idx = self._quality_combo.findData(DEFAULT_QUALITY)
         if idx >= 0:
             self._quality_combo.setCurrentIndex(idx)
@@ -87,23 +94,21 @@ class LauncherWindow(QMainWindow):
         quality_layout.addWidget(self._quality_combo)
         layout.addWidget(quality_group)
 
-        # --- Window list group ---
-        windows_group = QGroupBox("Select Window")
-        windows_layout = QVBoxLayout(windows_group)
-        self._window_list = WindowListWidget()
-        self._window_list.window_selected.connect(self._on_window_selected)
-        windows_layout.addWidget(self._window_list)
-        layout.addWidget(windows_group)
-
         # --- Auto-Unlock group ---
         self._setup_unlock_group(layout)
 
-        # --- Update banner (hidden until update found) ---
+        # --- Lock screen service status (compact, no manual buttons) ---
+        self._service_status_label = QLabel()
+        self._service_status_label.setStyleSheet("font-size: 12px; color: #666; padding: 4px 0;")
+        self._service_status_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self._service_status_label)
+
+        # --- Update banner ---
         self._update_label = QLabel()
         self._update_label.setOpenExternalLinks(True)
         self._update_label.setStyleSheet(
             "background:#fffbe6; color:#7a6000; border:1px solid #f0c040;"
-            "border-radius:4px; padding:6px;"
+            "border-radius:6px; padding:8px; font-size:13px;"
         )
         self._update_label.setWordWrap(True)
         self._update_label.hide()
@@ -111,7 +116,49 @@ class LauncherWindow(QMainWindow):
 
         # --- Status bar ---
         self._status_label = QLabel("Server stopped")
+        self._status_label.setStyleSheet("font-size: 13px; color: #666;")
         layout.addWidget(self._status_label)
+
+        self._refresh_service_status_label()
+
+    def _setup_style(self):
+        self.setStyleSheet("""
+            QMainWindow { background: #f8fafc; }
+            QGroupBox {
+                font-size: 14px;
+                font-weight: 600;
+                color: #1e293b;
+                border: 1px solid #e2e8f0;
+                border-radius: 8px;
+                margin-top: 8px;
+                padding-top: 8px;
+                background: white;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 12px;
+                padding: 0 6px;
+                color: #374151;
+            }
+            QScrollArea { border: none; background: #f8fafc; }
+            QWidget#qt_scrollarea_viewport { background: #f8fafc; }
+        """)
+
+    def _btn_style(self, bg: str, hover: str) -> str:
+        return f"""
+            QPushButton {{
+                background: {bg};
+                color: white;
+                border: none;
+                border-radius: 8px;
+                font-size: 15px;
+                font-weight: 600;
+                padding: 10px;
+            }}
+            QPushButton:hover {{ background: {hover}; }}
+            QPushButton:pressed {{ background: {hover}; }}
+            QPushButton:disabled {{ background: #94a3b8; }}
+        """
 
     def _refresh_ip(self):
         ip = get_best_ip()
@@ -130,7 +177,7 @@ class LauncherWindow(QMainWindow):
         data = buf.read()
         img = QImage.fromData(data)
         pix = QPixmap.fromImage(img).scaled(
-            160, 160, Qt.KeepAspectRatio, Qt.SmoothTransformation
+            190, 190, Qt.KeepAspectRatio, Qt.SmoothTransformation
         )
         self._qr_label.setPixmap(pix)
 
@@ -138,49 +185,60 @@ class LauncherWindow(QMainWindow):
         if not self._server_running:
             self._server_running = True
             self._start_stop_btn.setText("Stop Server")
+            self._start_stop_btn.setStyleSheet(self._btn_style("#dc2626", "#b91c1c"))
             self._status_label.setText("Server running…")
             self.server_start_requested.emit()
         else:
             self._server_running = False
             self._start_stop_btn.setText("Start Server")
+            self._start_stop_btn.setStyleSheet(self._btn_style("#2563eb", "#1d4ed8"))
             self._status_label.setText("Server stopped")
             self.server_stop_requested.emit()
 
-    def _on_quality_changed(self, _index: int):
+    def _on_quality_changed(self, _idx: int):
         key = self._quality_combo.currentData()
         value = QUALITY_MAP[key]
         self.quality_changed.emit(value)
 
-    def _on_window_selected(self, hwnd: int, title: str):
-        self._status_label.setText(f"Streaming: {title}")
-        self.window_selected.emit(hwnd, title)
-
     def _on_update_available(self, latest: str):
         url = f"https://github.com/{GITHUB_REPO}/releases/latest"
         self._update_label.setText(
-            f'⬆ Update available: v{latest} — '
+            f'Update available: v{latest} — '
             f'<a href="{url}">Download</a>'
         )
         self._update_label.show()
 
     def set_server_running(self, running: bool):
-        """Called externally to sync button state."""
         self._server_running = running
         if running:
             self._start_stop_btn.setText("Stop Server")
+            self._start_stop_btn.setStyleSheet(self._btn_style("#dc2626", "#b91c1c"))
             self._status_label.setText("Server running…")
         else:
             self._start_stop_btn.setText("Start Server")
+            self._start_stop_btn.setStyleSheet(self._btn_style("#2563eb", "#1d4ed8"))
             self._status_label.setText("Server stopped")
 
     def _setup_unlock_group(self, layout):
         unlock_group = QGroupBox("Auto-Unlock")
         unlock_layout = QVBoxLayout(unlock_group)
+        unlock_layout.setSpacing(8)
+        unlock_layout.setContentsMargins(12, 12, 12, 12)
+
+        info = QLabel("Store your Windows password to auto-unlock after lock screen.")
+        info.setWordWrap(True)
+        info.setStyleSheet("font-size: 13px; color: #64748b;")
+        unlock_layout.addWidget(info)
 
         pw_row = QHBoxLayout()
         self._set_pw_btn = QPushButton("Set Unlock Password")
+        self._set_pw_btn.setMinimumHeight(38)
+        self._set_pw_btn.setStyleSheet(self._btn_style("#0f766e", "#0d9488"))
         self._set_pw_btn.clicked.connect(self._on_set_unlock_password)
-        self._clear_pw_btn = QPushButton("Clear Password")
+        self._clear_pw_btn = QPushButton("Clear")
+        self._clear_pw_btn.setMinimumHeight(38)
+        self._clear_pw_btn.setMaximumWidth(80)
+        self._clear_pw_btn.setStyleSheet(self._btn_style("#64748b", "#475569"))
         self._clear_pw_btn.clicked.connect(self._on_clear_unlock_password)
         pw_row.addWidget(self._set_pw_btn)
         pw_row.addWidget(self._clear_pw_btn)
@@ -204,66 +262,34 @@ class LauncherWindow(QMainWindow):
         delete_password()
         self._status_label.setText("Unlock password cleared.")
 
-    def _setup_service_group(self, layout):
-        from PyQt5.QtWidgets import QGroupBox
-        from PyQt5.QtCore import QTimer
-        service_group = QGroupBox("Lock Screen Service")
-        service_layout = QVBoxLayout(service_group)
+    def _auto_install_service(self):
+        """Install lock screen service automatically if not already installed/running."""
+        if sys.platform != "win32":
+            return
+        from gui.service_status import get_service_status
+        status = get_service_status()
+        if status == "not_installed":
+            self._service_status_label.setText("Lock screen service: installing…")
+            self._run_elevated(sys.executable, "--install")
+            QTimer.singleShot(5000, self._refresh_service_status_label)
 
-        status_row = QHBoxLayout()
-        self._service_dot = QLabel("●")
-        self._service_dot.setFixedWidth(16)
-        self._service_status_label = QLabel("Checking…")
-        status_row.addWidget(self._service_dot)
-        status_row.addWidget(self._service_status_label)
-        status_row.addStretch()
-        service_layout.addLayout(status_row)
-
-        btn_row = QHBoxLayout()
-        self._install_btn = QPushButton("Install Service")
-        self._install_btn.clicked.connect(self._on_install_service)
-        self._uninstall_btn = QPushButton("Uninstall")
-        self._uninstall_btn.clicked.connect(self._on_uninstall_service)
-        btn_row.addWidget(self._install_btn)
-        btn_row.addWidget(self._uninstall_btn)
-        service_layout.addLayout(btn_row)
-
-        layout.addWidget(service_group)
-        self._refresh_service_status()
-
-    def _refresh_service_status(self):
+    def _refresh_service_status_label(self):
+        if sys.platform != "win32":
+            self._service_status_label.setText("Lock screen service: not available (Windows only)")
+            return
+        from gui.service_status import get_service_status
         status = get_service_status()
         if status == "running":
-            self._service_dot.setStyleSheet("color: #22c55e;")
-            self._service_status_label.setText("Running — lock screen active")
-            self._install_btn.setEnabled(False)
-            self._uninstall_btn.setEnabled(True)
+            self._service_status_label.setText("● Lock screen service: running")
+            self._service_status_label.setStyleSheet("font-size: 12px; color: #16a34a; padding: 4px 0;")
         elif status == "stopped":
-            self._service_dot.setStyleSheet("color: #ef4444;")
-            self._service_status_label.setText("Stopped")
-            self._install_btn.setEnabled(True)
-            self._uninstall_btn.setEnabled(True)
+            self._service_status_label.setText("● Lock screen service: stopped — restart app to retry")
+            self._service_status_label.setStyleSheet("font-size: 12px; color: #dc2626; padding: 4px 0;")
         else:
-            self._service_dot.setStyleSheet("color: #94a3b8;")
-            self._service_status_label.setText("Not installed")
-            self._install_btn.setEnabled(True)
-            self._uninstall_btn.setEnabled(False)
-
-    def _on_install_service(self):
-        from PyQt5.QtCore import QTimer
-        self._service_dot.setStyleSheet("color: #f59e0b;")
-        self._service_status_label.setText("Installing…")
-        self._install_btn.setEnabled(False)
-        self._run_elevated(sys.executable, "--install")
-        QTimer.singleShot(3000, self._refresh_service_status)
-
-    def _on_uninstall_service(self):
-        from PyQt5.QtCore import QTimer
-        self._run_elevated(sys.executable, "--uninstall")
-        QTimer.singleShot(3000, self._refresh_service_status)
+            self._service_status_label.setText("○ Lock screen service: not installed")
+            self._service_status_label.setStyleSheet("font-size: 12px; color: #94a3b8; padding: 4px 0;")
 
     def _run_elevated(self, exe: str, arg: str):
-        """Run exe with arg elevated (UAC prompt on Windows)."""
         if sys.platform == "win32":
             import ctypes
             ctypes.windll.shell32.ShellExecuteW(None, "runas", exe, arg, None, 1)

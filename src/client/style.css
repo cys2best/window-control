@@ -9,6 +9,26 @@ html, body {
   touch-action: none;
 }
 
+/* Portrait mode prompt overlay — shown when phone is held portrait */
+#rotate-prompt {
+  display: none;
+  position: fixed; inset: 0;
+  background: #000;
+  z-index: 200;
+  flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 16px;
+  color: #fff;
+  font-size: 18px;
+  text-align: center;
+  padding: 32px;
+}
+#rotate-prompt svg { width: 64px; height: 64px; opacity: 0.7; }
+
+@media (orientation: portrait) {
+  #rotate-prompt { display: flex; }
+}
+
 /* ── STREAM ─────────────────────────────────────────────────── */
 #stream-container {
   position: fixed; inset: 0;

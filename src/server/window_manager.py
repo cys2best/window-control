@@ -63,15 +63,12 @@ def is_window_alive(hwnd) -> bool:
 
 
 def focus_window(hwnd) -> None:
-    """Restore minimized window and bring it to foreground via AttachThreadInput."""
+    """Bring window to foreground and maximize it via AttachThreadInput."""
     import time
     try:
-        if win32gui.IsIconic(hwnd):
-            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-            time.sleep(0.05)
+        win32gui.ShowWindow(hwnd, win32con.SW_MAXIMIZE)
+        time.sleep(0.05)
         fg = win32gui.GetForegroundWindow()
-        if fg == hwnd:
-            return
         if sys.platform == "win32":
             import ctypes
             fg_tid, _ = win32process.GetWindowThreadProcessId(fg)

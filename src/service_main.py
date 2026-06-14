@@ -209,12 +209,30 @@ def _remove_service_if_exists():
         pass
 
 
-def _set_failure_actions():
-    """Configure 3x auto-restart with 60s delay."""
+def _install_service_manually():
+    """Register service directly via win32service API with explicit binary path."""
+    exe = sys.executable if getattr(sys, "frozen", False) else sys.argv[0]
+    # SCM will call: exe --run-service  — unambiguous dispatch
+    bin_path = f'"{exe}" --run-service'
+    hscm = win32service.OpenSCManager(None, None, win32service.SC_MANAGER_ALL_ACCESS)
     try:
-        hscm = win32service.OpenSCManager(None, None, win32service.SC_MANAGER_ALL_ACCESS)
-        hsvc = win32service.OpenService(hscm, SERVICE_NAME, win32service.SERVICE_ALL_ACCESS)
+        hsvc = win32service.CreateService(
+            hscm,
+            SERVICE_NAME,
+            SERVICE_DISPLAY,
+            win32service.SERVICE_ALL_ACCESS,
+            win32service.SERVICE_WIN32_OWN_PROCESS,
+            win32service.SERVICE_AUTO_START,
+            win32service.SERVICE_ERROR_NORMAL,
+            bin_path,
+            None, 0, None, None, None,
+        )
         try:
+            win32service.ChangeServiceConfig2(
+                hsvc,
+                win32service.SERVICE_CONFIG_DESCRIPTION,
+                SERVICE_DESCRIPTION,
+            )
             win32service.ChangeServiceConfig2(
                 hsvc,
                 win32service.SERVICE_CONFIG_FAILURE_ACTIONS,
@@ -227,63 +245,54 @@ def _set_failure_actions():
                         (win32service.SC_ACTION_RESTART, 60000),
                         (win32service.SC_ACTION_RESTART, 60000),
                     ],
-                }
+                },
             )
         finally:
             win32service.CloseServiceHandle(hsvc)
-            win32service.CloseServiceHandle(hscm)
-    except Exception:
-        pass
+    finally:
+        win32service.CloseServiceHandle(hscm)
 
 
 def main():
     _log_crash(f"[main] argv={sys.argv} frozen={getattr(sys, 'frozen', False)}")
     if "--install" in sys.argv:
         _remove_service_if_exists()
-        # HandleCommandLine with 'install' does InstallPythonClassString correctly
-        # even in a frozen exe — it resolves the class from the running module.
-        sys.argv = [sys.argv[0], "install"]
-        win32serviceutil.HandleCommandLine(WindowControlService)
-        _set_failure_actions()
+        _install_service_manually()
+        print(f"Service '{SERVICE_NAME}' installed.")
         try:
             win32serviceutil.StartService(SERVICE_NAME)
-            print(f"Service '{SERVICE_NAME}' installed and started.")
+            print(f"Service '{SERVICE_NAME}' started.")
         except Exception as exc:
             _log_crash(f"[StartService] {exc}")
-            print(f"Service installed. Start failed (will retry on reboot): {exc}")
+            print(f"Service start failed (starts on next reboot): {exc}")
     elif "--uninstall" in sys.argv:
         try:
             win32serviceutil.StopService(SERVICE_NAME)
             time.sleep(2)
         except Exception:
             pass
-        sys.argv = [sys.argv[0], "remove"]
-        win32serviceutil.HandleCommandLine(WindowControlService)
+        try:
+            win32serviceutil.RemoveService(SERVICE_NAME)
+            print(f"Service '{SERVICE_NAME}' removed.")
+        except Exception as exc:
+            print(f"Remove failed: {exc}")
     elif "--start" in sys.argv:
         win32serviceutil.StartService(SERVICE_NAME)
     elif "--stop" in sys.argv:
         win32serviceutil.StopService(SERVICE_NAME)
-    else:
-        # SCM launches exe with no args.
-        # In a frozen PyInstaller exe, servicemanager.Initialize needs the exe path
-        # as its second arg (event log source registration).
+    elif "--run-service" in sys.argv:
+        # SCM entry point — always explicit now, never ambiguous
         try:
-            if getattr(sys, "frozen", False):
-                # Frozen: use servicemanager dispatcher directly
-                servicemanager.Initialize(SERVICE_NAME, sys.executable)
-                servicemanager.PrepareToHostSingle(WindowControlService)
-                servicemanager.StartServiceCtrlDispatcher()
-            else:
-                # Dev: HandleCommandLine handles everything
-                win32serviceutil.HandleCommandLine(WindowControlService)
+            servicemanager.Initialize(SERVICE_NAME, sys.executable)
+            servicemanager.PrepareToHostSingle(WindowControlService)
+            servicemanager.StartServiceCtrlDispatcher()
         except Exception as exc:
             import traceback
             _log_crash(f"[SCM dispatch] {traceback.format_exc()}")
-            try:
-                servicemanager.LogErrorMsg(f"WindowControl SCM dispatch crashed: {exc}")
-            except Exception:
-                pass
             raise
+    else:
+        # Dev / interactive fallback
+        win32serviceutil.HandleCommandLine(WindowControlService)
 
 
 if __name__ == "__main__":
