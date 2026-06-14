@@ -11,27 +11,43 @@
 </head>
 <body>
 
+  <!-- CENTER: stream -->
   <div id="stream-container">
     <img id="stream-img" alt="stream" draggable="false">
   </div>
 
-  <div id="hud">
-    <span class="hud-pill" id="fps-pill">-- fps</span>
-    <span class="hud-pill" id="status-pill">Connecting…</span>
-  </div>
+  <!-- LEFT PANEL: toggle button + window list -->
+  <div id="left-toggle" title="Windows">&#9654;</div>
 
-  <button id="keyboard-btn">⌨</button>
-  <input id="keyboard-input" type="text" autocomplete="off" autocorrect="off" autocapitalize="off">
-
-  <div id="drawer-handle"></div>
-
-  <div id="drawer">
-    <div id="drawer-title">Windows</div>
+  <div id="left-panel">
+    <div id="left-header">
+      <span>Windows</span>
+      <button id="left-close">&#10005;</button>
+    </div>
     <div id="windows-list"></div>
   </div>
 
+  <!-- RIGHT TOOLBAR -->
+  <div id="right-toolbar">
+    <div class="hud-pill" id="fps-pill">-- fps</div>
+    <div class="hud-pill" id="status-pill">…</div>
+
+    <div class="rt-spacer"></div>
+
+    <button class="rt-btn" id="prev-btn" title="Previous window">&#9650;</button>
+    <button class="rt-btn" id="next-btn" title="Next window">&#9660;</button>
+
+    <div class="rt-spacer"></div>
+
+    <button class="rt-btn" id="keyboard-btn" title="Keyboard">&#9000;</button>
+  </div>
+
+  <!-- hidden keyboard input -->
+  <input id="keyboard-input" type="text" autocomplete="off" autocorrect="off" autocapitalize="off">
+
+  <!-- Unavailable overlay -->
   <div id="unavailable-overlay">
-    <p style="color:#aaa;font-size:16px">Window unavailable</p>
+    <p>Window unavailable</p>
     <button id="reconnect-btn">Reconnect</button>
   </div>
 

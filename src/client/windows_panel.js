@@ -1,24 +1,31 @@
-// windows_panel.js — swipe drawer + window switching
+// windows_panel.js — left panel + window switching
 let _windows = [];
 let _activeId = null;
-let _thumbTimers = {};
 
-function initDrawer() {
-  const drawer = document.getElementById('drawer');
-  const handle = document.getElementById('drawer-handle');
+// ── Left panel ──────────────────────────────────────────────────
+function initLeftPanel() {
+  const panel  = document.getElementById('left-panel');
+  const toggle = document.getElementById('left-toggle');
+  const close  = document.getElementById('left-close');
 
-  handle.addEventListener('click', () => drawer.classList.toggle('open'));
-
-  // swipe up to open, swipe down to close
-  let startY = 0;
-  document.addEventListener('touchstart', e => { startY = e.touches[0].clientY; }, { passive: true });
-  document.addEventListener('touchend', e => {
-    const dy = startY - e.changedTouches[0].clientY;
-    if (dy > 60) drawer.classList.add('open');
-    if (dy < -60) drawer.classList.remove('open');
-  }, { passive: true });
+  toggle.addEventListener('click', () => {
+    panel.classList.toggle('open');
+    toggle.innerHTML = panel.classList.contains('open') ? '&#9664;' : '&#9654;';
+  });
+  close.addEventListener('click', () => {
+    panel.classList.remove('open');
+    toggle.innerHTML = '&#9654;';
+  });
 }
 
+function closeLeftPanel() {
+  const panel  = document.getElementById('left-panel');
+  const toggle = document.getElementById('left-toggle');
+  panel.classList.remove('open');
+  toggle.innerHTML = '&#9654;';
+}
+
+// ── Window list rendering ────────────────────────────────────────
 function renderWindowsList() {
   const list = document.getElementById('windows-list');
   list.innerHTML = '';
@@ -38,7 +45,10 @@ function renderWindowsList() {
 
     row.appendChild(thumb);
     row.appendChild(title);
-    row.addEventListener('click', () => selectWindow(w.id));
+    row.addEventListener('click', () => {
+      selectWindow(w.id);
+      closeLeftPanel();
+    });
     list.appendChild(row);
   });
 }
@@ -60,8 +70,27 @@ async function selectWindow(id) {
     });
     _activeId = id;
     renderWindowsList();
-    document.getElementById('drawer').classList.remove('open');
   } catch (_) {}
+}
+
+// ── Prev / Next window ───────────────────────────────────────────
+function selectPrev() {
+  if (!_windows.length) return;
+  const idx = _windows.findIndex(w => w.id === _activeId);
+  const next = _windows[(idx - 1 + _windows.length) % _windows.length];
+  selectWindow(next.id);
+}
+
+function selectNext() {
+  if (!_windows.length) return;
+  const idx = _windows.findIndex(w => w.id === _activeId);
+  const next = _windows[(idx + 1) % _windows.length];
+  selectWindow(next.id);
+}
+
+function initPrevNext() {
+  document.getElementById('prev-btn').addEventListener('click', selectPrev);
+  document.getElementById('next-btn').addEventListener('click', selectNext);
 }
 
 function refreshThumbnails() {
@@ -82,4 +111,10 @@ function startWindowsPolling() {
 function setActiveWindow(id) {
   _activeId = id;
   renderWindowsList();
+}
+
+// called from app.js DOMContentLoaded
+function initDrawer() {
+  initLeftPanel();
+  initPrevNext();
 }
