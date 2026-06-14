@@ -9,10 +9,11 @@ from PyQt5.QtGui import QPixmap, QImage
 import qrcode
 import io
 
-from config import PORT, QUALITY_MAP, DEFAULT_QUALITY
+from config import PORT, QUALITY_MAP, DEFAULT_QUALITY, VERSION, GITHUB_REPO
 from server.tailscale import get_best_ip, has_tailscale
 from server.stream import CaptureState
 from gui.window_list import WindowListWidget
+from updater import check_for_update
 
 
 class LauncherWindow(QMainWindow):
@@ -25,10 +26,11 @@ class LauncherWindow(QMainWindow):
         super().__init__(parent)
         self._state = state
         self._server_running = False
-        self.setWindowTitle("WindowControl")
+        self.setWindowTitle(f"WindowControl v{VERSION}")
         self.setMinimumWidth(320)
         self._setup_ui()
         self._refresh_ip()
+        check_for_update(self._on_update_available)
 
     def _setup_ui(self):
         central = QWidget()
@@ -82,6 +84,17 @@ class LauncherWindow(QMainWindow):
         windows_layout.addWidget(self._window_list)
         layout.addWidget(windows_group)
 
+        # --- Update banner (hidden until update found) ---
+        self._update_label = QLabel()
+        self._update_label.setOpenExternalLinks(True)
+        self._update_label.setStyleSheet(
+            "background:#fffbe6; color:#7a6000; border:1px solid #f0c040;"
+            "border-radius:4px; padding:6px;"
+        )
+        self._update_label.setWordWrap(True)
+        self._update_label.hide()
+        layout.addWidget(self._update_label)
+
         # --- Status bar ---
         self._status_label = QLabel("Server stopped")
         layout.addWidget(self._status_label)
@@ -127,6 +140,14 @@ class LauncherWindow(QMainWindow):
     def _on_window_selected(self, hwnd: int, title: str):
         self._status_label.setText(f"Streaming: {title}")
         self.window_selected.emit(hwnd, title)
+
+    def _on_update_available(self, latest: str):
+        url = f"https://github.com/{GITHUB_REPO}/releases/latest"
+        self._update_label.setText(
+            f'⬆ Update available: v{latest} — '
+            f'<a href="{url}">Download</a>'
+        )
+        self._update_label.show()
 
     def set_server_running(self, running: bool):
         """Called externally to sync button state."""
