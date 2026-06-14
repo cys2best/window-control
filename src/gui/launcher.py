@@ -1,5 +1,6 @@
 # src/gui/launcher.py
 import threading
+import subprocess
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QComboBox, QGroupBox, QSizePolicy
@@ -84,6 +85,9 @@ class LauncherWindow(QMainWindow):
         windows_layout.addWidget(self._window_list)
         layout.addWidget(windows_group)
 
+        # --- Auto-Unlock group ---
+        self._setup_unlock_group(layout)
+
         # --- Update banner (hidden until update found) ---
         self._update_label = QLabel()
         self._update_label.setOpenExternalLinks(True)
@@ -158,3 +162,34 @@ class LauncherWindow(QMainWindow):
         else:
             self._start_stop_btn.setText("Start Server")
             self._status_label.setText("Server stopped")
+
+    def _setup_unlock_group(self, layout):
+        unlock_group = QGroupBox("Auto-Unlock")
+        unlock_layout = QVBoxLayout(unlock_group)
+
+        pw_row = QHBoxLayout()
+        self._set_pw_btn = QPushButton("Set Unlock Password")
+        self._set_pw_btn.clicked.connect(self._on_set_unlock_password)
+        self._clear_pw_btn = QPushButton("Clear Password")
+        self._clear_pw_btn.clicked.connect(self._on_clear_unlock_password)
+        pw_row.addWidget(self._set_pw_btn)
+        pw_row.addWidget(self._clear_pw_btn)
+        unlock_layout.addLayout(pw_row)
+        layout.addWidget(unlock_group)
+
+    def _on_set_unlock_password(self):
+        from PyQt5.QtWidgets import QInputDialog, QLineEdit
+        pw, ok = QInputDialog.getText(
+            self, "Set Unlock Password",
+            "Enter your Windows password for auto-unlock:",
+            QLineEdit.Password
+        )
+        if ok and pw:
+            from service.auto_unlock import store_password
+            store_password(pw)
+            self._status_label.setText("Unlock password saved.")
+
+    def _on_clear_unlock_password(self):
+        from service.auto_unlock import delete_password
+        delete_password()
+        self._status_label.setText("Unlock password cleared.")
