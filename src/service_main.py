@@ -244,8 +244,12 @@ def main():
         sys.argv = [sys.argv[0], "install"]
         win32serviceutil.HandleCommandLine(WindowControlService)
         _set_failure_actions()
-        win32serviceutil.StartService(SERVICE_NAME)
-        print(f"Service '{SERVICE_NAME}' installed and started.")
+        try:
+            win32serviceutil.StartService(SERVICE_NAME)
+            print(f"Service '{SERVICE_NAME}' installed and started.")
+        except Exception as exc:
+            _log_crash(f"[StartService] {exc}")
+            print(f"Service installed. Start failed (will retry on reboot): {exc}")
     elif "--uninstall" in sys.argv:
         try:
             win32serviceutil.StopService(SERVICE_NAME)
@@ -259,22 +263,17 @@ def main():
     elif "--stop" in sys.argv:
         win32serviceutil.StopService(SERVICE_NAME)
     else:
-        # SCM starts the exe with no args. In a frozen PyInstaller exe the correct
-        # pattern is HandleCommandLine with no argv manipulation — it detects the
-        # frozen context and calls StartServiceCtrlDispatcher internally.
+        # SCM launches exe with no args. Must call StartServiceCtrlDispatcher via
+        # servicemanager — HandleCommandLine with no args just prints usage and exits.
         try:
-            win32serviceutil.HandleCommandLine(WindowControlService)
+            servicemanager.Initialize(SERVICE_NAME, None)
+            servicemanager.PrepareToHostSingle(WindowControlService)
+            servicemanager.StartServiceCtrlDispatcher()
         except Exception as exc:
-            import traceback, os
-            log_path = r"C:\ProgramData\WindowControl\service_crash.log"
+            import traceback
+            _log_crash(f"[SCM dispatch] {traceback.format_exc()}")
             try:
-                os.makedirs(r"C:\ProgramData\WindowControl", exist_ok=True)
-                with open(log_path, "a") as f:
-                    f.write(traceback.format_exc())
-            except Exception:
-                pass
-            try:
-                servicemanager.LogErrorMsg(f"WindowControl service crashed: {exc}")
+                servicemanager.LogErrorMsg(f"WindowControl SCM dispatch crashed: {exc}")
             except Exception:
                 pass
             raise
