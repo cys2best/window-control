@@ -263,12 +263,18 @@ def main():
     elif "--stop" in sys.argv:
         win32serviceutil.StopService(SERVICE_NAME)
     else:
-        # SCM launches exe with no args. Must call StartServiceCtrlDispatcher via
-        # servicemanager — HandleCommandLine with no args just prints usage and exits.
+        # SCM launches exe with no args.
+        # In a frozen PyInstaller exe, servicemanager.Initialize needs the exe path
+        # as its second arg (event log source registration).
         try:
-            servicemanager.Initialize(SERVICE_NAME, None)
-            servicemanager.PrepareToHostSingle(WindowControlService)
-            servicemanager.StartServiceCtrlDispatcher()
+            if getattr(sys, "frozen", False):
+                # Frozen: use servicemanager dispatcher directly
+                servicemanager.Initialize(SERVICE_NAME, sys.executable)
+                servicemanager.PrepareToHostSingle(WindowControlService)
+                servicemanager.StartServiceCtrlDispatcher()
+            else:
+                # Dev: HandleCommandLine handles everything
+                win32serviceutil.HandleCommandLine(WindowControlService)
         except Exception as exc:
             import traceback
             _log_crash(f"[SCM dispatch] {traceback.format_exc()}")
