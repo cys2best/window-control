@@ -4,7 +4,7 @@ import threading
 import subprocess
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QLabel, QComboBox, QGroupBox, QSizePolicy
+    QPushButton, QLabel, QComboBox, QGroupBox, QSizePolicy, QScrollArea
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QThread, pyqtSlot
 from PyQt5.QtGui import QPixmap, QImage
@@ -36,8 +36,13 @@ class LauncherWindow(QMainWindow):
         check_for_update(self._on_update_available)
 
     def _setup_ui(self):
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setCentralWidget(scroll)
+
         central = QWidget()
-        self.setCentralWidget(central)
+        scroll.setWidget(central)
         layout = QVBoxLayout(central)
         layout.setSpacing(12)
         layout.setContentsMargins(16, 16, 16, 16)

@@ -2,10 +2,16 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QListWidget, QListWidgetItem,
     QPushButton, QLabel, QHBoxLayout
 )
-from PyQt5.QtCore import Qt, pyqtSignal, QTimer
+from PyQt5.QtCore import Qt, pyqtSignal, QTimer, QEvent
 from PyQt5.QtGui import QPixmap, QImage
 from server.window_manager import list_windows
 from server.preview import capture_preview
+
+
+class _NoScrollList(QListWidget):
+    """QListWidget that ignores wheel events so parent can scroll."""
+    def wheelEvent(self, event):
+        event.ignore()
 
 
 class WindowListWidget(QWidget):
@@ -31,7 +37,8 @@ class WindowListWidget(QWidget):
         header.addWidget(refresh_btn)
         layout.addLayout(header)
 
-        self._list = QListWidget()
+        self._list = _NoScrollList()
+        self._list.setFixedHeight(150)
         self._list.itemDoubleClicked.connect(self._on_item_double_clicked)
         layout.addWidget(self._list)
 
