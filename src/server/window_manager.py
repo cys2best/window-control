@@ -63,10 +63,26 @@ def is_window_alive(hwnd) -> bool:
 
 
 def focus_window(hwnd) -> None:
-    """Restore minimized window and bring it to foreground."""
+    """Restore minimized window and bring it to foreground via AttachThreadInput."""
+    import time
     try:
         if win32gui.IsIconic(hwnd):
             win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-        win32gui.SetForegroundWindow(hwnd)
+            time.sleep(0.05)
+        fg = win32gui.GetForegroundWindow()
+        if fg == hwnd:
+            return
+        if sys.platform == "win32":
+            import ctypes
+            fg_tid, _ = win32process.GetWindowThreadProcessId(fg)
+            tgt_tid, _ = win32process.GetWindowThreadProcessId(hwnd)
+            if fg_tid != tgt_tid:
+                ctypes.windll.user32.AttachThreadInput(fg_tid, tgt_tid, True)
+                win32gui.SetForegroundWindow(hwnd)
+                win32gui.BringWindowToTop(hwnd)
+                ctypes.windll.user32.AttachThreadInput(fg_tid, tgt_tid, False)
+            else:
+                win32gui.SetForegroundWindow(hwnd)
+                win32gui.BringWindowToTop(hwnd)
     except Exception:
         pass
