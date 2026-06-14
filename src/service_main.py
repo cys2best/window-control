@@ -156,8 +156,8 @@ if sys.platform == "win32":
             win32event.WaitForSingleObject(self._stop_event, win32event.INFINITE)
 
 
-def install_service():
-    # Remove existing service first (handles upgrades cleanly)
+def _remove_service_if_exists():
+    """Stop and remove existing service — idempotent."""
     try:
         win32serviceutil.StopService(SERVICE_NAME)
         time.sleep(2)
@@ -168,15 +168,10 @@ def install_service():
         time.sleep(1)
     except Exception:
         pass
-    win32serviceutil.InstallService(
-        WindowControlService,
-        SERVICE_NAME,
-        SERVICE_DISPLAY,
-        description=SERVICE_DESCRIPTION,
-        startType=win32service.SERVICE_AUTO_START,
-        exeName=sys.executable,
-    )
-    # Configure failure actions: restart 3 times with 60s delay
+
+
+def _set_failure_actions():
+    """Configure 3x auto-restart with 60s delay."""
     hscm = win32service.OpenSCManager(None, None, win32service.SC_MANAGER_ALL_ACCESS)
     hsvc = win32service.OpenService(hscm, SERVICE_NAME, win32service.SERVICE_ALL_ACCESS)
     win32service.ChangeServiceConfig2(
@@ -195,25 +190,26 @@ def install_service():
     )
     win32service.CloseServiceHandle(hsvc)
     win32service.CloseServiceHandle(hscm)
-    win32serviceutil.StartService(SERVICE_NAME, waitSecs=30)
-    print(f"Service '{SERVICE_NAME}' installed and started.")
-
-
-def uninstall_service():
-    try:
-        win32serviceutil.StopService(SERVICE_NAME)
-        time.sleep(2)
-    except Exception:
-        pass
-    win32serviceutil.RemoveService(SERVICE_NAME)
-    print(f"Service '{SERVICE_NAME}' removed.")
 
 
 def main():
     if "--install" in sys.argv:
-        install_service()
+        _remove_service_if_exists()
+        # HandleCommandLine with 'install' does InstallPythonClassString correctly
+        # even in a frozen exe — it resolves the class from the running module.
+        sys.argv = [sys.argv[0], "install"]
+        win32serviceutil.HandleCommandLine(WindowControlService)
+        _set_failure_actions()
+        win32serviceutil.StartService(SERVICE_NAME, waitSecs=30)
+        print(f"Service '{SERVICE_NAME}' installed and started.")
     elif "--uninstall" in sys.argv:
-        uninstall_service()
+        try:
+            win32serviceutil.StopService(SERVICE_NAME)
+            time.sleep(2)
+        except Exception:
+            pass
+        sys.argv = [sys.argv[0], "remove"]
+        win32serviceutil.HandleCommandLine(WindowControlService)
     elif "--start" in sys.argv:
         win32serviceutil.StartService(SERVICE_NAME, waitSecs=30)
     elif "--stop" in sys.argv:
