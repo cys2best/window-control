@@ -57,6 +57,7 @@ if sys.platform == "win32":
             self._desktop_monitor = None
 
         def SvcDoRun(self):
+            self.ReportServiceStatus(win32service.SERVICE_RUNNING)
             servicemanager.LogMsg(
                 servicemanager.EVENTLOG_INFORMATION_TYPE,
                 servicemanager.PYS_SERVICE_STARTED,
