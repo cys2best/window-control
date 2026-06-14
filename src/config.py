@@ -3,7 +3,7 @@ import sys
 
 PORT = 8080
 DEV_MODE = sys.platform != "win32"
-VERSION = "1.2.6"
+VERSION = "1.2.7"
 GITHUB_REPO = "cys2best/window-control"
 
 QUALITY_MAP = {
@@ -29,3 +29,4 @@ def get_base_path():
 BASE_PATH = get_base_path()
 CLIENT_DIR = os.path.join(BASE_PATH, "client")
 ASSETS_DIR = os.path.join(BASE_PATH, "assets")
+
