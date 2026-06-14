@@ -237,6 +237,7 @@ def _set_failure_actions():
 
 
 def main():
+    _log_crash(f"[main] argv={sys.argv} frozen={getattr(sys, 'frozen', False)}")
     if "--install" in sys.argv:
         _remove_service_if_exists()
         # HandleCommandLine with 'install' does InstallPythonClassString correctly
