@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from typing import Literal
 
 from config import CLIENT_DIR, QUALITY_MAP
-from server.input_handler import handle_click, handle_move, handle_scroll, handle_key
+from server.input_handler import handle_move, handle_scroll, handle_click_on_desktop, handle_key_on_desktop
 from server.preview import capture_preview
 from server.stream import CaptureState, FrameQueue, mjpeg_generator
 from server.window_manager import focus_window
@@ -81,14 +81,15 @@ def create_app(
                     continue
                 try:
                     t = data.get("type")
+                    desktop = state.desktop
                     if t == "click":
-                        handle_click(hwnd, data["x"], data["y"])
+                        handle_click_on_desktop(hwnd, data["x"], data["y"], desktop)
                     elif t == "move":
                         handle_move(hwnd, data["x"], data["y"])
                     elif t == "scroll":
                         handle_scroll(hwnd, data.get("dx", 0), data.get("dy", 0))
                     elif t == "key":
-                        handle_key(hwnd, data["key"])
+                        handle_key_on_desktop(hwnd, data["key"], desktop)
                 except (KeyError, TypeError):
                     pass
         except WebSocketDisconnect:

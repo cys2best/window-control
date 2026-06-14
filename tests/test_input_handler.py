@@ -44,3 +44,14 @@ def test_to_send_input_coords_origin():
         sx, sy = _to_send_input_coords(0, 0)
     assert sx == 0
     assert sy == 0
+
+
+def test_handle_key_on_winlogon_desktop_uses_sendkey():
+    """handle_key must not crash when called with Winlogon desktop."""
+    with patch('server.input_handler._send_key') as mock_send, \
+         patch('server.input_handler._focus_window'), \
+         patch('server.input_handler.win32gui'):
+        from server.input_handler import handle_key_on_desktop
+        handle_key_on_desktop(0, "a", "Winlogon")
+        # _send_key called twice: keydown + keyup
+        assert mock_send.call_count == 2

@@ -179,3 +179,64 @@ def handle_key(hwnd, key: str):
     _send_key(vk, key_up=False)
     time.sleep(0.02)
     _send_key(vk, key_up=True)
+
+
+def _with_desktop(desktop_name: str, fn):
+    """Run fn() with thread temporarily switched to named desktop."""
+    if sys.platform != "win32" or desktop_name == "Default":
+        return fn()
+    try:
+        import ctypes
+        DESKTOP_ALL_ACCESS = 0x01FF
+        hdesk = ctypes.windll.user32.OpenDesktopW(
+            desktop_name, 0, False, DESKTOP_ALL_ACCESS
+        )
+        if hdesk:
+            ctypes.windll.user32.SetThreadDesktop(hdesk)
+            try:
+                return fn()
+            finally:
+                # Restore to Default desktop
+                hdefault = ctypes.windll.user32.OpenDesktopW(
+                    "Default", 0, False, DESKTOP_ALL_ACCESS
+                )
+                if hdefault:
+                    ctypes.windll.user32.SetThreadDesktop(hdefault)
+                    ctypes.windll.user32.CloseDesktop(hdefault)
+                ctypes.windll.user32.CloseDesktop(hdesk)
+    except Exception:
+        return fn()
+
+
+def handle_click_on_desktop(hwnd, nx: float, ny: float, desktop: str = "Default"):
+    """Click with desktop-switching for lock screen support."""
+    def _do():
+        if desktop == "Winlogon":
+            # Lock screen: treat nx/ny as absolute screen fractions
+            sw, sh = _screen_size()
+            ax, ay = int(nx * sw), int(ny * sh)
+        else:
+            _focus_window(hwnd)
+            ax, ay = _abs_coords(hwnd, nx, ny)
+        _send_mouse(MOUSEEVENTF_MOVE, ax, ay)
+        time.sleep(0.02)
+        _send_mouse(MOUSEEVENTF_LEFTDOWN, ax, ay)
+        time.sleep(0.02)
+        _send_mouse(MOUSEEVENTF_LEFTUP, ax, ay)
+    _with_desktop(desktop, _do)
+
+
+def handle_key_on_desktop(hwnd, key: str, desktop: str = "Default"):
+    """Send key with desktop-switching for lock screen support."""
+    vk = KEY_MAP.get(key)
+    if vk is None and len(key) == 1:
+        vk = ord(key.upper())
+    if vk is None:
+        return
+    def _do():
+        if desktop == "Default":
+            _focus_window(hwnd)
+        _send_key(vk, key_up=False)
+        time.sleep(0.02)
+        _send_key(vk, key_up=True)
+    _with_desktop(desktop, _do)
