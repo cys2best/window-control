@@ -1,4 +1,5 @@
 # src/gui/launcher.py
+import sys
 import threading
 import subprocess
 from PyQt5.QtWidgets import (
@@ -14,6 +15,7 @@ from config import PORT, QUALITY_MAP, DEFAULT_QUALITY, VERSION, GITHUB_REPO
 from server.tailscale import get_best_ip, has_tailscale
 from server.stream import CaptureState
 from gui.window_list import WindowListWidget
+from gui.service_status import get_service_status
 from updater import check_for_update
 
 
@@ -39,6 +41,9 @@ class LauncherWindow(QMainWindow):
         layout = QVBoxLayout(central)
         layout.setSpacing(12)
         layout.setContentsMargins(16, 16, 16, 16)
+
+        # --- Lock Screen Service group ---
+        self._setup_service_group(layout)
 
         # --- Server status group ---
         server_group = QGroupBox("Server")
@@ -193,3 +198,67 @@ class LauncherWindow(QMainWindow):
         from service.auto_unlock import delete_password
         delete_password()
         self._status_label.setText("Unlock password cleared.")
+
+    def _setup_service_group(self, layout):
+        from PyQt5.QtWidgets import QGroupBox
+        from PyQt5.QtCore import QTimer
+        service_group = QGroupBox("Lock Screen Service")
+        service_layout = QVBoxLayout(service_group)
+
+        status_row = QHBoxLayout()
+        self._service_dot = QLabel("●")
+        self._service_dot.setFixedWidth(16)
+        self._service_status_label = QLabel("Checking…")
+        status_row.addWidget(self._service_dot)
+        status_row.addWidget(self._service_status_label)
+        status_row.addStretch()
+        service_layout.addLayout(status_row)
+
+        btn_row = QHBoxLayout()
+        self._install_btn = QPushButton("Install Service")
+        self._install_btn.clicked.connect(self._on_install_service)
+        self._uninstall_btn = QPushButton("Uninstall")
+        self._uninstall_btn.clicked.connect(self._on_uninstall_service)
+        btn_row.addWidget(self._install_btn)
+        btn_row.addWidget(self._uninstall_btn)
+        service_layout.addLayout(btn_row)
+
+        layout.addWidget(service_group)
+        self._refresh_service_status()
+
+    def _refresh_service_status(self):
+        status = get_service_status()
+        if status == "running":
+            self._service_dot.setStyleSheet("color: #22c55e;")
+            self._service_status_label.setText("Running — lock screen active")
+            self._install_btn.setEnabled(False)
+            self._uninstall_btn.setEnabled(True)
+        elif status == "stopped":
+            self._service_dot.setStyleSheet("color: #ef4444;")
+            self._service_status_label.setText("Stopped")
+            self._install_btn.setEnabled(True)
+            self._uninstall_btn.setEnabled(True)
+        else:
+            self._service_dot.setStyleSheet("color: #94a3b8;")
+            self._service_status_label.setText("Not installed")
+            self._install_btn.setEnabled(True)
+            self._uninstall_btn.setEnabled(False)
+
+    def _on_install_service(self):
+        from PyQt5.QtCore import QTimer
+        self._service_dot.setStyleSheet("color: #f59e0b;")
+        self._service_status_label.setText("Installing…")
+        self._install_btn.setEnabled(False)
+        subprocess.Popen(
+            [sys.executable, "--install"],
+            creationflags=0x00000008 if sys.platform == "win32" else 0
+        )
+        QTimer.singleShot(3000, self._refresh_service_status)
+
+    def _on_uninstall_service(self):
+        from PyQt5.QtCore import QTimer
+        subprocess.Popen(
+            [sys.executable, "--uninstall"],
+            creationflags=0x00000008 if sys.platform == "win32" else 0
+        )
+        QTimer.singleShot(3000, self._refresh_service_status)
