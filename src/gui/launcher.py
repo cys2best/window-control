@@ -1,15 +1,14 @@
 # src/gui/launcher.py
 import sys
 import subprocess
+import io
 from PyQt5.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QLabel, QComboBox, QFrame, QSizePolicy,
-    QScrollArea, QApplication
+    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QStackedWidget,
+    QPushButton, QLabel, QScrollArea, QSizePolicy, QFrame, QApplication
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer, QSize
-from PyQt5.QtGui import QPixmap, QImage, QFont, QWheelEvent
+from PyQt5.QtGui import QPixmap, QImage, QWheelEvent
 import qrcode
-import io
 
 from config import PORT, QUALITY_MAP, DEFAULT_QUALITY, VERSION, GITHUB_REPO
 from server.tailscale import get_best_ip, has_tailscale
@@ -18,36 +17,27 @@ from server.window_manager import list_windows
 from gui.service_status import get_service_status
 from updater import check_for_update
 
-
-_PANEL_BG = "#1a1a2e"
+_BG = "#0f0f1a"
+_CARD_BG = "#1a1a2e"
 _TOOLBAR_BG = "#16213e"
-_BTN_BG = "#0f3460"
-_BTN_HOVER = "#e94560"
-_TEXT = "#eaeaea"
+_BTN = "#0f3460"
 _ACCENT = "#e94560"
+_TEXT = "#eaeaea"
+_MUTED = "#94a3b8"
 _GREEN = "#22c55e"
 _RED = "#ef4444"
-_GRAY = "#94a3b8"
-
-_TOOLBAR_W = 64
-_LEFT_PANEL_W = 220
 
 
-def _btn(text: str, tooltip: str = "", size: int = 13) -> QPushButton:
-    b = QPushButton(text)
-    b.setToolTip(tooltip)
-    f = b.font()
-    f.setPointSize(size)
-    b.setFont(f)
+def _style_btn(b: QPushButton, bg=_BTN, fg=_TEXT, hover=_ACCENT, px=8, py=6, radius=6, bold=False):
+    weight = "bold" if bold else "normal"
     b.setStyleSheet(f"""
         QPushButton {{
-            background: {_BTN_BG}; color: {_TEXT};
-            border: none; border-radius: 6px; padding: 6px;
+            background:{bg}; color:{fg}; border:none;
+            border-radius:{radius}px; padding:{py}px {px}px; font-weight:{weight};
         }}
-        QPushButton:hover {{ background: {_BTN_HOVER}; }}
-        QPushButton:disabled {{ background: #2a2a3e; color: #666; }}
+        QPushButton:hover {{ background:{hover}; }}
+        QPushButton:disabled {{ background:#2a2a3e; color:#555; }}
     """)
-    return b
 
 
 class LauncherWindow(QMainWindow):
@@ -60,285 +50,288 @@ class LauncherWindow(QMainWindow):
         super().__init__(parent)
         self._state = state
         self._server_running = False
-        self._windows = []          # list of (hwnd, title)
+        self._windows = []       # list of (hwnd, title)
         self._current_idx = 0
-        self._left_visible = False
+        self._quality_keys = list(QUALITY_MAP.keys())
+        self._quality_idx = self._quality_keys.index(DEFAULT_QUALITY)
 
         self.setWindowTitle(f"WindowControl v{VERSION}")
-        self.setMinimumSize(480, 400)
-        self.resize(900, 600)
-        self.setStyleSheet(f"background: {_PANEL_BG}; color: {_TEXT};")
+        self.setStyleSheet(f"background:{_BG}; color:{_TEXT};")
+        self.resize(480, 700)
 
-        self._setup_ui()
-        self._refresh_ip()
+        self._stack = QStackedWidget()
+        self.setCentralWidget(self._stack)
+
+        self._screen_picker = self._build_picker_screen()
+        self._screen_stream = self._build_stream_screen()
+        self._stack.addWidget(self._screen_picker)  # index 0
+        self._stack.addWidget(self._screen_stream)  # index 1
+
         self._refresh_windows()
-        self._refresh_service_status()
+        self._refresh_ip()
         check_for_update(self._on_update_available)
 
         self._svc_timer = QTimer()
         self._svc_timer.timeout.connect(self._refresh_service_status)
         self._svc_timer.start(5000)
+        self._refresh_service_status()
 
-    # ------------------------------------------------------------------ layout
+    # ══════════════════════════════════════════════════════════ SCREEN 0: PICKER
 
-    def _setup_ui(self):
-        root = QWidget()
-        self.setCentralWidget(root)
-        root_layout = QHBoxLayout(root)
-        root_layout.setContentsMargins(0, 0, 0, 0)
-        root_layout.setSpacing(0)
-
-        # LEFT PANEL (window list, hidden by default)
-        self._left_panel = self._build_left_panel()
-        self._left_panel.setFixedWidth(_LEFT_PANEL_W)
-        self._left_panel.hide()
-        root_layout.addWidget(self._left_panel)
-
-        # CENTER (stream view + info)
-        center = self._build_center()
-        root_layout.addWidget(center, 1)
-
-        # RIGHT TOOLBAR
-        toolbar = self._build_toolbar()
-        toolbar.setFixedWidth(_TOOLBAR_W)
-        root_layout.addWidget(toolbar)
-
-    def _build_left_panel(self) -> QWidget:
-        panel = QWidget()
-        panel.setStyleSheet(f"background: {_TOOLBAR_BG};")
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(6)
-
-        title = QLabel("Windows")
-        title.setStyleSheet(f"color: {_TEXT}; font-weight: bold; font-size: 13px;")
-        layout.addWidget(title)
-
-        refresh_btn = _btn("↺ Refresh", "Refresh window list", 11)
-        refresh_btn.clicked.connect(self._refresh_windows)
-        layout.addWidget(refresh_btn)
-
-        self._win_list_layout = QVBoxLayout()
-        self._win_list_layout.setSpacing(4)
-        scroll_widget = QWidget()
-        scroll_widget.setLayout(self._win_list_layout)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setWidget(scroll_widget)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("border: none;")
-        layout.addWidget(scroll, 1)
-
-        return panel
-
-    def _build_center(self) -> QWidget:
-        center = QWidget()
-        center.setStyleSheet(f"background: #000;")
-        layout = QVBoxLayout(center)
+    def _build_picker_screen(self) -> QWidget:
+        screen = QWidget()
+        screen.setStyleSheet(f"background:{_BG};")
+        layout = QVBoxLayout(screen)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # Stream placeholder
-        self._stream_label = QLabel("Select a window →\nthen Start Server")
-        self._stream_label.setAlignment(Qt.AlignCenter)
-        self._stream_label.setStyleSheet(f"color: {_GRAY}; font-size: 16px;")
-        self._stream_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        layout.addWidget(self._stream_label, 1)
+        # Header
+        header = QWidget()
+        header.setStyleSheet(f"background:{_TOOLBAR_BG};")
+        h_layout = QHBoxLayout(header)
+        h_layout.setContentsMargins(16, 12, 16, 12)
+        title = QLabel(f"WindowControl  v{VERSION}")
+        title.setStyleSheet(f"color:{_TEXT}; font-size:16px; font-weight:bold;")
+        h_layout.addWidget(title, 1)
 
-        # Bottom bar: current window name + IP
-        bar = QWidget()
-        bar.setStyleSheet(f"background: {_TOOLBAR_BG};")
-        bar_layout = QHBoxLayout(bar)
-        bar_layout.setContentsMargins(12, 6, 12, 6)
-        self._window_name_label = QLabel("No window selected")
-        self._window_name_label.setStyleSheet(f"color: {_TEXT}; font-size: 12px;")
-        bar_layout.addWidget(self._window_name_label, 1)
-        self._ip_label = QLabel("IP: …")
-        self._ip_label.setStyleSheet(f"color: {_GRAY}; font-size: 11px;")
-        self._ip_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        bar_layout.addWidget(self._ip_label)
-        layout.addWidget(bar)
+        self._svc_dot_picker = QLabel("●")
+        self._svc_dot_picker.setStyleSheet(f"color:{_MUTED}; font-size:18px;")
+        self._svc_dot_picker.setToolTip("Lock screen service")
+        h_layout.addWidget(self._svc_dot_picker)
 
-        return center
+        layout.addWidget(header)
 
-    def _build_toolbar(self) -> QWidget:
-        toolbar = QWidget()
-        toolbar.setStyleSheet(f"background: {_TOOLBAR_BG};")
-        layout = QVBoxLayout(toolbar)
-        layout.setContentsMargins(6, 8, 6, 8)
-        layout.setSpacing(8)
-        layout.setAlignment(Qt.AlignTop)
+        # IP bar
+        self._ip_bar = QLabel("IP: …")
+        self._ip_bar.setStyleSheet(
+            f"background:{_CARD_BG}; color:{_MUTED}; font-size:11px;"
+            "padding:4px 16px;"
+        )
+        self._ip_bar.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        layout.addWidget(self._ip_bar)
 
-        # Toggle left panel
-        self._toggle_btn = _btn("◀", "Show/hide window list", 14)
-        self._toggle_btn.setFixedSize(52, 44)
-        self._toggle_btn.clicked.connect(self._toggle_left_panel)
-        layout.addWidget(self._toggle_btn)
+        # Scrollable window card list
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("border:none; background:transparent;")
 
-        self._divider(layout)
+        self._cards_widget = QWidget()
+        self._cards_widget.setStyleSheet(f"background:{_BG};")
+        self._cards_layout = QVBoxLayout(self._cards_widget)
+        self._cards_layout.setContentsMargins(12, 12, 12, 12)
+        self._cards_layout.setSpacing(8)
+        self._cards_layout.addStretch()
+        scroll.setWidget(self._cards_widget)
+        layout.addWidget(scroll, 1)
 
-        # Prev / Next window (scroll equivalent)
-        prev_btn = _btn("▲", "Previous window\n(scroll up)", 14)
-        prev_btn.setFixedSize(52, 44)
-        prev_btn.clicked.connect(self._prev_window)
-        layout.addWidget(prev_btn)
+        # Bottom toolbar
+        bottom = QWidget()
+        bottom.setStyleSheet(f"background:{_TOOLBAR_BG};")
+        b_layout = QHBoxLayout(bottom)
+        b_layout.setContentsMargins(12, 8, 12, 8)
+        b_layout.setSpacing(8)
 
-        next_btn = _btn("▼", "Next window\n(scroll down)", 14)
-        next_btn.setFixedSize(52, 44)
-        next_btn.clicked.connect(self._next_window)
-        layout.addWidget(next_btn)
+        refresh_btn = QPushButton("↺  Refresh")
+        _style_btn(refresh_btn)
+        refresh_btn.clicked.connect(self._refresh_windows)
+        b_layout.addWidget(refresh_btn)
 
-        self._divider(layout)
-
-        # Start / Stop server
-        self._start_stop_btn = _btn("▶", "Start server", 14)
-        self._start_stop_btn.setFixedSize(52, 44)
-        self._start_stop_btn.clicked.connect(self._on_start_stop)
-        layout.addWidget(self._start_stop_btn)
-
-        self._divider(layout)
-
-        # Quality cycle button
-        self._quality_btn = _btn("HD", "Cycle quality", 10)
-        self._quality_btn.setFixedSize(52, 36)
-        self._quality_btn.clicked.connect(self._cycle_quality)
-        self._quality_keys = list(QUALITY_MAP.keys())
-        self._quality_idx = self._quality_keys.index(DEFAULT_QUALITY)
-        layout.addWidget(self._quality_btn)
-
-        layout.addStretch(1)
-
-        # Service status dot
-        self._svc_dot = QLabel("●")
-        self._svc_dot.setAlignment(Qt.AlignCenter)
-        self._svc_dot.setFixedSize(52, 24)
-        self._svc_dot.setToolTip("Lock screen service status")
-        self._svc_dot.setStyleSheet(f"color: {_GRAY}; font-size: 16px;")
-        layout.addWidget(self._svc_dot)
-
-        # Install / Uninstall service
-        install_btn = _btn("↓Svc", "Install lock screen service", 9)
-        install_btn.setFixedSize(52, 36)
+        install_btn = QPushButton("Install Service")
+        _style_btn(install_btn, bg="#1a3a1a", hover="#22c55e")
         install_btn.clicked.connect(self._on_install_service)
-        layout.addWidget(install_btn)
+        b_layout.addWidget(install_btn)
 
-        # Set unlock password
-        pw_btn = _btn("🔑", "Set auto-unlock password", 13)
-        pw_btn.setFixedSize(52, 36)
+        pw_btn = QPushButton("🔑 Auto-Unlock PW")
+        _style_btn(pw_btn)
         pw_btn.clicked.connect(self._on_set_unlock_password)
-        layout.addWidget(pw_btn)
+        b_layout.addWidget(pw_btn)
 
-        # QR code button
-        qr_btn = _btn("QR", "Show QR code", 10)
-        qr_btn.setFixedSize(52, 36)
+        layout.addWidget(bottom)
+        return screen
+
+    def _rebuild_cards(self):
+        # Remove all except trailing stretch
+        while self._cards_layout.count() > 1:
+            item = self._cards_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        for idx, (hwnd, title) in enumerate(self._windows):
+            card = QPushButton(title)
+            card.setStyleSheet(f"""
+                QPushButton {{
+                    background:{_CARD_BG}; color:{_TEXT};
+                    border:none; border-radius:8px;
+                    padding:14px 16px; text-align:left;
+                    font-size:14px;
+                }}
+                QPushButton:hover {{
+                    background:{_BTN}; border-left:3px solid {_ACCENT};
+                }}
+            """)
+            card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            card.setFixedHeight(56)
+            card.clicked.connect(lambda _, i=idx: self._open_stream(i))
+            self._cards_layout.insertWidget(self._cards_layout.count() - 1, card)
+
+    # ══════════════════════════════════════════════════════════ SCREEN 1: STREAM
+
+    def _build_stream_screen(self) -> QWidget:
+        screen = QWidget()
+        screen.setStyleSheet(f"background:#000;")
+        layout = QVBoxLayout(screen)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # Top bar
+        topbar = QWidget()
+        topbar.setStyleSheet(f"background:{_TOOLBAR_BG};")
+        topbar.setFixedHeight(48)
+        top_layout = QHBoxLayout(topbar)
+        top_layout.setContentsMargins(8, 4, 8, 4)
+        top_layout.setSpacing(6)
+
+        back_btn = QPushButton("◀  Windows")
+        _style_btn(back_btn, bold=True)
+        back_btn.clicked.connect(self._go_picker)
+        top_layout.addWidget(back_btn)
+
+        self._stream_title = QLabel("—")
+        self._stream_title.setStyleSheet(f"color:{_TEXT}; font-size:13px; font-weight:bold;")
+        self._stream_title.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self._stream_title.setAlignment(Qt.AlignCenter)
+        top_layout.addWidget(self._stream_title, 1)
+
+        # Prev/Next window
+        prev_btn = QPushButton("▲")
+        _style_btn(prev_btn)
+        prev_btn.setFixedWidth(36)
+        prev_btn.setToolTip("Previous window")
+        prev_btn.clicked.connect(self._prev_window)
+        top_layout.addWidget(prev_btn)
+
+        next_btn = QPushButton("▼")
+        _style_btn(next_btn)
+        next_btn.setFixedWidth(36)
+        next_btn.setToolTip("Next window")
+        next_btn.clicked.connect(self._next_window)
+        top_layout.addWidget(next_btn)
+
+        # Start/Stop
+        self._start_stop_btn = QPushButton("▶")
+        _style_btn(self._start_stop_btn, bg=_GREEN, hover="#16a34a")
+        self._start_stop_btn.setFixedWidth(40)
+        self._start_stop_btn.setToolTip("Start server")
+        self._start_stop_btn.clicked.connect(self._on_start_stop)
+        top_layout.addWidget(self._start_stop_btn)
+
+        # Quality
+        self._quality_btn = QPushButton(DEFAULT_QUALITY[:2].upper())
+        _style_btn(self._quality_btn)
+        self._quality_btn.setFixedWidth(40)
+        self._quality_btn.setToolTip("Cycle stream quality")
+        self._quality_btn.clicked.connect(self._cycle_quality)
+        top_layout.addWidget(self._quality_btn)
+
+        # QR
+        qr_btn = QPushButton("QR")
+        _style_btn(qr_btn)
+        qr_btn.setFixedWidth(36)
         qr_btn.clicked.connect(self._show_qr_popup)
-        layout.addWidget(qr_btn)
+        top_layout.addWidget(qr_btn)
 
-        # Status label (bottom)
-        self._status_label = QLabel("")
-        self._status_label.setAlignment(Qt.AlignCenter)
-        self._status_label.setWordWrap(True)
-        self._status_label.setStyleSheet(f"color: {_GRAY}; font-size: 9px;")
-        self._status_label.setFixedWidth(52)
-        layout.addWidget(self._status_label)
+        # Service dot
+        self._svc_dot_stream = QLabel("●")
+        self._svc_dot_stream.setStyleSheet(f"color:{_MUTED}; font-size:18px; padding:0 4px;")
+        self._svc_dot_stream.setToolTip("Lock screen service")
+        top_layout.addWidget(self._svc_dot_stream)
 
-        return toolbar
+        layout.addWidget(topbar)
 
-    @staticmethod
-    def _divider(layout):
-        line = QFrame()
-        line.setFrameShape(QFrame.HLine)
-        line.setStyleSheet("color: #2a2a4e;")
-        layout.addWidget(line)
+        # Stream area (fullscreen horizontal)
+        self._stream_area = QLabel("Select a window and start the server\nto begin streaming.")
+        self._stream_area.setAlignment(Qt.AlignCenter)
+        self._stream_area.setStyleSheet(f"color:{_MUTED}; font-size:15px; background:#000;")
+        self._stream_area.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        layout.addWidget(self._stream_area, 1)
 
-    # ------------------------------------------------------------------ scroll to switch window
+        # Bottom status bar
+        self._status_bar = QLabel("")
+        self._status_bar.setStyleSheet(
+            f"background:{_TOOLBAR_BG}; color:{_MUTED}; font-size:11px; padding:3px 12px;"
+        )
+        self._status_bar.setAlignment(Qt.AlignLeft)
+        layout.addWidget(self._status_bar)
 
-    def wheelEvent(self, event: QWheelEvent):
-        delta = event.angleDelta().y()
-        if delta > 0:
-            self._prev_window()
-        elif delta < 0:
-            self._next_window()
+        return screen
+
+    # ══════════════════════════════════════════════════════════ NAVIGATION
+
+    def _open_stream(self, idx: int):
+        self._current_idx = idx
+        hwnd, title = self._windows[idx]
+        self._stream_title.setText(title)
+        self._status_bar.setText(f"Window: {title}")
+        self.window_selected.emit(hwnd, title)
+        self._stack.setCurrentIndex(1)
+
+    def _go_picker(self):
+        self._stack.setCurrentIndex(0)
+
+    # ══════════════════════════════════════════════════════════ WINDOW SWITCHING
+
+    def _refresh_windows(self):
+        self._windows = [(w.hwnd, w.title) for w in list_windows()]
+        self._rebuild_cards()
 
     def _prev_window(self):
         if not self._windows:
             return
         self._current_idx = (self._current_idx - 1) % len(self._windows)
-        self._select_window_by_idx(self._current_idx)
+        self._open_stream(self._current_idx)
 
     def _next_window(self):
         if not self._windows:
             return
         self._current_idx = (self._current_idx + 1) % len(self._windows)
-        self._select_window_by_idx(self._current_idx)
+        self._open_stream(self._current_idx)
 
-    def _select_window_by_idx(self, idx: int):
-        hwnd, title = self._windows[idx]
-        self._window_name_label.setText(title)
-        self._status_label.setText(title[:12])
-        self.window_selected.emit(hwnd, title)
-        self._highlight_window_btn(idx)
+    def wheelEvent(self, event: QWheelEvent):
+        if self._stack.currentIndex() == 1:
+            if event.angleDelta().y() > 0:
+                self._prev_window()
+            else:
+                self._next_window()
 
-    # ------------------------------------------------------------------ left panel
-
-    def _toggle_left_panel(self):
-        self._left_visible = not self._left_visible
-        self._left_panel.setVisible(self._left_visible)
-        self._toggle_btn.setText("▶" if self._left_visible else "◀")
-
-    def _refresh_windows(self):
-        self._windows = [(w.hwnd, w.title) for w in list_windows()]
-        # Rebuild button list
-        for i in reversed(range(self._win_list_layout.count())):
-            w = self._win_list_layout.itemAt(i).widget()
-            if w:
-                w.deleteLater()
-        for idx, (hwnd, title) in enumerate(self._windows):
-            btn = QPushButton(title[:28])
-            btn.setToolTip(title)
-            btn.setCheckable(True)
-            btn.setStyleSheet(f"""
-                QPushButton {{
-                    background: {_BTN_BG}; color: {_TEXT};
-                    border: none; border-radius: 4px;
-                    padding: 6px 8px; text-align: left; font-size: 11px;
-                }}
-                QPushButton:hover {{ background: {_BTN_HOVER}; }}
-                QPushButton:checked {{ background: {_ACCENT}; }}
-            """)
-            btn.clicked.connect(lambda _, i=idx: self._on_window_btn(i))
-            self._win_list_layout.addWidget(btn)
-        self._win_list_layout.addStretch()
-
-    def _highlight_window_btn(self, selected_idx: int):
-        for i in range(self._win_list_layout.count()):
-            w = self._win_list_layout.itemAt(i).widget()
-            if isinstance(w, QPushButton):
-                w.setChecked(i == selected_idx)
-
-    def _on_window_btn(self, idx: int):
-        self._current_idx = idx
-        self._select_window_by_idx(idx)
-
-    # ------------------------------------------------------------------ server
+    # ══════════════════════════════════════════════════════════ SERVER
 
     def _on_start_stop(self):
         if not self._server_running:
             self._server_running = True
             self._start_stop_btn.setText("⏹")
+            _style_btn(self._start_stop_btn, bg=_RED, hover="#b91c1c")
             self._start_stop_btn.setToolTip("Stop server")
+            self._status_bar.setText("Server running…")
             self.server_start_requested.emit()
         else:
             self._server_running = False
             self._start_stop_btn.setText("▶")
+            _style_btn(self._start_stop_btn, bg=_GREEN, hover="#16a34a")
             self._start_stop_btn.setToolTip("Start server")
+            self._status_bar.setText("Server stopped")
             self.server_stop_requested.emit()
 
     def set_server_running(self, running: bool):
         self._server_running = running
-        self._start_stop_btn.setText("⏹" if running else "▶")
+        if running:
+            self._start_stop_btn.setText("⏹")
+            _style_btn(self._start_stop_btn, bg=_RED, hover="#b91c1c")
+        else:
+            self._start_stop_btn.setText("▶")
+            _style_btn(self._start_stop_btn, bg=_GREEN, hover="#16a34a")
 
-    # ------------------------------------------------------------------ quality
+    # ══════════════════════════════════════════════════════════ QUALITY
 
     def _cycle_quality(self):
         self._quality_idx = (self._quality_idx + 1) % len(self._quality_keys)
@@ -347,53 +340,56 @@ class LauncherWindow(QMainWindow):
         self._quality_btn.setToolTip(f"Quality: {key}")
         self.quality_changed.emit(QUALITY_MAP[key])
 
-    # ------------------------------------------------------------------ IP / QR
+    # ══════════════════════════════════════════════════════════ IP / QR
 
     def _refresh_ip(self):
         ip = get_best_ip()
         ts = has_tailscale()
-        label = f"{'TS' if ts else 'LAN'}: {ip}:{PORT}"
-        self._ip_label.setText(label)
-        self._ip_label.setToolTip(f"http://{ip}:{PORT}")
+        label = f"{'Tailscale' if ts else 'LAN'}: {ip}:{PORT}"
+        self._ip_bar.setText(label)
 
     def _show_qr_popup(self):
         ip = get_best_ip()
         url = f"http://{ip}:{PORT}"
-        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel as QL
+        from PyQt5.QtWidgets import QDialog, QVBoxLayout
         dlg = QDialog(self)
         dlg.setWindowTitle("Scan to connect")
-        dlg.setStyleSheet(f"background: {_PANEL_BG};")
+        dlg.setStyleSheet(f"background:{_BG}; color:{_TEXT};")
         lay = QVBoxLayout(dlg)
-        qr = qrcode.make(url)
+        qr_img = qrcode.make(url)
         buf = io.BytesIO()
-        qr.save(buf, format="PNG")
+        qr_img.save(buf, format="PNG")
         buf.seek(0)
         img = QImage.fromData(buf.read())
         pix = QPixmap.fromImage(img).scaled(240, 240, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        lbl = QL()
+        lbl = QLabel()
         lbl.setPixmap(pix)
         lbl.setAlignment(Qt.AlignCenter)
         lay.addWidget(lbl)
-        url_lbl = QL(url)
+        url_lbl = QLabel(url)
         url_lbl.setAlignment(Qt.AlignCenter)
-        url_lbl.setStyleSheet(f"color: {_TEXT}; font-size: 12px;")
+        url_lbl.setStyleSheet(f"color:{_TEXT}; font-size:12px;")
         url_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
         lay.addWidget(url_lbl)
         dlg.exec_()
 
-    # ------------------------------------------------------------------ service
+    # ══════════════════════════════════════════════════════════ SERVICE
 
     def _refresh_service_status(self):
         status = get_service_status()
-        if status == "running":
-            self._svc_dot.setStyleSheet(f"color: {_GREEN}; font-size: 16px;")
-            self._svc_dot.setToolTip("Lock screen service: Running")
-        elif status == "stopped":
-            self._svc_dot.setStyleSheet(f"color: {_RED}; font-size: 16px;")
-            self._svc_dot.setToolTip("Lock screen service: Stopped")
-        else:
-            self._svc_dot.setStyleSheet(f"color: {_GRAY}; font-size: 16px;")
-            self._svc_dot.setToolTip("Lock screen service: Not installed")
+        color = {
+            "running": _GREEN,
+            "stopped": _RED,
+        }.get(status, _MUTED)
+        tooltip = {
+            "running": "Lock screen service: Running",
+            "stopped": "Lock screen service: Stopped",
+        }.get(status, "Lock screen service: Not installed")
+        style = f"color:{color}; font-size:18px;"
+        self._svc_dot_picker.setStyleSheet(style)
+        self._svc_dot_picker.setToolTip(tooltip)
+        self._svc_dot_stream.setStyleSheet(f"{style} padding:0 4px;")
+        self._svc_dot_stream.setToolTip(tooltip)
 
     def _on_install_service(self):
         self._run_elevated(sys.executable, "--install")
@@ -406,7 +402,7 @@ class LauncherWindow(QMainWindow):
         else:
             subprocess.Popen([exe, arg])
 
-    # ------------------------------------------------------------------ auto-unlock
+    # ══════════════════════════════════════════════════════════ AUTO-UNLOCK
 
     def _on_set_unlock_password(self):
         from PyQt5.QtWidgets import QInputDialog, QLineEdit
@@ -418,17 +414,15 @@ class LauncherWindow(QMainWindow):
         if ok and pw:
             from service.auto_unlock import store_password
             store_password(pw)
-            self._status_label.setText("PW saved")
 
-    # ------------------------------------------------------------------ update
+    # ══════════════════════════════════════════════════════════ UPDATE
 
     def _on_update_available(self, latest: str):
-        url = f"https://github.com/{GITHUB_REPO}/releases/latest"
         from PyQt5.QtWidgets import QMessageBox
+        import webbrowser
         msg = QMessageBox(self)
         msg.setWindowTitle("Update available")
-        msg.setText(f"v{latest} is available. Download from GitHub?")
+        msg.setText(f"v{latest} is available. Open download page?")
         msg.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
         if msg.exec_() == QMessageBox.Ok:
-            import webbrowser
-            webbrowser.open(url)
+            webbrowser.open(f"https://github.com/{GITHUB_REPO}/releases/latest")
