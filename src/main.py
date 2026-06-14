@@ -32,7 +32,7 @@ def main():
     _server_thread = None
     _capture_thread = None
 
-    config = uvicorn.Config(fastapi_app, host="0.0.0.0", port=PORT, log_level="warning")
+    config = uvicorn.Config(fastapi_app, host="0.0.0.0", port=PORT, log_level="warning", log_config=None)
     server = uvicorn.Server(config)
 
     def start_server():
