@@ -1,7 +1,7 @@
 ; installer.iss — Inno Setup 6 script for WindowControl
 
 #define MyAppName "WindowControl"
-#define MyAppVersion "1.2.0"
+#define MyAppVersion "1.2.2"
 #define MyAppPublisher "WindowControl"
 #define MyAppExeName "WindowControl.exe"
 
@@ -34,6 +34,21 @@ begin
     'Installed',
     Installed
   ) or (Installed = 0);
+end;
+
+procedure StopServiceIfRunning();
+var
+  ResultCode: Integer;
+begin
+  // Stop the service before files are copied so WindowControl.exe is not locked
+  Exec('sc.exe', 'stop WindowControlService', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Sleep(2000); // give SCM time to release the file handle
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssInstall then
+    StopServiceIfRunning();
 end;
 
 function InitializeSetup(): Boolean;
