@@ -211,46 +211,51 @@ def _remove_service_if_exists():
 
 def _install_service_manually():
     """Register service directly via win32service API with explicit binary path."""
+    import traceback as _tb
     exe = sys.executable if getattr(sys, "frozen", False) else sys.argv[0]
-    # SCM will call: exe --run-service  — unambiguous dispatch
     bin_path = f'"{exe}" --run-service'
-    hscm = win32service.OpenSCManager(None, None, win32service.SC_MANAGER_ALL_ACCESS)
+    _log_crash(f"[install] registering bin_path={bin_path}")
     try:
-        hsvc = win32service.CreateService(
-            hscm,
-            SERVICE_NAME,
-            SERVICE_DISPLAY,
-            win32service.SERVICE_ALL_ACCESS,
-            win32service.SERVICE_WIN32_OWN_PROCESS,
-            win32service.SERVICE_AUTO_START,
-            win32service.SERVICE_ERROR_NORMAL,
-            bin_path,
-            None, 0, None, None, None,
-        )
+        hscm = win32service.OpenSCManager(None, None, win32service.SC_MANAGER_ALL_ACCESS)
         try:
-            win32service.ChangeServiceConfig2(
-                hsvc,
-                win32service.SERVICE_CONFIG_DESCRIPTION,
-                SERVICE_DESCRIPTION,
+            hsvc = win32service.CreateService(
+                hscm,
+                SERVICE_NAME,
+                SERVICE_DISPLAY,
+                win32service.SERVICE_ALL_ACCESS,
+                win32service.SERVICE_WIN32_OWN_PROCESS,
+                win32service.SERVICE_AUTO_START,
+                win32service.SERVICE_ERROR_NORMAL,
+                bin_path,
+                None, 0, None, None, None,
             )
-            win32service.ChangeServiceConfig2(
-                hsvc,
-                win32service.SERVICE_CONFIG_FAILURE_ACTIONS,
-                {
-                    "ResetPeriod": 86400,
-                    "RebootMsg": "",
-                    "Command": "",
-                    "Actions": [
-                        (win32service.SC_ACTION_RESTART, 60000),
-                        (win32service.SC_ACTION_RESTART, 60000),
-                        (win32service.SC_ACTION_RESTART, 60000),
-                    ],
-                },
-            )
+            try:
+                win32service.ChangeServiceConfig2(
+                    hsvc,
+                    win32service.SERVICE_CONFIG_DESCRIPTION,
+                    SERVICE_DESCRIPTION,
+                )
+                win32service.ChangeServiceConfig2(
+                    hsvc,
+                    win32service.SERVICE_CONFIG_FAILURE_ACTIONS,
+                    {
+                        "ResetPeriod": 86400,
+                        "RebootMsg": "",
+                        "Command": "",
+                        "Actions": [
+                            (win32service.SC_ACTION_RESTART, 60000),
+                            (win32service.SC_ACTION_RESTART, 60000),
+                            (win32service.SC_ACTION_RESTART, 60000),
+                        ],
+                    },
+                )
+                _log_crash(f"[install] CreateService OK")
+            finally:
+                win32service.CloseServiceHandle(hsvc)
         finally:
-            win32service.CloseServiceHandle(hsvc)
-    finally:
-        win32service.CloseServiceHandle(hscm)
+            win32service.CloseServiceHandle(hscm)
+    except Exception:
+        _log_crash(f"[install] CreateService FAILED: {_tb.format_exc()}")
 
 
 def main():
@@ -282,6 +287,7 @@ def main():
         win32serviceutil.StopService(SERVICE_NAME)
     elif "--run-service" in sys.argv:
         # SCM entry point — always explicit now, never ambiguous
+        _log_crash(f"[run-service] entered, exe={sys.executable}")
         try:
             servicemanager.Initialize(SERVICE_NAME, sys.executable)
             servicemanager.PrepareToHostSingle(WindowControlService)

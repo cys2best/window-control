@@ -8,21 +8,22 @@ function initLeftPanel() {
   const toggle = document.getElementById('left-toggle');
   const close  = document.getElementById('left-close');
 
+  const iconSpan = document.getElementById('left-toggle-icon');
   toggle.addEventListener('click', () => {
     panel.classList.toggle('open');
-    toggle.innerHTML = panel.classList.contains('open') ? '&#9664;' : '&#9654;';
+    iconSpan.innerHTML = panel.classList.contains('open') ? '&#9664;' : '&#9654;';
   });
   close.addEventListener('click', () => {
     panel.classList.remove('open');
-    toggle.innerHTML = '&#9654;';
+    iconSpan.innerHTML = '&#9654;';
   });
 }
 
 function closeLeftPanel() {
-  const panel  = document.getElementById('left-panel');
-  const toggle = document.getElementById('left-toggle');
+  const panel    = document.getElementById('left-panel');
+  const iconSpan = document.getElementById('left-toggle-icon');
   panel.classList.remove('open');
-  toggle.innerHTML = '&#9654;';
+  if (iconSpan) iconSpan.innerHTML = '&#9654;';
 }
 
 // ── Window list rendering ────────────────────────────────────────
