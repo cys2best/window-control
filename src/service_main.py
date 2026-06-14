@@ -10,23 +10,50 @@ Usage:
   (no args)                       Run as service (called by SCM)
 """
 import sys
-import threading
-import time
-import uvicorn
+import os
+
+# Log import crashes — service process dying here produces error 1053 with no other trace
+def _log_crash(msg: str):
+    try:
+        _p = r"C:\ProgramData\WindowControl"
+        os.makedirs(_p, exist_ok=True)
+        with open(os.path.join(_p, "service_crash.log"), "a") as _f:
+            _f.write(msg + "\n")
+    except Exception:
+        pass
+
+try:
+    import threading
+    import time
+    import uvicorn
+except Exception as _e:
+    import traceback as _tb
+    _log_crash(f"[stdlib/uvicorn import] {_tb.format_exc()}")
+    raise
 
 if sys.platform == "win32":
-    import win32service
-    import win32serviceutil
-    import win32event
-    import servicemanager
+    try:
+        import win32service
+        import win32serviceutil
+        import win32event
+        import servicemanager
+    except Exception as _e:
+        import traceback as _tb
+        _log_crash(f"[win32 import] {_tb.format_exc()}")
+        raise
 
-from config import PORT, QUALITY_MAP, DEFAULT_QUALITY
-from server.app import create_app
-from server.stream import CaptureState, FrameQueue, capture_loop
-from server.window_manager import list_windows
-from service.pipe_server import PipeServer
-from service.desktop_monitor import DesktopMonitor
-from service.auto_unlock import auto_unlock_on_lock, turn_monitor_off_after_unlock
+try:
+    from config import PORT, QUALITY_MAP, DEFAULT_QUALITY
+    from server.app import create_app
+    from server.stream import CaptureState, FrameQueue, capture_loop
+    from server.window_manager import list_windows
+    from service.pipe_server import PipeServer
+    from service.desktop_monitor import DesktopMonitor
+    from service.auto_unlock import auto_unlock_on_lock, turn_monitor_off_after_unlock
+except Exception as _e:
+    import traceback as _tb
+    _log_crash(f"[app import] {_tb.format_exc()}")
+    raise
 
 
 SERVICE_NAME = "WindowControlService"
