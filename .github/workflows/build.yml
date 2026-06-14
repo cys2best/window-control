@@ -21,7 +21,7 @@ jobs:
         run: uv sync
 
       - name: Install Inno Setup 6
-        run: choco install innosetup --version 6.2.2 -y
+        run: choco install innosetup -y --no-progress
         shell: cmd
 
       - name: Build EXE with PyInstaller
@@ -31,7 +31,7 @@ jobs:
       - name: Build installer with Inno Setup
         run: |
           mkdir release
-          "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" build\installer.iss
+          ISCC build\installer.iss
         shell: cmd
 
       - name: Upload installer artifact
