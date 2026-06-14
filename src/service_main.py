@@ -157,6 +157,17 @@ if sys.platform == "win32":
 
 
 def install_service():
+    # Remove existing service first (handles upgrades cleanly)
+    try:
+        win32serviceutil.StopService(SERVICE_NAME)
+        time.sleep(2)
+    except Exception:
+        pass
+    try:
+        win32serviceutil.RemoveService(SERVICE_NAME)
+        time.sleep(1)
+    except Exception:
+        pass
     win32serviceutil.InstallService(
         WindowControlService,
         SERVICE_NAME,
