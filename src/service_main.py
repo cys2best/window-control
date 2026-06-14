@@ -157,7 +157,7 @@ if sys.platform == "win32":
 
 def install_service():
     win32serviceutil.InstallService(
-        None,
+        WindowControlService,
         SERVICE_NAME,
         SERVICE_DISPLAY,
         description=SERVICE_DESCRIPTION,
@@ -183,7 +183,7 @@ def install_service():
     )
     win32service.CloseServiceHandle(hsvc)
     win32service.CloseServiceHandle(hscm)
-    win32serviceutil.StartService(SERVICE_NAME)
+    win32serviceutil.StartService(SERVICE_NAME, waitSecs=30)
     print(f"Service '{SERVICE_NAME}' installed and started.")
 
 
@@ -203,7 +203,7 @@ def main():
     elif "--uninstall" in sys.argv:
         uninstall_service()
     elif "--start" in sys.argv:
-        win32serviceutil.StartService(SERVICE_NAME)
+        win32serviceutil.StartService(SERVICE_NAME, waitSecs=30)
     elif "--stop" in sys.argv:
         win32serviceutil.StopService(SERVICE_NAME)
     else:
