@@ -23,12 +23,32 @@ class QualityRequest(BaseModel):
     quality: Literal["low", "medium", "high"]
 
 
+def _make_exception_handler(default_handler):
+    def handler(loop, context):
+        exc = context.get("exception")
+        if isinstance(exc, ConnectionResetError):
+            return  # client disconnected — expected on mobile
+        if isinstance(exc, OSError) and getattr(exc, "winerror", None) == 10054:
+            return  # WinError 10054 — same thing
+        if default_handler:
+            default_handler(loop, context)
+        else:
+            loop.default_exception_handler(context)
+    return handler
+
+
 def create_app(
     state: CaptureState,
     frame_queue: FrameQueue,
     available_windows: list[dict],
 ) -> FastAPI:
+    import asyncio
     app = FastAPI()
+
+    @app.on_event("startup")
+    async def _suppress_connection_reset():
+        loop = asyncio.get_event_loop()
+        loop.set_exception_handler(_make_exception_handler(loop.get_exception_handler()))
 
     @app.get("/")
     async def index():
