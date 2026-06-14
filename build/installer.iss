@@ -1,7 +1,7 @@
 ; installer.iss — Inno Setup 6 script for WindowControl
 
 #define MyAppName "WindowControl"
-#define MyAppVersion "1.2.10"
+#define MyAppVersion "1.2.11"
 #define MyAppPublisher "WindowControl"
 #define MyAppExeName "WindowControl.exe"
 
@@ -78,7 +78,8 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Name: "startupicon"; Description: "Start WindowControl with Windows"; GroupDescription: "Startup:"; Flags: unchecked
 
 [Files]
-Source: "..\dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+; One-dir build: copy entire dist\WindowControl\ folder contents
+Source: "..\dist\WindowControl\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; VC++ 2015-2022 x64 redistributable (downloaded by CI, bundled here)
 Source: "..\build\vc_redist.x64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall; Check: NeedsVCRedist
 

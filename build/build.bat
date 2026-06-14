@@ -15,4 +15,4 @@ if %ERRORLEVEL% NEQ 0 (
     exit /b 1
 )
 
-echo [WindowControl Build] EXE built at dist\WindowControl.exe
+echo [WindowControl Build] Built at dist\WindowControl\ (one-dir mode)
