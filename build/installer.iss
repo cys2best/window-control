@@ -1,7 +1,7 @@
 ; installer.iss — Inno Setup 6 script for WindowControl
 
 #define MyAppName "WindowControl"
-#define MyAppVersion "1.0.4"
+#define MyAppVersion "1.1.4"
 #define MyAppPublisher "WindowControl"
 #define MyAppExeName "WindowControl.exe"
 
@@ -23,6 +23,19 @@ PrivilegesRequired=admin
 
 ; Tailscale recommendation (not mandatory)
 [Code]
+function NeedsVCRedist(): Boolean;
+var
+  Installed: Cardinal;
+begin
+  // Check for VC++ 2015-2022 x64 (minimum version 14.0)
+  Result := not RegQueryDWordValue(
+    HKLM,
+    'SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64',
+    'Installed',
+    Installed
+  ) or (Installed = 0);
+end;
+
 function InitializeSetup(): Boolean;
 var
   HasTailscale: Boolean;
@@ -51,6 +64,8 @@ Name: "startupicon"; Description: "Start WindowControl with Windows"; GroupDescr
 
 [Files]
 Source: "..\dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+; VC++ 2015-2022 x64 redistributable (downloaded by CI, bundled here)
+Source: "..\build\vc_redist.x64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall; Check: NeedsVCRedist
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
@@ -61,4 +76,5 @@ Name: "{commondesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: 
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "{#MyAppName}"; ValueData: """{app}\{#MyAppExeName}"""; Flags: uninsdeletevalue; Tasks: startupicon
 
 [Run]
+Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/quiet /norestart"; StatusMsg: "Installing Visual C++ Runtime..."; Flags: waituntilterminated; Check: NeedsVCRedist
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent

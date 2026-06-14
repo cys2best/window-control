@@ -33,6 +33,11 @@ jobs:
         run: uv run pyinstaller build/window_control.spec --distpath dist --workpath build/work --noconfirm
         shell: cmd
 
+      - name: Download VC++ Redistributable
+        run: |
+          curl -L -o build\vc_redist.x64.exe "https://aka.ms/vs/17/release/vc_redist.x64.exe"
+        shell: cmd
+
       - name: Build installer with Inno Setup
         run: |
           mkdir release
