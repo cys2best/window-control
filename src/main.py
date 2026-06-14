@@ -18,6 +18,12 @@ def _build_available_windows():
 
 
 def main():
+    # Delegate service CLI args before starting GUI
+    if "--install" in sys.argv or "--uninstall" in sys.argv or "--start" in sys.argv or "--stop" in sys.argv:
+        from service_main import main as service_cli
+        service_cli()
+        return
+
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)  # keep alive in tray
 
