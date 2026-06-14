@@ -1,7 +1,7 @@
 ; installer.iss — Inno Setup 6 script for WindowControl
 
 #define MyAppName "WindowControl"
-#define MyAppVersion "1.2.3"
+#define MyAppVersion "1.2.5"
 #define MyAppPublisher "WindowControl"
 #define MyAppExeName "WindowControl.exe"
 
