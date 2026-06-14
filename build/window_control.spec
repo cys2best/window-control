@@ -15,10 +15,21 @@ win32_datas, win32_binaries, win32_hiddenimports = collect_all('win32')
 win32api_datas, win32api_binaries, win32api_hiddenimports = collect_all('win32api')
 pywintypes_datas, pywintypes_binaries, pywintypes_hiddenimports = collect_all('pywintypes')
 
+# Bundle turbojpeg.dll if present (ships with PyTurboJPEG on Windows)
+import glob, os
+_turbojpeg_binaries = []
+try:
+    import turbojpeg as _tj_mod
+    _tj_dir = os.path.dirname(_tj_mod.__file__)
+    for _dll in glob.glob(os.path.join(_tj_dir, 'turbojpeg*.dll')):
+        _turbojpeg_binaries.append((_dll, '.'))
+except ImportError:
+    pass
+
 a = Analysis(
     [str(_root / 'src' / 'main.py')],
     pathex=[src_dir],
-    binaries=win32_binaries + win32api_binaries + pywintypes_binaries,
+    binaries=win32_binaries + win32api_binaries + pywintypes_binaries + _turbojpeg_binaries,
     datas=[
         (str(_root / 'src' / 'client'), 'client'),
         (str(_root / 'src' / 'assets'), 'assets'),

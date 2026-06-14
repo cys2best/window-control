@@ -9,8 +9,11 @@ from PIL import Image
 
 if sys.platform == "win32":
     import mss as mss_lib
-    from turbojpeg import TurboJPEG
-    _jpeg = TurboJPEG()
+    try:
+        from turbojpeg import TurboJPEG
+        _jpeg = TurboJPEG()
+    except (RuntimeError, OSError, ImportError):
+        _jpeg = None
 else:
     from stubs import mss_stub as mss_lib
     _jpeg = None
