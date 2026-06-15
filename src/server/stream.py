@@ -127,17 +127,32 @@ def _encode_frame(arr: np.ndarray, quality: int) -> bytes:
 
 
 def _switch_thread_desktop(name: str):
-    """Switch this thread to named desktop so mss can grab its pixels."""
+    """Switch this thread's window station + desktop so mss/BitBlt can grab pixels.
+
+    SYSTEM services run in Session 0 with no window station. We must explicitly
+    open WinSta0 (the interactive station) and then the named desktop within it.
+    """
     if sys.platform != "win32":
         return
     try:
-        flags = 0x0200  # DESKTOP_WRITEOBJECTS
-        hdesk = ctypes.windll.user32.OpenDesktopW(name, 0, False, flags)
+        # Open the interactive window station — SYSTEM can open it but doesn't own it
+        WINSTA_ALL_ACCESS = 0x037F
+        hwinsta = ctypes.windll.user32.OpenWindowStationW("WinSta0", False, WINSTA_ALL_ACCESS)
+        if hwinsta:
+            ctypes.windll.user32.SetProcessWindowStation(hwinsta)
+            _log(f"[desktop] SetProcessWindowStation(WinSta0) OK")
+        else:
+            _log(f"[desktop] OpenWindowStation(WinSta0) failed err={ctypes.GetLastError()}")
+
+        DESKTOP_ALL_ACCESS = 0x01FF
+        hdesk = ctypes.windll.user32.OpenDesktopW(name, 0, False, DESKTOP_ALL_ACCESS)
         if hdesk:
             ctypes.windll.user32.SetThreadDesktop(hdesk)
-            ctypes.windll.user32.CloseDesktop(hdesk)
+            _log(f"[desktop] SetThreadDesktop({name}) OK")
+        else:
+            _log(f"[desktop] OpenDesktop({name}) failed err={ctypes.GetLastError()}")
     except Exception:
-        pass
+        _log(f"[desktop] _switch_thread_desktop({name}) exception: {traceback.format_exc()[:300]}")
 
 
 def _grab_dxgi(camera, rect: tuple) -> np.ndarray | None:
