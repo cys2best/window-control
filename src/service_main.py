@@ -129,23 +129,18 @@ if sys.platform == "win32":
         _log_crash("[service_body] started — desktop monitor + pipe server only")
         pipe_server = None
         desktop_monitor = None
-        _connected_handle = [None]  # mutable ref for current pipe client handle
-
-        def _push_event(event: dict):
-            """Push event to currently connected GUI pipe client."""
-            h = _connected_handle[0]
-            if h is not None and pipe_server is not None:
-                pipe_server.push(h, event)
 
         def on_lock():
             _log_crash("[desktop] LOCK detected")
             auto_unlock_on_lock()
-            _push_event({"event": "lock"})
+            if pipe_server:
+                pipe_server.push({"event": "lock"})
 
         def on_unlock():
             _log_crash("[desktop] UNLOCK detected")
             turn_monitor_off_after_unlock()
-            _push_event({"event": "unlock"})
+            if pipe_server:
+                pipe_server.push({"event": "unlock"})
 
         def on_command(msg):
             cmd = msg.get("cmd")

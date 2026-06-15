@@ -44,10 +44,16 @@ if sys.platform == "win32":
     class PipeServer:
         """Runs in service. Accepts one client at a time in a loop."""
 
-        def __init__(self, on_command: Callable[[dict], dict | None]):
+        def __init__(self, on_command: Callable[[dict], dict | None],
+                     on_connect: Callable[[], None] | None = None,
+                     on_disconnect: Callable[[], None] | None = None):
             self._on_command = on_command
+            self._on_connect = on_connect
+            self._on_disconnect = on_disconnect
             self._running = False
             self._thread: threading.Thread | None = None
+            self._current_handle = None
+            self._handle_lock = threading.Lock()
 
         def start(self):
             self._running = True
@@ -63,7 +69,15 @@ if sys.platform == "win32":
                 try:
                     handle = _create_pipe_handle()
                     win32pipe.ConnectNamedPipe(handle, None)
+                    with self._handle_lock:
+                        self._current_handle = handle
+                    if self._on_connect:
+                        self._on_connect()
                     self._handle_client(handle)
+                    with self._handle_lock:
+                        self._current_handle = None
+                    if self._on_disconnect:
+                        self._on_disconnect()
                 except Exception:
                     time.sleep(0.1)
 
@@ -86,8 +100,12 @@ if sys.platform == "win32":
                 except Exception:
                     pass
 
-        def push(self, handle, event: dict):
-            """Push unsolicited event to connected client."""
+        def push(self, event: dict):
+            """Push unsolicited event to currently connected client."""
+            with self._handle_lock:
+                handle = self._current_handle
+            if handle is None:
+                return
             try:
                 win32file.WriteFile(handle, encode_msg(event))
             except Exception:

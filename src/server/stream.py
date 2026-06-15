@@ -108,6 +108,7 @@ class CaptureState:
 
 
 _BLACK_FRAME: bytes = b""
+_LOCKED_FRAME: bytes = b""
 _hwinsta = None  # keep WinSta0 handle alive for the process lifetime
 
 
@@ -115,6 +116,25 @@ def _make_black_frame() -> bytes:
     img = Image.new("RGB", (1280, 720), color=(0, 0, 0))
     buf = io.BytesIO()
     img.save(buf, format="JPEG", quality=40)
+    return buf.getvalue()
+
+
+def _make_locked_frame() -> bytes:
+    img = Image.new("RGB", (1280, 720), color=(15, 15, 35))
+    try:
+        from PIL import ImageDraw
+        draw = ImageDraw.Draw(img)
+        # Lock icon (simple rectangle + arc)
+        cx, cy = 640, 300
+        draw.rectangle([cx-30, cy, cx+30, cy+40], fill=(180, 180, 200))
+        draw.arc([cx-22, cy-30, cx+22, cy+10], start=0, end=180, fill=(180, 180, 200), width=8)
+        # Text
+        draw.text((640, 380), "Screen Locked", fill=(160, 160, 180), anchor="mm")
+        draw.text((640, 410), "Unlock PC to resume stream", fill=(100, 100, 120), anchor="mm")
+    except Exception:
+        pass
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=60)
     return buf.getvalue()
 
 
@@ -185,8 +205,9 @@ def _grab_mss(rect: tuple) -> np.ndarray | None:
 
 
 def capture_loop(state: CaptureState, frame_queue: FrameQueue):
-    global _BLACK_FRAME
+    global _BLACK_FRAME, _LOCKED_FRAME
     _BLACK_FRAME = _make_black_frame()
+    _LOCKED_FRAME = _make_locked_frame()
     current_desktop = "Default"
     _capture_err_logged = False
 
@@ -227,23 +248,10 @@ def capture_loop(state: CaptureState, frame_queue: FrameQueue):
                     camera = None
 
         if desktop == "Winlogon":
-            # Lock screen: DXGI is blocked from Winlogon desktop.
-            # Use mss/GDI (SetThreadDesktop already switched above).
-            try:
-                with _mss_lib.mss() as sct:
-                    monitor = sct.monitors[1]  # primary monitor full screen
-                    shot = sct.grab(monitor)
-                    arr = np.frombuffer(shot.raw, dtype=np.uint8).reshape(
-                        (shot.height, shot.width, 4)
-                    )
-                jpeg_bytes = _encode_frame(arr, state.quality)
-                frame_queue.put(jpeg_bytes)
-            except Exception:
-                if not _capture_err_logged:
-                    _log(f"[capture_loop] Winlogon grab failed: {traceback.format_exc()}")
-                    _capture_err_logged = True
-                frame_queue.put(_BLACK_FRAME)
-            time.sleep(1 / 30)
+            # Winlogon desktop is security-isolated — BitBlt blocked even from user session.
+            # Show a static "Screen Locked" frame instead of blank/reconnect.
+            frame_queue.put(_LOCKED_FRAME)
+            time.sleep(1 / 5)  # 5fps is enough for a static frame
             continue
 
         hwnd = state.active_hwnd
