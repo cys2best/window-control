@@ -4,9 +4,17 @@ from PIL import Image
 import io
 
 if sys.platform == "win32":
-    import mss as mss_lib
+    _mss_lib = None
+    def _get_mss():
+        global _mss_lib
+        if _mss_lib is None:
+            import mss as _m
+            _mss_lib = _m
+        return _mss_lib
 else:
-    from stubs import mss_stub as mss_lib
+    from stubs import mss_stub as _mss_mod
+    def _get_mss():
+        return _mss_mod
 
 from server.window_manager import get_window_rect
 
@@ -22,7 +30,7 @@ def capture_preview(hwnd) -> bytes:
         x0, y0, x1, y1 = rect
         w, h = max(x1 - x0, 1), max(y1 - y0, 1)
         monitor = {"left": x0, "top": y0, "width": w, "height": h}
-        with mss_lib.mss() as sct:
+        with _get_mss().mss() as sct:
             shot = sct.grab(monitor)
             arr = np.frombuffer(shot.raw, dtype=np.uint8).reshape((shot.height, shot.width, 4))
         img = Image.fromarray(arr[:, :, 2::-1], "RGB")  # BGRA → RGB

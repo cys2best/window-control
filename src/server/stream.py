@@ -10,21 +10,33 @@ import numpy as np
 from PIL import Image
 
 if sys.platform == "win32":
-    import mss as mss_lib
-    try:
-        import dxcam
-        _dxcam_available = True
-    except ImportError:
-        _dxcam_available = False
-    try:
-        from turbojpeg import TurboJPEG
-        _jpeg = TurboJPEG()
-    except (RuntimeError, OSError, ImportError):
-        _jpeg = None
+    _mss_lib = None
+    _dxcam_available = None  # None = not yet checked
+    _jpeg = None
+
+    def _ensure_capture_libs():
+        global _mss_lib, _dxcam_available, _jpeg
+        if _mss_lib is not None:
+            return
+        import mss as mss_lib
+        _mss_lib = mss_lib
+        try:
+            import dxcam
+            _dxcam_available = True
+        except Exception:
+            _dxcam_available = False
+        try:
+            from turbojpeg import TurboJPEG
+            _jpeg = TurboJPEG()
+        except Exception:
+            _jpeg = None
 else:
-    from stubs import mss_stub as mss_lib
+    from stubs import mss_stub as _mss_lib
     _dxcam_available = False
     _jpeg = None
+
+    def _ensure_capture_libs():
+        pass
 
 from server.window_manager import get_window_rect, is_window_alive
 
@@ -120,7 +132,7 @@ def _grab_mss(rect: tuple) -> np.ndarray | None:
     try:
         x0, y0, x1, y1 = rect
         monitor = {"left": x0, "top": y0, "width": max(x1 - x0, 1), "height": max(y1 - y0, 1)}
-        with mss_lib.mss() as sct:
+        with _mss_lib.mss() as sct:
             shot = sct.grab(monitor)
             return np.frombuffer(shot.raw, dtype=np.uint8).reshape(
                 (shot.height, shot.width, 4)
@@ -134,11 +146,14 @@ def capture_loop(state: CaptureState, frame_queue: FrameQueue):
     _BLACK_FRAME = _make_black_frame()
     current_desktop = "Default"
 
+    _ensure_capture_libs()
+
     # Create dxcam camera once — reused across frames (GPU resource)
     camera = None
     if _dxcam_available:
         try:
-            camera = dxcam.create(output_color="BGR")
+            import dxcam as _dxcam_mod
+            camera = _dxcam_mod.create(output_color="BGR")
         except Exception:
             camera = None
 
@@ -155,7 +170,8 @@ def capture_loop(state: CaptureState, frame_queue: FrameQueue):
                 except Exception:
                     pass
                 try:
-                    camera = dxcam.create(output_color="BGR")
+                    import dxcam as _dxcam_mod
+                    camera = _dxcam_mod.create(output_color="BGR")
                 except Exception:
                     camera = None
 
@@ -163,7 +179,7 @@ def capture_loop(state: CaptureState, frame_queue: FrameQueue):
             # Lock screen: DXGI is blocked from Winlogon desktop.
             # Use mss/GDI (SetThreadDesktop already switched above).
             try:
-                with mss_lib.mss() as sct:
+                with _mss_lib.mss() as sct:
                     monitor = sct.monitors[1]  # primary monitor full screen
                     shot = sct.grab(monitor)
                     arr = np.frombuffer(shot.raw, dtype=np.uint8).reshape(
