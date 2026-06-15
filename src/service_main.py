@@ -113,7 +113,7 @@ if sys.platform == "win32":
 
     def _set_service_status(state, controls=SERVICE_ACCEPT_STOP):
         global _g_status_handle
-        if _g_status_handle is None:
+        if not _g_status_handle:
             return
         ss = SERVICE_STATUS()
         ss.dwServiceType = 0x10  # SERVICE_WIN32_OWN_PROCESS
@@ -123,7 +123,11 @@ if sys.platform == "win32":
         ss.dwServiceSpecificExitCode = 0
         ss.dwCheckPoint = 0
         ss.dwWaitHint = 5000
-        _advapi32.SetServiceStatus(_g_status_handle, ctypes.byref(ss))
+        _advapi32.SetServiceStatus.restype = ctypes.wintypes.BOOL
+        _advapi32.SetServiceStatus.argtypes = [ctypes.wintypes.HANDLE, ctypes.POINTER(SERVICE_STATUS)]
+        ret = _advapi32.SetServiceStatus(_g_status_handle, ctypes.byref(ss))
+        if not ret:
+            _log_crash(f"[SetServiceStatus] failed state={state} err={ctypes.GetLastError()}")
 
     HANDLER_FUNC = ctypes.WINFUNCTYPE(None, ctypes.wintypes.DWORD)
 
@@ -233,15 +237,23 @@ if sys.platform == "win32":
         _set_service_status(SERVICE_STOP_PENDING, 0)
         _log_crash(f"[service_main] done")
 
+    class _SERVICE_TABLE_ENTRYW(ctypes.Structure):
+        _fields_ = [
+            ("lpServiceName", ctypes.c_wchar_p),
+            ("lpServiceProc", ctypes.c_void_p),
+        ]
+
     def _dispatch_service():
         """Called in --run-service path. Registers service main with SCM."""
         _svc_main_func = SERVICE_MAIN_FUNC(_service_main)
-        SERVICE_TABLE_ENTRY = ctypes.c_void_p * 4
-        table = SERVICE_TABLE_ENTRY(
-            ctypes.cast(ctypes.create_unicode_buffer(SERVICE_NAME), ctypes.c_void_p),
-            ctypes.cast(_svc_main_func, ctypes.c_void_p),
-            None, None,
+        # Two entries: the service entry + null terminator
+        TableType = _SERVICE_TABLE_ENTRYW * 2
+        table = TableType(
+            _SERVICE_TABLE_ENTRYW(SERVICE_NAME, ctypes.cast(_svc_main_func, ctypes.c_void_p)),
+            _SERVICE_TABLE_ENTRYW(None, None),
         )
+        _advapi32.StartServiceCtrlDispatcherW.restype = ctypes.wintypes.BOOL
+        _advapi32.StartServiceCtrlDispatcherW.argtypes = [ctypes.POINTER(_SERVICE_TABLE_ENTRYW)]
         _log_crash(f"[dispatch] calling StartServiceCtrlDispatcherW")
         ret = _advapi32.StartServiceCtrlDispatcherW(table)
         if not ret:
