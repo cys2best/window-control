@@ -23,32 +23,51 @@ def _log_crash(msg: str):
         except Exception:
             continue
 
+_log_crash(f"[imports-start] pid={os.getpid()} user={os.environ.get('USERNAME','?')} path={os.environ.get('PATH','?')[:120]}")
+
 try:
     import threading
     import time
-    import uvicorn
+    _log_crash("[imports] threading+time OK")
 except Exception as _e:
     import traceback as _tb
-    _log_crash(f"[stdlib/uvicorn import] {_tb.format_exc()}")
+    _log_crash(f"[stdlib import] {_tb.format_exc()}")
+    raise
+
+try:
+    import uvicorn
+    _log_crash("[imports] uvicorn OK")
+except Exception as _e:
+    import traceback as _tb
+    _log_crash(f"[uvicorn import] {_tb.format_exc()}")
     raise
 
 if sys.platform == "win32":
     try:
         import win32service
         import win32serviceutil
+        _log_crash("[imports] win32 OK")
     except Exception as _e:
         import traceback as _tb
         _log_crash(f"[win32 import] {_tb.format_exc()}")
         raise
 
 try:
+    _log_crash("[imports] loading app modules...")
     from config import PORT, QUALITY_MAP, DEFAULT_QUALITY
+    _log_crash("[imports] config OK")
     from server.app import create_app
+    _log_crash("[imports] server.app OK")
     from server.stream import CaptureState, FrameQueue, capture_loop
+    _log_crash("[imports] server.stream OK")
     from server.window_manager import list_windows
+    _log_crash("[imports] window_manager OK")
     from service.pipe_server import PipeServer
+    _log_crash("[imports] pipe_server OK")
     from service.desktop_monitor import DesktopMonitor
+    _log_crash("[imports] desktop_monitor OK")
     from service.auto_unlock import auto_unlock_on_lock, turn_monitor_off_after_unlock
+    _log_crash("[imports] auto_unlock OK")
 except Exception as _e:
     import traceback as _tb
     _log_crash(f"[app import] {_tb.format_exc()}")
