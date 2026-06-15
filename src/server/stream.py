@@ -172,6 +172,10 @@ def capture_loop(state: CaptureState, frame_queue: FrameQueue):
     _ensure_capture_libs()
     _log("[capture_loop] started")
 
+    # Switch to Default desktop immediately — BitBlt fails under SYSTEM without this
+    _switch_thread_desktop("Default")
+    _log("[capture_loop] SetThreadDesktop(Default) called")
+
     # Create dxcam camera once — reused across frames (GPU resource)
     camera = None
     if _dxcam_available:
