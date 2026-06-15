@@ -124,7 +124,7 @@ if sys.platform == "win32":
         ss.dwCheckPoint = 0
         ss.dwWaitHint = 5000
         _advapi32.SetServiceStatus.restype = ctypes.wintypes.BOOL
-        _advapi32.SetServiceStatus.argtypes = [ctypes.wintypes.HANDLE, ctypes.POINTER(SERVICE_STATUS)]
+        _advapi32.SetServiceStatus.argtypes = [ctypes.c_void_p, ctypes.POINTER(SERVICE_STATUS)]
         ret = _advapi32.SetServiceStatus(_g_status_handle, ctypes.byref(ss))
         if not ret:
             _log_crash(f"[SetServiceStatus] failed state={state} err={ctypes.GetLastError()}")
@@ -222,7 +222,12 @@ if sys.platform == "win32":
         _log_crash(f"[service_main] SCM dispatched, registering handler")
         _g_stop_event = threading.Event()
         handler = _make_ctrl_handler(_g_stop_event)
-        _g_status_handle = _advapi32.RegisterServiceCtrlHandlerW(SERVICE_NAME, handler)
+        # SERVICE_STATUS_HANDLE is not HANDLE — must declare as c_void_p or it gets truncated
+        _advapi32.RegisterServiceCtrlHandlerW.restype = ctypes.c_void_p
+        _advapi32.RegisterServiceCtrlHandlerW.argtypes = [ctypes.c_wchar_p, ctypes.c_void_p]
+        _g_status_handle = _advapi32.RegisterServiceCtrlHandlerW(
+            SERVICE_NAME, ctypes.cast(handler, ctypes.c_void_p)
+        )
         if not _g_status_handle:
             _log_crash(f"[service_main] RegisterServiceCtrlHandlerW failed: {ctypes.GetLastError()}")
             return
