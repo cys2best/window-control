@@ -36,8 +36,6 @@ if sys.platform == "win32":
     try:
         import win32service
         import win32serviceutil
-        import win32event
-        import servicemanager
     except Exception as _e:
         import traceback as _tb
         _log_crash(f"[win32 import] {_tb.format_exc()}")
@@ -68,131 +66,170 @@ def _build_windows():
 
 
 if sys.platform == "win32":
-    class WindowControlService(win32serviceutil.ServiceFramework):
-        _svc_name_ = SERVICE_NAME
-        _svc_display_name_ = SERVICE_DISPLAY
-        _svc_description_ = SERVICE_DESCRIPTION
-        _svc_start_type_ = win32service.SERVICE_AUTO_START
+    import ctypes
+    import ctypes.wintypes
 
-        def __init__(self, args):
-            win32serviceutil.ServiceFramework.__init__(self, args)
-            self._stop_event = win32event.CreateEvent(None, 0, 0, None)
-            try:
-                self._state = CaptureState()
-                self._state.set_quality(QUALITY_MAP[DEFAULT_QUALITY])
-                self._frame_queue = FrameQueue()
-                self._available_windows = []
-                self._server = None
-                self._pipe_server = None
-                self._desktop_monitor = None
-            except Exception as exc:
-                import traceback
-                servicemanager.LogErrorMsg(f"WindowControl __init__ crashed: {exc}\n{traceback.format_exc()}")
-                raise
+    # Pure ctypes Win32 service — no pywin32 framework, no HandleCommandLine
+    _advapi32 = ctypes.windll.advapi32
 
-        def SvcDoRun(self):
-            self.ReportServiceStatus(win32service.SERVICE_RUNNING)
-            servicemanager.LogMsg(
-                servicemanager.EVENTLOG_INFORMATION_TYPE,
-                servicemanager.PYS_SERVICE_STARTED,
-                (self._svc_name_, "")
-            )
-            try:
-                self._run()
-            except Exception as exc:
-                import traceback
-                servicemanager.LogErrorMsg(f"WindowControl SvcDoRun crashed: {exc}\n{traceback.format_exc()}")
-                raise
-            servicemanager.LogMsg(
-                servicemanager.EVENTLOG_INFORMATION_TYPE,
-                servicemanager.PYS_SERVICE_STOPPED,
-                (self._svc_name_, "")
-            )
+    SERVICE_CONTROL_STOP = 0x00000001
+    SERVICE_CONTROL_INTERROGATE = 0x00000004
+    SERVICE_RUNNING = 0x00000004
+    SERVICE_STOP_PENDING = 0x00000003
+    SERVICE_ACCEPT_STOP = 0x00000001
 
-        def SvcStop(self):
-            self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
-            self._state.running = False
-            if self._server:
-                self._server.should_exit = True
-            if self._pipe_server:
-                self._pipe_server.stop()
-            if self._desktop_monitor:
-                self._desktop_monitor.stop()
-            win32event.SetEvent(self._stop_event)
+    class SERVICE_STATUS(ctypes.Structure):
+        _fields_ = [
+            ("dwServiceType",             ctypes.wintypes.DWORD),
+            ("dwCurrentState",            ctypes.wintypes.DWORD),
+            ("dwControlsAccepted",        ctypes.wintypes.DWORD),
+            ("dwWin32ExitCode",           ctypes.wintypes.DWORD),
+            ("dwServiceSpecificExitCode", ctypes.wintypes.DWORD),
+            ("dwCheckPoint",              ctypes.wintypes.DWORD),
+            ("dwWaitHint",                ctypes.wintypes.DWORD),
+        ]
 
-        def _on_lock(self):
-            self._state.set_desktop("Winlogon")
-            servicemanager.LogInfoMsg("WindowControl: session locked, streaming lock screen")
+    _g_status_handle = None
+    _g_stop_event = None
+
+    def _set_service_status(state, controls=SERVICE_ACCEPT_STOP):
+        global _g_status_handle
+        if _g_status_handle is None:
+            return
+        ss = SERVICE_STATUS()
+        ss.dwServiceType = 0x10  # SERVICE_WIN32_OWN_PROCESS
+        ss.dwCurrentState = state
+        ss.dwControlsAccepted = controls if state == SERVICE_RUNNING else 0
+        ss.dwWin32ExitCode = 0
+        ss.dwServiceSpecificExitCode = 0
+        ss.dwCheckPoint = 0
+        ss.dwWaitHint = 5000
+        _advapi32.SetServiceStatus(_g_status_handle, ctypes.byref(ss))
+
+    HANDLER_FUNC = ctypes.WINFUNCTYPE(None, ctypes.wintypes.DWORD)
+
+    def _make_ctrl_handler(stop_event):
+        def _handler(ctrl):
+            if ctrl in (SERVICE_CONTROL_STOP, SERVICE_CONTROL_INTERROGATE):
+                _set_service_status(SERVICE_STOP_PENDING)
+                stop_event.set()
+        return HANDLER_FUNC(_handler)
+
+    SERVICE_MAIN_FUNC = ctypes.WINFUNCTYPE(None, ctypes.wintypes.DWORD, ctypes.POINTER(ctypes.c_wchar_p))
+
+    def _run_service_body():
+        """Core service logic — runs after SCM handshake complete."""
+        state = CaptureState()
+        state.set_quality(QUALITY_MAP[DEFAULT_QUALITY])
+        frame_queue = FrameQueue()
+        available_windows = []
+        server = None
+        pipe_server = None
+        desktop_monitor = None
+
+        def start_streaming():
+            nonlocal server
+            state.running = True
+            available_windows.clear()
+            available_windows.extend(_build_windows())
+            fastapi_app = create_app(state, frame_queue, available_windows)
+            config = uvicorn.Config(fastapi_app, host="0.0.0.0", port=PORT,
+                                    log_level="warning", log_config=None)
+            server = uvicorn.Server(config)
+            threading.Thread(target=capture_loop, args=(state, frame_queue), daemon=True).start()
+            threading.Thread(target=server.run, daemon=True).start()
+
+        def on_lock():
+            state.set_desktop("Winlogon")
             auto_unlock_on_lock()
 
-        def _on_unlock(self):
-            self._state.set_desktop("Default")
-            self._available_windows.clear()
-            self._available_windows.extend(_build_windows())
-            servicemanager.LogInfoMsg("WindowControl: session unlocked, resuming normal stream")
+        def on_unlock():
+            state.set_desktop("Default")
+            available_windows.clear()
+            available_windows.extend(_build_windows())
             turn_monitor_off_after_unlock()
 
-        def _on_command(self, msg: dict) -> dict | None:
+        def on_command(msg):
             cmd = msg.get("cmd")
             if cmd == "ping":
                 return {"event": "pong"}
             elif cmd == "start":
-                if not self._state.running:
-                    self._start_streaming()
-                return {"event": "state", "streaming": True, "locked": self._state.desktop == "Winlogon"}
+                if not state.running:
+                    start_streaming()
+                return {"event": "state", "streaming": True}
             elif cmd == "stop":
-                self._state.running = False
-                if self._server:
-                    self._server.should_exit = True
-                return {"event": "state", "streaming": False, "locked": self._state.desktop == "Winlogon"}
+                state.running = False
+                if server:
+                    server.should_exit = True
+                return {"event": "state", "streaming": False}
             elif cmd == "select":
                 hwnd = msg.get("id")
                 if hwnd:
-                    self._state.set_hwnd(hwnd)
-                return {"event": "state", "streaming": self._state.running, "hwnd": hwnd}
+                    state.set_hwnd(hwnd)
+                return {"event": "state", "streaming": state.running, "hwnd": hwnd}
             elif cmd == "quality":
-                self._state.set_quality(msg.get("value", 85))
+                state.set_quality(msg.get("value", 85))
                 return {"event": "pong"}
             elif cmd == "windows":
-                self._available_windows.clear()
-                self._available_windows.extend(_build_windows())
-                return {"event": "windows", "list": self._available_windows}
+                available_windows.clear()
+                available_windows.extend(_build_windows())
+                return {"event": "windows", "list": available_windows}
             return None
 
-        def _start_streaming(self):
-            self._state.running = True
-            self._available_windows.clear()
-            self._available_windows.extend(_build_windows())
+        desktop_monitor = DesktopMonitor(on_lock=on_lock, on_unlock=on_unlock)
+        desktop_monitor.start()
 
-            fastapi_app = create_app(
-                self._state, self._frame_queue, self._available_windows
-            )
-            config = uvicorn.Config(
-                fastapi_app, host="0.0.0.0", port=PORT,
-                log_level="warning", log_config=None
-            )
-            self._server = uvicorn.Server(config)
+        pipe_server = PipeServer(on_command=on_command)
+        pipe_server.start()
 
-            threading.Thread(
-                target=capture_loop,
-                args=(self._state, self._frame_queue),
-                daemon=True,
-            ).start()
-            threading.Thread(target=self._server.run, daemon=True).start()
+        start_streaming()
 
-        def _run(self):
-            self._desktop_monitor = DesktopMonitor(
-                on_lock=self._on_lock,
-                on_unlock=self._on_unlock,
-            )
-            self._desktop_monitor.start()
+        _g_stop_event.wait()
 
-            self._pipe_server = PipeServer(on_command=self._on_command)
-            self._pipe_server.start()
+        state.running = False
+        if server:
+            server.should_exit = True
+        if pipe_server:
+            pipe_server.stop()
+        if desktop_monitor:
+            desktop_monitor.stop()
 
-            self._start_streaming()
+    def _service_main(argc, argv):
+        global _g_status_handle, _g_stop_event
+        _log_crash(f"[service_main] SCM dispatched, registering handler")
+        _g_stop_event = threading.Event()
+        handler = _make_ctrl_handler(_g_stop_event)
+        _g_status_handle = _advapi32.RegisterServiceCtrlHandlerW(SERVICE_NAME, handler)
+        if not _g_status_handle:
+            _log_crash(f"[service_main] RegisterServiceCtrlHandlerW failed: {ctypes.GetLastError()}")
+            return
+        _log_crash(f"[service_main] handler registered, reporting SERVICE_RUNNING")
+        _set_service_status(SERVICE_RUNNING)
+        _log_crash(f"[service_main] SERVICE_RUNNING reported, starting body")
+        try:
+            _run_service_body()
+        except Exception:
+            import traceback
+            _log_crash(f"[service_main] body crashed: {traceback.format_exc()}")
+        _set_service_status(SERVICE_STOP_PENDING, 0)
+        _log_crash(f"[service_main] done")
 
-            win32event.WaitForSingleObject(self._stop_event, win32event.INFINITE)
+    def _dispatch_service():
+        """Called in --run-service path. Registers service main with SCM."""
+        _svc_main_func = SERVICE_MAIN_FUNC(_service_main)
+        SERVICE_TABLE_ENTRY = ctypes.c_void_p * 4
+        table = SERVICE_TABLE_ENTRY(
+            ctypes.cast(ctypes.create_unicode_buffer(SERVICE_NAME), ctypes.c_void_p),
+            ctypes.cast(_svc_main_func, ctypes.c_void_p),
+            None, None,
+        )
+        _log_crash(f"[dispatch] calling StartServiceCtrlDispatcherW")
+        ret = _advapi32.StartServiceCtrlDispatcherW(table)
+        if not ret:
+            err = ctypes.GetLastError()
+            _log_crash(f"[dispatch] StartServiceCtrlDispatcherW returned 0, error={err}")
+        else:
+            _log_crash(f"[dispatch] StartServiceCtrlDispatcherW returned cleanly")
 
 
 def _remove_service_if_exists():
@@ -286,22 +323,11 @@ def main():
     elif "--stop" in sys.argv:
         win32serviceutil.StopService(SERVICE_NAME)
     elif "--run-service" in sys.argv:
-        # SCM entry point — called by Windows Service Control Manager.
-        # servicemanager trio is correct here; 1063 only occurs if run interactively.
+        # SCM entry point — pure ctypes dispatch, no pywin32 framework
         _log_crash(f"[run-service] entered, exe={sys.executable}")
-        try:
-            servicemanager.Initialize(SERVICE_NAME, sys.executable)
-            servicemanager.PrepareToHostSingle(WindowControlService)
-            servicemanager.StartServiceCtrlDispatcher()
-        except Exception as exc:
-            import traceback
-            _log_crash(f"[SCM dispatch] {traceback.format_exc()}")
-            # 1063 = not started by SCM (interactive run) — not a real failure
-            if getattr(exc, 'winerror', None) != 1063:
-                raise
+        _dispatch_service()
     else:
-        # Dev / interactive fallback
-        win32serviceutil.HandleCommandLine(WindowControlService)
+        print("Usage: WindowControl.exe --install | --uninstall | --start | --stop")
 
 
 if __name__ == "__main__":
