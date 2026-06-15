@@ -86,6 +86,8 @@ function initTouch() {
   const container = document.getElementById('stream-container');
 
   container.addEventListener('touchstart', e => {
+    // Don't capture touches on toolbar buttons
+    if (e.target.closest('#right-toolbar')) return;
     if (e.touches.length === 1) {
       const t = e.touches[0];
       _dragStartX = t.clientX;
@@ -95,10 +97,7 @@ function initTouch() {
       const { x, y } = normalizeCoords(t.clientX, t.clientY);
       sendInput({ type: 'drag_start', x, y });
     } else if (e.touches.length === 2) {
-      // Cancel drag if second finger added
-      if (_dragActive) {
-        _dragActive = false;
-      }
+      if (_dragActive) _dragActive = false;
       lastDist = Math.hypot(
         e.touches[0].clientX - e.touches[1].clientX,
         e.touches[0].clientY - e.touches[1].clientY

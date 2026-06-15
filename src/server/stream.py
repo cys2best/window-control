@@ -298,23 +298,27 @@ def capture_loop(state: CaptureState, frame_queue: FrameQueue):
         hwnd = state.active_hwnd
         if hwnd is None:
             # No window selected — stream full primary monitor
-            try:
-                if not _capture_err_logged:
-                    cur_winsta = ctypes.windll.user32.GetProcessWindowStation()
-                    cur_desk = ctypes.windll.user32.GetThreadDesktop(ctypes.windll.kernel32.GetCurrentThreadId())
-                    _log(f"[capture_loop] pre-grab winsta={cur_winsta} desk={cur_desk} hwinsta_global={_hwinsta}")
-                with _mss_lib.mss() as sct:
-                    monitor = sct.monitors[1]
-                    shot = sct.grab(monitor)
-                    arr = np.frombuffer(shot.raw, dtype=np.uint8).reshape(
-                        (shot.height, shot.width, 4)
-                    )
+            arr = None
+            # dxcam works headless (GPU compositor level)
+            if camera is not None:
+                try:
+                    arr = camera.grab()  # full screen, no region
+                except Exception:
+                    arr = None
+            # mss fallback — requires active display, fails headless
+            if arr is None:
+                try:
+                    with _mss_lib.mss() as sct:
+                        monitor = sct.monitors[1]
+                        shot = sct.grab(monitor)
+                        arr = np.frombuffer(shot.raw, dtype=np.uint8).reshape(
+                            (shot.height, shot.width, 4)
+                        )
+                except Exception:
+                    arr = None
+            if arr is not None:
                 frame_queue.put(_encode_frame(arr, state.quality))
-                _capture_err_logged = False  # reset on success
-            except Exception:
-                if not _capture_err_logged:
-                    _log(f"[capture_loop] full-monitor grab failed: {traceback.format_exc()}")
-                    _capture_err_logged = True
+            else:
                 frame_queue.put(_BLACK_FRAME)
             time.sleep(1 / 30)
             continue
