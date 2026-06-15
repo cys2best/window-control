@@ -36,19 +36,26 @@ begin
   ) or (Installed = 0);
 end;
 
-procedure StopServiceIfRunning();
+procedure StopAndRemoveService();
 var
   ResultCode: Integer;
 begin
-  // Stop the service before files are copied so WindowControl.exe is not locked
   Exec('sc.exe', 'stop WindowControlService', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Sleep(2000); // give SCM time to release the file handle
+  Sleep(2000);
+  Exec('sc.exe', 'delete WindowControlService', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Sleep(1000);
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssInstall then
-    StopServiceIfRunning();
+    StopAndRemoveService();
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if CurUninstallStep = usUninstall then
+    StopAndRemoveService();
 end;
 
 function InitializeSetup(): Boolean;
@@ -90,9 +97,6 @@ Name: "{commondesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: 
 
 [Registry]
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "{#MyAppName}"; ValueData: """{app}\{#MyAppExeName}"""; Flags: uninsdeletevalue; Tasks: startupicon
-
-[UninstallRun]
-Filename: "{app}\{#MyAppExeName}"; Parameters: "--uninstall"; Flags: waituntilterminated runhidden; RunOnceId: "UninstallService"
 
 [Run]
 Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/quiet /norestart"; StatusMsg: "Installing Visual C++ Runtime..."; Flags: waituntilterminated; Check: NeedsVCRedist
