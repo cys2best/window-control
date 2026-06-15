@@ -1,56 +1,34 @@
-// windows_panel.js — left panel + window switching
+// windows_panel.js — window list screen + window switching
 let _windows = [];
 let _activeId = null;
 
-// ── Left panel ──────────────────────────────────────────────────
-function initLeftPanel() {
-  const panel  = document.getElementById('left-panel');
-  const toggle = document.getElementById('left-toggle');
-  const close  = document.getElementById('left-close');
-
-  const iconSpan = document.getElementById('left-toggle-icon');
-  toggle.addEventListener('click', () => {
-    panel.classList.toggle('open');
-    iconSpan.innerHTML = panel.classList.contains('open') ? '&#9664;' : '&#9654;';
-  });
-  close.addEventListener('click', () => {
-    panel.classList.remove('open');
-    iconSpan.innerHTML = '&#9654;';
-  });
+function showScreen(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
 }
 
-function closeLeftPanel() {
-  const panel    = document.getElementById('left-panel');
-  const iconSpan = document.getElementById('left-toggle-icon');
-  panel.classList.remove('open');
-  if (iconSpan) iconSpan.innerHTML = '&#9654;';
-}
-
-// ── Window list rendering ────────────────────────────────────────
-function renderWindowsList() {
-  const list = document.getElementById('windows-list');
-  list.innerHTML = '';
+// ── Window grid rendering ────────────────────────────────────────
+function renderWindowsGrid() {
+  const grid = document.getElementById('windows-grid');
+  grid.innerHTML = '';
   _windows.forEach(w => {
-    const row = document.createElement('div');
-    row.className = 'window-row' + (w.id === _activeId ? ' active' : '');
-    row.dataset.id = w.id;
+    const card = document.createElement('div');
+    card.className = 'window-card' + (w.id === _activeId ? ' active' : '');
+    card.dataset.id = w.id;
 
     const thumb = document.createElement('img');
-    thumb.className = 'window-thumb';
+    thumb.className = 'window-card-thumb';
     thumb.src = `/window/${w.id}/preview?t=${Date.now()}`;
     thumb.alt = '';
 
-    const title = document.createElement('span');
-    title.className = 'window-title';
+    const title = document.createElement('div');
+    title.className = 'window-card-title';
     title.textContent = w.title;
 
-    row.appendChild(thumb);
-    row.appendChild(title);
-    row.addEventListener('click', () => {
-      selectWindow(w.id);
-      closeLeftPanel();
-    });
-    list.appendChild(row);
+    card.appendChild(thumb);
+    card.appendChild(title);
+    card.addEventListener('click', () => selectWindow(w.id));
+    grid.appendChild(card);
   });
 }
 
@@ -58,7 +36,7 @@ async function fetchWindows() {
   try {
     const r = await fetch('/windows');
     _windows = await r.json();
-    renderWindowsList();
+    renderWindowsGrid();
   } catch (_) {}
 }
 
@@ -70,7 +48,11 @@ async function selectWindow(id) {
       body: JSON.stringify({ id })
     });
     _activeId = id;
-    renderWindowsList();
+    const w = _windows.find(w => w.id === id);
+    const titleEl = document.getElementById('stream-title');
+    if (titleEl && w) titleEl.textContent = w.title;
+    renderWindowsGrid();
+    showScreen('screen-stream');
   } catch (_) {}
 }
 
@@ -78,25 +60,18 @@ async function selectWindow(id) {
 function selectPrev() {
   if (!_windows.length) return;
   const idx = _windows.findIndex(w => w.id === _activeId);
-  const next = _windows[(idx - 1 + _windows.length) % _windows.length];
-  selectWindow(next.id);
+  selectWindow(_windows[(idx - 1 + _windows.length) % _windows.length].id);
 }
 
 function selectNext() {
   if (!_windows.length) return;
   const idx = _windows.findIndex(w => w.id === _activeId);
-  const next = _windows[(idx + 1) % _windows.length];
-  selectWindow(next.id);
-}
-
-function initPrevNext() {
-  document.getElementById('prev-btn').addEventListener('click', selectPrev);
-  document.getElementById('next-btn').addEventListener('click', selectNext);
+  selectWindow(_windows[(idx + 1) % _windows.length].id);
 }
 
 function refreshThumbnails() {
-  document.querySelectorAll('.window-thumb').forEach(img => {
-    const id = img.closest('.window-row').dataset.id;
+  document.querySelectorAll('.window-card-thumb').forEach(img => {
+    const id = img.closest('.window-card').dataset.id;
     img.src = `/window/${id}/preview?t=${Date.now()}`;
   });
 }
@@ -104,18 +79,21 @@ function refreshThumbnails() {
 function startWindowsPolling() {
   fetchWindows();
   setInterval(() => {
-    fetchWindows();
-    refreshThumbnails();
+    if (document.getElementById('screen-list').classList.contains('active')) {
+      fetchWindows();
+      refreshThumbnails();
+    }
   }, 2500);
 }
 
-function setActiveWindow(id) {
-  _activeId = id;
-  renderWindowsList();
-}
-
-// called from app.js DOMContentLoaded
 function initDrawer() {
-  initLeftPanel();
-  initPrevNext();
+  document.getElementById('back-btn').addEventListener('click', () => {
+    showScreen('screen-list');
+    fetchWindows();
+  });
+
+  document.getElementById('list-refresh-btn').addEventListener('click', fetchWindows);
+
+  document.getElementById('prev-btn').addEventListener('click', selectPrev);
+  document.getElementById('next-btn').addEventListener('click', selectNext);
 }

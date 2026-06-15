@@ -208,6 +208,26 @@ def _with_desktop(desktop_name: str, fn):
         return fn()
 
 
+def handle_drag_start(hwnd, nx: float, ny: float):
+    _focus_window(hwnd)
+    ax, ay = _abs_coords(hwnd, nx, ny)
+    _send_mouse(MOUSEEVENTF_MOVE, ax, ay)
+    time.sleep(0.01)
+    _send_mouse(MOUSEEVENTF_LEFTDOWN, ax, ay)
+
+
+def handle_drag_move(hwnd, nx: float, ny: float):
+    ax, ay = _abs_coords(hwnd, nx, ny)
+    _send_mouse(MOUSEEVENTF_MOVE, ax, ay)
+
+
+def handle_drag_end(hwnd, nx: float, ny: float):
+    ax, ay = _abs_coords(hwnd, nx, ny)
+    _send_mouse(MOUSEEVENTF_MOVE, ax, ay)
+    time.sleep(0.01)
+    _send_mouse(MOUSEEVENTF_LEFTUP, ax, ay)
+
+
 def handle_click_on_desktop(hwnd, nx: float, ny: float, desktop: str = "Default"):
     """Click with desktop-switching for lock screen support."""
     def _do():

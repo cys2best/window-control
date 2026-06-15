@@ -11,44 +11,49 @@
 </head>
 <body>
 
-  <!-- CENTER: stream -->
-  <div id="stream-container">
-    <img id="stream-img" alt="stream" draggable="false">
-  </div>
-
-  <!-- LEFT PANEL: toggle button + window list -->
-  <div id="left-toggle" title="Windows"><span id="left-toggle-icon">&#9654;</span><span style="font-size:9px;opacity:0.7;writing-mode:vertical-rl">WINDOWS</span></div>
-
-  <div id="left-panel">
-    <div id="left-header">
-      <span>Windows</span>
-      <button id="left-close">&#10005;</button>
+  <!-- SCREEN 1: Window list -->
+  <div id="screen-list" class="screen active">
+    <div id="list-header">
+      <span id="list-title">Windows</span>
+      <button id="list-refresh-btn" title="Refresh">&#8635;</button>
     </div>
-    <div id="windows-list"></div>
+    <div id="windows-grid"></div>
   </div>
 
-  <!-- RIGHT TOOLBAR -->
-  <div id="right-toolbar">
-    <div class="hud-pill" id="fps-pill">-- fps</div>
-    <div class="hud-pill" id="status-pill">…</div>
+  <!-- SCREEN 2: Stream -->
+  <div id="screen-stream" class="screen">
 
-    <div class="rt-spacer"></div>
+    <!-- Stream image -->
+    <div id="stream-container">
+      <img id="stream-img" alt="stream" draggable="false">
+    </div>
 
-    <button class="rt-btn" id="prev-btn" title="Previous window">&#9650;</button>
-    <button class="rt-btn" id="next-btn" title="Next window">&#9660;</button>
+    <!-- Top bar -->
+    <div id="stream-topbar">
+      <button id="back-btn" title="Back to windows">&#8592;</button>
+      <span id="stream-title"></span>
+      <div class="hud-pill" id="fps-pill">-- fps</div>
+    </div>
 
-    <div class="rt-spacer"></div>
+    <!-- Right toolbar -->
+    <div id="right-toolbar">
+      <div class="hud-pill" id="status-pill">…</div>
+      <div class="rt-spacer"></div>
+      <button class="rt-btn" id="prev-btn" title="Previous window">&#9650;</button>
+      <button class="rt-btn" id="next-btn" title="Next window">&#9660;</button>
+      <div class="rt-spacer"></div>
+      <button class="rt-btn" id="keyboard-btn" title="Keyboard">&#9000;</button>
+    </div>
 
-    <button class="rt-btn" id="keyboard-btn" title="Keyboard">&#9000;</button>
-  </div>
+    <!-- hidden keyboard input -->
+    <input id="keyboard-input" type="text" autocomplete="off" autocorrect="off" autocapitalize="off">
 
-  <!-- hidden keyboard input -->
-  <input id="keyboard-input" type="text" autocomplete="off" autocorrect="off" autocapitalize="off">
+    <!-- Unavailable overlay -->
+    <div id="unavailable-overlay">
+      <p>Window unavailable</p>
+      <button id="reconnect-btn">Reconnect</button>
+    </div>
 
-  <!-- Unavailable overlay -->
-  <div id="unavailable-overlay">
-    <p>Window unavailable</p>
-    <button id="reconnect-btn">Reconnect</button>
   </div>
 
   <script src="/static/windows_panel.js"></script>

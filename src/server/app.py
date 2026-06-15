@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from typing import Literal
 
 from config import CLIENT_DIR, QUALITY_MAP
-from server.input_handler import handle_move, handle_scroll, handle_click_on_desktop, handle_key_on_desktop
+from server.input_handler import handle_move, handle_scroll, handle_click_on_desktop, handle_key_on_desktop, handle_drag_start, handle_drag_move, handle_drag_end
 from server.preview import capture_preview
 from server.stream import CaptureState, FrameQueue, mjpeg_generator
 from server.window_manager import focus_window
@@ -106,6 +106,12 @@ def create_app(
                         handle_click_on_desktop(hwnd, data["x"], data["y"], desktop)
                     elif t == "move":
                         handle_move(hwnd, data["x"], data["y"])
+                    elif t == "drag_start":
+                        handle_drag_start(hwnd, data["x"], data["y"])
+                    elif t == "drag_move":
+                        handle_drag_move(hwnd, data["x"], data["y"])
+                    elif t == "drag_end":
+                        handle_drag_end(hwnd, data["x"], data["y"])
                     elif t == "scroll":
                         handle_scroll(hwnd, data.get("dx", 0), data.get("dy", 0))
                     elif t == "key":

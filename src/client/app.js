@@ -3,12 +3,15 @@ let ws = null;
 let wsRetryDelay = 1000;
 let frameCount = 0;
 let lastFrameTime = Date.now();
-let fpsInterval = null;
-// stream stall detection via _streamPoll interval (see initStream)
 
-// Pinch zoom state
 let lastDist = null;
 let currentScale = 1;
+
+// Drag state
+let _dragActive = false;
+let _dragStartX = 0;
+let _dragStartY = 0;
+let _dragMoved = false;
 
 function connectWS() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -21,7 +24,8 @@ function connectWS() {
 function scheduleWSReconnect() {
   setTimeout(() => connectWS(), wsRetryDelay);
   wsRetryDelay = Math.min(wsRetryDelay * 2, 30000);
-  document.getElementById('status-pill').textContent = 'Reconnecting…';
+  const pill = document.getElementById('status-pill');
+  if (pill) pill.textContent = 'Reconnecting…';
 }
 
 function sendInput(obj) {
@@ -34,15 +38,13 @@ function initStream() {
   const img = document.getElementById('stream-img');
   img.src = '/stream?' + Date.now();
 
-  // MJPEG: onload fires once on first frame; use naturalWidth poll to detect stall
-  let lastW = 0, lastCheck = Date.now();
+  let lastCheck = Date.now();
   clearInterval(window._streamPoll);
   window._streamPoll = setInterval(() => {
     const w = img.naturalWidth;
     if (w > 0) {
       frameCount++;
       clearUnavailable();
-      lastW = w;
       lastCheck = Date.now();
     } else if (Date.now() - lastCheck > 2000) {
       showUnavailable();
@@ -51,15 +53,8 @@ function initStream() {
 
   img.onerror = () => {
     clearInterval(window._streamPoll);
-    scheduleStreamReconnect();
+    setTimeout(() => initStream(), 2000);
   };
-}
-
-function scheduleStreamReconnect() {
-  setTimeout(() => {
-    const img = document.getElementById('stream-img');
-    img.src = '/stream?' + Date.now();
-  }, 2000);
 }
 
 function showUnavailable() {
@@ -86,7 +81,19 @@ function initTouch() {
   const container = document.getElementById('stream-container');
 
   container.addEventListener('touchstart', e => {
-    if (e.touches.length === 2) {
+    if (e.touches.length === 1) {
+      const t = e.touches[0];
+      _dragStartX = t.clientX;
+      _dragStartY = t.clientY;
+      _dragMoved = false;
+      _dragActive = true;
+      const { x, y } = normalizeCoords(t.clientX, t.clientY);
+      sendInput({ type: 'drag_start', x, y });
+    } else if (e.touches.length === 2) {
+      // Cancel drag if second finger added
+      if (_dragActive) {
+        _dragActive = false;
+      }
       lastDist = Math.hypot(
         e.touches[0].clientX - e.touches[1].clientX,
         e.touches[0].clientY - e.touches[1].clientY
@@ -95,7 +102,14 @@ function initTouch() {
   }, { passive: true });
 
   container.addEventListener('touchmove', e => {
-    if (e.touches.length === 2 && lastDist !== null) {
+    if (e.touches.length === 1 && _dragActive) {
+      const t = e.touches[0];
+      const dx = t.clientX - _dragStartX;
+      const dy = t.clientY - _dragStartY;
+      if (Math.hypot(dx, dy) > 4) _dragMoved = true;
+      const { x, y } = normalizeCoords(t.clientX, t.clientY);
+      sendInput({ type: 'drag_move', x, y });
+    } else if (e.touches.length === 2 && lastDist !== null) {
       const dist = Math.hypot(
         e.touches[0].clientX - e.touches[1].clientX,
         e.touches[0].clientY - e.touches[1].clientY
@@ -103,18 +117,21 @@ function initTouch() {
       currentScale = Math.max(0.5, Math.min(4, currentScale * (dist / lastDist)));
       document.getElementById('stream-img').style.transform = `scale(${currentScale})`;
       lastDist = dist;
-    } else if (e.touches.length === 2) {
-      const dx = e.touches[0].clientX - e.touches[1].clientX;
-      const dy = e.touches[0].clientY - e.touches[1].clientY;
-      sendInput({ type: 'scroll', dx: Math.round(dx / 20), dy: Math.round(dy / 20) });
     }
   }, { passive: true });
 
   container.addEventListener('touchend', e => {
-    if (e.changedTouches.length === 1 && e.touches.length === 0) {
+    if (_dragActive && e.touches.length === 0) {
       const t = e.changedTouches[0];
       const { x, y } = normalizeCoords(t.clientX, t.clientY);
-      sendInput({ type: 'click', x, y });
+      if (!_dragMoved) {
+        // Tap — release drag, then send a clean click
+        sendInput({ type: 'drag_end', x, y });
+        sendInput({ type: 'click', x, y });
+      } else {
+        sendInput({ type: 'drag_end', x, y });
+      }
+      _dragActive = false;
     }
     if (e.touches.length < 2) lastDist = null;
   }, { passive: true });
@@ -140,21 +157,15 @@ function initKeyboard() {
 }
 
 function initFPS() {
-  fpsInterval = setInterval(() => {
+  setInterval(() => {
     const now = Date.now();
     const elapsed = (now - lastFrameTime) / 1000;
     const fps = Math.round(frameCount / elapsed);
-    document.getElementById('fps-pill').textContent = `${fps} fps`;
+    const pill = document.getElementById('fps-pill');
+    if (pill) pill.textContent = `${fps} fps`;
     frameCount = 0;
     lastFrameTime = now;
   }, 1000);
-}
-
-function initReconnectBtn() {
-  document.getElementById('reconnect-btn').addEventListener('click', () => {
-    clearUnavailable();
-    initStream();
-  });
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -163,7 +174,11 @@ document.addEventListener('DOMContentLoaded', () => {
   initTouch();
   initKeyboard();
   initFPS();
-  initReconnectBtn();
   initDrawer();
   startWindowsPolling();
+
+  document.getElementById('reconnect-btn').addEventListener('click', () => {
+    clearUnavailable();
+    initStream();
+  });
 });
