@@ -155,7 +155,7 @@ if sys.platform == "win32":
             except Exception:
                 return []
 
-        available_windows = _build_windows()
+        available_windows = []  # populated by GUI via push_windows pipe command
         fastapi_app = create_app(state, frame_queue, available_windows)
 
         config = uvicorn.Config(
@@ -178,8 +178,6 @@ if sys.platform == "win32":
             _log_crash("[desktop] UNLOCK detected")
             turn_monitor_off_after_unlock()
             state.set_desktop("Default")
-            available_windows.clear()
-            available_windows.extend(_build_windows())
             if pipe_server:
                 pipe_server.push({"event": "unlock"})
 
@@ -191,8 +189,6 @@ if sys.platform == "win32":
             if cmd == "start":
                 if not state.running:
                     state.running = True
-                    available_windows.clear()
-                    available_windows.extend(_build_windows())
                     threading.Thread(target=capture_loop, args=(state, frame_queue), daemon=True).start()
                     threading.Thread(target=server.run, daemon=True).start()
                     _log_crash("[service_body] server+capture started via pipe cmd")
@@ -214,6 +210,12 @@ if sys.platform == "win32":
                 available_windows.clear()
                 available_windows.extend(_build_windows())
                 return {"event": "windows", "list": available_windows}
+            if cmd == "push_windows":
+                pushed = msg.get("list", [])
+                available_windows.clear()
+                available_windows.extend(pushed)
+                _log_crash(f"[service_body] windows updated from GUI: {len(pushed)} windows")
+                return {"event": "ok"}
             if cmd == "status":
                 return {"event": "status", "running": state.running}
             return None

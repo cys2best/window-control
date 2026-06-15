@@ -37,9 +37,11 @@ def main():
                 launcher.on_service_lock()
             elif event == "unlock":
                 launcher.on_service_unlock()
+                # Refresh window list after unlock — apps may have changed
+                threading.Thread(target=_push_windows, args=(lambda cmd: _pipe.send(cmd),), daemon=True).start()
 
         _pipe = PipeClient(on_event=_on_service_event)
-        threading.Thread(target=_try_connect_pipe, args=(_pipe,), daemon=True).start()
+        threading.Thread(target=_try_connect_pipe, args=(_pipe, lambda cmd: _pipe.send(cmd)), daemon=True).start()
 
     def _send(cmd: dict):
         if _pipe and _pipe.is_connected:
@@ -77,12 +79,26 @@ def main():
     sys.exit(exit_code)
 
 
-def _try_connect_pipe(pipe):
+def _try_connect_pipe(pipe, send_fn):
     import time
     while True:
         if pipe.connect():
+            _push_windows(send_fn)
+            # Re-push every 30s so service stays current
+            while pipe.is_connected:
+                time.sleep(30)
+                _push_windows(send_fn)
             return
         time.sleep(3)
+
+
+def _push_windows(send_fn):
+    try:
+        from server.window_manager import list_windows
+        windows = [{"id": w.hwnd, "title": w.title} for w in list_windows()]
+        send_fn({"cmd": "push_windows", "list": windows})
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":

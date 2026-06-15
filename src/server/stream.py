@@ -44,7 +44,7 @@ if sys.platform == "win32":
             _log("[capture] dxcam loaded OK")
         except Exception:
             _dxcam_available = False
-            _log(f"[capture] dxcam unavailable (ok): {traceback.format_exc()[:200]}")
+            _log(f"[capture] dxcam unavailable (ok): {traceback.format_exc()[:600]}")
         try:
             from turbojpeg import TurboJPEG
             _jpeg = TurboJPEG()
@@ -242,6 +242,7 @@ def _grab_printwindow(hwnd) -> np.ndarray | None:
         win32gui.ReleaseDC(hwnd, hwnd_dc)
         return arr
     except Exception:
+        _log(f"[printwindow] failed hwnd={hwnd}: {traceback.format_exc()[:400]}")
         return None
 
 
@@ -251,6 +252,7 @@ def capture_loop(state: CaptureState, frame_queue: FrameQueue):
     _LOCKED_FRAME = _make_locked_frame()
     current_desktop = "Default"
     _capture_err_logged = False
+    _capture_ok_logged = False
 
     _ensure_capture_libs()
     _log("[capture_loop] started")
@@ -346,11 +348,19 @@ def capture_loop(state: CaptureState, frame_queue: FrameQueue):
                 arr = _grab_mss(rect)
 
             if arr is None:
+                if not _capture_err_logged:
+                    _log(f"[capture_loop] all methods failed hwnd={hwnd}")
+                    _capture_err_logged = True
                 frame_queue.put(_BLACK_FRAME)
             else:
+                if not _capture_ok_logged:
+                    _log(f"[capture_loop] capture OK hwnd={hwnd}")
+                    _capture_ok_logged = True
+                _capture_err_logged = False
                 jpeg_bytes = _encode_frame(arr, state.quality)
                 frame_queue.put(jpeg_bytes)
         except Exception:
+            _log(f"[capture_loop] exception: {traceback.format_exc()[:300]}")
             frame_queue.put(_BLACK_FRAME)
 
         time.sleep(1 / 30)
