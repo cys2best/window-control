@@ -286,12 +286,12 @@ def main():
     elif "--stop" in sys.argv:
         win32serviceutil.StopService(SERVICE_NAME)
     elif "--run-service" in sys.argv:
-        # SCM entry point — always explicit now, never ambiguous
+        # SCM entry point. pywin32 detects SCM context internally via HandleCommandLine.
+        # Do NOT call servicemanager.Initialize/StartServiceCtrlDispatcher manually —
+        # that causes error 1063 when the connection is already managed by SCM.
         _log_crash(f"[run-service] entered, exe={sys.executable}")
         try:
-            servicemanager.Initialize(SERVICE_NAME, sys.executable)
-            servicemanager.PrepareToHostSingle(WindowControlService)
-            servicemanager.StartServiceCtrlDispatcher()
+            win32serviceutil.HandleCommandLine(WindowControlService)
         except Exception as exc:
             import traceback
             _log_crash(f"[SCM dispatch] {traceback.format_exc()}")
