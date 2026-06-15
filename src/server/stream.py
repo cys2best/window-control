@@ -204,6 +204,47 @@ def _grab_mss(rect: tuple) -> np.ndarray | None:
         return None
 
 
+def _grab_printwindow(hwnd) -> np.ndarray | None:
+    """Capture window via PrintWindow — works headless (no display required).
+
+    Uses GDI off-screen DC so RDP disconnect / no monitor doesn't break capture.
+    PW_RENDERFULLCONTENT (0x2) forces GPU content (DWM) to be included.
+    """
+    if sys.platform != "win32":
+        return None
+    try:
+        import win32gui
+        import win32ui
+        import win32con
+        left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+        w, h = right - left, bottom - top
+        if w <= 0 or h <= 0:
+            return None
+        hwnd_dc = win32gui.GetWindowDC(hwnd)
+        mfc_dc = win32ui.CreateDCFromHandle(hwnd_dc)
+        save_dc = mfc_dc.CreateCompatibleDC()
+        bmp = win32ui.CreateBitmap()
+        bmp.CreateCompatibleBitmap(mfc_dc, w, h)
+        save_dc.SelectObject(bmp)
+        # PW_RENDERFULLCONTENT = 0x2 captures GPU-composited content
+        result = ctypes.windll.user32.PrintWindow(hwnd, save_dc.GetSafeHdc(), 0x2)
+        if not result:
+            # Fallback without PW_RENDERFULLCONTENT
+            ctypes.windll.user32.PrintWindow(hwnd, save_dc.GetSafeHdc(), 0)
+        bmp_info = bmp.GetInfo()
+        bmp_str = bmp.GetBitmapBits(True)
+        arr = np.frombuffer(bmp_str, dtype=np.uint8).reshape(
+            (bmp_info['bmHeight'], bmp_info['bmWidth'], 4)
+        )
+        win32gui.DeleteObject(bmp.GetHandle())
+        save_dc.DeleteDC()
+        mfc_dc.DeleteDC()
+        win32gui.ReleaseDC(hwnd, hwnd_dc)
+        return arr
+    except Exception:
+        return None
+
+
 def capture_loop(state: CaptureState, frame_queue: FrameQueue):
     global _BLACK_FRAME, _LOCKED_FRAME
     _BLACK_FRAME = _make_black_frame()
@@ -292,7 +333,11 @@ def capture_loop(state: CaptureState, frame_queue: FrameQueue):
             if camera is not None:
                 arr = _grab_dxgi(camera, rect)
 
-            # Fallback: mss/GDI (monitor must be on, but always works)
+            # Secondary: PrintWindow — works headless (no display/RDP required)
+            if arr is None:
+                arr = _grab_printwindow(hwnd)
+
+            # Fallback: mss/GDI — requires active display session
             if arr is None:
                 arr = _grab_mss(rect)
 

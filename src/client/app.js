@@ -38,18 +38,23 @@ function initStream() {
   const img = document.getElementById('stream-img');
   img.src = '/stream?' + Date.now();
 
-  let lastCheck = Date.now();
+  let lastW = 0, lastCheck = Date.now();
   clearInterval(window._streamPoll);
   window._streamPoll = setInterval(() => {
     const w = img.naturalWidth;
     if (w > 0) {
       frameCount++;
       clearUnavailable();
+      lastW = w;
       lastCheck = Date.now();
-    } else if (Date.now() - lastCheck > 2000) {
-      showUnavailable();
+    } else if (Date.now() - lastCheck > 5000) {
+      // No frame for 5s — silently reconnect stream
+      clearInterval(window._streamPoll);
+      img.src = '';
+      clearUnavailable();
+      setTimeout(() => initStream(), 1000);
     }
-  }, 100);
+  }, 200);
 
   img.onerror = () => {
     clearInterval(window._streamPoll);
