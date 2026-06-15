@@ -34,14 +34,6 @@ except Exception as _e:
     _log_crash(f"[stdlib import] {_tb.format_exc()}")
     raise
 
-try:
-    import uvicorn
-    _log_crash("[imports] uvicorn OK")
-except Exception as _e:
-    import traceback as _tb
-    _log_crash(f"[uvicorn import] {_tb.format_exc()}")
-    raise
-
 if sys.platform == "win32":
     try:
         import win32service
@@ -54,14 +46,6 @@ if sys.platform == "win32":
 
 try:
     _log_crash("[imports] loading app modules...")
-    from config import PORT, QUALITY_MAP, DEFAULT_QUALITY
-    _log_crash("[imports] config OK")
-    from server.app import create_app
-    _log_crash("[imports] server.app OK")
-    from server.stream import CaptureState, FrameQueue, capture_loop
-    _log_crash("[imports] server.stream OK")
-    from server.window_manager import list_windows
-    _log_crash("[imports] window_manager OK")
     from service.pipe_server import PipeServer
     _log_crash("[imports] pipe_server OK")
     from service.desktop_monitor import DesktopMonitor
@@ -75,13 +59,8 @@ except Exception as _e:
 
 
 SERVICE_NAME = "WindowControlService"
-SERVICE_DISPLAY = "Window Control Streaming Service"
-SERVICE_DESCRIPTION = "Streams Windows application windows to iPhone over Tailscale. Continues during lock screen."
-
-
-def _build_windows():
-    windows = list_windows()
-    return [{"id": w.hwnd, "title": w.title} for w in windows]
+SERVICE_DISPLAY = "Window Control Lock Screen Monitor"
+SERVICE_DESCRIPTION = "Monitors Windows lock/unlock events for WindowControl screen streaming."
 
 
 if sys.platform == "win32":
@@ -141,66 +120,37 @@ if sys.platform == "win32":
     SERVICE_MAIN_FUNC = ctypes.WINFUNCTYPE(None, ctypes.wintypes.DWORD, ctypes.POINTER(ctypes.c_wchar_p))
 
     def _run_service_body():
-        """Core service logic — runs after SCM handshake complete."""
-        state = CaptureState()
-        state.set_quality(QUALITY_MAP[DEFAULT_QUALITY])
-        frame_queue = FrameQueue()
-        available_windows = []
-        server = None
+        """Service body — monitors lock/unlock, pushes events to GUI via pipe.
+
+        The GUI process (running as the logged-in user) owns uvicorn + capture.
+        This service only handles WTS session notifications and auto-unlock logic,
+        then forwards lock/unlock events so the GUI can switch capture desktops.
+        """
+        _log_crash("[service_body] started — desktop monitor + pipe server only")
         pipe_server = None
         desktop_monitor = None
+        _connected_handle = [None]  # mutable ref for current pipe client handle
 
-        def start_streaming():
-            nonlocal server
-            _log_crash(f"[streaming] starting uvicorn on port {PORT}")
-            state.running = True
-            available_windows.clear()
-            available_windows.extend(_build_windows())
-            fastapi_app = create_app(state, frame_queue, available_windows)
-            config = uvicorn.Config(fastapi_app, host="0.0.0.0", port=PORT,
-                                    log_level="warning", log_config=None)
-            server = uvicorn.Server(config)
-            threading.Thread(target=capture_loop, args=(state, frame_queue), daemon=True).start()
-            threading.Thread(target=server.run, daemon=True).start()
-            _log_crash(f"[streaming] threads launched")
+        def _push_event(event: dict):
+            """Push event to currently connected GUI pipe client."""
+            h = _connected_handle[0]
+            if h is not None and pipe_server is not None:
+                pipe_server.push(h, event)
 
         def on_lock():
-            _log_crash("[desktop] LOCK detected — switching to Winlogon desktop")
-            state.set_desktop("Winlogon")
+            _log_crash("[desktop] LOCK detected")
             auto_unlock_on_lock()
+            _push_event({"event": "lock"})
 
         def on_unlock():
-            _log_crash("[desktop] UNLOCK detected — switching to Default desktop")
-            state.set_desktop("Default")
-            available_windows.clear()
-            available_windows.extend(_build_windows())
+            _log_crash("[desktop] UNLOCK detected")
             turn_monitor_off_after_unlock()
+            _push_event({"event": "unlock"})
 
         def on_command(msg):
             cmd = msg.get("cmd")
             if cmd == "ping":
                 return {"event": "pong"}
-            elif cmd == "start":
-                if not state.running:
-                    start_streaming()
-                return {"event": "state", "streaming": True}
-            elif cmd == "stop":
-                state.running = False
-                if server:
-                    server.should_exit = True
-                return {"event": "state", "streaming": False}
-            elif cmd == "select":
-                hwnd = msg.get("id")
-                if hwnd:
-                    state.set_hwnd(hwnd)
-                return {"event": "state", "streaming": state.running, "hwnd": hwnd}
-            elif cmd == "quality":
-                state.set_quality(msg.get("value", 85))
-                return {"event": "pong"}
-            elif cmd == "windows":
-                available_windows.clear()
-                available_windows.extend(_build_windows())
-                return {"event": "windows", "list": available_windows}
             return None
 
         desktop_monitor = DesktopMonitor(on_lock=on_lock, on_unlock=on_unlock)
@@ -209,13 +159,9 @@ if sys.platform == "win32":
         pipe_server = PipeServer(on_command=on_command)
         pipe_server.start()
 
-        start_streaming()
-
+        _log_crash("[service_body] waiting for stop event")
         _g_stop_event.wait()
 
-        state.running = False
-        if server:
-            server.should_exit = True
         if pipe_server:
             pipe_server.stop()
         if desktop_monitor:
