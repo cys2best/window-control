@@ -250,6 +250,10 @@ def capture_loop(state: CaptureState, frame_queue: FrameQueue):
         if hwnd is None:
             # No window selected — stream full primary monitor
             try:
+                if not _capture_err_logged:
+                    cur_winsta = ctypes.windll.user32.GetProcessWindowStation()
+                    cur_desk = ctypes.windll.user32.GetThreadDesktop(ctypes.windll.kernel32.GetCurrentThreadId())
+                    _log(f"[capture_loop] pre-grab winsta={cur_winsta} desk={cur_desk} hwinsta_global={_hwinsta}")
                 with _mss_lib.mss() as sct:
                     monitor = sct.monitors[1]
                     shot = sct.grab(monitor)
