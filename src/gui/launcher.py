@@ -33,8 +33,11 @@ class LauncherWindow(QMainWindow):
         self._setup_ui()
         self._refresh_ip()
         check_for_update(self._on_update_available)
-        # Auto-install service on first launch if not installed
         QTimer.singleShot(1500, self._auto_install_service)
+        # Refresh service status every 10s
+        self._svc_refresh_timer = QTimer()
+        self._svc_refresh_timer.timeout.connect(self._refresh_service_status_label)
+        self._svc_refresh_timer.start(10000)
 
     def _setup_ui(self):
         scroll = QScrollArea()
