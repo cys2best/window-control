@@ -334,18 +334,24 @@ def capture_loop(state: CaptureState, frame_queue: FrameQueue):
         try:
             rect = get_window_rect(hwnd)  # (x0, y0, x1, y1)
             arr = None
+            _method = None
 
-            # Primary: DXGI — GPU-side, monitor power state irrelevant
-            if camera is not None:
+            # Primary: PrintWindow — works headless, no display/RDP required
+            arr = _grab_printwindow(hwnd)
+            if arr is not None:
+                _method = "PrintWindow"
+
+            # Secondary: DXGI — GPU-side (unavailable under SYSTEM but try anyway)
+            if arr is None and camera is not None:
                 arr = _grab_dxgi(camera, rect)
-
-            # Secondary: PrintWindow — works headless (no display/RDP required)
-            if arr is None:
-                arr = _grab_printwindow(hwnd)
+                if arr is not None:
+                    _method = "dxcam"
 
             # Fallback: mss/GDI — requires active display session
             if arr is None:
                 arr = _grab_mss(rect)
+                if arr is not None:
+                    _method = "mss"
 
             if arr is None:
                 if not _capture_err_logged:
@@ -354,7 +360,7 @@ def capture_loop(state: CaptureState, frame_queue: FrameQueue):
                 frame_queue.put(_BLACK_FRAME)
             else:
                 if not _capture_ok_logged:
-                    _log(f"[capture_loop] capture OK hwnd={hwnd}")
+                    _log(f"[capture_loop] capture OK via {_method} hwnd={hwnd}")
                     _capture_ok_logged = True
                 _capture_err_logged = False
                 jpeg_bytes = _encode_frame(arr, state.quality)
