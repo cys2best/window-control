@@ -52,6 +52,16 @@ try:
     _log_crash("[imports] desktop_monitor OK")
     from service.auto_unlock import auto_unlock_on_lock, turn_monitor_off_after_unlock
     _log_crash("[imports] auto_unlock OK")
+    import uvicorn
+    _log_crash("[imports] uvicorn OK")
+    from server.app import create_app
+    _log_crash("[imports] server.app OK")
+    from server.stream import CaptureState, FrameQueue, capture_loop
+    _log_crash("[imports] server.stream OK")
+    from server.window_manager import list_windows
+    _log_crash("[imports] window_manager OK")
+    from config import PORT, QUALITY_MAP, DEFAULT_QUALITY
+    _log_crash("[imports] config OK")
 except Exception as _e:
     import traceback as _tb
     _log_crash(f"[app import] {_tb.format_exc()}")
@@ -120,32 +130,92 @@ if sys.platform == "win32":
     SERVICE_MAIN_FUNC = ctypes.WINFUNCTYPE(None, ctypes.wintypes.DWORD, ctypes.POINTER(ctypes.c_wchar_p))
 
     def _run_service_body():
-        """Service body — monitors lock/unlock, pushes events to GUI via pipe.
+        """Service body — owns uvicorn + capture + lock monitor.
 
-        The GUI process (running as the logged-in user) owns uvicorn + capture.
-        This service only handles WTS session notifications and auto-unlock logic,
-        then forwards lock/unlock events so the GUI can switch capture desktops.
+        Runs as SYSTEM in Session 0 — survives RDP disconnect/reconnect.
+        Capture uses dxcam (GPU-level) + PrintWindow (GDI off-screen) — both
+        work headless without an active display session.
+
+        GUI tray app connects via named pipe to send commands (select window,
+        start/stop, set quality) and receive lock/unlock events.
         """
-        _log_crash("[service_body] started — desktop monitor + pipe server only")
+        import traceback
+
+        _log_crash("[service_body] started — uvicorn + capture + lock monitor")
+
+        # --- Shared state ---
+        state = CaptureState()
+        state.set_quality(QUALITY_MAP[DEFAULT_QUALITY])
+        frame_queue = FrameQueue()
+
+        def _build_windows():
+            try:
+                windows = list_windows()
+                return [{"id": w.hwnd, "title": w.title} for w in windows]
+            except Exception:
+                return []
+
+        available_windows = _build_windows()
+        fastapi_app = create_app(state, frame_queue, available_windows)
+
+        config = uvicorn.Config(
+            fastapi_app, host="0.0.0.0", port=PORT,
+            log_level="warning", log_config=None,
+        )
+        server = uvicorn.Server(config)
+
+        # --- Lock/unlock monitor ---
         pipe_server = None
-        desktop_monitor = None
 
         def on_lock():
             _log_crash("[desktop] LOCK detected")
             auto_unlock_on_lock()
+            state.set_desktop("Winlogon")
             if pipe_server:
                 pipe_server.push({"event": "lock"})
 
         def on_unlock():
             _log_crash("[desktop] UNLOCK detected")
             turn_monitor_off_after_unlock()
+            state.set_desktop("Default")
+            available_windows.clear()
+            available_windows.extend(_build_windows())
             if pipe_server:
                 pipe_server.push({"event": "unlock"})
 
+        # --- Pipe command handler ---
         def on_command(msg):
             cmd = msg.get("cmd")
             if cmd == "ping":
                 return {"event": "pong"}
+            if cmd == "start":
+                if not state.running:
+                    state.running = True
+                    available_windows.clear()
+                    available_windows.extend(_build_windows())
+                    threading.Thread(target=capture_loop, args=(state, frame_queue), daemon=True).start()
+                    threading.Thread(target=server.run, daemon=True).start()
+                    _log_crash("[service_body] server+capture started via pipe cmd")
+                return {"event": "ok"}
+            if cmd == "stop":
+                state.running = False
+                server.should_exit = True
+                return {"event": "ok"}
+            if cmd == "select":
+                hwnd = msg.get("hwnd")
+                state.set_hwnd(hwnd)
+                return {"event": "ok"}
+            if cmd == "quality":
+                val = msg.get("value")
+                if val is not None:
+                    state.set_quality(int(val))
+                return {"event": "ok"}
+            if cmd == "list_windows":
+                available_windows.clear()
+                available_windows.extend(_build_windows())
+                return {"event": "windows", "list": available_windows}
+            if cmd == "status":
+                return {"event": "status", "running": state.running}
             return None
 
         desktop_monitor = DesktopMonitor(on_lock=on_lock, on_unlock=on_unlock)
@@ -154,9 +224,17 @@ if sys.platform == "win32":
         pipe_server = PipeServer(on_command=on_command)
         pipe_server.start()
 
+        # --- Auto-start server on service start ---
+        state.running = True
+        threading.Thread(target=capture_loop, args=(state, frame_queue), daemon=True).start()
+        threading.Thread(target=server.run, daemon=True).start()
+        _log_crash("[service_body] uvicorn + capture started")
+
         _log_crash("[service_body] waiting for stop event")
         _g_stop_event.wait()
 
+        state.running = False
+        server.should_exit = True
         if pipe_server:
             pipe_server.stop()
         if desktop_monitor:

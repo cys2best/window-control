@@ -4,76 +4,93 @@ import sys
 import threading
 from typing import Callable
 
-from service.pipe_server import PIPE_NAME, encode_msg, decode_msg
+from service.pipe_server import CMD_PIPE_NAME, EVENT_PIPE_NAME, encode_msg, decode_msg
 
 if sys.platform == "win32":
     import win32pipe
     import win32file
     import pywintypes
 
+    def _open_pipe(name: str):
+        win32pipe.WaitNamedPipe(name, 2000)
+        handle = win32file.CreateFile(
+            name,
+            win32file.GENERIC_READ | win32file.GENERIC_WRITE,
+            0, None,
+            win32file.OPEN_EXISTING,
+            0, None,
+        )
+        win32pipe.SetNamedPipeHandleState(
+            handle,
+            win32pipe.PIPE_READMODE_MESSAGE,
+            None, None,
+        )
+        return handle
+
     class PipeClient:
-        """Runs in GUI tray app. Connects to service pipe, sends commands, reads events."""
+        """Two-pipe client.
+
+        CMD pipe  — send commands to service, get replies.
+        EVENT pipe — receive unsolicited events pushed by service.
+        """
 
         def __init__(self, on_event: Callable[[dict], None] | None = None):
             self._on_event = on_event
-            self._handle = None
-            self._lock = threading.Lock()
+            self._cmd_handle = None
+            self._cmd_lock = threading.Lock()
             self._connected = False
 
         def connect(self) -> bool:
             try:
-                win32pipe.WaitNamedPipe(PIPE_NAME, 2000)
-                self._handle = win32file.CreateFile(
-                    PIPE_NAME,
-                    win32file.GENERIC_READ | win32file.GENERIC_WRITE,
-                    0, None,
-                    win32file.OPEN_EXISTING,
-                    0, None,
-                )
-                win32pipe.SetNamedPipeHandleState(
-                    self._handle,
-                    win32pipe.PIPE_READMODE_MESSAGE,
-                    None, None,
-                )
+                self._cmd_handle = _open_pipe(CMD_PIPE_NAME)
                 self._connected = True
                 if self._on_event:
-                    t = threading.Thread(target=self._read_loop, daemon=True)
+                    t = threading.Thread(target=self._event_loop, daemon=True)
                     t.start()
                 return True
             except pywintypes.error:
                 return False
 
         def send(self, cmd: dict) -> dict | None:
-            if not self._connected or self._handle is None:
+            """Send command, wait for reply."""
+            if not self._connected or self._cmd_handle is None:
                 return None
-            with self._lock:
+            with self._cmd_lock:
                 try:
-                    win32file.WriteFile(self._handle, encode_msg(cmd))
-                    _, data = win32file.ReadFile(self._handle, 65536)
-                    return decode_msg(data.rstrip(b"\n"))
+                    win32file.WriteFile(self._cmd_handle, encode_msg(cmd))
+                    _, data = win32file.ReadFile(self._cmd_handle, 65536)
+                    return decode_msg(data)
                 except pywintypes.error:
                     self._connected = False
                     return None
 
-        def _read_loop(self):
-            while self._connected and self._handle is not None:
+        def _event_loop(self):
+            """Separate connection to EVENT pipe — reads unsolicited pushes."""
+            try:
+                event_handle = _open_pipe(EVENT_PIPE_NAME)
+            except pywintypes.error:
+                return
+            while self._connected:
                 try:
-                    _, data = win32file.ReadFile(self._handle, 65536)
-                    msg = decode_msg(data.rstrip(b"\n"))
+                    _, data = win32file.ReadFile(event_handle, 65536)
+                    msg = decode_msg(data)
                     if msg and self._on_event:
                         self._on_event(msg)
                 except pywintypes.error:
-                    self._connected = False
                     break
+            try:
+                event_handle.Close()
+            except Exception:
+                pass
 
         def disconnect(self):
             self._connected = False
-            if self._handle:
+            if self._cmd_handle:
                 try:
-                    self._handle.Close()
+                    self._cmd_handle.Close()
                 except Exception:
                     pass
-                self._handle = None
+                self._cmd_handle = None
 
         @property
         def is_connected(self) -> bool:

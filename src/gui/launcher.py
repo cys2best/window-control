@@ -22,6 +22,8 @@ class LauncherWindow(QMainWindow):
     server_stop_requested = pyqtSignal()
     quality_changed = pyqtSignal(int)
     window_selected = pyqtSignal(int, str)
+    _lock_signal = pyqtSignal()
+    _unlock_signal = pyqtSignal()
 
     def __init__(self, state: CaptureState, parent=None):
         super().__init__(parent)
@@ -38,6 +40,9 @@ class LauncherWindow(QMainWindow):
         self._svc_refresh_timer = QTimer()
         self._svc_refresh_timer.timeout.connect(self._refresh_service_status_label)
         self._svc_refresh_timer.start(10000)
+        # Wire cross-thread lock/unlock signals
+        self._lock_signal.connect(self._on_lock_ui)
+        self._unlock_signal.connect(self._on_unlock_ui)
 
     def _setup_ui(self):
         scroll = QScrollArea()
@@ -291,6 +296,22 @@ class LauncherWindow(QMainWindow):
         else:
             self._service_status_label.setText("○ Lock screen service: not installed")
             self._service_status_label.setStyleSheet("font-size: 12px; color: #94a3b8; padding: 4px 0;")
+
+    def on_service_lock(self):
+        """Called from pipe thread — emit to Qt main thread."""
+        self._lock_signal.emit()
+
+    def on_service_unlock(self):
+        """Called from pipe thread — emit to Qt main thread."""
+        self._unlock_signal.emit()
+
+    def _on_lock_ui(self):
+        self._status_label.setText("Screen locked")
+        self._status_label.setStyleSheet("font-size: 13px; color: #dc2626;")
+
+    def _on_unlock_ui(self):
+        self._status_label.setText("Screen unlocked — server running…")
+        self._status_label.setStyleSheet("font-size: 13px; color: #16a34a;")
 
     def _run_elevated(self, exe: str, arg: str):
         if sys.platform == "win32":
