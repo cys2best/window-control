@@ -116,7 +116,7 @@ if sys.platform == "win32":
         if not _g_status_handle:
             return
         ss = SERVICE_STATUS()
-        ss.dwServiceType = 0x10  # SERVICE_WIN32_OWN_PROCESS
+        ss.dwServiceType = 0x110  # SERVICE_WIN32_OWN_PROCESS | SERVICE_INTERACTIVE_PROCESS
         ss.dwCurrentState = state
         ss.dwControlsAccepted = controls if state == SERVICE_RUNNING else 0
         ss.dwWin32ExitCode = 0
@@ -295,12 +295,15 @@ def _install_service_manually():
     try:
         hscm = win32service.OpenSCManager(None, None, win32service.SC_MANAGER_ALL_ACCESS)
         try:
+            # SERVICE_INTERACTIVE_PROCESS (0x100) grants GDI/BitBlt access to WinSta0\Default
+            # Required for screen capture under LocalSystem account
+            svc_type = win32service.SERVICE_WIN32_OWN_PROCESS | 0x100
             hsvc = win32service.CreateService(
                 hscm,
                 SERVICE_NAME,
                 SERVICE_DISPLAY,
                 win32service.SERVICE_ALL_ACCESS,
-                win32service.SERVICE_WIN32_OWN_PROCESS,
+                svc_type,
                 win32service.SERVICE_AUTO_START,
                 win32service.SERVICE_ERROR_NORMAL,
                 bin_path,
