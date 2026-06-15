@@ -157,16 +157,7 @@ function initReconnectBtn() {
   });
 }
 
-function tryLockLandscape() {
-  try {
-    if (screen.orientation && screen.orientation.lock) {
-      screen.orientation.lock('landscape').catch(() => {});
-    }
-  } catch (_) {}
-}
-
 document.addEventListener('DOMContentLoaded', () => {
-  tryLockLandscape();
   connectWS();
   initStream();
   initTouch();

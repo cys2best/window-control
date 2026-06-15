@@ -152,6 +152,7 @@ if sys.platform == "win32":
 
         def start_streaming():
             nonlocal server
+            _log_crash(f"[streaming] starting uvicorn on port {PORT}")
             state.running = True
             available_windows.clear()
             available_windows.extend(_build_windows())
@@ -161,12 +162,15 @@ if sys.platform == "win32":
             server = uvicorn.Server(config)
             threading.Thread(target=capture_loop, args=(state, frame_queue), daemon=True).start()
             threading.Thread(target=server.run, daemon=True).start()
+            _log_crash(f"[streaming] threads launched")
 
         def on_lock():
+            _log_crash("[desktop] LOCK detected — switching to Winlogon desktop")
             state.set_desktop("Winlogon")
             auto_unlock_on_lock()
 
         def on_unlock():
+            _log_crash("[desktop] UNLOCK detected — switching to Default desktop")
             state.set_desktop("Default")
             available_windows.clear()
             available_windows.extend(_build_windows())
