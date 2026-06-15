@@ -108,6 +108,7 @@ class CaptureState:
 
 
 _BLACK_FRAME: bytes = b""
+_hwinsta = None  # keep WinSta0 handle alive for the process lifetime
 
 
 def _make_black_frame() -> bytes:
@@ -131,15 +132,20 @@ def _switch_thread_desktop(name: str):
 
     SYSTEM services run in Session 0 with no window station. We must explicitly
     open WinSta0 (the interactive station) and then the named desktop within it.
+    The WinSta0 handle must be kept alive globally — if it closes, the process
+    reverts to the null station and BitBlt silently fails (GetLastError=0).
     """
+    global _hwinsta
     if sys.platform != "win32":
         return
     try:
-        # Open the interactive window station — SYSTEM can open it but doesn't own it
+        # Open the interactive window station — SYSTEM can open it but doesn't own it.
+        # Store in global so handle stays alive; closing it reverts the process station.
         WINSTA_ALL_ACCESS = 0x037F
         hwinsta = ctypes.windll.user32.OpenWindowStationW("WinSta0", False, WINSTA_ALL_ACCESS)
         if hwinsta:
             ctypes.windll.user32.SetProcessWindowStation(hwinsta)
+            _hwinsta = hwinsta  # keep alive — GC would close handle and revert station
             _log(f"[desktop] SetProcessWindowStation(WinSta0) OK")
         else:
             _log(f"[desktop] OpenWindowStation(WinSta0) failed err={ctypes.GetLastError()}")
