@@ -1,13 +1,26 @@
 import asyncio
 import ctypes
 import io
+import os
 import queue
 import sys
 import threading
 import time
+import traceback
 
 import numpy as np
 from PIL import Image
+
+
+def _log(msg: str):
+    for _p in [r"C:\ProgramData\WindowControl", r"C:\Windows\Temp"]:
+        try:
+            os.makedirs(_p, exist_ok=True)
+            with open(os.path.join(_p, "service_crash.log"), "a") as f:
+                f.write(msg + "\n")
+            return
+        except Exception:
+            continue
 
 if sys.platform == "win32":
     _mss_lib = None
@@ -18,18 +31,27 @@ if sys.platform == "win32":
         global _mss_lib, _dxcam_available, _jpeg
         if _mss_lib is not None:
             return
-        import mss as mss_lib
-        _mss_lib = mss_lib
+        try:
+            import mss as mss_lib
+            _mss_lib = mss_lib
+            _log("[capture] mss loaded OK")
+        except Exception:
+            _log(f"[capture] mss load FAILED: {traceback.format_exc()}")
+            raise
         try:
             import dxcam
             _dxcam_available = True
+            _log("[capture] dxcam loaded OK")
         except Exception:
             _dxcam_available = False
+            _log(f"[capture] dxcam unavailable (ok): {traceback.format_exc()[:200]}")
         try:
             from turbojpeg import TurboJPEG
             _jpeg = TurboJPEG()
+            _log("[capture] TurboJPEG loaded OK")
         except Exception:
             _jpeg = None
+            _log(f"[capture] TurboJPEG unavailable (ok): {traceback.format_exc()[:200]}")
 else:
     from stubs import mss_stub as _mss_lib
     _dxcam_available = False
@@ -145,8 +167,10 @@ def capture_loop(state: CaptureState, frame_queue: FrameQueue):
     global _BLACK_FRAME
     _BLACK_FRAME = _make_black_frame()
     current_desktop = "Default"
+    _capture_err_logged = False
 
     _ensure_capture_libs()
+    _log("[capture_loop] started")
 
     # Create dxcam camera once — reused across frames (GPU resource)
     camera = None
@@ -154,7 +178,9 @@ def capture_loop(state: CaptureState, frame_queue: FrameQueue):
         try:
             import dxcam as _dxcam_mod
             camera = _dxcam_mod.create(output_color="BGR")
+            _log("[capture_loop] dxcam camera created")
         except Exception:
+            _log(f"[capture_loop] dxcam camera create failed: {traceback.format_exc()[:300]}")
             camera = None
 
     while state.running:
@@ -188,14 +214,31 @@ def capture_loop(state: CaptureState, frame_queue: FrameQueue):
                 jpeg_bytes = _encode_frame(arr, state.quality)
                 frame_queue.put(jpeg_bytes)
             except Exception:
+                if not _capture_err_logged:
+                    _log(f"[capture_loop] Winlogon grab failed: {traceback.format_exc()}")
+                    _capture_err_logged = True
                 frame_queue.put(_BLACK_FRAME)
             time.sleep(1 / 30)
             continue
 
         hwnd = state.active_hwnd
         if hwnd is None:
-            frame_queue.put(_BLACK_FRAME)
-            time.sleep(0.05)
+            # No window selected — stream full primary monitor
+            try:
+                with _mss_lib.mss() as sct:
+                    monitor = sct.monitors[1]
+                    shot = sct.grab(monitor)
+                    arr = np.frombuffer(shot.raw, dtype=np.uint8).reshape(
+                        (shot.height, shot.width, 4)
+                    )
+                frame_queue.put(_encode_frame(arr, state.quality))
+                _capture_err_logged = False  # reset on success
+            except Exception:
+                if not _capture_err_logged:
+                    _log(f"[capture_loop] full-monitor grab failed: {traceback.format_exc()}")
+                    _capture_err_logged = True
+                frame_queue.put(_BLACK_FRAME)
+            time.sleep(1 / 30)
             continue
 
         if not is_window_alive(hwnd):
