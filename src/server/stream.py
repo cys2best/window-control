@@ -224,12 +224,6 @@ def _grab_printwindow(hwnd) -> np.ndarray | None:
         if w <= 0 or h <= 0:
             return None
 
-        # Force window to repaint its DC — DWM throttles rendering when no display is connected
-        RDW_INVALIDATE = 0x0001
-        RDW_UPDATENOW  = 0x0100
-        RDW_ALLCHILDREN = 0x0080
-        ctypes.windll.user32.RedrawWindow(hwnd, None, None, RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN)
-
         hwnd_dc = win32gui.GetWindowDC(hwnd)
         mfc_dc = win32ui.CreateDCFromHandle(hwnd_dc)
         save_dc = mfc_dc.CreateCompatibleDC()
