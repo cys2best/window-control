@@ -11,7 +11,7 @@ from PyQt5.QtGui import QPixmap, QImage
 import qrcode
 import io
 
-from config import PORT, QUALITY_MAP, DEFAULT_QUALITY, VERSION, GITHUB_REPO
+from config import PORT, QUALITY_MAP, DEFAULT_QUALITY, VERSION
 from server.tailscale import get_best_ip, has_tailscale
 from server.stream import CaptureState
 from updater import check_for_update
@@ -33,6 +33,7 @@ class LauncherWindow(QMainWindow):
         self.setMinimumWidth(420)
         self.resize(460, 600)
         self._setup_ui()
+        self._pending_update_version = None
         self._refresh_ip()
         check_for_update(self._on_update_available)
         self._disable_lock_on_disconnect()
@@ -113,15 +114,27 @@ class LauncherWindow(QMainWindow):
         layout.addWidget(self._service_status_label)
 
         # --- Update banner ---
-        self._update_label = QLabel()
-        self._update_label.setOpenExternalLinks(True)
-        self._update_label.setStyleSheet(
-            "background:#fffbe6; color:#7a6000; border:1px solid #f0c040;"
-            "border-radius:6px; padding:8px; font-size:13px;"
+        self._update_banner = QWidget()
+        self._update_banner.setStyleSheet(
+            "background:#fffbe6; border:1px solid #f0c040; border-radius:6px;"
         )
+        banner_layout = QVBoxLayout(self._update_banner)
+        banner_layout.setContentsMargins(10, 8, 10, 8)
+        banner_layout.setSpacing(6)
+
+        self._update_label = QLabel()
+        self._update_label.setStyleSheet("color:#7a6000; font-size:13px; background:transparent; border:none;")
         self._update_label.setWordWrap(True)
-        self._update_label.hide()
-        layout.addWidget(self._update_label)
+        banner_layout.addWidget(self._update_label)
+
+        self._install_btn = QPushButton("Install Update")
+        self._install_btn.setMinimumHeight(36)
+        self._install_btn.setStyleSheet(self._btn_style("#d97706", "#b45309"))
+        self._install_btn.clicked.connect(self._on_install_update)
+        banner_layout.addWidget(self._install_btn)
+
+        self._update_banner.hide()
+        layout.addWidget(self._update_banner)
 
         # --- Status bar ---
         self._status_label = QLabel("Server stopped")
@@ -210,12 +223,28 @@ class LauncherWindow(QMainWindow):
         self.quality_changed.emit(value)
 
     def _on_update_available(self, latest: str):
-        url = f"https://github.com/{GITHUB_REPO}/releases/latest"
-        self._update_label.setText(
-            f'Update available: v{latest} — '
-            f'<a href="{url}">Download</a>'
-        )
-        self._update_label.show()
+        self._pending_update_version = latest
+        self._update_label.setText(f"Update available: v{latest}")
+        self._install_btn.setText("Install Update")
+        self._install_btn.setEnabled(True)
+        self._update_banner.show()
+
+    def _on_install_update(self):
+        from updater import download_and_install
+        version = self._pending_update_version
+        if not version:
+            return
+        self._install_btn.setEnabled(False)
+        self._update_label.setText(f"Downloading v{version}… 0%")
+
+        def _progress(pct):
+            self._update_label.setText(f"Downloading v{version}… {pct}%")
+
+        def _error(msg):
+            self._update_label.setText(f"Download failed: {msg}")
+            self._install_btn.setEnabled(True)
+
+        download_and_install(version, on_progress=_progress, on_error=_error)
 
     def set_server_running(self, running: bool):
         self._server_running = running
