@@ -81,9 +81,8 @@ function startWindowsPolling() {
   setInterval(() => {
     if (document.getElementById('screen-list').classList.contains('active')) {
       fetchWindows();
-      refreshThumbnails();
     }
-  }, 2500);
+  }, 60000);
 }
 
 function initDrawer() {

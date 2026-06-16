@@ -3,6 +3,7 @@ let ws = null;
 let wsRetryDelay = 1000;
 let frameCount = 0;
 let lastFrameTime = Date.now();
+let totalFrameCount = 0;
 
 let lastDist = null;
 let currentScale = 1;
@@ -44,6 +45,7 @@ function initStream() {
     const w = img.naturalWidth;
     if (w > 0) {
       frameCount++;
+      totalFrameCount++;
       clearUnavailable();
       lastW = w;
       lastCheck = Date.now();
@@ -174,11 +176,22 @@ function initFPS() {
 
 function startLockPolling() {
   let wasLocked = false;
+  let lastSeenFrameCount = 0;
+  let lastFrameCountChange = Date.now();
   setInterval(async () => {
     try {
       const r = await fetch('/status');
       const { locked } = await r.json();
-      if (wasLocked && !locked) initStream();
+      if (totalFrameCount !== lastSeenFrameCount) {
+        lastSeenFrameCount = totalFrameCount;
+        lastFrameCountChange = Date.now();
+      }
+      const stale = Date.now() - lastFrameCountChange > 4000;
+      // Reinit if: lock→unlock transition, OR unlocked but no new frames for 4s
+      if ((wasLocked && !locked) || (!locked && stale)) {
+        lastFrameCountChange = Date.now(); // prevent rapid re-trigger
+        initStream();
+      }
       wasLocked = locked;
     } catch (_) {}
   }, 2000);
