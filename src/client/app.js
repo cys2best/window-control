@@ -37,6 +37,7 @@ function sendInput(obj) {
 
 function initStream() {
   const img = document.getElementById('stream-img');
+  img.src = '';  // force disconnect old connection
   img.src = '/stream?' + Date.now();
 
   let lastW = 0, lastCheck = Date.now();
