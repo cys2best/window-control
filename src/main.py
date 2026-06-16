@@ -86,12 +86,13 @@ def main():
                 launcher.on_service_unlock()
 
         def _on_pipe_reconnect():
-            # Re-sync desktop state after pipe reconnects (may have missed events)
+            # Re-sync desktop state after pipe reconnects (may have missed unlock event)
             import time
             time.sleep(0.5)
             state.set_desktop("Default")
             available_windows.clear()
             available_windows.extend(_build_available_windows())
+            # on_service_unlock emits Qt signal — safe from any thread
             launcher.on_service_unlock()
 
         _pipe = PipeClient(on_event=_on_service_event)
@@ -173,13 +174,20 @@ def _keep_session_alive():
 
 def _try_connect_pipe(pipe, on_reconnect=None):
     import time
+    first = True
     while True:
         if pipe.connect():
-            if on_reconnect:
-                on_reconnect()
+            if first:
+                _log("[pipe] connected")
+                first = False
+            else:
+                _log("[pipe] reconnected")
+                if on_reconnect:
+                    on_reconnect()
             # Wait until disconnected, then retry
             while pipe.is_connected:
                 time.sleep(1)
+            _log("[pipe] disconnected — will retry")
         time.sleep(3)
 
 
