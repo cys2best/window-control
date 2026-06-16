@@ -67,6 +67,10 @@ class TrayIcon:
         t = threading.Thread(target=self._icon.run, daemon=True)
         t.start()
 
+    def notify(self, message: str, title: str = "WindowControl"):
+        if self._icon:
+            self._icon.notify(message, title)
+
     def stop(self):
         if self._icon:
             self._icon.stop()

@@ -96,10 +96,25 @@ def main():
         launcher.activateWindow()
 
     def _force_reinstall():
-        from updater import _fetch_latest_version, download_and_install
-        latest = _fetch_latest_version()
-        if latest:
-            download_and_install(latest)
+        def _run():
+            from updater import _fetch_latest_version, download_and_install
+            _log("[Reinstall] Fetching latest version…")
+            tray.notify("Fetching latest release…", "WindowControl Update")
+            latest = _fetch_latest_version()
+            if not latest:
+                _log("[Reinstall] Failed to fetch latest version from GitHub")
+                tray.notify("Could not fetch latest release. Check internet.", "Update Failed")
+                return
+            _log(f"[Reinstall] Downloading v{latest}…")
+            tray.notify(f"Downloading v{latest}…", "WindowControl Update")
+
+            def _on_error(msg):
+                _log(f"[Reinstall] Download failed: {msg}")
+                tray.notify(f"Download failed: {msg}", "Update Failed")
+
+            download_and_install(latest, on_error=_on_error)
+
+        threading.Thread(target=_run, daemon=True).start()
 
     tray = TrayIcon(
         on_show=show_launcher,
@@ -113,6 +128,9 @@ def main():
     launcher.quality_changed.connect(state.set_quality)
     launcher.window_selected.connect(lambda hwnd, title: state.set_hwnd(hwnd))
 
+    # Prevent Windows from locking session due to inactivity
+    threading.Thread(target=_keep_session_alive, daemon=True).start()
+
     launcher.show()
     tray.start()
 
@@ -121,6 +139,27 @@ def main():
     stop_server()
     tray.stop()
     sys.exit(exit_code)
+
+
+def _keep_session_alive():
+    """Prevent Windows inactivity lock by resetting execution state periodically.
+
+    ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED | ES_CONTINUOUS tells Windows
+    this app needs the session active — same mechanism used by media players.
+    Also calls SetThreadExecutionState every 30s to reset inactivity timer.
+    """
+    if sys.platform != "win32":
+        return
+    import ctypes
+    ES_CONTINUOUS       = 0x80000000
+    ES_SYSTEM_REQUIRED  = 0x00000001
+    ES_DISPLAY_REQUIRED = 0x00000002
+    flags = ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED
+    ctypes.windll.kernel32.SetThreadExecutionState(flags)
+    import time
+    while True:
+        time.sleep(30)
+        ctypes.windll.kernel32.SetThreadExecutionState(flags)
 
 
 def _try_connect_pipe(pipe):
