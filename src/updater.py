@@ -28,16 +28,6 @@ def _get_asset_url(version: str) -> str:
     )
 
 
-def _reporthook(on_progress):
-    def hook(block_num, block_size, total_size):
-        if total_size <= 0:
-            return
-        downloaded = block_num * block_size
-        pct = min(100, int(downloaded * 100 / total_size))
-        on_progress(pct)
-    return hook
-
-
 def download_and_install(version: str, on_progress=None, on_error=None):
     """Download installer for `version` to %TEMP% and run it silently.
 
@@ -53,7 +43,20 @@ def download_and_install(version: str, on_progress=None, on_error=None):
         url = _get_asset_url(version)
         dest = os.path.join(tempfile.gettempdir(), "WindowControlInstaller.exe")
         try:
-            urllib.request.urlretrieve(url, dest, reporthook=_reporthook(on_progress))
+            req = urllib.request.Request(url, headers={"User-Agent": "WindowControl"})
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                total = int(resp.headers.get("Content-Length", 0))
+                downloaded = 0
+                chunk_size = 8192
+                with open(dest, "wb") as f:
+                    while True:
+                        chunk = resp.read(chunk_size)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        if total > 0:
+                            on_progress(min(100, int(downloaded * 100 / total)))
         except Exception as e:
             on_error(str(e))
             return
@@ -63,10 +66,7 @@ def download_and_install(version: str, on_progress=None, on_error=None):
             on_error(str(e))
 
     t = threading.Thread(target=_run, daemon=True)
-    try:
-        t.start()
-    except RuntimeError:
-        pass  # thread was already started (e.g. by test inline_thread side-effect)
+    t.start()
 
 
 def check_for_update(on_update_available):
