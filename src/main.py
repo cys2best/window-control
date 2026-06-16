@@ -85,8 +85,17 @@ def main():
                 available_windows.extend(_build_available_windows())
                 launcher.on_service_unlock()
 
+        def _on_pipe_reconnect():
+            # Re-sync desktop state after pipe reconnects (may have missed events)
+            import time
+            time.sleep(0.5)
+            state.set_desktop("Default")
+            available_windows.clear()
+            available_windows.extend(_build_available_windows())
+            launcher.on_service_unlock()
+
         _pipe = PipeClient(on_event=_on_service_event)
-        threading.Thread(target=_try_connect_pipe, args=(_pipe,), daemon=True).start()
+        threading.Thread(target=_try_connect_pipe, args=(_pipe, _on_pipe_reconnect), daemon=True).start()
 
     launcher = LauncherWindow(state)
 
@@ -162,11 +171,15 @@ def _keep_session_alive():
         ctypes.windll.kernel32.SetThreadExecutionState(flags)
 
 
-def _try_connect_pipe(pipe):
+def _try_connect_pipe(pipe, on_reconnect=None):
     import time
     while True:
         if pipe.connect():
-            return
+            if on_reconnect:
+                on_reconnect()
+            # Wait until disconnected, then retry
+            while pipe.is_connected:
+                time.sleep(1)
         time.sleep(3)
 
 
