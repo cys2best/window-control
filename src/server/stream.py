@@ -278,6 +278,8 @@ def capture_loop(state: CaptureState, frame_queue: FrameQueue):
         if desktop != current_desktop:
             _switch_thread_desktop(desktop)
             current_desktop = desktop
+            _capture_ok_logged = False  # re-log after desktop switch
+            _log(f"[capture_loop] desktop switched to {desktop}")
             # Reinitialize dxcam after desktop switch (GPU context changed)
             if camera is not None and desktop == "Default":
                 try:

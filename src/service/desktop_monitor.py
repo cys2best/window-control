@@ -72,6 +72,21 @@ if sys.platform == "win32":
         def _wnd_proc(self, hwnd, msg, wparam, lparam):
             _WM_WTSSESSION_CHANGE = 0x02B1
             if msg == _WM_WTSSESSION_CHANGE:
+                _WTS_NAMES = {
+                    1: "CONSOLE_CONNECT", 2: "CONSOLE_DISCONNECT",
+                    3: "REMOTE_CONNECT",  4: "REMOTE_DISCONNECT",
+                    5: "SESSION_LOGON",   6: "SESSION_LOGOFF",
+                    7: "SESSION_LOCK",    8: "SESSION_UNLOCK",
+                    9: "SESSION_REMOTE_CONTROL",
+                }
+                from service.pipe_server import PIPE_NAME
+                import os
+                try:
+                    os.makedirs(r"C:\ProgramData\WindowControl", exist_ok=True)
+                    with open(r"C:\ProgramData\WindowControl\service_crash.log", "a") as f:
+                        f.write(f"[WTS] event={wparam} ({_WTS_NAMES.get(wparam,'?')}) session={lparam}\n")
+                except Exception:
+                    pass
                 if wparam == _WTS_SESSION_LOCK:
                     self._on_lock()
                 elif wparam == _WTS_SESSION_UNLOCK:

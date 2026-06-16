@@ -35,6 +35,7 @@ class LauncherWindow(QMainWindow):
         self._setup_ui()
         self._refresh_ip()
         check_for_update(self._on_update_available)
+        self._disable_lock_on_disconnect()
         QTimer.singleShot(1500, self._auto_install_service)
         # Refresh service status every 10s
         self._svc_refresh_timer = QTimer()
@@ -269,6 +270,25 @@ class LauncherWindow(QMainWindow):
         from service.auto_unlock import delete_password
         delete_password()
         self._status_label.setText("Unlock password cleared.")
+
+    @staticmethod
+    def _disable_lock_on_disconnect():
+        """Prevent Windows from locking session on RDP disconnect."""
+        if sys.platform != "win32":
+            return
+        try:
+            import winreg
+            # Disable screen saver lock
+            key = winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Control Panel\Desktop",
+                0, winreg.KEY_SET_VALUE
+            )
+            winreg.SetValueEx(key, "ScreenSaverIsSecure", 0, winreg.REG_SZ, "0")
+            winreg.SetValueEx(key, "ScreenSaveActive", 0, winreg.REG_SZ, "0")
+            winreg.CloseKey(key)
+        except Exception:
+            pass
 
     def _auto_install_service(self):
         """Install lock screen service automatically if not already installed/running."""
