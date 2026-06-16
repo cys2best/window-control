@@ -69,6 +69,7 @@ if sys.platform == "win32":
             try:
                 event_handle = _open_pipe(EVENT_PIPE_NAME)
             except pywintypes.error:
+                self._connected = False
                 return
             while self._connected:
                 try:
@@ -82,6 +83,8 @@ if sys.platform == "win32":
                 event_handle.Close()
             except Exception:
                 pass
+            # Mark disconnected so _try_connect_pipe retries
+            self._connected = False
 
         def disconnect(self):
             self._connected = False

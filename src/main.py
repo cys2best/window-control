@@ -1,5 +1,6 @@
 # src/main.py
 import sys
+import os
 import threading
 import uvicorn
 from PyQt5.QtWidgets import QApplication
@@ -37,6 +38,7 @@ def main():
         service_cli()
         return
 
+    _log(f"[GUI] starting pid={os.getpid()} user={os.environ.get('USERNAME','?')}")
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)  # keep alive in tray
 
