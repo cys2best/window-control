@@ -1403,7 +1403,7 @@ wheels = [
 
 [[package]]
 name = "window-control"
-version = "1.2.8"
+version = "1.2.13"
 source = { virtual = "." }
 dependencies = [
     { name = "dxcam", marker = "sys_platform == 'win32'" },

@@ -359,6 +359,7 @@ def capture_loop(state: CaptureState, frame_queue: FrameQueue):
                 if not _capture_err_logged:
                     _log(f"[capture_loop] all methods failed hwnd={hwnd}")
                     _capture_err_logged = True
+                _capture_ok_logged = False  # reset so next success gets logged
                 frame_queue.put(_BLACK_FRAME)
             else:
                 if not _capture_ok_logged:

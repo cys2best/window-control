@@ -3,26 +3,73 @@ import sys
 import time
 import threading
 
-import keyring
+import os
+import ctypes
+import ctypes.wintypes
 
-CREDENTIAL_SERVICE = "WindowControl"
-CREDENTIAL_USER = "unlock"
+_PASSWORD_FILE = r"C:\ProgramData\WindowControl\unlock.dat"
+
+
+def _dpapi_encrypt(data: bytes) -> bytes:
+    """Encrypt with DPAPI LOCAL_MACHINE scope — readable by SYSTEM and user."""
+    class DATA_BLOB(ctypes.Structure):
+        _fields_ = [("cbData", ctypes.wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_char))]
+
+    buf = ctypes.create_string_buffer(data)
+    inp = DATA_BLOB(len(data), buf)
+    out = DATA_BLOB()
+    # CRYPTPROTECT_LOCAL_MACHINE = 0x4 — any process on this machine can decrypt
+    ok = ctypes.windll.crypt32.CryptProtectData(
+        ctypes.byref(inp), None, None, None, None, 0x4, ctypes.byref(out)
+    )
+    if not ok:
+        raise RuntimeError(f"CryptProtectData failed: {ctypes.GetLastError()}")
+    result = bytes(out.pbData[:out.cbData])
+    ctypes.windll.kernel32.LocalFree(out.pbData)
+    return result
+
+
+def _dpapi_decrypt(data: bytes) -> bytes:
+    """Decrypt DPAPI blob."""
+    class DATA_BLOB(ctypes.Structure):
+        _fields_ = [("cbData", ctypes.wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_char))]
+
+    buf = ctypes.create_string_buffer(data)
+    inp = DATA_BLOB(len(data), buf)
+    out = DATA_BLOB()
+    ok = ctypes.windll.crypt32.CryptUnprotectData(
+        ctypes.byref(inp), None, None, None, None, 0x4, ctypes.byref(out)
+    )
+    if not ok:
+        raise RuntimeError(f"CryptUnprotectData failed: {ctypes.GetLastError()}")
+    result = bytes(out.pbData[:out.cbData])
+    ctypes.windll.kernel32.LocalFree(out.pbData)
+    return result
 
 
 def store_password(password: str) -> None:
-    keyring.set_password(CREDENTIAL_SERVICE, CREDENTIAL_USER, password)
+    if sys.platform != "win32":
+        return
+    os.makedirs(os.path.dirname(_PASSWORD_FILE), exist_ok=True)
+    encrypted = _dpapi_encrypt(password.encode("utf-8"))
+    with open(_PASSWORD_FILE, "wb") as f:
+        f.write(encrypted)
 
 
 def get_stored_password() -> str | None:
+    if sys.platform != "win32":
+        return None
     try:
-        return keyring.get_password(CREDENTIAL_SERVICE, CREDENTIAL_USER)
+        with open(_PASSWORD_FILE, "rb") as f:
+            encrypted = f.read()
+        return _dpapi_decrypt(encrypted).decode("utf-8")
     except Exception:
         return None
 
 
 def delete_password() -> None:
     try:
-        keyring.delete_password(CREDENTIAL_SERVICE, CREDENTIAL_USER)
+        os.remove(_PASSWORD_FILE)
     except Exception:
         pass
 
