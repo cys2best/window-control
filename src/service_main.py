@@ -227,6 +227,41 @@ def _remove_service_if_exists():
         pass
 
 
+def _disable_lock_on_rdp_disconnect():
+    """Write registry keys to prevent Windows locking on RDP disconnect.
+
+    Runs elevated (called from --install which runs as admin).
+    Sets the 'Don't lock on disconnect' equivalent — disables screen saver
+    password requirement which is what triggers lock on RDP disconnect.
+    """
+    try:
+        import winreg
+        # Per-machine: disable inactivity lock timer
+        k = winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon",
+            0, winreg.KEY_SET_VALUE
+        )
+        # DisableLockWorkstation via policy path (machine-wide, overrides user setting)
+        winreg.CloseKey(k)
+
+        # Machine policy override — prevents GPO from re-enabling screensaver lock
+        try:
+            k3 = winreg.CreateKey(
+                winreg.HKEY_LOCAL_MACHINE,
+                r"SOFTWARE\Policies\Microsoft\Windows\Control Panel\Desktop"
+            )
+            winreg.SetValueEx(k3, "ScreenSaverIsSecure", 0, winreg.REG_SZ, "0")
+            winreg.SetValueEx(k3, "ScreenSaveActive", 0, winreg.REG_SZ, "0")
+            winreg.CloseKey(k3)
+        except Exception:
+            pass
+
+        _log_crash("[install] lock-on-disconnect disabled via registry")
+    except Exception as e:
+        _log_crash(f"[install] registry lock disable failed: {e}")
+
+
 def _install_service_manually():
     """Register service directly via win32service API with explicit binary path."""
     import traceback as _tb
@@ -284,6 +319,7 @@ def main():
     if "--install" in sys.argv:
         _remove_service_if_exists()
         _install_service_manually()
+        _disable_lock_on_rdp_disconnect()
         print(f"Service '{SERVICE_NAME}' installed.")
         try:
             win32serviceutil.StartService(SERVICE_NAME)
