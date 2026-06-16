@@ -17,30 +17,39 @@ def _load_tray_icon() -> Image.Image:
 
 
 class TrayIcon:
-    def __init__(self, on_show, on_stop_server, on_exit):
+    def __init__(self, on_show, on_stop_server, on_exit, on_reinstall=None):
         """
         on_show: callable() — show/raise the launcher window
         on_stop_server: callable() — stop the streaming server
         on_exit: callable() — quit the entire application
+        on_reinstall: callable() | None — force download and install latest release
         """
         self._on_show = on_show
         self._on_stop_server = on_stop_server
         self._on_exit = on_exit
+        self._on_reinstall = on_reinstall
         self._icon = None
 
     def _build_menu(self):
-        return pystray.Menu(
+        items = [
             pystray.MenuItem("Show", self._handle_show, default=True),
             pystray.MenuItem("Stop Server", self._handle_stop),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem("Exit", self._handle_exit),
-        )
+        ]
+        if self._on_reinstall is not None:
+            items.append(pystray.MenuItem("Reinstall / Update", self._handle_reinstall))
+        items.append(pystray.MenuItem("Exit", self._handle_exit))
+        return pystray.Menu(*items)
 
     def _handle_show(self, icon, item):
         self._on_show()
 
     def _handle_stop(self, icon, item):
         self._on_stop_server()
+
+    def _handle_reinstall(self, icon, item):
+        if self._on_reinstall:
+            self._on_reinstall()
 
     def _handle_exit(self, icon, item):
         self._on_exit()

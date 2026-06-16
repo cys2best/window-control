@@ -48,3 +48,30 @@ def test_handle_exit_calls_callback():
     tray._handle_exit(icon_mock, None)
     assert exit_called == [True]
     icon_mock.stop.assert_called_once()
+
+
+def test_tray_icon_construction_with_reinstall():
+    """TrayIcon accepts on_reinstall callback."""
+    from gui.tray import TrayIcon
+    reinstall = MagicMock()
+    tray = TrayIcon(
+        on_show=MagicMock(),
+        on_stop_server=MagicMock(),
+        on_exit=MagicMock(),
+        on_reinstall=reinstall,
+    )
+    assert tray._on_reinstall is reinstall
+
+
+def test_handle_reinstall_calls_callback():
+    """_handle_reinstall calls on_reinstall."""
+    from gui.tray import TrayIcon
+    called = []
+    tray = TrayIcon(
+        on_show=MagicMock(),
+        on_stop_server=MagicMock(),
+        on_exit=MagicMock(),
+        on_reinstall=lambda: called.append(True),
+    )
+    tray._handle_reinstall(MagicMock(), None)
+    assert called == [True]
