@@ -110,10 +110,13 @@ def main():
 
         def _on_service_event(ev: dict):
             event = ev.get("event")
+            _log(f"[pipe] event received: {ev}")
             if event == "lock":
+                _log("[pipe] setting desktop=Winlogon")
                 state.set_desktop("Winlogon")
                 launcher.on_service_lock()
             elif event == "unlock":
+                _log("[pipe] setting desktop=Default")
                 state.set_desktop("Default")
                 available_windows.clear()
                 available_windows.extend(_build_available_windows())
