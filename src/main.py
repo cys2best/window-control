@@ -95,10 +95,17 @@ def main():
         launcher.raise_()
         launcher.activateWindow()
 
+    def _force_reinstall():
+        from updater import _fetch_latest_version, download_and_install
+        latest = _fetch_latest_version()
+        if latest:
+            download_and_install(latest)
+
     tray = TrayIcon(
         on_show=show_launcher,
         on_stop_server=stop_server,
         on_exit=lambda: (stop_server(), app.quit()),
+        on_reinstall=_force_reinstall,
     )
 
     launcher.server_start_requested.connect(start_server)
