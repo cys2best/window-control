@@ -3,7 +3,6 @@ let ws = null;
 let wsRetryDelay = 1000;
 let frameCount = 0;
 let lastFrameTime = Date.now();
-let totalFrameCount = 0;
 
 let lastDist = null;
 let currentScale = 1;
@@ -53,28 +52,18 @@ function initStream() {
 
   newImg.src = '/stream?' + Date.now();
 
-  let lastSeenTotal = totalFrameCount;
-  let lastChange = Date.now();
-  window._streamPoll = setInterval(() => {
-    if (gen !== _streamGeneration) { clearInterval(window._streamPoll); return; }
-    const w = newImg.naturalWidth;
-    if (w > 0) {
-      frameCount++;
-      totalFrameCount++;
-      lastSeenTotal = totalFrameCount;
-      lastChange = Date.now();
-      clearUnavailable();
-    } else if (Date.now() - lastChange > 5000) {
-      clearInterval(window._streamPoll);
-      setTimeout(() => { if (gen === _streamGeneration) initStream(); }, 500);
-    }
-  }, 200);
+  // MJPEG img onload fires once on first frame only — not per-frame
+  newImg.onload = () => { if (gen === _streamGeneration) { frameCount++; clearUnavailable(); } };
 
   newImg.onerror = () => {
     if (gen !== _streamGeneration) return;
     clearInterval(window._streamPoll);
     setTimeout(() => { if (gen === _streamGeneration) initStream(); }, 2000);
   };
+
+  // Staleness: if img stops loading (server died), onerror fires.
+  // Don't poll naturalWidth — it doesn't change per-frame for MJPEG.
+  // Lock polling handles reinit on lock→unlock. No stale-reinit needed here.
 }
 
 function showUnavailable() {
@@ -189,20 +178,11 @@ function initFPS() {
 
 function startLockPolling() {
   let wasLocked = false;
-  let lastSeenFrameCount = 0;
-  let lastFrameCountChange = Date.now();
   setInterval(async () => {
     try {
       const r = await fetch('/status');
       const { locked } = await r.json();
-      if (totalFrameCount !== lastSeenFrameCount) {
-        lastSeenFrameCount = totalFrameCount;
-        lastFrameCountChange = Date.now();
-      }
-      const stale = Date.now() - lastFrameCountChange > 4000;
-      // Reinit if: lock→unlock transition, OR unlocked but no new frames for 4s
-      if ((wasLocked && !locked) || (!locked && stale)) {
-        lastFrameCountChange = Date.now(); // prevent rapid re-trigger
+      if (wasLocked && !locked) {
         initStream();
       }
       wasLocked = locked;
