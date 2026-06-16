@@ -72,3 +72,29 @@ def test_download_and_install_calls_on_error_on_failure(tmp_path):
 
     assert error_calls
     assert "network down" in error_calls[0]
+
+
+def test_download_and_install_calls_on_error_on_spawn_failure(tmp_path):
+    from updater import download_and_install
+
+    error_calls = []
+
+    with patch("updater.urllib.request.urlretrieve") as mock_retrieve, \
+         patch("updater.subprocess.Popen", side_effect=Exception("spawn failed")), \
+         patch("updater.tempfile.gettempdir", return_value=str(tmp_path)):
+
+        mock_retrieve.return_value = (str(tmp_path / "WindowControlInstaller.exe"), None)
+
+        import threading, time
+        original_thread = threading.Thread
+        def inline_thread(target=None, daemon=None, **kw):
+            t = original_thread(target=target, daemon=daemon, **kw)
+            t.start()
+            return t
+
+        with patch("updater.threading.Thread", side_effect=inline_thread):
+            download_and_install("1.2.14", on_progress=lambda p: None, on_error=lambda e: error_calls.append(e))
+            time.sleep(0.2)
+
+    assert error_calls
+    assert "spawn failed" in error_calls[0]
