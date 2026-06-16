@@ -47,9 +47,14 @@ begin
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
+var
+  ResultCode: Integer;
 begin
-  if CurStep = ssInstall then
+  if CurStep = ssInstall then begin
+    Exec('taskkill.exe', '/F /IM WindowControl.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Sleep(1000);
     StopAndRemoveService();
+  end;
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
