@@ -172,6 +172,18 @@ function initFPS() {
   }, 1000);
 }
 
+function startLockPolling() {
+  let wasLocked = false;
+  setInterval(async () => {
+    try {
+      const r = await fetch('/status');
+      const { locked } = await r.json();
+      if (wasLocked && !locked) initStream();
+      wasLocked = locked;
+    } catch (_) {}
+  }, 2000);
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   connectWS();
   initStream();
@@ -180,6 +192,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initFPS();
   initDrawer();
   startWindowsPolling();
+  startLockPolling();
 
   document.getElementById('reconnect-btn').addEventListener('click', () => {
     clearUnavailable();
