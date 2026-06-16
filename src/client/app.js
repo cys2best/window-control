@@ -35,33 +35,45 @@ function sendInput(obj) {
   }
 }
 
-function initStream() {
-  const img = document.getElementById('stream-img');
-  img.src = '';  // force disconnect old connection
-  img.src = '/stream?' + Date.now();
+let _streamGeneration = 0;
 
-  let lastW = 0, lastCheck = Date.now();
+function initStream() {
   clearInterval(window._streamPoll);
+  _streamGeneration++;
+  const gen = _streamGeneration;
+
+  // Remove and recreate img to force browser to drop the TCP connection.
+  // Setting img.src='' is not enough — Safari keeps the socket open.
+  const oldImg = document.getElementById('stream-img');
+  const newImg = document.createElement('img');
+  newImg.id = 'stream-img';
+  newImg.className = oldImg.className;
+  newImg.style.cssText = oldImg.style.cssText;
+  oldImg.replaceWith(newImg);
+
+  newImg.src = '/stream?' + Date.now();
+
+  let lastSeenTotal = totalFrameCount;
+  let lastChange = Date.now();
   window._streamPoll = setInterval(() => {
-    const w = img.naturalWidth;
+    if (gen !== _streamGeneration) { clearInterval(window._streamPoll); return; }
+    const w = newImg.naturalWidth;
     if (w > 0) {
       frameCount++;
       totalFrameCount++;
+      lastSeenTotal = totalFrameCount;
+      lastChange = Date.now();
       clearUnavailable();
-      lastW = w;
-      lastCheck = Date.now();
-    } else if (Date.now() - lastCheck > 5000) {
-      // No frame for 5s — silently reconnect stream
+    } else if (Date.now() - lastChange > 5000) {
       clearInterval(window._streamPoll);
-      img.src = '';
-      clearUnavailable();
-      setTimeout(() => initStream(), 1000);
+      setTimeout(() => { if (gen === _streamGeneration) initStream(); }, 500);
     }
   }, 200);
 
-  img.onerror = () => {
+  newImg.onerror = () => {
+    if (gen !== _streamGeneration) return;
     clearInterval(window._streamPoll);
-    setTimeout(() => initStream(), 2000);
+    setTimeout(() => { if (gen === _streamGeneration) initStream(); }, 2000);
   };
 }
 
