@@ -104,19 +104,44 @@ def _type_password_to_winlogon(password: str):
     user32.CloseDesktop(hdesk)
 
 
+def _log(msg: str):
+    import os
+    for _p in [r"C:\ProgramData\WindowControl", r"C:\Windows\Temp"]:
+        try:
+            os.makedirs(_p, exist_ok=True)
+            with open(os.path.join(_p, "service_crash.log"), "a") as f:
+                f.write(msg + "\n")
+            return
+        except Exception:
+            continue
+
+
 def auto_unlock_on_lock():
     """
     Called when WTS_SESSION_LOCK fires.
     Waits for Winlogon to render, then types stored password.
     Run in a daemon thread — do not block the caller.
     """
-    password = get_stored_password()
+    try:
+        password = get_stored_password()
+    except Exception as e:
+        _log(f"[auto_unlock] get_stored_password failed: {e}")
+        password = None
+
     if not password:
-        return  # no password stored, user must type manually
+        _log("[auto_unlock] no password stored — skipping auto-unlock")
+        return
+
+    _log(f"[auto_unlock] password found (len={len(password)}), scheduling unlock in 1.5s")
 
     def _run():
         time.sleep(1.5)  # wait for Winlogon desktop to fully render
-        _type_password_to_winlogon(password)
+        _log("[auto_unlock] typing password to Winlogon")
+        try:
+            _type_password_to_winlogon(password)
+            _log("[auto_unlock] done")
+        except Exception as e:
+            _log(f"[auto_unlock] _type_password_to_winlogon failed: {e}")
 
     threading.Thread(target=_run, daemon=True).start()
 
