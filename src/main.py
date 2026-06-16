@@ -209,19 +209,26 @@ def _keep_session_alive():
 def _try_connect_pipe(pipe, on_reconnect=None):
     import time
     first = True
+    attempt = 0
+    _log("[pipe] _try_connect_pipe thread started")
     while True:
-        if pipe.connect():
+        attempt += 1
+        result = pipe.connect()
+        if result:
             if first:
-                _log("[pipe] connected")
+                _log(f"[pipe] connected (attempt={attempt})")
                 first = False
             else:
-                _log("[pipe] reconnected")
+                _log(f"[pipe] reconnected (attempt={attempt})")
                 if on_reconnect:
                     on_reconnect()
             # Wait until disconnected, then retry
             while pipe.is_connected:
                 time.sleep(1)
             _log("[pipe] disconnected — will retry")
+        else:
+            if attempt == 1 or attempt % 10 == 0:
+                _log(f"[pipe] connect failed attempt={attempt}, retrying in 3s")
         time.sleep(3)
 
 
