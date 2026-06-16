@@ -306,6 +306,10 @@ def capture_loop(state: CaptureState, frame_queue: FrameQueue):
             # Show a static "Screen Locked" frame instead of blank/reconnect.
             frame_queue.put(_LOCKED_FRAME)
             time.sleep(1 / 5)  # 5fps is enough for a static frame
+            _winlogon_iters = getattr(capture_loop, '_winlogon_iters', 0) + 1
+            capture_loop._winlogon_iters = _winlogon_iters
+            if _winlogon_iters % 25 == 0:  # every 5s
+                _log(f"[capture_loop] still in Winlogon loop iters={_winlogon_iters} state.desktop={state.desktop!r} running={state.running}")
             continue
 
         hwnd = state.active_hwnd
