@@ -26,13 +26,18 @@ def _grab_printwindow(hwnd) -> np.ndarray | None:
         w, h = right - left, bottom - top
         if w <= 0 or h <= 0:
             return None
+        RDW_INVALIDATE = 0x0001
+        RDW_UPDATENOW  = 0x0100
+        RDW_ALLCHILDREN = 0x0080
+        ctypes.windll.user32.RedrawWindow(hwnd, None, None, RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN)
         hwnd_dc = win32gui.GetWindowDC(hwnd)
         mfc_dc = win32ui.CreateDCFromHandle(hwnd_dc)
         save_dc = mfc_dc.CreateCompatibleDC()
         bmp = win32ui.CreateBitmap()
         bmp.CreateCompatibleBitmap(mfc_dc, w, h)
         save_dc.SelectObject(bmp)
-        ctypes.windll.user32.PrintWindow(hwnd, save_dc.GetSafeHdc(), 0x2)
+        # Flag 0 (GDI-only) works headless; 0x2 (DWM) freezes after RDP disconnect
+        ctypes.windll.user32.PrintWindow(hwnd, save_dc.GetSafeHdc(), 0)
         bmp_info = bmp.GetInfo()
         bmp_str = bmp.GetBitmapBits(True)
         arr = np.frombuffer(bmp_str, dtype=np.uint8).reshape(

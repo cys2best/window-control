@@ -208,7 +208,10 @@ def _grab_printwindow(hwnd) -> np.ndarray | None:
     """Capture window via PrintWindow — works headless (no display required).
 
     Uses GDI off-screen DC so RDP disconnect / no monitor doesn't break capture.
-    PW_RENDERFULLCONTENT (0x2) forces GPU content (DWM) to be included.
+    Tries PW_RENDERFULLCONTENT (0x2) first for GPU-composited content, then
+    falls back to flag 0 (GDI only) if DWM returns a blank/all-black result.
+    Sends RedrawWindow before capture to force app to update its DC — needed
+    when RDP disconnects and DWM throttles window rendering.
     """
     if sys.platform != "win32":
         return None
@@ -220,17 +223,28 @@ def _grab_printwindow(hwnd) -> np.ndarray | None:
         w, h = right - left, bottom - top
         if w <= 0 or h <= 0:
             return None
+
+        # Force window to repaint its DC — DWM throttles rendering when no display is connected
+        RDW_INVALIDATE = 0x0001
+        RDW_UPDATENOW  = 0x0100
+        RDW_ALLCHILDREN = 0x0080
+        ctypes.windll.user32.RedrawWindow(hwnd, None, None, RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN)
+
         hwnd_dc = win32gui.GetWindowDC(hwnd)
         mfc_dc = win32ui.CreateDCFromHandle(hwnd_dc)
         save_dc = mfc_dc.CreateCompatibleDC()
         bmp = win32ui.CreateBitmap()
         bmp.CreateCompatibleBitmap(mfc_dc, w, h)
         save_dc.SelectObject(bmp)
-        # PW_RENDERFULLCONTENT = 0x2 captures GPU-composited content
-        result = ctypes.windll.user32.PrintWindow(hwnd, save_dc.GetSafeHdc(), 0x2)
+
+        # Use flag 0 (GDI-only, no DWM) — works headless after RDP disconnect.
+        # PW_RENDERFULLCONTENT (0x2) reads DWM's compositor texture which freezes
+        # when the RDP virtual display driver disconnects.
+        result = ctypes.windll.user32.PrintWindow(hwnd, save_dc.GetSafeHdc(), 0)
         if not result:
-            # Fallback without PW_RENDERFULLCONTENT
-            ctypes.windll.user32.PrintWindow(hwnd, save_dc.GetSafeHdc(), 0)
+            # Last resort: try with PW_RENDERFULLCONTENT anyway
+            ctypes.windll.user32.PrintWindow(hwnd, save_dc.GetSafeHdc(), 0x2)
+
         bmp_info = bmp.GetInfo()
         bmp_str = bmp.GetBitmapBits(True)
         arr = np.frombuffer(bmp_str, dtype=np.uint8).reshape(
