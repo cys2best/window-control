@@ -266,7 +266,16 @@ def capture_loop(state: CaptureState, frame_queue: FrameQueue):
     if _dxcam_available:
         try:
             import dxcam as _dxcam_mod
-            camera = _dxcam_mod.create(output_color="BGR")
+            import os as _os
+            # dxcam prints DXGI messages to stdout — suppress by redirecting to nul
+            _devnull = open(_os.devnull, 'w')
+            _old_stdout, _old_stderr = sys.stdout, sys.stderr
+            sys.stdout, sys.stderr = _devnull, _devnull
+            try:
+                camera = _dxcam_mod.create(output_color="BGR")
+            finally:
+                sys.stdout, sys.stderr = _old_stdout, _old_stderr
+                _devnull.close()
             _log("[capture_loop] dxcam camera created")
         except Exception:
             _log(f"[capture_loop] dxcam camera create failed: {traceback.format_exc()[:300]}")
