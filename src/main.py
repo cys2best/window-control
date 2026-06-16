@@ -1,16 +1,48 @@
 # src/main.py
 import sys
 import os
-import threading
-import uvicorn
-from PyQt5.QtWidgets import QApplication
 
-from config import PORT, QUALITY_MAP, DEFAULT_QUALITY
-from server.app import create_app
-from server.stream import CaptureState, FrameQueue, capture_loop
-from server.window_manager import list_windows
-from gui.launcher import LauncherWindow
-from gui.tray import TrayIcon
+def _log_early(msg: str):
+    for _p in [r"C:\ProgramData\WindowControl", r"C:\Windows\Temp", r"C:\Temp"]:
+        try:
+            os.makedirs(_p, exist_ok=True)
+            with open(os.path.join(_p, "service_crash.log"), "a") as _f:
+                _f.write(msg + "\n")
+            return
+        except Exception:
+            continue
+
+_log_early(f"[gui-imports-start] pid={os.getpid()} user={os.environ.get('USERNAME','?')}")
+
+try:
+    import threading
+    import uvicorn
+    _log_early("[gui-imports] threading+uvicorn OK")
+except Exception:
+    import traceback as _tb
+    _log_early(f"[gui-imports] threading/uvicorn FAILED: {_tb.format_exc()[:400]}")
+    raise
+
+try:
+    from PyQt5.QtWidgets import QApplication
+    _log_early("[gui-imports] PyQt5 OK")
+except Exception:
+    import traceback as _tb
+    _log_early(f"[gui-imports] PyQt5 FAILED: {_tb.format_exc()[:400]}")
+    raise
+
+try:
+    from config import PORT, QUALITY_MAP, DEFAULT_QUALITY
+    from server.app import create_app
+    from server.stream import CaptureState, FrameQueue, capture_loop
+    from server.window_manager import list_windows
+    from gui.launcher import LauncherWindow
+    from gui.tray import TrayIcon
+    _log_early("[gui-imports] app modules OK")
+except Exception:
+    import traceback as _tb
+    _log_early(f"[gui-imports] app modules FAILED: {_tb.format_exc()[:600]}")
+    raise
 
 
 def _log(msg: str):
