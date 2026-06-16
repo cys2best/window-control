@@ -163,11 +163,12 @@ def _log(msg: str):
             continue
 
 
-def auto_unlock_on_lock():
+def auto_unlock_on_lock(on_unlocked=None):
     """
     Called when WTS_SESSION_LOCK fires.
     Waits for Winlogon to render, then types stored password.
     Run in a daemon thread — do not block the caller.
+    on_unlocked: optional callback fired after password typed successfully.
     """
     try:
         password = get_stored_password()
@@ -187,6 +188,11 @@ def auto_unlock_on_lock():
         try:
             _type_password_to_winlogon(password)
             _log("[auto_unlock] done")
+            if on_unlocked:
+                # Extra delay — let Windows process the input before switching desktop
+                time.sleep(1.0)
+                _log("[auto_unlock] calling on_unlocked callback")
+                on_unlocked()
         except Exception as e:
             _log(f"[auto_unlock] _type_password_to_winlogon failed: {e}")
 

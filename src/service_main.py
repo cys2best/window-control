@@ -132,9 +132,13 @@ if sys.platform == "win32":
 
         def on_lock():
             _log_crash("[desktop] LOCK detected")
-            auto_unlock_on_lock()
             if pipe_server:
                 pipe_server.push({"event": "lock"})
+            def _after_unlock():
+                _log_crash("[desktop] auto_unlock completed — pushing unlock event to GUI")
+                if pipe_server:
+                    pipe_server.push({"event": "unlock"})
+            auto_unlock_on_lock(on_unlocked=_after_unlock)
 
         def on_unlock():
             _log_crash("[desktop] UNLOCK detected")
