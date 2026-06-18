@@ -9,6 +9,7 @@ let _dragActive = false;
 let _dragStartX = 0;
 let _dragStartY = 0;
 let _dragMoved = false;
+let _lastDragSendTime = 0;   // throttle drag_move sends
 
 // Two-finger scroll state
 let _twoFingerLastY = null;
@@ -86,18 +87,22 @@ function initTouch() {
   const container = document.getElementById('stream-container');
 
   container.addEventListener('touchstart', e => {
-    // Don't capture touches on toolbar buttons
     if (e.target.closest('#right-toolbar')) return;
     if (e.touches.length === 1) {
       const t = e.touches[0];
       _dragStartX = t.clientX;
       _dragStartY = t.clientY;
       _dragMoved = false;
+      _lastDragSendTime = 0;
       _dragActive = true;
       const { x, y } = normalizeCoords(t.clientX, t.clientY);
       sendInput({ type: 'drag_start', x, y });
     } else if (e.touches.length === 2) {
-      if (_dragActive) { sendInput({ type: 'drag_end', x: normalizeCoords(_dragStartX, _dragStartY).x, y: normalizeCoords(_dragStartX, _dragStartY).y }); _dragActive = false; }
+      if (_dragActive) {
+        const { x, y } = normalizeCoords(_dragStartX, _dragStartY);
+        sendInput({ type: 'drag_end', x, y });
+        _dragActive = false;
+      }
       _twoFingerLastY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
     }
   }, { passive: true });
@@ -107,11 +112,15 @@ function initTouch() {
       const t = e.touches[0];
       const dx = t.clientX - _dragStartX;
       const dy = t.clientY - _dragStartY;
-      if (Math.hypot(dx, dy) > 4) _dragMoved = true;
+      if (Math.hypot(dx, dy) > 8) _dragMoved = true;
       const { x, y } = normalizeCoords(t.clientX, t.clientY);
-      // Pass whether movement is scroll-dominant (vertical) so server can tune duration
       const scrollDominant = Math.abs(dy) > Math.abs(dx) * 1.5;
-      sendInput({ type: 'drag_move', x, y, scroll: scrollDominant });
+      // Throttle: max one drag_move per 50ms to avoid flooding ADB
+      const now = Date.now();
+      if (now - _lastDragSendTime >= 50) {
+        sendInput({ type: 'drag_move', x, y, scroll: scrollDominant });
+        _lastDragSendTime = now;
+      }
     } else if (e.touches.length === 2 && _twoFingerLastY !== null) {
       const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
       const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
@@ -129,7 +138,7 @@ function initTouch() {
       const t = e.changedTouches[0];
       const { x, y } = normalizeCoords(t.clientX, t.clientY);
       if (!_dragMoved) {
-        sendInput({ type: 'drag_end', x, y });
+        // Short tap with no movement — fire click, no drag_end needed
         sendInput({ type: 'click', x, y });
       } else {
         sendInput({ type: 'drag_end', x, y });

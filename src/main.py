@@ -87,26 +87,42 @@ def main():
 
     fastapi_app = create_app(state, frame_queue)
 
-    config = uvicorn.Config(fastapi_app, host="0.0.0.0", port=PORT,
-                            log_level="warning", log_config=None)
-    server = uvicorn.Server(config)
+    server = None
     _server_thread = None
     _capture_thread = None
 
     def start_server():
-        nonlocal _server_thread, _capture_thread
+        nonlocal _server_thread, _capture_thread, server
         state.running = True
         _capture_thread = threading.Thread(
             target=capture_loop, args=(state, frame_queue), daemon=True
         )
         _capture_thread.start()
+        # Fresh uvicorn Server each restart (uvicorn cannot be re-run after exit)
+        config = uvicorn.Config(fastapi_app, host="0.0.0.0", port=PORT,
+                                log_level="warning", log_config=None)
+        server = uvicorn.Server(config)
         _server_thread = threading.Thread(target=server.run, daemon=True)
         _server_thread.start()
         _log("[GUI] server started")
 
     def stop_server():
         state.running = False
-        server.should_exit = True
+        if server:
+            server.should_exit = True
+
+    def _watchdog():
+        import time
+        while True:
+            time.sleep(10)
+            if _server_thread and not _server_thread.is_alive():
+                _log("[GUI] watchdog: server thread dead — restarting")
+                try:
+                    start_server()
+                except Exception:
+                    import traceback as _tb
+                    _log(f"[GUI] watchdog restart failed: {_tb.format_exc()[:300]}")
+    threading.Thread(target=_watchdog, daemon=True).start()
 
     launcher = LauncherWindow(state)
 

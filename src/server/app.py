@@ -59,11 +59,18 @@ def create_app(state: CaptureState, frame_queue: FrameQueue) -> FastAPI:
         if not req.id.startswith("adb:"):
             raise HTTPException(status_code=400, detail="Invalid id — must be adb:SERIAL")
         serial = req.id[4:]
+        # Find ldplayer_index from cached VM list
+        vms = adb_manager.list_vms()
+        ldplayer_index = next((v.get("ldplayer_index", 0) for v in vms if v["id"] == req.id), 0)
         w, h = adb_manager.get_screen_size(serial)
-        session = adb_manager.AdbSession(serial, w, h, fps=15)
+        session = adb_manager.AdbSession(serial, w, h, fps=15, ldplayer_index=ldplayer_index)
         if not session.start():
             raise HTTPException(status_code=503, detail="Could not start ADB session")
         state.set_adb_session(session)
+        # Maximize LDPlayer window on Windows so user sees the instance
+        import threading as _t
+        _t.Thread(target=adb_manager.maximize_ldplayer_window,
+                  args=(ldplayer_index,), daemon=True).start()
         return {"ok": True, "id": req.id, "w": w, "h": h}
 
     @app.get("/stream")
@@ -122,9 +129,8 @@ def create_app(state: CaptureState, frame_queue: FrameQueue) -> FastAPI:
                         dx = abs(nx - prev[0]) * w
                         dy = abs(ny - prev[1]) * h
                         if dx + dy > 2:
-                            # Scroll-dominant gestures need longer duration so Android
-                            # recognises them as scroll, not fling. Joystick/drag: 30ms.
-                            dur = 150 if data.get("scroll") else 30
+                            # Scroll needs 200ms+ so Android recognises as scroll not fling.
+                            dur = 200 if data.get("scroll") else 30
                             adb_manager.swipe(session.serial,
                                               prev[0], prev[1], nx, ny, w, h,
                                               duration_ms=dur)
@@ -134,7 +140,7 @@ def create_app(state: CaptureState, frame_queue: FrameQueue) -> FastAPI:
                         dx = abs(nx - prev[0]) * w
                         dy = abs(ny - prev[1]) * h
                         if dx + dy > 2:
-                            dur = 150 if data.get("scroll") else 30
+                            dur = 200 if data.get("scroll") else 30
                             adb_manager.swipe(session.serial,
                                               prev[0], prev[1], nx, ny, w, h,
                                               duration_ms=dur)

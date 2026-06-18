@@ -65,6 +65,68 @@ def _get_ffmpeg() -> str | None:
         return None
 
 
+def _find_ldplayer_window(index: int) -> int | None:
+    """Return HWND of LDPlayer window for given instance index, or None."""
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        # LDPlayer window titles: "LDPlayer", "LDPlayer-1", "LDPlayer 1", etc.
+        candidates = [
+            f"LDPlayer",
+            f"LDPlayer-{index}",
+            f"LDPlayer {index}",
+            f"LDPlayer#{index}",
+            f"LDPlayer4",
+            f"LDPlayer4-{index}",
+            f"LDPlayer9",
+            f"LDPlayer9-{index}",
+        ]
+        for title in candidates:
+            hwnd = user32.FindWindowW(None, title)
+            if hwnd:
+                return hwnd
+        # Fallback: enumerate all windows, find one containing "LDPlayer"
+        found = []
+        EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
+        buf = ctypes.create_unicode_buffer(256)
+        def _cb(hwnd, _):
+            user32.GetWindowTextW(hwnd, buf, 256)
+            t = buf.value
+            if "LDPlayer" in t and user32.IsWindowVisible(hwnd):
+                found.append((hwnd, t))
+            return True
+        user32.EnumWindows(EnumWindowsProc(_cb), 0)
+        if found:
+            # Pick by index if multiple
+            if index < len(found):
+                return found[index][0]
+            return found[0][0]
+    except Exception:
+        pass
+    return None
+
+
+def maximize_ldplayer_window(index: int):
+    """Bring LDPlayer instance window to foreground and maximize it."""
+    if sys.platform != "win32":
+        return
+    hwnd = _find_ldplayer_window(index)
+    if not hwnd:
+        _log(f"[ldplayer] window not found for index={index}")
+        return
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        SW_MAXIMIZE = 3
+        user32.ShowWindow(hwnd, SW_MAXIMIZE)
+        user32.SetForegroundWindow(hwnd)
+        _log(f"[ldplayer] maximized hwnd={hwnd} index={index}")
+    except Exception:
+        _log(f"[ldplayer] maximize failed: {traceback.format_exc()[:200]}")
+
+
 def list_vms() -> list[dict]:
     """Return list of connected ADB devices as VM dicts with id='adb:SERIAL'."""
     adb = _find_adb()
@@ -89,10 +151,12 @@ def list_vms() -> list[dict]:
                 idx = (port - 5554) // 2
                 name = f"LDPlayer #{idx}"
             else:
+                idx = 0
                 name = serial
             result.append({
                 "id": f"adb:{serial}",
                 "title": f"[VM] {name}",
+                "ldplayer_index": idx,
             })
         return result
     except Exception:
@@ -120,11 +184,12 @@ def get_screen_size(serial: str) -> tuple[int, int]:
 class AdbSession:
     """Holds the screenrecord+ffmpeg pipeline for one ADB device."""
 
-    def __init__(self, serial: str, w: int, h: int, fps: int = 15):
+    def __init__(self, serial: str, w: int, h: int, fps: int = 15, ldplayer_index: int = 0):
         self.serial = serial
         self.w = w
         self.h = h
         self.fps = fps
+        self.ldplayer_index = ldplayer_index
         self._record_proc: subprocess.Popen | None = None
         self._ffmpeg_proc: subprocess.Popen | None = None
         self._lock = threading.Lock()
