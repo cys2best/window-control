@@ -26,6 +26,7 @@ def _log_crash(msg: str):
 _log_crash(f"[imports-start] pid={os.getpid()} user={os.environ.get('USERNAME','?')} path={os.environ.get('PATH','?')[:120]}")
 
 try:
+    import subprocess
     import threading
     import time
     _log_crash("[imports] threading+time OK")
@@ -35,14 +36,7 @@ except Exception as _e:
     raise
 
 if sys.platform == "win32":
-    try:
-        import win32service
-        import win32serviceutil
-        _log_crash("[imports] win32 OK")
-    except Exception as _e:
-        import traceback as _tb
-        _log_crash(f"[win32 import] {_tb.format_exc()}")
-        raise
+    _log_crash("[imports] win32 (ctypes only, no pywin32)")
 
 try:
     _log_crash("[imports] loading app modules...")
@@ -217,18 +211,21 @@ if sys.platform == "win32":
             _log_crash(f"[dispatch] StartServiceCtrlDispatcherW returned cleanly")
 
 
+def _sc(args: list, timeout=10):
+    """Run sc.exe with args, return (returncode, stdout+stderr)."""
+    r = subprocess.run(
+        ["sc.exe"] + args,
+        capture_output=True, text=True, timeout=timeout
+    )
+    return r.returncode, (r.stdout + r.stderr).strip()
+
+
 def _remove_service_if_exists():
     """Stop and remove existing service — idempotent."""
-    try:
-        win32serviceutil.StopService(SERVICE_NAME)
-        time.sleep(2)
-    except Exception:
-        pass
-    try:
-        win32serviceutil.RemoveService(SERVICE_NAME)
-        time.sleep(1)
-    except Exception:
-        pass
+    _sc(["stop", SERVICE_NAME])
+    time.sleep(2)
+    _sc(["delete", SERVICE_NAME])
+    time.sleep(1)
 
 
 def _disable_lock_on_rdp_disconnect():
@@ -267,55 +264,31 @@ def _disable_lock_on_rdp_disconnect():
 
 
 def _install_service_manually():
-    """Register service directly via win32service API with explicit binary path."""
-    import traceback as _tb
+    """Register service via sc.exe with auto-restart failure actions."""
     exe = sys.executable if getattr(sys, "frozen", False) else sys.argv[0]
     bin_path = f'"{exe}" --run-service'
     _log_crash(f"[install] registering bin_path={bin_path}")
-    try:
-        hscm = win32service.OpenSCManager(None, None, win32service.SC_MANAGER_ALL_ACCESS)
-        try:
-            # SERVICE_INTERACTIVE_PROCESS (0x100) grants GDI/BitBlt access to WinSta0\Default
-            # Required for screen capture under LocalSystem account
-            svc_type = win32service.SERVICE_WIN32_OWN_PROCESS | 0x100
-            hsvc = win32service.CreateService(
-                hscm,
-                SERVICE_NAME,
-                SERVICE_DISPLAY,
-                win32service.SERVICE_ALL_ACCESS,
-                svc_type,
-                win32service.SERVICE_AUTO_START,
-                win32service.SERVICE_ERROR_NORMAL,
-                bin_path,
-                None, 0, None, None, None,
-            )
-            try:
-                win32service.ChangeServiceConfig2(
-                    hsvc,
-                    win32service.SERVICE_CONFIG_DESCRIPTION,
-                    SERVICE_DESCRIPTION,
-                )
-                win32service.ChangeServiceConfig2(
-                    hsvc,
-                    win32service.SERVICE_CONFIG_FAILURE_ACTIONS,
-                    {
-                        "ResetPeriod": 86400,
-                        "RebootMsg": "",
-                        "Command": "",
-                        "Actions": [
-                            (win32service.SC_ACTION_RESTART, 60000),
-                            (win32service.SC_ACTION_RESTART, 60000),
-                            (win32service.SC_ACTION_RESTART, 60000),
-                        ],
-                    },
-                )
-                _log_crash(f"[install] CreateService OK")
-            finally:
-                win32service.CloseServiceHandle(hsvc)
-        finally:
-            win32service.CloseServiceHandle(hscm)
-    except Exception:
-        _log_crash(f"[install] CreateService FAILED: {_tb.format_exc()}")
+
+    rc, out = _sc([
+        "create", SERVICE_NAME,
+        "binPath=", bin_path,
+        "DisplayName=", SERVICE_DISPLAY,
+        "start=", "auto",
+        "type=", "interact",
+        "type=", "own",
+    ])
+    _log_crash(f"[install] sc create rc={rc} out={out}")
+
+    # Set description
+    _sc(["description", SERVICE_NAME, SERVICE_DESCRIPTION])
+
+    # Auto-restart on failure (3× with 60s delay)
+    rc2, out2 = _sc([
+        "failure", SERVICE_NAME,
+        "reset=", "86400",
+        "actions=", "restart/60000/restart/60000/restart/60000",
+    ])
+    _log_crash(f"[install] sc failure rc={rc2} out={out2}")
 
 
 def main():
@@ -325,27 +298,28 @@ def main():
         _install_service_manually()
         _disable_lock_on_rdp_disconnect()
         print(f"Service '{SERVICE_NAME}' installed.")
-        try:
-            win32serviceutil.StartService(SERVICE_NAME)
+        rc, out = _sc(["start", SERVICE_NAME])
+        if rc == 0:
             print(f"Service '{SERVICE_NAME}' started.")
-        except Exception as exc:
-            _log_crash(f"[StartService] {exc}")
-            print(f"Service start failed (starts on next reboot): {exc}")
+        else:
+            _log_crash(f"[StartService] rc={rc} out={out}")
+            print(f"Service start failed (starts on next reboot): {out}")
     elif "--uninstall" in sys.argv:
-        try:
-            win32serviceutil.StopService(SERVICE_NAME)
-            time.sleep(2)
-        except Exception:
-            pass
-        try:
-            win32serviceutil.RemoveService(SERVICE_NAME)
+        _sc(["stop", SERVICE_NAME])
+        time.sleep(2)
+        rc, out = _sc(["delete", SERVICE_NAME])
+        if rc == 0:
             print(f"Service '{SERVICE_NAME}' removed.")
-        except Exception as exc:
-            print(f"Remove failed: {exc}")
+        else:
+            print(f"Remove failed: {out}")
     elif "--start" in sys.argv:
-        win32serviceutil.StartService(SERVICE_NAME)
+        rc, out = _sc(["start", SERVICE_NAME])
+        if rc != 0:
+            print(f"Start failed: {out}")
     elif "--stop" in sys.argv:
-        win32serviceutil.StopService(SERVICE_NAME)
+        rc, out = _sc(["stop", SERVICE_NAME])
+        if rc != 0:
+            print(f"Stop failed: {out}")
     elif "--run-service" in sys.argv:
         # SCM entry point — pure ctypes dispatch, no pywin32 framework
         _log_crash(f"[run-service] entered, exe={sys.executable}")
