@@ -208,17 +208,27 @@ class AdbSession:
             return False
         try:
             nw = _no_window_flags()
+            # Scale stream resolution to 75% — reduces transcode load and bandwidth
+            sw = (self.w * 3 // 4) & ~1
+            sh = (self.h * 3 // 4) & ~1
             self._record_proc = subprocess.Popen(
                 [adb, "-s", self.serial, "exec-out",
-                 f"screenrecord --output-format=h264 --bit-rate=2000000 --size={self.w}x{self.h} -"],
+                 f"screenrecord --output-format=h264 --bit-rate=1000000 --size={sw}x{sh} -"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
                 **nw,
             )
             self._ffmpeg_proc = subprocess.Popen(
-                [ffmpeg, "-loglevel", "quiet",
+                [ffmpeg,
+                 "-loglevel", "quiet",
+                 # Low-latency input flags — don't buffer/probe more than needed
+                 "-fflags", "nobuffer",
+                 "-flags", "low_delay",
+                 "-probesize", "32",
+                 "-analyzeduration", "0",
                  "-i", "pipe:0",
                  "-vf", f"fps={self.fps}",
+                 "-vsync", "0",       # no frame duplication
                  "-f", "image2pipe",
                  "-vcodec", "mjpeg",
                  "-q:v", "5",
@@ -314,14 +324,43 @@ class InputSession:
 
     One per ADB serial. Eliminates per-tap process spawn overhead (~200-400ms).
     Commands are newline-terminated shell one-liners sent to `adb shell` stdin.
+    Heartbeat every 25s keeps the shell alive through idle timeouts.
     """
 
     def __init__(self, serial: str):
         self.serial = serial
         self._proc: subprocess.Popen | None = None
         self._lock = threading.Lock()
+        self._stopped = False
+        # Pre-warm immediately — don't pay spawn cost on first tap
+        self._ensure()
+        # Heartbeat thread keeps adb shell alive through idle timeouts
+        t = threading.Thread(target=self._heartbeat, daemon=True)
+        t.start()
+
+    def _heartbeat(self):
+        while not self._stopped:
+            import time
+            time.sleep(25)
+            if self._stopped:
+                return
+            with self._lock:
+                if self._proc and self._proc.poll() is None:
+                    try:
+                        self._proc.stdin.write(b"echo .\n")
+                        self._proc.stdin.flush()
+                    except Exception:
+                        self._proc = None
+                else:
+                    # Dead — pre-warm a replacement so next tap is instant
+                    self._ensure_locked()
 
     def _ensure(self) -> bool:
+        with self._lock:
+            return self._ensure_locked()
+
+    def _ensure_locked(self) -> bool:
+        """Must be called with self._lock held."""
         if self._proc and self._proc.poll() is None:
             return True
         adb = _find_adb()
@@ -341,7 +380,7 @@ class InputSession:
 
     def send(self, cmd: str):
         with self._lock:
-            if not self._ensure():
+            if not self._ensure_locked():
                 return
             try:
                 self._proc.stdin.write((cmd + "\n").encode())
@@ -350,6 +389,7 @@ class InputSession:
                 self._proc = None
 
     def stop(self):
+        self._stopped = True
         with self._lock:
             if self._proc:
                 try:

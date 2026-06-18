@@ -76,9 +76,29 @@ def create_app(state: CaptureState, frame_queue: FrameQueue) -> FastAPI:
     @app.get("/stream")
     async def stream():
         return StreamingResponse(
-            mjpeg_generator(frame_queue),
+            mjpeg_generator(frame_queue, state),
             media_type="multipart/x-mixed-replace; boundary=frame",
         )
+
+    @app.get("/stats")
+    async def stats():
+        """Lightweight FPS counter — client polls every second."""
+        count = state.frames_served
+        state.frames_served = 0
+        session = state.adb_session
+        return {"frames": count, "active": session is not None}
+
+    @app.post("/reconnect")
+    async def reconnect():
+        """Re-start the ADB capture pipeline for the current session."""
+        session = state.adb_session
+        if session is None:
+            raise HTTPException(status_code=404, detail="No active session")
+        session.stop()
+        ok = session.start()
+        if not ok:
+            raise HTTPException(status_code=503, detail="Could not restart session")
+        return {"ok": True}
 
     @app.get("/window/{window_id}/preview")
     async def preview(window_id: str):
@@ -110,6 +130,17 @@ def create_app(state: CaptureState, frame_queue: FrameQueue) -> FastAPI:
     @app.websocket("/input")
     async def ws_input(websocket: WebSocket):
         await websocket.accept()
+        import asyncio as _asyncio
+
+        async def _ping():
+            while True:
+                await _asyncio.sleep(20)
+                try:
+                    await websocket.send_text('{"type":"ping"}')
+                except Exception:
+                    return
+        _asyncio.create_task(_ping())
+
         try:
             while True:
                 data = await websocket.receive_json()

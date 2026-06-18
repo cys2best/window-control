@@ -1,8 +1,6 @@
 // app.js — stream display, touch→input, reconnect, stats
 let ws = null;
 let wsRetryDelay = 1000;
-let frameCount = 0;
-let lastFrameTime = Date.now();
 
 // Drag state
 let _dragActive = false;
@@ -54,7 +52,7 @@ function initStream() {
   newImg.src = '/stream?' + Date.now();
 
   // MJPEG img onload fires once on first frame only — not per-frame
-  newImg.onload = () => { if (gen === _streamGeneration) { frameCount++; clearUnavailable(); } };
+  newImg.onload = () => { if (gen === _streamGeneration) { clearUnavailable(); } };
 
   newImg.onerror = () => {
     if (gen !== _streamGeneration) return;
@@ -169,37 +167,13 @@ function initKeyboard() {
 }
 
 function initFPS() {
-  // Count real frames by reading the MJPEG stream as a fetch ReadableStream
-  // and counting --frame boundary markers
-  let _fpsReader = null;
-  function startFpsCounter() {
-    if (_fpsReader) { try { _fpsReader.cancel(); } catch(_) {} }
-    fetch('/stream').then(r => {
-      _fpsReader = r.body.getReader();
-      const dec = new TextDecoder();
-      function pump() {
-        _fpsReader.read().then(({ done, value }) => {
-          if (done) { setTimeout(startFpsCounter, 2000); return; }
-          const s = dec.decode(value, { stream: true });
-          // Count boundary markers
-          let i = 0;
-          while ((i = s.indexOf('--frame', i)) !== -1) { frameCount++; i += 7; }
-          pump();
-        }).catch(() => setTimeout(startFpsCounter, 2000));
-      }
-      pump();
-    }).catch(() => setTimeout(startFpsCounter, 2000));
-  }
-  startFpsCounter();
-
+  // Poll /stats every second — server counts frames served, resets counter each call.
+  // Avoids opening a second /stream connection that would starve the img tag.
   setInterval(() => {
-    const now = Date.now();
-    const elapsed = (now - lastFrameTime) / 1000;
-    const fps = elapsed > 0 ? Math.round(frameCount / elapsed) : 0;
-    const pill = document.getElementById('fps-pill');
-    if (pill) pill.textContent = `${fps} fps`;
-    frameCount = 0;
-    lastFrameTime = now;
+    fetch('/stats').then(r => r.json()).then(d => {
+      const pill = document.getElementById('fps-pill');
+      if (pill) pill.textContent = `${d.frames} fps`;
+    }).catch(() => {});
   }, 1000);
 }
 
@@ -215,5 +189,32 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('reconnect-btn').addEventListener('click', () => {
     clearUnavailable();
     initStream();
+  });
+
+  // Reconnect stream + WS when app returns from background (iOS Safari suspends both)
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) {
+      if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
+        wsRetryDelay = 1000;
+        connectWS();
+      }
+      // Only reinit stream if we're on the stream screen
+      if (document.getElementById('screen-stream').classList.contains('active')) {
+        initStream();
+      }
+    }
+  });
+
+  // Fullscreen toggle button
+  document.getElementById('fullscreen-btn').addEventListener('click', () => {
+    const el = document.getElementById('screen-stream');
+    const isFs = document.fullscreenElement || document.webkitFullscreenElement;
+    if (isFs) {
+      if (document.exitFullscreen) document.exitFullscreen();
+      else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+    } else {
+      if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
+      else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+    }
   });
 });

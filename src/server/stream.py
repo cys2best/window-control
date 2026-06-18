@@ -54,6 +54,7 @@ class CaptureState:
         self.quality: int = 85
         self.adb_session = None   # AdbSession when VM selected
         self._lock = threading.Lock()
+        self.frames_served: int = 0  # incremented by mjpeg_generator
 
     def set_quality(self, q: int):
         with self._lock:
@@ -91,17 +92,19 @@ def capture_loop(state: CaptureState, frame_queue: FrameQueue):
             time.sleep(0.05)
         else:
             frame_queue.put(frame)
-            time.sleep(1 / 30)
+            time.sleep(1 / session.fps)
 
     _log("[capture_loop] stopped")
 
 
-async def mjpeg_generator(frame_queue: FrameQueue):
+async def mjpeg_generator(frame_queue: FrameQueue, state: CaptureState | None = None):
     loop = asyncio.get_event_loop()
     while True:
         frame = await loop.run_in_executor(None, frame_queue.get, 1.0)
         if frame is None:
             continue
+        if state is not None:
+            state.frames_served += 1
         yield (
             b"--frame\r\n"
             b"Content-Type: image/jpeg\r\n\r\n" + frame + b"\r\n"
