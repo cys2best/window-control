@@ -1,6 +1,17 @@
 import os
 from pathlib import Path
 
+
+def _log(msg: str):
+    for _p in [r"C:\ProgramData\WindowControl", r"C:\Windows\Temp"]:
+        try:
+            os.makedirs(_p, exist_ok=True)
+            with open(os.path.join(_p, "service_crash.log"), "a") as f:
+                f.write(msg + "\n")
+            return
+        except Exception:
+            continue
+
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -117,6 +128,7 @@ def create_app(state: CaptureState, frame_queue: FrameQueue) -> FastAPI:
     @app.post("/webrtc/offer")
     async def webrtc_offer(req: WebRTCOfferRequest):
         if not webrtc_manager.available:
+            _log("[webrtc] offer rejected — aiortc not available in this build")
             raise HTTPException(status_code=501, detail="aiortc not installed")
         if not req.id.startswith("adb:"):
             raise HTTPException(status_code=400, detail="Invalid id")

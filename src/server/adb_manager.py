@@ -81,7 +81,7 @@ def _find_ldplayer_window(index: int) -> int | None:
         def _cb(hwnd, _):
             user32.GetWindowTextW(hwnd, buf, 256)
             t = buf.value
-            if "LDPlayer" in t and user32.IsWindowVisible(hwnd):
+            if "LDPlayer" in t:
                 found.append((hwnd, t))
             return True
         user32.EnumWindows(EnumWindowsProc(_cb), 0)

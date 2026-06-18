@@ -158,7 +158,8 @@ async function initWebRTC(windowId) {
     for (const c of pendingCandidates) {
       fetch('/webrtc/ice-candidate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(c) }).catch(() => {});
     }
-  } catch (_) {
+  } catch (err) {
+    console.error('[webrtc] initWebRTC error, falling back to MJPEG:', err);
     _fallbackToMJPEG();
   }
 }
