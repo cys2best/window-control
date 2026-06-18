@@ -213,27 +213,29 @@ class WebRTCManager:
             )
             answer = await pc.createAnswer()
             await pc.setLocalDescription(answer)
-
-            # Wait for ICE gathering — answer must contain a=candidate lines
-            # Without this, client gets answer with no candidates, ICE stays "checking"
-            ice_done = asyncio.Event()
-
-            @pc.on("icegatheringstatechange")
-            def _on_gather():
-                if pc.iceGatheringState == "complete":
-                    ice_done.set()
-
-            if pc.iceGatheringState == "complete":
-                ice_done.set()
-            try:
-                await asyncio.wait_for(ice_done.wait(), timeout=10)
-            except asyncio.TimeoutError:
-                _log("[webrtc] ICE gathering timed out — sending partial candidates")
-
+            # Return answer immediately — trickle ICE via add_ice_candidate()
             patched_sdp = _patch_sdp_for_safari(pc.localDescription.sdp)
             self._session = WebRTCSession(pc, track, raw)
             _log(f"[webrtc] session started serial={serial}")
             return patched_sdp, pc.localDescription.type
+
+    async def add_ice_candidate(self, candidate: dict):
+        """Add a trickle ICE candidate from the client."""
+        session = self._session
+        if session is None:
+            return
+        cand_str = candidate.get("candidate", "")
+        if not cand_str:
+            return  # end-of-candidates signal, ignore
+        try:
+            from aiortc.sdp import candidate_from_sdp
+            rtc_cand = candidate_from_sdp(cand_str.replace("candidate:", "", 1))
+            rtc_cand.sdpMid = candidate.get("sdpMid")
+            rtc_cand.sdpMLineIndex = candidate.get("sdpMLineIndex")
+            await session.pc.addIceCandidate(rtc_cand)
+            _log(f"[webrtc] added remote candidate: {cand_str[:80]}")
+        except Exception:
+            _log(f"[webrtc] addIceCandidate error: {traceback.format_exc()[:200]}")
 
     async def close(self):
         async with self._lock:

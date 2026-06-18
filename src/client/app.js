@@ -98,7 +98,7 @@ async function initWebRTC(windowId) {
   try {
     if (_pc) { try { _pc.close(); } catch(_) {} _pc = null; }
 
-    _pc = new RTCPeerConnection({ iceServers: [] }); // direct Tailscale IP, no STUN needed
+    _pc = new RTCPeerConnection({ iceServers: [] }); // direct Tailscale, no STUN
 
     const video = document.getElementById('stream-video');
     const img   = document.getElementById('stream-img');
@@ -118,13 +118,27 @@ async function initWebRTC(windowId) {
       }
     };
 
+    // Trickle ICE: send candidates to server as they arrive
+    _pc.onicecandidate = e => {
+      if (!e.candidate) return; // end-of-candidates, server doesn't need it
+      fetch('/webrtc/ice-candidate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          candidate: e.candidate.candidate,
+          sdpMid: e.candidate.sdpMid,
+          sdpMLineIndex: e.candidate.sdpMLineIndex,
+        }),
+      }).catch(() => {});
+    };
+
     _pc.addTransceiver('video', { direction: 'recvonly' });
     const offer = await _pc.createOffer();
     await _pc.setLocalDescription(offer);
 
-    // 15s negotiation timeout (ICE gathering can take up to 10s) → fallback to MJPEG
+    // 5s timeout — answer comes back immediately now (trickle ICE)
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 15000);
+    const timer = setTimeout(() => controller.abort(), 5000);
     const r = await fetch('/webrtc/offer', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -136,7 +150,8 @@ async function initWebRTC(windowId) {
     if (!r.ok) { _fallbackToMJPEG(); return; }
     const ans = await r.json();
     await _pc.setRemoteDescription(ans);
-    // Video will appear via ontrack callback
+    // ICE candidates flow via onicecandidate → /webrtc/ice-candidate
+    // Video appears via ontrack once ICE connects
   } catch (_) {
     _fallbackToMJPEG();
   }

@@ -41,6 +41,12 @@ class WebRTCOfferRequest(BaseModel):
     id: str  # "adb:SERIAL"
 
 
+class WebRTCIceCandidateRequest(BaseModel):
+    candidate: str = ""
+    sdpMid: str | None = None
+    sdpMLineIndex: int | None = None
+
+
 def create_app(state: CaptureState, frame_queue: FrameQueue) -> FastAPI:
     import asyncio
     app = FastAPI()
@@ -125,6 +131,15 @@ def create_app(state: CaptureState, frame_queue: FrameQueue) -> FastAPI:
             return {"sdp": answer_sdp, "type": answer_type}
         except Exception as e:
             raise HTTPException(status_code=503, detail=str(e))
+
+    @app.post("/webrtc/ice-candidate")
+    async def webrtc_ice_candidate(req: WebRTCIceCandidateRequest):
+        await webrtc_manager.add_ice_candidate({
+            "candidate": req.candidate,
+            "sdpMid": req.sdpMid,
+            "sdpMLineIndex": req.sdpMLineIndex,
+        })
+        return {"ok": True}
 
     @app.delete("/webrtc")
     async def webrtc_close():
