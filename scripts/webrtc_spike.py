@@ -65,28 +65,50 @@ def _iter_nalus(pipe):
 
 # ── Track ─────────────────────────────────────────────────────────────────────
 class H264SpikeTrack(VideoStreamTrack):
+    """Decode ADB H.264 NAL units into VideoFrames for aiortc."""
     kind = "video"
+
     def __init__(self, pipe, loop):
         super().__init__()
-        self._q = asyncio.Queue(maxsize=60)
+        self._q = asyncio.Queue(maxsize=4)   # small — only hold recent frames
         self._loop = loop
-        self._pts = 0
+        self._codec = None  # av.CodecContext, created in reader thread
         threading.Thread(target=self._read, args=(pipe,), daemon=True).start()
 
     def _read(self, pipe):
+        import av
+        # Create H.264 decoder
+        codec = av.CodecContext.create("h264", "r")
+        frame_count = 0
         try:
             for nalu in _iter_nalus(pipe):
-                asyncio.run_coroutine_threadsafe(self._q.put(nalu), self._loop)
+                # Re-add Annex B start code — av decoder needs it
+                pkt = av.Packet(b"\x00\x00\x00\x01" + nalu)
+                try:
+                    frames = codec.decode(pkt)
+                    for frame in frames:
+                        frame_count += 1
+                        if frame_count <= 3 or frame_count % 100 == 0:
+                            print(f"[spike] decoded frame #{frame_count} {frame.width}x{frame.height}")
+                        # Drop if queue full — keep latency low
+                        if self._q.full():
+                            try: self._q.get_nowait()
+                            except: pass
+                        asyncio.run_coroutine_threadsafe(
+                            self._q.put(frame), self._loop)
+                except Exception as e:
+                    if frame_count < 10:
+                        print(f"[spike] decode error: {e}")
         except Exception:
-            print(f"[spike] reader: {traceback.format_exc()[:200]}")
+            print(f"[spike] reader: {traceback.format_exc()[:300]}")
 
     async def recv(self):
-        nalu = await self._q.get()
-        pkt = av.Packet(nalu)
-        self._pts += int(90000 / 30)
-        pkt.pts = pkt.dts = self._pts
-        pkt.time_base = fractions.Fraction(1, 90000)
-        return pkt
+        frame = await self._q.get()
+        # Ensure pts is set for aiortc
+        pts, time_base = await self.next_timestamp()
+        frame.pts = pts
+        frame.time_base = time_base
+        return frame
 
 # ── SDP patch ─────────────────────────────────────────────────────────────────
 def _patch_sdp(sdp):
