@@ -216,6 +216,17 @@ class WebRTCManager:
                 if pc.iceConnectionState in ("failed", "closed"):
                     await self._close_session()
 
+            @pc.on("icegatheringstatechange")
+            async def _on_gather():
+                _log(f"[webrtc] gathering: {pc.iceGatheringState}")
+
+            @pc.on("icecandidate")
+            async def _on_local_cand(candidate):
+                if candidate:
+                    _log(f"[webrtc] local candidate: {str(candidate.candidate)[:80]}")
+                else:
+                    _log("[webrtc] local gathering complete")
+
             pc.addTrack(track)
             await pc.setRemoteDescription(
                 RTCSessionDescription(sdp=offer_sdp, type=offer_type)

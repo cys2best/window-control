@@ -66,7 +66,8 @@ def main():
         service_cli()
         return
 
-    _log(f"[GUI] starting pid={os.getpid()} user={os.environ.get('USERNAME','?')}")
+    from config import VERSION
+    _log(f"[GUI] starting v{VERSION} pid={os.getpid()} user={os.environ.get('USERNAME','?')}")
 
     # Remove legacy lock-screen service if still installed from older versions
     if sys.platform == "win32":
