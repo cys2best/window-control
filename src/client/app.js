@@ -147,7 +147,7 @@ async function initWebRTC(windowId) {
     await _pc.setLocalDescription(offer);
 
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 5000);
+    const timer = setTimeout(() => controller.abort(), 15000);
     let r;
     try {
       r = await fetch('/webrtc/offer', {
