@@ -90,7 +90,9 @@ class H264SpikeTrack(VideoStreamTrack):
 
 # ── SDP patch ─────────────────────────────────────────────────────────────────
 def _patch_sdp(sdp):
-    lines = sdp.splitlines(); out = []
+    # aiortc produces \r\n — split keeping delimiter to avoid mangling
+    lines = sdp.split("\r\n")
+    out = []
     for line in lines:
         out.append(line)
         if "H264/90000" in line and "a=rtpmap" in line:
@@ -99,7 +101,12 @@ def _patch_sdp(sdp):
                 fmtp = f"a=fmtp:{pt} level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f"
                 out.append(fmtp)
                 print(f"[spike] injected fmtp: {fmtp}")
-    return "\r\n".join(out)
+    result = "\r\n".join(out)
+    # Debug: print first 20 lines to verify SDP structure
+    print("[spike] SDP answer (first 20 lines):")
+    for l in result.split("\r\n")[:20]:
+        print(f"  {repr(l)}")
+    return result
 
 # ── State: one PC per session ID ──────────────────────────────────────────────
 _sessions = {}  # session_id → RTCPeerConnection
