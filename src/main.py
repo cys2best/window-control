@@ -133,7 +133,6 @@ def main():
     )
 
     launcher.server_start_requested.connect(start_server)
-    launcher.server_stop_requested.connect(stop_server)
     launcher.quality_changed.connect(state.set_quality)
 
     launcher.show()

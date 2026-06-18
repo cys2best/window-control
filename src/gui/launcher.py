@@ -4,7 +4,7 @@ import threading
 import subprocess
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QLabel, QComboBox, QGroupBox, QSizePolicy, QScrollArea
+    QPushButton, QLabel, QComboBox, QGroupBox, QScrollArea
 )
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QPixmap, QImage
@@ -19,7 +19,6 @@ from updater import check_for_update
 
 class LauncherWindow(QMainWindow):
     server_start_requested = pyqtSignal()
-    server_stop_requested = pyqtSignal()
     quality_changed = pyqtSignal(int)
     window_selected = pyqtSignal(int, str)
 
@@ -34,6 +33,9 @@ class LauncherWindow(QMainWindow):
         self._pending_update_version = None
         self._refresh_ip()
         check_for_update(self._on_update_available)
+        # Auto-start server immediately
+        self._server_running = True
+        self.server_start_requested.emit()
 
     def _setup_ui(self):
         scroll = QScrollArea()
@@ -68,12 +70,6 @@ class LauncherWindow(QMainWindow):
         self._qr_label.setAlignment(Qt.AlignCenter)
         self._qr_label.setFixedHeight(200)
         server_layout.addWidget(self._qr_label)
-
-        self._start_stop_btn = QPushButton("Start Server")
-        self._start_stop_btn.setMinimumHeight(44)
-        self._start_stop_btn.setStyleSheet(self._btn_style("#2563eb", "#1d4ed8"))
-        self._start_stop_btn.clicked.connect(self._on_start_stop)
-        server_layout.addWidget(self._start_stop_btn)
 
         layout.addWidget(server_group)
 
@@ -117,8 +113,8 @@ class LauncherWindow(QMainWindow):
         layout.addWidget(self._update_banner)
 
         # --- Status bar ---
-        self._status_label = QLabel("Server stopped")
-        self._status_label.setStyleSheet("font-size: 13px; color: #666;")
+        self._status_label = QLabel("Server running…")
+        self._status_label.setStyleSheet("font-size: 13px; color: #16a34a;")
         layout.addWidget(self._status_label)
 
 
@@ -182,20 +178,6 @@ class LauncherWindow(QMainWindow):
         )
         self._qr_label.setPixmap(pix)
 
-    def _on_start_stop(self):
-        if not self._server_running:
-            self._server_running = True
-            self._start_stop_btn.setText("Stop Server")
-            self._start_stop_btn.setStyleSheet(self._btn_style("#dc2626", "#b91c1c"))
-            self._status_label.setText("Server running…")
-            self.server_start_requested.emit()
-        else:
-            self._server_running = False
-            self._start_stop_btn.setText("Start Server")
-            self._start_stop_btn.setStyleSheet(self._btn_style("#2563eb", "#1d4ed8"))
-            self._status_label.setText("Server stopped")
-            self.server_stop_requested.emit()
-
     def _on_quality_changed(self, _idx: int):
         key = self._quality_combo.currentData()
         value = QUALITY_MAP[key]
@@ -224,17 +206,6 @@ class LauncherWindow(QMainWindow):
             self._install_btn.setEnabled(True)
 
         download_and_install(version, on_progress=_progress, on_error=_error)
-
-    def set_server_running(self, running: bool):
-        self._server_running = running
-        if running:
-            self._start_stop_btn.setText("Stop Server")
-            self._start_stop_btn.setStyleSheet(self._btn_style("#dc2626", "#b91c1c"))
-            self._status_label.setText("Server running…")
-        else:
-            self._start_stop_btn.setText("Start Server")
-            self._start_stop_btn.setStyleSheet(self._btn_style("#2563eb", "#1d4ed8"))
-            self._status_label.setText("Server stopped")
 
     def _run_elevated(self, exe: str, arg: str):
         if sys.platform == "win32":
