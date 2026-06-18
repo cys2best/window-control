@@ -146,6 +146,7 @@ def create_app(state: CaptureState, frame_queue: FrameQueue) -> FastAPI:
 
     @app.post("/webrtc/ice-candidate")
     async def webrtc_ice_candidate(req: WebRTCIceCandidateRequest):
+        _log(f"[webrtc] /ice-candidate received: {(req.candidate or '')[:80]}")
         await webrtc_manager.add_ice_candidate({
             "candidate": req.candidate,
             "sdpMid": req.sdpMid,

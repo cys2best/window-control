@@ -235,6 +235,8 @@ class WebRTCManager:
             await pc.setLocalDescription(answer)
             # Return answer immediately — trickle ICE via add_ice_candidate()
             patched_sdp = _patch_sdp_for_safari(pc.localDescription.sdp)
+            local_cands = [l for l in pc.localDescription.sdp.split("\r\n") if l.startswith("a=candidate")]
+            _log(f"[webrtc] local SDP candidates ({len(local_cands)}): {local_cands[:3]}")
             self._session = WebRTCSession(pc, track, raw)
             _log(f"[webrtc] session started serial={serial}")
             return patched_sdp, pc.localDescription.type
