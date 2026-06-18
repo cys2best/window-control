@@ -22,6 +22,9 @@ _ADB_PATH_FALLBACKS = [
     r"C:\LDPlayer\LDPlayer9\adb.exe",
     r"C:\LDPlayer\LDPlayer4.0\vbox64\adb.exe",
     r"C:\Program Files\LDPlayer\LDPlayer9\adb.exe",
+    r"C:\Program Files\LDPlayer\LDPlayer4.0\vbox64\adb.exe",
+    r"C:\LDPlayer9\adb.exe",
+    r"C:\LDPlayer4\adb.exe",
 ]
 
 
@@ -39,7 +42,15 @@ def _log(msg: str):
 def _find_adb() -> str | None:
     for path in _ADB_PATH_FALLBACKS:
         if os.path.exists(path):
+            _log(f"[adb] found at {path}")
             return path
+    # Try adb.exe on PATH
+    import shutil
+    found = shutil.which("adb")
+    if found:
+        _log(f"[adb] found on PATH: {found}")
+        return found
+    _log(f"[adb] not found — tried: {_ADB_PATH_FALLBACKS}")
     return None
 
 
@@ -60,6 +71,7 @@ def list_vms() -> list[dict]:
     try:
         out = subprocess.check_output([adb, "devices"], timeout=5, text=True,
                                       **_no_window_flags())
+        _log(f"[adb] devices output: {out.strip()!r}")
         result = []
         for line in out.splitlines()[1:]:
             line = line.strip()
