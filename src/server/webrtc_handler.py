@@ -10,7 +10,6 @@ MJPEG path kept as fallback if WebRTC negotiation fails.
 """
 
 import asyncio
-import fractions
 import sys
 import threading
 import time
@@ -84,41 +83,50 @@ except ImportError:
 
 if _AIORTC_AVAILABLE:
     class H264StreamTrack(VideoStreamTrack):
-        """Feeds raw H.264 NAL units from ADB screenrecord into WebRTC."""
+        """Decode ADB H.264 NAL units into VideoFrames for aiortc.
+
+        aiortc recv() must return av.VideoFrame — raw av.Packet doesn't work.
+        Decode via av.CodecContext, aiortc re-encodes for WebRTC transport.
+        """
 
         kind = "video"
 
         def __init__(self, pipe, loop: asyncio.AbstractEventLoop):
             super().__init__()
-            self._queue: asyncio.Queue = asyncio.Queue(maxsize=60)
+            self._queue: asyncio.Queue = asyncio.Queue(maxsize=4)
             self._loop = loop
             self._stopped = False
-            self._pts = 0
-            self._time_base = fractions.Fraction(1, 90000)  # RTP 90kHz clock
             t = threading.Thread(target=self._read_thread, args=(pipe,), daemon=True)
             t.start()
 
         def _read_thread(self, pipe):
+            codec = av.CodecContext.create("h264", "r")
             try:
                 for nalu in _iter_nalus(pipe):
                     if self._stopped:
                         break
-                    asyncio.run_coroutine_threadsafe(
-                        self._queue.put(nalu), self._loop
-                    )
+                    pkt = av.Packet(b"\x00\x00\x00\x01" + nalu)
+                    try:
+                        for frame in codec.decode(pkt):
+                            if self._queue.full():
+                                try:
+                                    self._queue.get_nowait()
+                                except Exception:
+                                    pass
+                            asyncio.run_coroutine_threadsafe(
+                                self._queue.put(frame), self._loop
+                            )
+                    except Exception:
+                        pass
             except Exception:
                 _log(f"[webrtc] NAL reader error: {traceback.format_exc()[:300]}")
 
         async def recv(self):
-            nalu = await self._queue.get()
-            # Build av.Packet from raw NAL unit bytes
-            packet = av.Packet(nalu)
-            # Monotonic PTS in 90kHz units — avoids jitter from wall clock
-            self._pts += int(90000 / 30)  # assume max 30fps for timestamp spacing
-            packet.pts = self._pts
-            packet.dts = self._pts
-            packet.time_base = self._time_base
-            return packet
+            frame = await self._queue.get()
+            pts, time_base = await self.next_timestamp()
+            frame.pts = pts
+            frame.time_base = time_base
+            return frame
 
         def stop(self):
             self._stopped = True
@@ -129,14 +137,12 @@ if _AIORTC_AVAILABLE:
 
 def _patch_sdp_for_safari(sdp: str) -> str:
     """Ensure H.264 Baseline 3.1 profile in SDP answer — required by Safari."""
-    lines = sdp.splitlines()
+    lines = sdp.split("\r\n")
     out = []
     for line in lines:
         out.append(line)
-        # After the H264 rtpmap line, inject fmtp if not already present
         if "H264/90000" in line and "a=rtpmap" in line:
             pt = line.split(":")[1].split(" ")[0]
-            # Check if fmtp already follows
             has_fmtp = any(f"a=fmtp:{pt}" in l for l in lines)
             if not has_fmtp:
                 out.append(
