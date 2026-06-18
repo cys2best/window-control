@@ -1,0 +1,263 @@
+"""
+ADB-based Android VM capture and input for LDPlayer/VirtualBox headless instances.
+
+Capture pipeline:
+  adb exec-out screenrecord --output-format=h264 --time-limit=3600 -
+    | ffmpeg -i pipe:0 -vf fps=15 -f image2pipe -vcodec mjpeg pipe:1
+    -> Python reads JPEG frames -> FrameQueue
+
+Input:
+  adb shell input tap X Y
+  adb shell input keyevent KEYCODE
+"""
+
+import os
+import re
+import subprocess
+import threading
+import traceback
+
+
+_ADB_PATH_FALLBACKS = [
+    r"C:\LDPlayer\LDPlayer9\adb.exe",
+    r"C:\LDPlayer\LDPlayer4.0\vbox64\adb.exe",
+    r"C:\Program Files\LDPlayer\LDPlayer9\adb.exe",
+]
+
+
+def _log(msg: str):
+    for _p in [r"C:\ProgramData\WindowControl", r"C:\Windows\Temp"]:
+        try:
+            os.makedirs(_p, exist_ok=True)
+            with open(os.path.join(_p, "service_crash.log"), "a") as f:
+                f.write(msg + "\n")
+            return
+        except Exception:
+            continue
+
+
+def _find_adb() -> str | None:
+    for path in _ADB_PATH_FALLBACKS:
+        if os.path.exists(path):
+            return path
+    return None
+
+
+def _get_ffmpeg() -> str | None:
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        return None
+
+
+def list_vms() -> list[dict]:
+    """Return list of connected ADB devices as VM dicts with id='adb:SERIAL'."""
+    adb = _find_adb()
+    if not adb:
+        _log("[adb] adb.exe not found")
+        return []
+    try:
+        out = subprocess.check_output([adb, "devices"], timeout=5, text=True)
+        result = []
+        for line in out.splitlines()[1:]:
+            line = line.strip()
+            if not line or "\t" not in line:
+                continue
+            serial, state = line.split("\t", 1)
+            if state.strip() != "device":
+                continue
+            m = re.match(r"emulator-(\d+)", serial)
+            if m:
+                port = int(m.group(1))
+                idx = (port - 5554) // 2
+                name = f"LDPlayer #{idx}"
+            else:
+                name = serial
+            result.append({
+                "id": f"adb:{serial}",
+                "title": f"[VM] {name}",
+            })
+        return result
+    except Exception:
+        _log(f"[adb] list_vms failed: {traceback.format_exc()[:300]}")
+        return []
+
+
+def get_screen_size(serial: str) -> tuple[int, int]:
+    adb = _find_adb()
+    if not adb:
+        return 1280, 720
+    try:
+        out = subprocess.check_output(
+            [adb, "-s", serial, "shell", "wm size"], timeout=5, text=True
+        )
+        m = re.search(r"(\d+)x(\d+)", out)
+        if m:
+            return int(m.group(1)), int(m.group(2))
+    except Exception:
+        pass
+    return 1280, 720
+
+
+class AdbSession:
+    """Holds the screenrecord+ffmpeg pipeline for one ADB device."""
+
+    def __init__(self, serial: str, w: int, h: int, fps: int = 15):
+        self.serial = serial
+        self.w = w
+        self.h = h
+        self.fps = fps
+        self._record_proc: subprocess.Popen | None = None
+        self._ffmpeg_proc: subprocess.Popen | None = None
+        self._lock = threading.Lock()
+        self._latest_frame: bytes | None = None
+        self._reader_thread: threading.Thread | None = None
+        self._running = False
+
+    def start(self) -> bool:
+        adb = _find_adb()
+        ffmpeg = _get_ffmpeg()
+        if not adb:
+            _log("[adb] adb.exe not found")
+            return False
+        if not ffmpeg:
+            _log("[adb] ffmpeg not found — install imageio-ffmpeg")
+            return False
+        try:
+            self._record_proc = subprocess.Popen(
+                [adb, "-s", self.serial, "exec-out",
+                 f"screenrecord --output-format=h264 --bit-rate=2000000 --size={self.w}x{self.h} -"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+            )
+            self._ffmpeg_proc = subprocess.Popen(
+                [ffmpeg, "-loglevel", "quiet",
+                 "-i", "pipe:0",
+                 "-vf", f"fps={self.fps}",
+                 "-f", "image2pipe",
+                 "-vcodec", "mjpeg",
+                 "-q:v", "5",
+                 "pipe:1"],
+                stdin=self._record_proc.stdout,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+            )
+            self._record_proc.stdout.close()
+            self._running = True
+            self._reader_thread = threading.Thread(target=self._read_frames, daemon=True)
+            self._reader_thread.start()
+            _log(f"[adb] session started serial={self.serial} {self.w}x{self.h}@{self.fps}fps")
+            return True
+        except Exception:
+            _log(f"[adb] session start failed: {traceback.format_exc()[:400]}")
+            self.stop()
+            return False
+
+    def _read_frames(self):
+        """Parse JPEG frames from ffmpeg stdout (SOI=FFD8, EOI=FFD9)."""
+        buf = b""
+        ffmpeg = self._ffmpeg_proc
+        if ffmpeg is None:
+            return
+        try:
+            while self._running:
+                chunk = ffmpeg.stdout.read(65536)
+                if not chunk:
+                    break
+                buf += chunk
+                while True:
+                    start = buf.find(b"\xff\xd8")
+                    if start == -1:
+                        buf = b""
+                        break
+                    end = buf.find(b"\xff\xd9", start + 2)
+                    if end == -1:
+                        buf = buf[start:]
+                        break
+                    jpeg = buf[start:end + 2]
+                    buf = buf[end + 2:]
+                    with self._lock:
+                        self._latest_frame = jpeg
+        except Exception:
+            pass
+        _log(f"[adb] frame reader exited serial={self.serial}")
+
+    def get_latest_frame(self) -> bytes | None:
+        with self._lock:
+            return self._latest_frame
+
+    def stop(self):
+        self._running = False
+        for proc in [self._ffmpeg_proc, self._record_proc]:
+            if proc:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+        self._ffmpeg_proc = None
+        self._record_proc = None
+        _log(f"[adb] session stopped serial={self.serial}")
+
+
+# ── Input ─────────────────────────────────────────────────────────────────────
+
+def _adb_shell_async(serial: str, *args):
+    adb = _find_adb()
+    if not adb:
+        return
+    try:
+        subprocess.Popen(
+            [adb, "-s", serial, "shell"] + list(args),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        pass
+
+
+def tap(serial: str, nx: float, ny: float, w: int, h: int):
+    x, y = int(nx * w), int(ny * h)
+    _adb_shell_async(serial, "input", "tap", str(x), str(y))
+
+
+def swipe(serial: str, nx0: float, ny0: float, nx1: float, ny1: float,
+          w: int, h: int, duration_ms: int = 50):
+    x0, y0 = int(nx0 * w), int(ny0 * h)
+    x1, y1 = int(nx1 * w), int(ny1 * h)
+    _adb_shell_async(serial, "input", "swipe",
+                     str(x0), str(y0), str(x1), str(y1), str(duration_ms))
+
+
+def scroll(serial: str, nx: float, ny: float, dy: int, w: int, h: int):
+    x, y = int(nx * w), int(ny * h)
+    dist = dy * 200
+    _adb_shell_async(serial, "input", "swipe",
+                     str(x), str(y), str(x), str(y - dist), "300")
+
+
+_KEYCODES = {
+    "Return":    "66",
+    "BackSpace": "67",
+    "Tab":       "61",
+    "Escape":    "111",
+    "Delete":    "112",
+    "ArrowLeft": "21",
+    "ArrowUp":   "19",
+    "ArrowRight":"22",
+    "ArrowDown": "20",
+    " ":         "62",
+    "Space":     "62",
+}
+
+
+def send_key(serial: str, key: str):
+    kc = _KEYCODES.get(key)
+    if kc:
+        _adb_shell_async(serial, "input", "keyevent", kc)
+    elif len(key) == 1:
+        escaped = key.replace("\\", "\\\\").replace("'", "\\'") \
+                     .replace('"', '\\"').replace(" ", "%s") \
+                     .replace("&", "\\&").replace("<", "\\<") \
+                     .replace(">", "\\>").replace("|", "\\|")
+        _adb_shell_async(serial, "input", "text", escaped)

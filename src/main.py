@@ -2,6 +2,7 @@
 import sys
 import os
 
+
 def _log_early(msg: str):
     for _p in [r"C:\ProgramData\WindowControl", r"C:\Windows\Temp", r"C:\Temp"]:
         try:
@@ -11,6 +12,7 @@ def _log_early(msg: str):
             return
         except Exception:
             continue
+
 
 _log_early(f"[gui-imports-start] pid={os.getpid()} user={os.environ.get('USERNAME','?')}")
 
@@ -35,7 +37,6 @@ try:
     from config import PORT, QUALITY_MAP, DEFAULT_QUALITY
     from server.app import create_app
     from server.stream import CaptureState, FrameQueue, capture_loop
-    from server.window_manager import list_windows
     from gui.launcher import LauncherWindow
     from gui.tray import TrayIcon
     _log_early("[gui-imports] app modules OK")
@@ -57,11 +58,6 @@ def _log(msg: str):
             continue
 
 
-def _build_available_windows():
-    windows = list_windows()
-    return [{"id": w.hwnd, "title": w.title} for w in windows]
-
-
 def main():
     # Delegate service CLI args before starting GUI
     _svc_args = {"--install", "--uninstall", "--start", "--stop", "--run-service"}
@@ -72,14 +68,13 @@ def main():
 
     _log(f"[GUI] starting pid={os.getpid()} user={os.environ.get('USERNAME','?')}")
     app = QApplication(sys.argv)
-    app.setQuitOnLastWindowClosed(False)  # keep alive in tray
+    app.setQuitOnLastWindowClosed(False)
 
     state = CaptureState()
     state.set_quality(QUALITY_MAP[DEFAULT_QUALITY])
     frame_queue = FrameQueue()
 
-    available_windows = _build_available_windows()
-    fastapi_app = create_app(state, frame_queue, available_windows)
+    fastapi_app = create_app(state, frame_queue)
 
     config = uvicorn.Config(fastapi_app, host="0.0.0.0", port=PORT,
                             log_level="warning", log_config=None)
@@ -90,50 +85,17 @@ def main():
     def start_server():
         nonlocal _server_thread, _capture_thread
         state.running = True
-        available_windows.clear()
-        available_windows.extend(_build_available_windows())
         _capture_thread = threading.Thread(
             target=capture_loop, args=(state, frame_queue), daemon=True
         )
         _capture_thread.start()
         _server_thread = threading.Thread(target=server.run, daemon=True)
         _server_thread.start()
+        _log("[GUI] server started")
 
     def stop_server():
         state.running = False
         server.should_exit = True
-
-    # Connect to service for lock/unlock desktop switching
-    _pipe = None
-    if sys.platform == "win32":
-        from service.pipe_client import PipeClient
-
-        def _on_service_event(ev: dict):
-            event = ev.get("event")
-            _log(f"[pipe] event received: {ev}")
-            if event == "lock":
-                _log("[pipe] setting desktop=Winlogon")
-                state.set_desktop("Winlogon")
-                launcher.on_service_lock()
-            elif event == "unlock":
-                _log("[pipe] setting desktop=Default")
-                state.set_desktop("Default")
-                available_windows.clear()
-                available_windows.extend(_build_available_windows())
-                launcher.on_service_unlock()
-
-        def _on_pipe_reconnect():
-            # Re-sync desktop state after pipe reconnects (may have missed unlock event)
-            import time
-            time.sleep(0.5)
-            state.set_desktop("Default")
-            available_windows.clear()
-            available_windows.extend(_build_available_windows())
-            # on_service_unlock emits Qt signal — safe from any thread
-            launcher.on_service_unlock()
-
-        _pipe = PipeClient(on_event=_on_service_event)
-        threading.Thread(target=_try_connect_pipe, args=(_pipe, _on_pipe_reconnect), daemon=True).start()
 
     launcher = LauncherWindow(state)
 
@@ -173,10 +135,6 @@ def main():
     launcher.server_start_requested.connect(start_server)
     launcher.server_stop_requested.connect(stop_server)
     launcher.quality_changed.connect(state.set_quality)
-    launcher.window_selected.connect(lambda hwnd, title: state.set_hwnd(hwnd))
-
-    # Prevent Windows from locking session due to inactivity
-    threading.Thread(target=_keep_session_alive, daemon=True).start()
 
     launcher.show()
     tray.start()
@@ -186,53 +144,6 @@ def main():
     stop_server()
     tray.stop()
     sys.exit(exit_code)
-
-
-def _keep_session_alive():
-    """Prevent Windows inactivity lock by resetting execution state periodically.
-
-    ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED | ES_CONTINUOUS tells Windows
-    this app needs the session active — same mechanism used by media players.
-    Also calls SetThreadExecutionState every 30s to reset inactivity timer.
-    """
-    if sys.platform != "win32":
-        return
-    import ctypes
-    ES_CONTINUOUS       = 0x80000000
-    ES_SYSTEM_REQUIRED  = 0x00000001
-    ES_DISPLAY_REQUIRED = 0x00000002
-    flags = ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED
-    ctypes.windll.kernel32.SetThreadExecutionState(flags)
-    import time
-    while True:
-        time.sleep(30)
-        ctypes.windll.kernel32.SetThreadExecutionState(flags)
-
-
-def _try_connect_pipe(pipe, on_reconnect=None):
-    import time
-    first = True
-    attempt = 0
-    _log("[pipe] _try_connect_pipe thread started")
-    while True:
-        attempt += 1
-        result = pipe.connect()
-        if result:
-            if first:
-                _log(f"[pipe] connected (attempt={attempt})")
-                first = False
-            else:
-                _log(f"[pipe] reconnected (attempt={attempt})")
-                if on_reconnect:
-                    on_reconnect()
-            # Wait until disconnected, then retry
-            while pipe.is_connected:
-                time.sleep(1)
-            _log("[pipe] disconnected — will retry")
-        else:
-            if attempt == 1 or attempt % 10 == 0:
-                _log(f"[pipe] connect failed attempt={attempt}, retrying in 3s")
-        time.sleep(3)
 
 
 if __name__ == "__main__":

@@ -1,39 +1,20 @@
 # build/window_control.spec
 # -*- mode: python ; coding: utf-8 -*-
-import sys
 from pathlib import Path
-from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 block_cipher = None
 
-# SPECPATH is set by PyInstaller to the directory containing this spec file
 _root = Path(SPECPATH).parent
 src_dir = str(_root / 'src')
-
-# Collect pywin32 fully (DLLs + pyd files + submodules)
-win32_datas, win32_binaries, win32_hiddenimports = collect_all('win32')
-win32api_datas, win32api_binaries, win32api_hiddenimports = collect_all('win32api')
-pywintypes_datas, pywintypes_binaries, pywintypes_hiddenimports = collect_all('pywintypes')
-
-# Bundle turbojpeg.dll if present (ships with PyTurboJPEG on Windows)
-import glob, os
-_turbojpeg_binaries = []
-try:
-    import turbojpeg as _tj_mod
-    _tj_dir = os.path.dirname(_tj_mod.__file__)
-    for _dll in glob.glob(os.path.join(_tj_dir, 'turbojpeg*.dll')):
-        _turbojpeg_binaries.append((_dll, '.'))
-except ImportError:
-    pass
 
 a = Analysis(
     [str(_root / 'src' / 'main.py')],
     pathex=[src_dir],
-    binaries=win32_binaries + win32api_binaries + pywintypes_binaries + _turbojpeg_binaries,
+    binaries=[],
     datas=[
         (str(_root / 'src' / 'client'), 'client'),
         (str(_root / 'src' / 'assets'), 'assets'),
-    ] + win32_datas + win32api_datas + pywintypes_datas,
+    ],
     hiddenimports=[
         'uvicorn.logging',
         'uvicorn.loops',
@@ -50,33 +31,9 @@ a = Analysis(
         'pystray',
         'PIL',
         'qrcode',
-        'mss',
         'numpy',
-        'win32gui',
-        'win32api',
-        'win32con',
-        'win32process',
-        'win32com',
-        'pywintypes',
-        'win32service',
-        'win32serviceutil',
-        'win32ts',
-        'win32security',
-        'win32event',
-        'win32pipe',
-        'win32file',
-        'servicemanager',
-        'service',
-        'service.pipe_server',
-        'service.pipe_client',
-        'service.desktop_monitor',
-        'service.auto_unlock',
-        'service_main',
-        'dxcam',
-        'keyring',
-        'keyring.backends',
-        'keyring.backends.Windows',
-    ] + win32_hiddenimports + win32api_hiddenimports + pywintypes_hiddenimports,
+        'imageio_ffmpeg',
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -93,7 +50,7 @@ exe = EXE(
     pyz,
     a.scripts,
     [],
-    exclude_binaries=True,   # one-dir mode: DLLs live beside the exe, not extracted at runtime
+    exclude_binaries=True,
     name='WindowControl',
     debug=False,
     bootloader_ignore_signals=False,

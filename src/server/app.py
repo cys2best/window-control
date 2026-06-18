@@ -1,5 +1,4 @@
 import os
-import sys
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -9,14 +8,12 @@ from pydantic import BaseModel
 from typing import Literal
 
 from config import CLIENT_DIR, QUALITY_MAP
-from server.input_handler import handle_move, handle_scroll, handle_click_on_desktop, handle_key_on_desktop, handle_drag_start, handle_drag_move, handle_drag_end
-from server.preview import capture_preview
 from server.stream import CaptureState, FrameQueue, mjpeg_generator
-from server.window_manager import focus_window
+from server import adb_manager
 
 
 class SelectRequest(BaseModel):
-    id: int
+    id: str  # "adb:SERIAL"
 
 
 class QualityRequest(BaseModel):
@@ -27,9 +24,9 @@ def _make_exception_handler(default_handler):
     def handler(loop, context):
         exc = context.get("exception")
         if isinstance(exc, ConnectionResetError):
-            return  # client disconnected — expected on mobile
+            return
         if isinstance(exc, OSError) and getattr(exc, "winerror", None) == 10054:
-            return  # WinError 10054 — same thing
+            return
         if default_handler:
             default_handler(loop, context)
         else:
@@ -37,11 +34,7 @@ def _make_exception_handler(default_handler):
     return handler
 
 
-def create_app(
-    state: CaptureState,
-    frame_queue: FrameQueue,
-    available_windows: list[dict],
-) -> FastAPI:
+def create_app(state: CaptureState, frame_queue: FrameQueue) -> FastAPI:
     import asyncio
     app = FastAPI()
 
@@ -59,20 +52,23 @@ def create_app(
 
     @app.get("/status")
     async def get_status():
-        return {"locked": state.desktop == "Winlogon"}
+        return {"locked": False}
 
     @app.get("/windows")
     async def get_windows():
-        return available_windows
+        return adb_manager.list_vms()
 
     @app.post("/select")
     async def select_window(req: SelectRequest):
-        match = next((w for w in available_windows if w["id"] == req.id), None)
-        if match is None:
-            raise HTTPException(status_code=404, detail="Window not found")
-        state.set_hwnd(req.id)
-        focus_window(req.id)
-        return {"ok": True, "id": req.id}
+        if not req.id.startswith("adb:"):
+            raise HTTPException(status_code=400, detail="Invalid id — must be adb:SERIAL")
+        serial = req.id[4:]
+        w, h = adb_manager.get_screen_size(serial)
+        session = adb_manager.AdbSession(serial, w, h, fps=15)
+        if not session.start():
+            raise HTTPException(status_code=503, detail="Could not start ADB session")
+        state.set_adb_session(session)
+        return {"ok": True, "id": req.id, "w": w, "h": h}
 
     @app.get("/stream")
     async def stream():
@@ -82,12 +78,25 @@ def create_app(
         )
 
     @app.get("/window/{window_id}/preview")
-    async def preview(window_id: int):
-        match = next((w for w in available_windows if w["id"] == window_id), None)
-        if match is None:
-            raise HTTPException(status_code=404, detail="Window not found")
-        jpeg = capture_preview(window_id)
-        return Response(content=jpeg, media_type="image/jpeg")
+    async def preview(window_id: str):
+        # window_id is the serial (adb: prefix already stripped by JS)
+        import subprocess, io
+        from PIL import Image
+        adb = adb_manager._find_adb()
+        if not adb:
+            raise HTTPException(status_code=503, detail="adb not found")
+        try:
+            png = subprocess.check_output(
+                [adb, "-s", window_id, "exec-out", "screencap -p"],
+                timeout=5
+            )
+            img = Image.open(io.BytesIO(png))
+            img.thumbnail((200, 120))
+            buf = io.BytesIO()
+            img.convert("RGB").save(buf, format="JPEG", quality=60)
+            return Response(content=buf.getvalue(), media_type="image/jpeg")
+        except Exception:
+            raise HTTPException(status_code=503, detail="Preview capture failed")
 
     @app.post("/quality")
     async def set_quality(req: QualityRequest):
@@ -100,32 +109,33 @@ def create_app(
         try:
             while True:
                 data = await websocket.receive_json()
-                hwnd = state.active_hwnd
-                if hwnd is None:
+                session = state.adb_session
+                if session is None:
                     continue
                 try:
                     t = data.get("type")
-                    desktop = state.desktop
+                    nx, ny = data.get("x", 0.5), data.get("y", 0.5)
+                    w, h = session.w, session.h
                     if t == "click":
-                        handle_click_on_desktop(hwnd, data["x"], data["y"], desktop)
-                    elif t == "move":
-                        handle_move(hwnd, data["x"], data["y"])
+                        adb_manager.tap(session.serial, nx, ny, w, h)
                     elif t == "drag_start":
-                        handle_drag_start(hwnd, data["x"], data["y"])
+                        # store drag start — send as swipe on drag_end
+                        websocket._drag_start = (nx, ny)
                     elif t == "drag_move":
-                        handle_drag_move(hwnd, data["x"], data["y"])
+                        pass  # no per-move adb input (too slow)
                     elif t == "drag_end":
-                        handle_drag_end(hwnd, data["x"], data["y"])
+                        start = getattr(websocket, "_drag_start", (nx, ny))
+                        adb_manager.swipe(session.serial, start[0], start[1], nx, ny, w, h)
+                        websocket._drag_start = None
                     elif t == "scroll":
-                        handle_scroll(hwnd, data.get("dx", 0), data.get("dy", 0))
+                        adb_manager.scroll(session.serial, nx, ny, data.get("dy", 0), w, h)
                     elif t == "key":
-                        handle_key_on_desktop(hwnd, data["key"], desktop)
+                        adb_manager.send_key(session.serial, data["key"])
                 except (KeyError, TypeError):
                     pass
         except WebSocketDisconnect:
             pass
 
-    # Serve static client files at /static/
     if os.path.isdir(CLIENT_DIR):
         app.mount("/static", StaticFiles(directory=CLIENT_DIR), name="static")
 

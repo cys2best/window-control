@@ -18,7 +18,8 @@ function renderWindowsGrid() {
 
     const thumb = document.createElement('img');
     thumb.className = 'window-card-thumb';
-    thumb.src = `/window/${w.id}/preview?t=${Date.now()}`;
+    const previewId = w.id.startsWith('adb:') ? w.id.slice(4) : w.id;
+    thumb.src = `/window/${previewId}/preview?t=${Date.now()}`;
     thumb.alt = '';
 
     const title = document.createElement('div');
