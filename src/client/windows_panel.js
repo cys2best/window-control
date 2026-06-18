@@ -42,6 +42,10 @@ async function fetchWindows() {
 }
 
 async function selectWindow(id) {
+  // Fullscreen must be triggered synchronously inside user gesture — before any await
+  const el = document.getElementById('screen-stream');
+  if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
+  else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
   try {
     await fetch('/select', {
       method: 'POST',
@@ -54,10 +58,6 @@ async function selectWindow(id) {
     if (titleEl && w) titleEl.textContent = w.title;
     renderWindowsGrid();
     showScreen('screen-stream');
-    // Request fullscreen on the stream screen
-    const el = document.getElementById('screen-stream');
-    if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
-    else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
   } catch (_) {}
 }
 

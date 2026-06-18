@@ -109,7 +109,9 @@ function initTouch() {
       const dy = t.clientY - _dragStartY;
       if (Math.hypot(dx, dy) > 4) _dragMoved = true;
       const { x, y } = normalizeCoords(t.clientX, t.clientY);
-      sendInput({ type: 'drag_move', x, y });
+      // Pass whether movement is scroll-dominant (vertical) so server can tune duration
+      const scrollDominant = Math.abs(dy) > Math.abs(dx) * 1.5;
+      sendInput({ type: 'drag_move', x, y, scroll: scrollDominant });
     } else if (e.touches.length === 2 && _twoFingerLastY !== null) {
       const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
       const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2;

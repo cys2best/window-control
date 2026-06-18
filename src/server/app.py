@@ -119,22 +119,25 @@ def create_app(state: CaptureState, frame_queue: FrameQueue) -> FastAPI:
                         websocket._drag_pos = (nx, ny)
                     elif t == "drag_move":
                         prev = getattr(websocket, "_drag_pos", (nx, ny))
-                        # Only send if moved enough to avoid spam
                         dx = abs(nx - prev[0]) * w
                         dy = abs(ny - prev[1]) * h
                         if dx + dy > 2:
+                            # Scroll-dominant gestures need longer duration so Android
+                            # recognises them as scroll, not fling. Joystick/drag: 30ms.
+                            dur = 150 if data.get("scroll") else 30
                             adb_manager.swipe(session.serial,
                                               prev[0], prev[1], nx, ny, w, h,
-                                              duration_ms=30)
+                                              duration_ms=dur)
                             websocket._drag_pos = (nx, ny)
                     elif t == "drag_end":
                         prev = getattr(websocket, "_drag_pos", (nx, ny))
                         dx = abs(nx - prev[0]) * w
                         dy = abs(ny - prev[1]) * h
                         if dx + dy > 2:
+                            dur = 150 if data.get("scroll") else 30
                             adb_manager.swipe(session.serial,
                                               prev[0], prev[1], nx, ny, w, h,
-                                              duration_ms=30)
+                                              duration_ms=dur)
                         websocket._drag_pos = None
                     elif t == "scroll":
                         adb_manager.scroll(session.serial, nx, ny, data.get("dy", 0), w, h)
