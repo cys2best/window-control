@@ -42,10 +42,6 @@ async function fetchWindows() {
 }
 
 async function selectWindow(id) {
-  // Fullscreen must be triggered synchronously inside user gesture — before any await
-  const el = document.getElementById('screen-stream');
-  if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
-  else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
   try {
     await fetch('/select', {
       method: 'POST',
