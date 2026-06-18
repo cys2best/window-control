@@ -12,7 +12,7 @@ def _log(msg: str):
         except Exception:
             continue
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -126,7 +126,7 @@ def create_app(state: CaptureState, frame_queue: FrameQueue) -> FastAPI:
         return {"ok": True}
 
     @app.post("/webrtc/offer")
-    async def webrtc_offer(req: WebRTCOfferRequest):
+    async def webrtc_offer(req: WebRTCOfferRequest, http_req: Request):
         if not webrtc_manager.available:
             _log("[webrtc] offer rejected — aiortc not available in this build")
             raise HTTPException(status_code=501, detail="aiortc not installed")
@@ -136,9 +136,13 @@ def create_app(state: CaptureState, frame_queue: FrameQueue) -> FastAPI:
         session = state.adb_session
         if session is None:
             raise HTTPException(status_code=404, detail="No active session — call /select first")
+        # Extract client IP — inject as remote candidate so server can reach client
+        # even when STUN is blocked and client only generates mDNS candidates
+        client_ip = http_req.client.host if http_req.client else None
+        _log(f"[webrtc] offer from client_ip={client_ip}")
         try:
             answer_sdp, answer_type = await webrtc_manager.offer(
-                req.sdp, req.type, serial, session.w, session.h
+                req.sdp, req.type, serial, session.w, session.h, client_ip=client_ip
             )
             return {"sdp": answer_sdp, "type": answer_type}
         except Exception as e:

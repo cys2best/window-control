@@ -189,6 +189,7 @@ class WebRTCManager:
         serial: str,
         w: int,
         h: int,
+        client_ip: str | None = None,
     ) -> tuple[str, str]:
         """Handle WebRTC offer. Returns (answer_sdp, answer_type)."""
         if not _AIORTC_AVAILABLE:
@@ -237,7 +238,7 @@ class WebRTCManager:
             local_cands = [l for l in pc.localDescription.sdp.split("\r\n") if l.startswith("a=candidate")]
             _log(f"[webrtc] local SDP candidates ({len(local_cands)}): {local_cands[:3]}")
             self._session = WebRTCSession(pc, track, raw)
-            _log(f"[webrtc] session started serial={serial}")
+            _log(f"[webrtc] session started serial={serial} client_ip={client_ip}")
             return patched_sdp, pc.localDescription.type
 
     async def add_ice_candidate(self, candidate: dict):

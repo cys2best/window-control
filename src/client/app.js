@@ -137,10 +137,14 @@ async function initWebRTC(windowId) {
     }
 
     _pc.onicecandidate = e => {
+      console.log('[webrtc] onicecandidate:', e.candidate ? e.candidate.candidate.slice(0, 80) : 'end-of-candidates');
       if (!e.candidate) return;
       const c = { candidate: e.candidate.candidate, sdpMid: e.candidate.sdpMid, sdpMLineIndex: e.candidate.sdpMLineIndex };
       if (offerDone) _sendCandidate(c); else pendingCandidates.push(c);
     };
+
+    _pc.onicegatheringstatechange = () => console.log('[webrtc] gathering:', _pc.iceGatheringState);
+    _pc.oniceconnectionstatechange = () => console.log('[webrtc] ICE connection:', _pc ? _pc.iceConnectionState : '?');
 
     _pc.addTransceiver('video', { direction: 'recvonly' });
     const offer = await _pc.createOffer();
