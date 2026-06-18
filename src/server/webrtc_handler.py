@@ -214,6 +214,22 @@ class WebRTCManager:
             answer = await pc.createAnswer()
             await pc.setLocalDescription(answer)
 
+            # Wait for ICE gathering — answer must contain a=candidate lines
+            # Without this, client gets answer with no candidates, ICE stays "checking"
+            ice_done = asyncio.Event()
+
+            @pc.on("icegatheringstatechange")
+            def _on_gather():
+                if pc.iceGatheringState == "complete":
+                    ice_done.set()
+
+            if pc.iceGatheringState == "complete":
+                ice_done.set()
+            try:
+                await asyncio.wait_for(ice_done.wait(), timeout=10)
+            except asyncio.TimeoutError:
+                _log("[webrtc] ICE gathering timed out — sending partial candidates")
+
             patched_sdp = _patch_sdp_for_safari(pc.localDescription.sdp)
             self._session = WebRTCSession(pc, track, raw)
             _log(f"[webrtc] session started serial={serial}")

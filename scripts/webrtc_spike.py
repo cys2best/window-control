@@ -159,8 +159,27 @@ async def handle_offer(request):
     answer = await pc.createAnswer()
     await pc.setLocalDescription(answer)
 
+    # Wait for ICE gathering to complete — answer must contain a=candidate lines
+    # Without this, Safari gets an answer with no candidates and ICE stays "checking"
+    ice_done = asyncio.Event()
+    @pc.on("icegatheringstatechange")
+    def on_gather():
+        print(f"[spike] ICE gathering: {pc.iceGatheringState}")
+        if pc.iceGatheringState == "complete":
+            ice_done.set()
+    if pc.iceGatheringState == "complete":
+        ice_done.set()
+    try:
+        await asyncio.wait_for(ice_done.wait(), timeout=10)
+    except asyncio.TimeoutError:
+        print("[spike] WARNING: ICE gathering timed out — sending partial candidates")
+
     patched = _patch_sdp(pc.localDescription.sdp)
-    print("[spike] SDP answer sent")
+    # Log candidates found
+    cands = [l for l in pc.localDescription.sdp.splitlines() if l.startswith("a=candidate")]
+    print(f"[spike] SDP answer sent with {len(cands)} candidates:")
+    for c in cands:
+        print(f"  {c}")
     return web.json_response({"sdp": patched, "type": pc.localDescription.type})
 
 async def handle_index(request):

@@ -122,9 +122,9 @@ async function initWebRTC(windowId) {
     const offer = await _pc.createOffer();
     await _pc.setLocalDescription(offer);
 
-    // 5s negotiation timeout → fallback to MJPEG
+    // 15s negotiation timeout (ICE gathering can take up to 10s) → fallback to MJPEG
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 5000);
+    const timer = setTimeout(() => controller.abort(), 15000);
     const r = await fetch('/webrtc/offer', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
