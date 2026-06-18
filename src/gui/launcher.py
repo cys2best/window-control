@@ -17,13 +17,11 @@ from updater import check_for_update
 
 
 class LauncherWindow(QMainWindow):
-    server_start_requested = pyqtSignal()
     quality_changed = pyqtSignal(int)
 
     def __init__(self, state: CaptureState, parent=None):
         super().__init__(parent)
         self._state = state
-        self._server_running = False
         self.setWindowTitle(f"WindowControl v{VERSION}")
         self.setMinimumWidth(420)
         self.resize(460, 600)
@@ -31,9 +29,6 @@ class LauncherWindow(QMainWindow):
         self._pending_update_version = None
         self._refresh_ip()
         check_for_update(self._on_update_available)
-        # Auto-start server immediately
-        self._server_running = True
-        self.server_start_requested.emit()
 
     def _setup_ui(self):
         scroll = QScrollArea()

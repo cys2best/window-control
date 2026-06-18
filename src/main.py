@@ -132,11 +132,11 @@ def main():
         on_reinstall=_force_reinstall,
     )
 
-    launcher.server_start_requested.connect(start_server)
     launcher.quality_changed.connect(state.set_quality)
 
     launcher.show()
     tray.start()
+    start_server()
 
     exit_code = app.exec_()
     _log(f"[GUI] app.exec_() returned exit_code={exit_code} — process exiting")
