@@ -71,24 +71,11 @@ def _find_ldplayer_window(index: int) -> int | None:
         return None
     try:
         import ctypes
+        import re
         user32 = ctypes.windll.user32
-        # LDPlayer window titles: "LDPlayer", "LDPlayer-1", "LDPlayer 1", etc.
-        candidates = [
-            f"LDPlayer",
-            f"LDPlayer-{index}",
-            f"LDPlayer {index}",
-            f"LDPlayer#{index}",
-            f"LDPlayer4",
-            f"LDPlayer4-{index}",
-            f"LDPlayer9",
-            f"LDPlayer9-{index}",
-        ]
-        for title in candidates:
-            hwnd = user32.FindWindowW(None, title)
-            if hwnd:
-                return hwnd
-        # Fallback: enumerate all windows, find one containing "LDPlayer"
-        found = []
+
+        # Enumerate all visible windows containing "LDPlayer"
+        found = []  # list of (hwnd, title)
         EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
         buf = ctypes.create_unicode_buffer(256)
         def _cb(hwnd, _):
@@ -98,13 +85,25 @@ def _find_ldplayer_window(index: int) -> int | None:
                 found.append((hwnd, t))
             return True
         user32.EnumWindows(EnumWindowsProc(_cb), 0)
-        if found:
-            # Pick by index if multiple
-            if index < len(found):
-                return found[index][0]
+        _log(f"[ldplayer] visible LDPlayer windows: {[t for _, t in found]}")
+
+        if not found:
+            return None
+
+        # Instance 0 → title has no suffix or suffix "-0" or " 0"
+        # Instance N → title ends with "-N", " N", or "#N"
+        for hwnd, title in found:
+            # Extract trailing number from title
+            m = re.search(r'[-\s#](\d+)$', title)
+            win_idx = int(m.group(1)) if m else 0
+            if win_idx == index:
+                return hwnd
+
+        # No exact match — fall back to first window (only one instance open)
+        if len(found) == 1:
             return found[0][0]
     except Exception:
-        pass
+        _log(f"[ldplayer] _find_ldplayer_window error: {traceback.format_exc()[:200]}")
     return None
 
 
