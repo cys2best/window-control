@@ -4,14 +4,14 @@ let wsRetryDelay = 1000;
 let frameCount = 0;
 let lastFrameTime = Date.now();
 
-let lastDist = null;
-let currentScale = 1;
-
 // Drag state
 let _dragActive = false;
 let _dragStartX = 0;
 let _dragStartY = 0;
 let _dragMoved = false;
+
+// Two-finger scroll state
+let _twoFingerLastY = null;
 
 function connectWS() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -97,11 +97,8 @@ function initTouch() {
       const { x, y } = normalizeCoords(t.clientX, t.clientY);
       sendInput({ type: 'drag_start', x, y });
     } else if (e.touches.length === 2) {
-      if (_dragActive) _dragActive = false;
-      lastDist = Math.hypot(
-        e.touches[0].clientX - e.touches[1].clientX,
-        e.touches[0].clientY - e.touches[1].clientY
-      );
+      if (_dragActive) { sendInput({ type: 'drag_end', x: normalizeCoords(_dragStartX, _dragStartY).x, y: normalizeCoords(_dragStartX, _dragStartY).y }); _dragActive = false; }
+      _twoFingerLastY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
     }
   }, { passive: true });
 
@@ -113,14 +110,15 @@ function initTouch() {
       if (Math.hypot(dx, dy) > 4) _dragMoved = true;
       const { x, y } = normalizeCoords(t.clientX, t.clientY);
       sendInput({ type: 'drag_move', x, y });
-    } else if (e.touches.length === 2 && lastDist !== null) {
-      const dist = Math.hypot(
-        e.touches[0].clientX - e.touches[1].clientX,
-        e.touches[0].clientY - e.touches[1].clientY
-      );
-      currentScale = Math.max(0.5, Math.min(4, currentScale * (dist / lastDist)));
-      document.getElementById('stream-img').style.transform = `scale(${currentScale})`;
-      lastDist = dist;
+    } else if (e.touches.length === 2 && _twoFingerLastY !== null) {
+      const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+      const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+      const dy = midY - _twoFingerLastY;
+      if (Math.abs(dy) > 2) {
+        const { x, y } = normalizeCoords(midX, midY);
+        sendInput({ type: 'scroll', x, y, dy: dy > 0 ? -1 : 1 });
+        _twoFingerLastY = midY;
+      }
     }
   }, { passive: true });
 
@@ -129,7 +127,6 @@ function initTouch() {
       const t = e.changedTouches[0];
       const { x, y } = normalizeCoords(t.clientX, t.clientY);
       if (!_dragMoved) {
-        // Tap — release drag, then send a clean click
         sendInput({ type: 'drag_end', x, y });
         sendInput({ type: 'click', x, y });
       } else {
@@ -137,7 +134,7 @@ function initTouch() {
       }
       _dragActive = false;
     }
-    if (e.touches.length < 2) lastDist = null;
+    if (e.touches.length < 2) _twoFingerLastY = null;
   }, { passive: true });
 }
 
@@ -161,10 +158,33 @@ function initKeyboard() {
 }
 
 function initFPS() {
+  // Count real frames by reading the MJPEG stream as a fetch ReadableStream
+  // and counting --frame boundary markers
+  let _fpsReader = null;
+  function startFpsCounter() {
+    if (_fpsReader) { try { _fpsReader.cancel(); } catch(_) {} }
+    fetch('/stream').then(r => {
+      _fpsReader = r.body.getReader();
+      const dec = new TextDecoder();
+      function pump() {
+        _fpsReader.read().then(({ done, value }) => {
+          if (done) { setTimeout(startFpsCounter, 2000); return; }
+          const s = dec.decode(value, { stream: true });
+          // Count boundary markers
+          let i = 0;
+          while ((i = s.indexOf('--frame', i)) !== -1) { frameCount++; i += 7; }
+          pump();
+        }).catch(() => setTimeout(startFpsCounter, 2000));
+      }
+      pump();
+    }).catch(() => setTimeout(startFpsCounter, 2000));
+  }
+  startFpsCounter();
+
   setInterval(() => {
     const now = Date.now();
     const elapsed = (now - lastFrameTime) / 1000;
-    const fps = Math.round(frameCount / elapsed);
+    const fps = elapsed > 0 ? Math.round(frameCount / elapsed) : 0;
     const pill = document.getElementById('fps-pill');
     if (pill) pill.textContent = `${fps} fps`;
     frameCount = 0;

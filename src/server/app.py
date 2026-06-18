@@ -116,14 +116,26 @@ def create_app(state: CaptureState, frame_queue: FrameQueue) -> FastAPI:
                     if t == "click":
                         adb_manager.tap(session.serial, nx, ny, w, h)
                     elif t == "drag_start":
-                        # store drag start — send as swipe on drag_end
-                        websocket._drag_start = (nx, ny)
+                        websocket._drag_pos = (nx, ny)
                     elif t == "drag_move":
-                        pass  # no per-move adb input (too slow)
+                        prev = getattr(websocket, "_drag_pos", (nx, ny))
+                        # Only send if moved enough to avoid spam
+                        dx = abs(nx - prev[0]) * w
+                        dy = abs(ny - prev[1]) * h
+                        if dx + dy > 2:
+                            adb_manager.swipe(session.serial,
+                                              prev[0], prev[1], nx, ny, w, h,
+                                              duration_ms=30)
+                            websocket._drag_pos = (nx, ny)
                     elif t == "drag_end":
-                        start = getattr(websocket, "_drag_start", (nx, ny))
-                        adb_manager.swipe(session.serial, start[0], start[1], nx, ny, w, h)
-                        websocket._drag_start = None
+                        prev = getattr(websocket, "_drag_pos", (nx, ny))
+                        dx = abs(nx - prev[0]) * w
+                        dy = abs(ny - prev[1]) * h
+                        if dx + dy > 2:
+                            adb_manager.swipe(session.serial,
+                                              prev[0], prev[1], nx, ny, w, h,
+                                              duration_ms=30)
+                        websocket._drag_pos = None
                     elif t == "scroll":
                         adb_manager.scroll(session.serial, nx, ny, data.get("dy", 0), w, h)
                     elif t == "key":
