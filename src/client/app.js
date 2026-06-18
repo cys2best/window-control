@@ -99,7 +99,9 @@ async function initWebRTC(windowId) {
     if (_pc) { try { _pc.close(); } catch(_) {} _pc = null; }
 
     _pc = new RTCPeerConnection({ iceServers: [
-      { urls: 'stun:stun.l.google.com:19302' }
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:stun.cloudflare.com:3478' },
     ] });
 
     const video = document.getElementById('stream-video');
@@ -120,19 +122,24 @@ async function initWebRTC(windowId) {
       }
     };
 
-    // Buffer candidates that arrive before offer round-trip completes.
-    // onicecandidate fires immediately after setLocalDescription — before
-    // the server has created its session — so we must not POST yet.
+    // Buffer candidates until server session exists (offer round-trip done).
+    // onicecandidate fires immediately after setLocalDescription.
     const pendingCandidates = [];
     let offerDone = false;
+
+    function _sendCandidate(c) {
+      fetch('/webrtc/ice-candidate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(c) }).catch(() => {});
+    }
+
+    function _flushCandidates() {
+      offerDone = true;
+      for (const c of pendingCandidates.splice(0)) _sendCandidate(c);
+    }
+
     _pc.onicecandidate = e => {
       if (!e.candidate) return;
       const c = { candidate: e.candidate.candidate, sdpMid: e.candidate.sdpMid, sdpMLineIndex: e.candidate.sdpMLineIndex };
-      if (offerDone) {
-        fetch('/webrtc/ice-candidate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(c) }).catch(() => {});
-      } else {
-        pendingCandidates.push(c);
-      }
+      if (offerDone) _sendCandidate(c); else pendingCandidates.push(c);
     };
 
     _pc.addTransceiver('video', { direction: 'recvonly' });
@@ -141,23 +148,23 @@ async function initWebRTC(windowId) {
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 5000);
-    const r = await fetch('/webrtc/offer', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sdp: offer.sdp, type: offer.type, id: windowId }),
-      signal: controller.signal,
-    });
-    clearTimeout(timer);
+    let r;
+    try {
+      r = await fetch('/webrtc/offer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sdp: offer.sdp, type: offer.type, id: windowId }),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+      // Flush regardless — server may have created session even if response failed
+      _flushCandidates();
+    }
 
-    if (!r.ok) { _fallbackToMJPEG(); return; }
+    if (!r || !r.ok) { _fallbackToMJPEG(); return; }
     const ans = await r.json();
     await _pc.setRemoteDescription(ans);
-
-    // Session exists on server now — flush buffered candidates then enable live sends
-    offerDone = true;
-    for (const c of pendingCandidates) {
-      fetch('/webrtc/ice-candidate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(c) }).catch(() => {});
-    }
   } catch (err) {
     console.error('[webrtc] initWebRTC error, falling back to MJPEG:', err);
     _fallbackToMJPEG();

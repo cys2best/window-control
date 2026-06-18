@@ -249,6 +249,10 @@ class WebRTCManager:
         cand_str = candidate.get("candidate", "")
         if not cand_str:
             return  # end-of-candidates signal, ignore
+        # Skip mDNS candidates — aiortc cannot resolve *.local hostnames
+        if ".local" in cand_str:
+            _log(f"[webrtc] skipped mDNS candidate: {cand_str[:80]}")
+            return
         try:
             from aiortc.sdp import candidate_from_sdp
             rtc_cand = candidate_from_sdp(cand_str.replace("candidate:", "", 1))
