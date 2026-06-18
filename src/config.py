@@ -3,7 +3,7 @@ import sys
 
 PORT = 8080
 DEV_MODE = sys.platform != "win32"
-VERSION = "1.2.22"
+VERSION = "1.2.28"
 GITHUB_REPO = "cys2best/window-control"
 
 QUALITY_MAP = {
