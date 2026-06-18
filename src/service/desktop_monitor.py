@@ -6,42 +6,47 @@ from typing import Callable
 if sys.platform == "win32":
     import ctypes
     import ctypes.wintypes
-    import win32api
-    import win32con
-    import win32gui
-    import win32ts
-    import win32security
 
-    _WTS_SESSION_LOCK   = 0x7
-    _WTS_SESSION_UNLOCK = 0x8
+    _user32   = ctypes.windll.user32
+    _wtsapi32 = ctypes.windll.wtsapi32
+
+    _WTS_SESSION_LOCK        = 0x7
+    _WTS_SESSION_UNLOCK      = 0x8
     _NOTIFY_FOR_ALL_SESSIONS = 1
+    _WM_WTSSESSION_CHANGE    = 0x02B1
+    _WM_QUIT                 = 0x0012
 
     def get_current_desktop_name() -> str:
         try:
-            hdesk = ctypes.windll.user32.OpenInputDesktop(0, False, 0x0200)
+            hdesk = _user32.OpenInputDesktop(0, False, 0x0200)
             if not hdesk:
                 return "Default"
             buf = ctypes.create_unicode_buffer(256)
-            ctypes.windll.user32.GetUserObjectInformationW(
-                hdesk, 2, buf, ctypes.sizeof(buf), None
-            )
-            ctypes.windll.user32.CloseDesktop(hdesk)
+            _user32.GetUserObjectInformationW(hdesk, 2, buf, ctypes.sizeof(buf), None)
+            _user32.CloseDesktop(hdesk)
             return buf.value or "Default"
         except Exception:
             return "Default"
 
-    class DesktopMonitor:
-        """Watches for WTS lock/unlock events. Runs its own message loop thread."""
+    def _log(msg: str):
+        import os
+        for _p in [r"C:\ProgramData\WindowControl", r"C:\Windows\Temp"]:
+            try:
+                os.makedirs(_p, exist_ok=True)
+                with open(os.path.join(_p, "service_crash.log"), "a") as f:
+                    f.write(msg + "\n")
+                return
+            except Exception:
+                continue
 
-        def __init__(
-            self,
-            on_lock: Callable[[], None],
-            on_unlock: Callable[[], None],
-        ):
+    class DesktopMonitor:
+        """Watches for WTS lock/unlock events via a hidden message-only window."""
+
+        def __init__(self, on_lock: Callable[[], None], on_unlock: Callable[[], None]):
             self._on_lock = on_lock
             self._on_unlock = on_unlock
             self._thread: threading.Thread | None = None
-            self._hwnd = None
+            self._hwnd: int = 0
 
         def start(self):
             self._thread = threading.Thread(target=self._run, daemon=True)
@@ -49,49 +54,80 @@ if sys.platform == "win32":
 
         def stop(self):
             if self._hwnd:
-                try:
-                    win32gui.PostMessage(self._hwnd, win32con.WM_QUIT, 0, 0)
-                except Exception:
-                    pass
+                _user32.PostMessageW(self._hwnd, _WM_QUIT, 0, 0)
 
         def _run(self):
-            wc = win32gui.WNDCLASS()
-            wc.lpszClassName = "WCDesktopMonitor"
-            wc.lpfnWndProc = self._wnd_proc
-            win32gui.RegisterClass(wc)
-            self._hwnd = win32gui.CreateWindow(
-                "WCDesktopMonitor", "", 0, 0, 0, 0, 0, 0, 0, None, None
+            WndProcType = ctypes.WINFUNCTYPE(
+                ctypes.c_long,
+                ctypes.wintypes.HWND,
+                ctypes.wintypes.UINT,
+                ctypes.wintypes.WPARAM,
+                ctypes.wintypes.LPARAM,
             )
-            # Register for WTS session notifications
-            win32ts.WTSRegisterSessionNotification(
-                self._hwnd, _NOTIFY_FOR_ALL_SESSIONS
-            )
-            win32gui.PumpMessages()
-            win32ts.WTSUnRegisterSessionNotification(self._hwnd)
 
-        def _wnd_proc(self, hwnd, msg, wparam, lparam):
-            _WM_WTSSESSION_CHANGE = 0x02B1
-            if msg == _WM_WTSSESSION_CHANGE:
-                _WTS_NAMES = {
-                    1: "CONSOLE_CONNECT", 2: "CONSOLE_DISCONNECT",
-                    3: "REMOTE_CONNECT",  4: "REMOTE_DISCONNECT",
-                    5: "SESSION_LOGON",   6: "SESSION_LOGOFF",
-                    7: "SESSION_LOCK",    8: "SESSION_UNLOCK",
-                    9: "SESSION_REMOTE_CONTROL",
-                }
-                from service.pipe_server import PIPE_NAME
-                import os
-                try:
-                    os.makedirs(r"C:\ProgramData\WindowControl", exist_ok=True)
-                    with open(r"C:\ProgramData\WindowControl\service_crash.log", "a") as f:
-                        f.write(f"[WTS] event={wparam} ({_WTS_NAMES.get(wparam,'?')}) session={lparam}\n")
-                except Exception:
-                    pass
-                if wparam == _WTS_SESSION_LOCK:
-                    self._on_lock()
-                elif wparam == _WTS_SESSION_UNLOCK:
-                    self._on_unlock()
-            return win32gui.DefWindowProc(hwnd, msg, wparam, lparam)
+            def _wnd_proc(hwnd, msg, wparam, lparam):
+                if msg == _WM_WTSSESSION_CHANGE:
+                    _WTS_NAMES = {
+                        1: "CONSOLE_CONNECT", 2: "CONSOLE_DISCONNECT",
+                        3: "REMOTE_CONNECT",  4: "REMOTE_DISCONNECT",
+                        5: "SESSION_LOGON",   6: "SESSION_LOGOFF",
+                        7: "SESSION_LOCK",    8: "SESSION_UNLOCK",
+                        9: "SESSION_REMOTE_CONTROL",
+                    }
+                    _log(f"[WTS] event={wparam} ({_WTS_NAMES.get(wparam,'?')}) session={lparam}")
+                    if wparam == _WTS_SESSION_LOCK:
+                        self._on_lock()
+                    elif wparam == _WTS_SESSION_UNLOCK:
+                        self._on_unlock()
+                    return 0
+                return _user32.DefWindowProcW(hwnd, msg, wparam, lparam)
+
+            _proc = WndProcType(_wnd_proc)
+
+            class WNDCLASSW(ctypes.Structure):
+                _fields_ = [
+                    ("style",         ctypes.wintypes.UINT),
+                    ("lpfnWndProc",   ctypes.c_void_p),
+                    ("cbClsExtra",    ctypes.c_int),
+                    ("cbWndExtra",    ctypes.c_int),
+                    ("hInstance",     ctypes.wintypes.HANDLE),
+                    ("hIcon",         ctypes.wintypes.HANDLE),
+                    ("hCursor",       ctypes.wintypes.HANDLE),
+                    ("hbrBackground", ctypes.wintypes.HANDLE),
+                    ("lpszMenuName",  ctypes.c_wchar_p),
+                    ("lpszClassName", ctypes.c_wchar_p),
+                ]
+
+            wc = WNDCLASSW()
+            wc.lpfnWndProc = ctypes.cast(_proc, ctypes.c_void_p)
+            wc.lpszClassName = "WCDesktopMonitor"
+            _user32.RegisterClassW(ctypes.byref(wc))
+
+            _user32.CreateWindowExW.restype = ctypes.wintypes.HWND
+            self._hwnd = _user32.CreateWindowExW(
+                0, "WCDesktopMonitor", "", 0,
+                0, 0, 0, 0, None, None, None, None
+            )
+
+            _wtsapi32.WTSRegisterSessionNotification(self._hwnd, _NOTIFY_FOR_ALL_SESSIONS)
+
+            # Message loop
+            class MSG(ctypes.Structure):
+                _fields_ = [
+                    ("hwnd",    ctypes.wintypes.HWND),
+                    ("message", ctypes.wintypes.UINT),
+                    ("wParam",  ctypes.wintypes.WPARAM),
+                    ("lParam",  ctypes.wintypes.LPARAM),
+                    ("time",    ctypes.wintypes.DWORD),
+                    ("pt",      ctypes.wintypes.POINT),
+                ]
+
+            msg = MSG()
+            while _user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
+                _user32.TranslateMessage(ctypes.byref(msg))
+                _user32.DispatchMessageW(ctypes.byref(msg))
+
+            _wtsapi32.WTSUnRegisterSessionNotification(self._hwnd)
 
 else:
     def get_current_desktop_name() -> str:

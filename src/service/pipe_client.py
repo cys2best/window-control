@@ -7,25 +7,70 @@ from typing import Callable
 from service.pipe_server import CMD_PIPE_NAME, EVENT_PIPE_NAME, encode_msg, decode_msg
 
 if sys.platform == "win32":
-    import win32pipe
-    import win32file
-    import pywintypes
+    import ctypes
+    import ctypes.wintypes
+
+    _kernel32 = ctypes.windll.kernel32
+
+    GENERIC_READ          = 0x80000000
+    GENERIC_WRITE         = 0x40000000
+    OPEN_EXISTING         = 3
+    PIPE_READMODE_MESSAGE = 0x00000002
+    INVALID_HANDLE_VALUE  = ctypes.c_void_p(-1).value
 
     def _open_pipe(name: str):
-        win32pipe.WaitNamedPipe(name, 2000)
-        handle = win32file.CreateFile(
+        # Wait up to 2s for pipe to become available
+        _kernel32.WaitNamedPipeW.restype = ctypes.wintypes.BOOL
+        _kernel32.WaitNamedPipeW(name, 2000)
+
+        _kernel32.CreateFileW.restype = ctypes.c_void_p
+        h = _kernel32.CreateFileW(
             name,
-            win32file.GENERIC_READ | win32file.GENERIC_WRITE,
+            GENERIC_READ | GENERIC_WRITE,
             0, None,
-            win32file.OPEN_EXISTING,
+            OPEN_EXISTING,
             0, None,
         )
-        win32pipe.SetNamedPipeHandleState(
-            handle,
-            win32pipe.PIPE_READMODE_MESSAGE,
+        if h == INVALID_HANDLE_VALUE:
+            raise OSError(f"CreateFile failed: {ctypes.GetLastError()}")
+
+        # Switch to message-read mode
+        mode = ctypes.wintypes.DWORD(PIPE_READMODE_MESSAGE)
+        _kernel32.SetNamedPipeHandleState.restype = ctypes.wintypes.BOOL
+        _kernel32.SetNamedPipeHandleState(
+            ctypes.c_void_p(h),
+            ctypes.byref(mode),
             None, None,
         )
-        return handle
+        return h
+
+    def _read_pipe(handle, size=65536) -> bytes | None:
+        buf = ctypes.create_string_buffer(size)
+        read = ctypes.wintypes.DWORD(0)
+        _kernel32.ReadFile.restype = ctypes.wintypes.BOOL
+        ok = _kernel32.ReadFile(
+            ctypes.c_void_p(handle), buf, size,
+            ctypes.byref(read), None
+        )
+        if not ok or read.value == 0:
+            return None
+        return buf.raw[:read.value]
+
+    def _write_pipe(handle, data: bytes) -> bool:
+        written = ctypes.wintypes.DWORD(0)
+        _kernel32.WriteFile.restype = ctypes.wintypes.BOOL
+        ok = _kernel32.WriteFile(
+            ctypes.c_void_p(handle),
+            ctypes.c_char_p(data), len(data),
+            ctypes.byref(written), None
+        )
+        return bool(ok)
+
+    def _close_handle(handle):
+        try:
+            _kernel32.CloseHandle(ctypes.c_void_p(handle))
+        except Exception:
+            pass
 
     class PipeClient:
         """Two-pipe client.
@@ -48,51 +93,46 @@ if sys.platform == "win32":
                     t = threading.Thread(target=self._event_loop, daemon=True)
                     t.start()
                 return True
-            except pywintypes.error:
+            except OSError:
                 return False
 
         def send(self, cmd: dict) -> dict | None:
-            """Send command, wait for reply."""
             if not self._connected or self._cmd_handle is None:
                 return None
             with self._cmd_lock:
                 try:
-                    win32file.WriteFile(self._cmd_handle, encode_msg(cmd))
-                    _, data = win32file.ReadFile(self._cmd_handle, 65536)
+                    if not _write_pipe(self._cmd_handle, encode_msg(cmd)):
+                        self._connected = False
+                        return None
+                    data = _read_pipe(self._cmd_handle)
+                    if data is None:
+                        self._connected = False
+                        return None
                     return decode_msg(data)
-                except pywintypes.error:
+                except Exception:
                     self._connected = False
                     return None
 
         def _event_loop(self):
-            """Separate connection to EVENT pipe — reads unsolicited pushes."""
             try:
                 event_handle = _open_pipe(EVENT_PIPE_NAME)
-            except pywintypes.error:
+            except OSError:
                 self._connected = False
                 return
             while self._connected:
-                try:
-                    _, data = win32file.ReadFile(event_handle, 65536)
-                    msg = decode_msg(data)
-                    if msg and self._on_event:
-                        self._on_event(msg)
-                except pywintypes.error:
+                data = _read_pipe(event_handle)
+                if data is None:
                     break
-            try:
-                event_handle.Close()
-            except Exception:
-                pass
-            # Mark disconnected so _try_connect_pipe retries
+                msg = decode_msg(data)
+                if msg and self._on_event:
+                    self._on_event(msg)
+            _close_handle(event_handle)
             self._connected = False
 
         def disconnect(self):
             self._connected = False
-            if self._cmd_handle:
-                try:
-                    self._cmd_handle.Close()
-                except Exception:
-                    pass
+            if self._cmd_handle is not None:
+                _close_handle(self._cmd_handle)
                 self._cmd_handle = None
 
         @property

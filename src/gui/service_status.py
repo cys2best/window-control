@@ -1,20 +1,21 @@
+import subprocess
 import sys
 
 if sys.platform == "win32":
-    import win32service
-    import win32serviceutil
-
     SERVICE_NAME = "WindowControlService"
 
     def get_service_status() -> str:
         """Returns 'running', 'stopped', 'not_installed'."""
         try:
-            status = win32serviceutil.QueryServiceStatus(SERVICE_NAME)
-            state = status[1]
-            if state == win32service.SERVICE_RUNNING:
+            r = subprocess.run(
+                ["sc.exe", "query", SERVICE_NAME],
+                capture_output=True, text=True, timeout=5
+            )
+            out = r.stdout
+            if "does not exist" in out or r.returncode == 1060:
+                return "not_installed"
+            if "RUNNING" in out:
                 return "running"
-            elif state in (win32service.SERVICE_STOPPED, win32service.SERVICE_STOP_PENDING):
-                return "stopped"
             return "stopped"
         except Exception:
             return "not_installed"
