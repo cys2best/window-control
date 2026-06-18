@@ -67,6 +67,17 @@ def main():
         return
 
     _log(f"[GUI] starting pid={os.getpid()} user={os.environ.get('USERNAME','?')}")
+
+    # Remove legacy lock-screen service if still installed from older versions
+    if sys.platform == "win32":
+        def _remove_legacy_service():
+            import subprocess
+            subprocess.run(["sc.exe", "stop", "WindowControlService"],
+                           capture_output=True, timeout=10)
+            subprocess.run(["sc.exe", "delete", "WindowControlService"],
+                           capture_output=True, timeout=10)
+        threading.Thread(target=_remove_legacy_service, daemon=True).start()
+
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
 
