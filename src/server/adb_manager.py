@@ -58,7 +58,8 @@ def list_vms() -> list[dict]:
         _log("[adb] adb.exe not found")
         return []
     try:
-        out = subprocess.check_output([adb, "devices"], timeout=5, text=True)
+        out = subprocess.check_output([adb, "devices"], timeout=5, text=True,
+                                      **_no_window_flags())
         result = []
         for line in out.splitlines()[1:]:
             line = line.strip()
@@ -90,7 +91,8 @@ def get_screen_size(serial: str) -> tuple[int, int]:
         return 1280, 720
     try:
         out = subprocess.check_output(
-            [adb, "-s", serial, "shell", "wm size"], timeout=5, text=True
+            [adb, "-s", serial, "shell", "wm size"], timeout=5, text=True,
+            **_no_window_flags()
         )
         m = re.search(r"(\d+)x(\d+)", out)
         if m:
@@ -125,11 +127,13 @@ class AdbSession:
             _log("[adb] ffmpeg not found — install imageio-ffmpeg")
             return False
         try:
+            nw = _no_window_flags()
             self._record_proc = subprocess.Popen(
                 [adb, "-s", self.serial, "exec-out",
                  f"screenrecord --output-format=h264 --bit-rate=2000000 --size={self.w}x{self.h} -"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
+                **nw,
             )
             self._ffmpeg_proc = subprocess.Popen(
                 [ffmpeg, "-loglevel", "quiet",
@@ -142,6 +146,7 @@ class AdbSession:
                 stdin=self._record_proc.stdout,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
+                **nw,
             )
             self._record_proc.stdout.close()
             self._running = True
@@ -202,38 +207,11 @@ class AdbSession:
 
 # ── Input ─────────────────────────────────────────────────────────────────────
 
-def _adb_shell_async(serial: str, *args):
-    adb = _find_adb()
-    if not adb:
-        return
-    try:
-        subprocess.Popen(
-            [adb, "-s", serial, "shell"] + list(args),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-    except Exception:
-        pass
-
-
-def tap(serial: str, nx: float, ny: float, w: int, h: int):
-    x, y = int(nx * w), int(ny * h)
-    _adb_shell_async(serial, "input", "tap", str(x), str(y))
-
-
-def swipe(serial: str, nx0: float, ny0: float, nx1: float, ny1: float,
-          w: int, h: int, duration_ms: int = 50):
-    x0, y0 = int(nx0 * w), int(ny0 * h)
-    x1, y1 = int(nx1 * w), int(ny1 * h)
-    _adb_shell_async(serial, "input", "swipe",
-                     str(x0), str(y0), str(x1), str(y1), str(duration_ms))
-
-
-def scroll(serial: str, nx: float, ny: float, dy: int, w: int, h: int):
-    x, y = int(nx * w), int(ny * h)
-    dist = dy * 200
-    _adb_shell_async(serial, "input", "swipe",
-                     str(x), str(y), str(x), str(y - dist), "300")
+def _no_window_flags():
+    """Return CREATE_NO_WINDOW flag on Windows to suppress cmd flashes."""
+    if sys.platform == "win32":
+        return {"creationflags": 0x08000000}  # CREATE_NO_WINDOW
+    return {}
 
 
 _KEYCODES = {
@@ -251,13 +229,98 @@ _KEYCODES = {
 }
 
 
+class InputSession:
+    """Persistent `adb shell` process — sends input commands over stdin.
+
+    One per ADB serial. Eliminates per-tap process spawn overhead (~200-400ms).
+    Commands are newline-terminated shell one-liners sent to `adb shell` stdin.
+    """
+
+    def __init__(self, serial: str):
+        self.serial = serial
+        self._proc: subprocess.Popen | None = None
+        self._lock = threading.Lock()
+
+    def _ensure(self) -> bool:
+        if self._proc and self._proc.poll() is None:
+            return True
+        adb = _find_adb()
+        if not adb:
+            return False
+        try:
+            self._proc = subprocess.Popen(
+                [adb, "-s", self.serial, "shell"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                **_no_window_flags(),
+            )
+            return True
+        except Exception:
+            return False
+
+    def send(self, cmd: str):
+        with self._lock:
+            if not self._ensure():
+                return
+            try:
+                self._proc.stdin.write((cmd + "\n").encode())
+                self._proc.stdin.flush()
+            except Exception:
+                self._proc = None
+
+    def stop(self):
+        with self._lock:
+            if self._proc:
+                try:
+                    self._proc.stdin.close()
+                    self._proc.kill()
+                except Exception:
+                    pass
+                self._proc = None
+
+
+# Per-serial InputSession cache — created on first use, reused thereafter
+_input_sessions: dict[str, InputSession] = {}
+_input_sessions_lock = threading.Lock()
+
+
+def _get_input_session(serial: str) -> InputSession:
+    with _input_sessions_lock:
+        if serial not in _input_sessions:
+            _input_sessions[serial] = InputSession(serial)
+        return _input_sessions[serial]
+
+
+def tap(serial: str, nx: float, ny: float, w: int, h: int):
+    x, y = int(nx * w), int(ny * h)
+    _get_input_session(serial).send(f"input tap {x} {y}")
+
+
+def swipe(serial: str, nx0: float, ny0: float, nx1: float, ny1: float,
+          w: int, h: int, duration_ms: int = 50):
+    x0, y0 = int(nx0 * w), int(ny0 * h)
+    x1, y1 = int(nx1 * w), int(ny1 * h)
+    _get_input_session(serial).send(
+        f"input swipe {x0} {y0} {x1} {y1} {duration_ms}"
+    )
+
+
+def scroll(serial: str, nx: float, ny: float, dy: int, w: int, h: int):
+    x, y = int(nx * w), int(ny * h)
+    dist = dy * 200
+    _get_input_session(serial).send(
+        f"input swipe {x} {y} {x} {y - dist} 300"
+    )
+
+
 def send_key(serial: str, key: str):
     kc = _KEYCODES.get(key)
     if kc:
-        _adb_shell_async(serial, "input", "keyevent", kc)
+        _get_input_session(serial).send(f"input keyevent {kc}")
     elif len(key) == 1:
         escaped = key.replace("\\", "\\\\").replace("'", "\\'") \
                      .replace('"', '\\"').replace(" ", "%s") \
                      .replace("&", "\\&").replace("<", "\\<") \
                      .replace(">", "\\>").replace("|", "\\|")
-        _adb_shell_async(serial, "input", "text", escaped)
+        _get_input_session(serial).send(f"input text {escaped}")

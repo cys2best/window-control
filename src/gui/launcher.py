@@ -6,7 +6,7 @@ from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QComboBox, QGroupBox, QSizePolicy, QScrollArea
 )
-from PyQt5.QtCore import Qt, pyqtSignal, QThread, pyqtSlot, QTimer
+from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QPixmap, QImage
 import qrcode
 import io
@@ -22,8 +22,6 @@ class LauncherWindow(QMainWindow):
     server_stop_requested = pyqtSignal()
     quality_changed = pyqtSignal(int)
     window_selected = pyqtSignal(int, str)
-    _lock_signal = pyqtSignal()
-    _unlock_signal = pyqtSignal()
 
     def __init__(self, state: CaptureState, parent=None):
         super().__init__(parent)
@@ -36,15 +34,6 @@ class LauncherWindow(QMainWindow):
         self._pending_update_version = None
         self._refresh_ip()
         check_for_update(self._on_update_available)
-        self._disable_lock_on_disconnect()
-        QTimer.singleShot(1500, self._auto_install_service)
-        # Refresh service status every 10s
-        self._svc_refresh_timer = QTimer()
-        self._svc_refresh_timer.timeout.connect(self._refresh_service_status_label)
-        self._svc_refresh_timer.start(10000)
-        # Wire cross-thread lock/unlock signals
-        self._lock_signal.connect(self._on_lock_ui)
-        self._unlock_signal.connect(self._on_unlock_ui)
 
     def _setup_ui(self):
         scroll = QScrollArea()
@@ -104,15 +93,6 @@ class LauncherWindow(QMainWindow):
         quality_layout.addWidget(self._quality_combo)
         layout.addWidget(quality_group)
 
-        # --- Auto-Unlock group ---
-        self._setup_unlock_group(layout)
-
-        # --- Lock screen service status (compact, no manual buttons) ---
-        self._service_status_label = QLabel()
-        self._service_status_label.setStyleSheet("font-size: 12px; color: #666; padding: 4px 0;")
-        self._service_status_label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(self._service_status_label)
-
         # --- Update banner ---
         self._update_banner = QWidget()
         self._update_banner.setStyleSheet(
@@ -141,7 +121,6 @@ class LauncherWindow(QMainWindow):
         self._status_label.setStyleSheet("font-size: 13px; color: #666;")
         layout.addWidget(self._status_label)
 
-        self._refresh_service_status_label()
 
     def _setup_style(self):
         self.setStyleSheet("""
@@ -256,111 +235,6 @@ class LauncherWindow(QMainWindow):
             self._start_stop_btn.setText("Start Server")
             self._start_stop_btn.setStyleSheet(self._btn_style("#2563eb", "#1d4ed8"))
             self._status_label.setText("Server stopped")
-
-    def _setup_unlock_group(self, layout):
-        unlock_group = QGroupBox("Auto-Unlock")
-        unlock_layout = QVBoxLayout(unlock_group)
-        unlock_layout.setSpacing(8)
-        unlock_layout.setContentsMargins(12, 12, 12, 12)
-
-        info = QLabel("Store your Windows password to auto-unlock after lock screen.")
-        info.setWordWrap(True)
-        info.setStyleSheet("font-size: 13px; color: #64748b;")
-        unlock_layout.addWidget(info)
-
-        pw_row = QHBoxLayout()
-        self._set_pw_btn = QPushButton("Set Unlock Password")
-        self._set_pw_btn.setMinimumHeight(38)
-        self._set_pw_btn.setStyleSheet(self._btn_style("#0f766e", "#0d9488"))
-        self._set_pw_btn.clicked.connect(self._on_set_unlock_password)
-        self._clear_pw_btn = QPushButton("Clear")
-        self._clear_pw_btn.setMinimumHeight(38)
-        self._clear_pw_btn.setMaximumWidth(80)
-        self._clear_pw_btn.setStyleSheet(self._btn_style("#64748b", "#475569"))
-        self._clear_pw_btn.clicked.connect(self._on_clear_unlock_password)
-        pw_row.addWidget(self._set_pw_btn)
-        pw_row.addWidget(self._clear_pw_btn)
-        unlock_layout.addLayout(pw_row)
-        layout.addWidget(unlock_group)
-
-    def _on_set_unlock_password(self):
-        from PyQt5.QtWidgets import QInputDialog, QLineEdit
-        pw, ok = QInputDialog.getText(
-            self, "Set Unlock Password",
-            "Enter your Windows password for auto-unlock:",
-            QLineEdit.Password
-        )
-        if ok and pw:
-            from service.auto_unlock import store_password
-            store_password(pw)
-            self._status_label.setText("Unlock password saved.")
-
-    def _on_clear_unlock_password(self):
-        from service.auto_unlock import delete_password
-        delete_password()
-        self._status_label.setText("Unlock password cleared.")
-
-    @staticmethod
-    def _disable_lock_on_disconnect():
-        """Prevent Windows from locking session on RDP disconnect."""
-        if sys.platform != "win32":
-            return
-        try:
-            import winreg
-            # Disable screen saver lock
-            key = winreg.OpenKey(
-                winreg.HKEY_CURRENT_USER,
-                r"Control Panel\Desktop",
-                0, winreg.KEY_SET_VALUE
-            )
-            winreg.SetValueEx(key, "ScreenSaverIsSecure", 0, winreg.REG_SZ, "0")
-            winreg.SetValueEx(key, "ScreenSaveActive", 0, winreg.REG_SZ, "0")
-            winreg.CloseKey(key)
-        except Exception:
-            pass
-
-    def _auto_install_service(self):
-        """Install lock screen service automatically if not already installed/running."""
-        if sys.platform != "win32":
-            return
-        from gui.service_status import get_service_status
-        status = get_service_status()
-        if status == "not_installed":
-            self._service_status_label.setText("Lock screen service: installing…")
-            self._run_elevated(sys.executable, "--install")
-            QTimer.singleShot(5000, self._refresh_service_status_label)
-
-    def _refresh_service_status_label(self):
-        if sys.platform != "win32":
-            self._service_status_label.setText("Lock screen service: not available (Windows only)")
-            return
-        from gui.service_status import get_service_status
-        status = get_service_status()
-        if status == "running":
-            self._service_status_label.setText("● Lock screen service: running")
-            self._service_status_label.setStyleSheet("font-size: 12px; color: #16a34a; padding: 4px 0;")
-        elif status == "stopped":
-            self._service_status_label.setText("● Lock screen service: stopped — restart app to retry")
-            self._service_status_label.setStyleSheet("font-size: 12px; color: #dc2626; padding: 4px 0;")
-        else:
-            self._service_status_label.setText("○ Lock screen service: not installed")
-            self._service_status_label.setStyleSheet("font-size: 12px; color: #94a3b8; padding: 4px 0;")
-
-    def on_service_lock(self):
-        """Called from pipe thread — emit to Qt main thread."""
-        self._lock_signal.emit()
-
-    def on_service_unlock(self):
-        """Called from pipe thread — emit to Qt main thread."""
-        self._unlock_signal.emit()
-
-    def _on_lock_ui(self):
-        self._status_label.setText("Screen locked")
-        self._status_label.setStyleSheet("font-size: 13px; color: #dc2626;")
-
-    def _on_unlock_ui(self):
-        self._status_label.setText("Screen unlocked — server running…")
-        self._status_label.setStyleSheet("font-size: 13px; color: #16a34a;")
 
     def _run_elevated(self, exe: str, arg: str):
         if sys.platform == "win32":

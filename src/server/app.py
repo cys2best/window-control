@@ -85,10 +85,11 @@ def create_app(state: CaptureState, frame_queue: FrameQueue) -> FastAPI:
         adb = adb_manager._find_adb()
         if not adb:
             raise HTTPException(status_code=503, detail="adb not found")
+        nw = adb_manager._no_window_flags()
         try:
             png = subprocess.check_output(
                 [adb, "-s", window_id, "exec-out", "screencap -p"],
-                timeout=5
+                timeout=5, **nw
             )
             img = Image.open(io.BytesIO(png))
             img.thumbnail((200, 120))
