@@ -100,7 +100,7 @@ async function initWebRTC(windowId) {
 
     _pc = new RTCPeerConnection({ iceServers: [
       { urls: 'stun:stun.l.google.com:19302' }
-    ] }); // STUN needed — Safari sends mDNS candidates otherwise, aiortc can't resolve them
+    ] });
 
     const video = document.getElementById('stream-video');
     const img   = document.getElementById('stream-img');
@@ -120,25 +120,25 @@ async function initWebRTC(windowId) {
       }
     };
 
-    // Trickle ICE: send candidates to server as they arrive
+    // Buffer candidates that arrive before offer round-trip completes.
+    // onicecandidate fires immediately after setLocalDescription — before
+    // the server has created its session — so we must not POST yet.
+    const pendingCandidates = [];
+    let offerDone = false;
     _pc.onicecandidate = e => {
-      if (!e.candidate) return; // end-of-candidates, server doesn't need it
-      fetch('/webrtc/ice-candidate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          candidate: e.candidate.candidate,
-          sdpMid: e.candidate.sdpMid,
-          sdpMLineIndex: e.candidate.sdpMLineIndex,
-        }),
-      }).catch(() => {});
+      if (!e.candidate) return;
+      const c = { candidate: e.candidate.candidate, sdpMid: e.candidate.sdpMid, sdpMLineIndex: e.candidate.sdpMLineIndex };
+      if (offerDone) {
+        fetch('/webrtc/ice-candidate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(c) }).catch(() => {});
+      } else {
+        pendingCandidates.push(c);
+      }
     };
 
     _pc.addTransceiver('video', { direction: 'recvonly' });
     const offer = await _pc.createOffer();
     await _pc.setLocalDescription(offer);
 
-    // 5s timeout — answer comes back immediately now (trickle ICE)
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 5000);
     const r = await fetch('/webrtc/offer', {
@@ -152,8 +152,12 @@ async function initWebRTC(windowId) {
     if (!r.ok) { _fallbackToMJPEG(); return; }
     const ans = await r.json();
     await _pc.setRemoteDescription(ans);
-    // ICE candidates flow via onicecandidate → /webrtc/ice-candidate
-    // Video appears via ontrack once ICE connects
+
+    // Session exists on server now — flush buffered candidates then enable live sends
+    offerDone = true;
+    for (const c of pendingCandidates) {
+      fetch('/webrtc/ice-candidate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(c) }).catch(() => {});
+    }
   } catch (_) {
     _fallbackToMJPEG();
   }
