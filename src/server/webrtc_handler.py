@@ -205,10 +205,9 @@ class WebRTCManager:
 
             loop = asyncio.get_event_loop()
             track = H264StreamTrack(raw.stdout, loop)
-            from aiortc import RTCConfiguration, RTCIceServer
-            pc = RTCPeerConnection(configuration=RTCConfiguration(iceServers=[
-                RTCIceServer(urls="stun:stun.l.google.com:19302"),
-            ]))
+            # No STUN on server — server has real IPs (Tailscale + LAN) as host candidates.
+            # STUN would block setLocalDescription waiting for external response.
+            pc = RTCPeerConnection()
 
             @pc.on("iceconnectionstatechange")
             async def _on_ice():
