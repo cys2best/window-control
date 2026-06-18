@@ -150,19 +150,14 @@ async function initWebRTC(windowId) {
     const offer = await _pc.createOffer();
     await _pc.setLocalDescription(offer);
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 15000);
     let r;
     try {
       r = await fetch('/webrtc/offer', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sdp: offer.sdp, type: offer.type, id: windowId }),
-        signal: controller.signal,
       });
     } finally {
-      clearTimeout(timer);
-      // Flush regardless — server may have created session even if response failed
       _flushCandidates();
     }
 
