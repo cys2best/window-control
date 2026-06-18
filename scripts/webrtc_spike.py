@@ -146,7 +146,10 @@ async def handle_offer(request):
     print(f"[spike] screenrecord pid={proc.pid}")
 
     track = H264SpikeTrack(proc.stdout, loop)
-    pc = RTCPeerConnection()
+    from aiortc import RTCConfiguration, RTCIceServer
+    pc = RTCPeerConnection(configuration=RTCConfiguration(iceServers=[
+        RTCIceServer(urls="stun:stun.l.google.com:19302"),
+    ]))
     _sessions[session_id] = pc
 
     @pc.on("iceconnectionstatechange")
@@ -225,7 +228,7 @@ async def handle_index(request):
 
     async function connect() {
       log('Creating RTCPeerConnection...');
-      const pc = new RTCPeerConnection({ iceServers: [] });
+      const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
 
       pc.ontrack = e => {
         log('✅ Track received! Setting video src...');

@@ -205,7 +205,10 @@ class WebRTCManager:
 
             loop = asyncio.get_event_loop()
             track = H264StreamTrack(raw.stdout, loop)
-            pc = RTCPeerConnection()
+            from aiortc import RTCConfiguration, RTCIceServer
+            pc = RTCPeerConnection(configuration=RTCConfiguration(iceServers=[
+                RTCIceServer(urls="stun:stun.l.google.com:19302"),
+            ]))
 
             @pc.on("iceconnectionstatechange")
             async def _on_ice():

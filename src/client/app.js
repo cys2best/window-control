@@ -98,7 +98,9 @@ async function initWebRTC(windowId) {
   try {
     if (_pc) { try { _pc.close(); } catch(_) {} _pc = null; }
 
-    _pc = new RTCPeerConnection({ iceServers: [] }); // direct Tailscale, no STUN
+    _pc = new RTCPeerConnection({ iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' }
+    ] }); // STUN needed — Safari sends mDNS candidates otherwise, aiortc can't resolve them
 
     const video = document.getElementById('stream-video');
     const img   = document.getElementById('stream-img');
