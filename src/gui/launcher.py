@@ -1,6 +1,5 @@
 # src/gui/launcher.py
 import sys
-import threading
 import subprocess
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -20,7 +19,6 @@ from updater import check_for_update
 class LauncherWindow(QMainWindow):
     server_start_requested = pyqtSignal()
     quality_changed = pyqtSignal(int)
-    window_selected = pyqtSignal(int, str)
 
     def __init__(self, state: CaptureState, parent=None):
         super().__init__(parent)

@@ -50,10 +50,6 @@ def create_app(state: CaptureState, frame_queue: FrameQueue) -> FastAPI:
             return HTMLResponse(Path(html_path).read_text())
         return HTMLResponse("<h1>Client not found</h1>", status_code=500)
 
-    @app.get("/status")
-    async def get_status():
-        return {"locked": False}
-
     @app.get("/windows")
     async def get_windows():
         return adb_manager.list_vms()
