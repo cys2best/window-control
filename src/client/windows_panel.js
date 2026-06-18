@@ -58,6 +58,8 @@ async function selectWindow(id) {
     if (titleEl && w) titleEl.textContent = w.title;
     renderWindowsGrid();
     showScreen('screen-stream');
+    // Try WebRTC first; falls back to MJPEG automatically on failure
+    initWebRTC(id);
   } catch (_) {}
 }
 

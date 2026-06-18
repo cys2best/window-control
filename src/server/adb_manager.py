@@ -221,14 +221,14 @@ class AdbSession:
             self._ffmpeg_proc = subprocess.Popen(
                 [ffmpeg,
                  "-loglevel", "quiet",
-                 # Low-latency input flags — don't buffer/probe more than needed
+                 "-hwaccel", "auto",      # GPU decode H.264; silent CPU fallback if unavailable
                  "-fflags", "nobuffer",
                  "-flags", "low_delay",
                  "-probesize", "32",
                  "-analyzeduration", "0",
                  "-i", "pipe:0",
                  "-vf", f"fps={self.fps}",
-                 "-vsync", "0",       # no frame duplication
+                 "-vsync", "0",
                  "-f", "image2pipe",
                  "-vcodec", "mjpeg",
                  "-q:v", "5",
@@ -293,6 +293,49 @@ class AdbSession:
         self._ffmpeg_proc = None
         self._record_proc = None
         _log(f"[adb] session stopped serial={self.serial}")
+
+
+class RawH264Session:
+    """screenrecord pipe only — no ffmpeg transcode. For WebRTC path."""
+
+    def __init__(self, serial: str, w: int, h: int):
+        self.serial = serial
+        self.w = w
+        self.h = h
+        self._proc: subprocess.Popen | None = None
+        self.stdout = None
+
+    def start(self) -> bool:
+        adb = _find_adb()
+        if not adb:
+            _log("[raw264] adb not found")
+            return False
+        sw = (self.w * 3 // 4) & ~1
+        sh = (self.h * 3 // 4) & ~1
+        try:
+            self._proc = subprocess.Popen(
+                [adb, "-s", self.serial, "exec-out",
+                 f"screenrecord --output-format=h264 --bit-rate=2000000 --size={sw}x{sh} -"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                **_no_window_flags(),
+            )
+            self.stdout = self._proc.stdout
+            _log(f"[raw264] started serial={self.serial} {sw}x{sh}")
+            return True
+        except Exception:
+            _log(f"[raw264] start failed: {traceback.format_exc()[:300]}")
+            return False
+
+    def stop(self):
+        if self._proc:
+            try:
+                self._proc.kill()
+            except Exception:
+                pass
+            self._proc = None
+        self.stdout = None
+        _log(f"[raw264] stopped serial={self.serial}")
 
 
 # ── Input ─────────────────────────────────────────────────────────────────────

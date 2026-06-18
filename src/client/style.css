@@ -96,12 +96,14 @@ html, body {
   display: flex; align-items: center; justify-content: center;
 }
 
-#stream-img {
+#stream-img,
+#stream-video {
   width: 100%; height: 100%;
   object-fit: contain;
   transform-origin: center center;
   user-select: none;
   -webkit-user-select: none;
+  background: #000;
 }
 
 /* Fullscreen: fill entire screen */
@@ -115,7 +117,9 @@ html, body {
   position: absolute; inset: 0;
 }
 #screen-stream:fullscreen #stream-img,
-#screen-stream:-webkit-full-screen #stream-img {
+#screen-stream:fullscreen #stream-video,
+#screen-stream:-webkit-full-screen #stream-img,
+#screen-stream:-webkit-full-screen #stream-video {
   width: 100%; height: 100%;
   object-fit: contain;
 }

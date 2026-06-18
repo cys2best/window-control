@@ -1,0 +1,235 @@
+"""
+WebRTC video streaming handler.
+
+Pipeline:
+  ADB screenrecord (Annex B H.264) → AnnexBParser → H264StreamTrack
+  → aiortc RTCPeerConnection → WebRTC → Safari <video>
+
+Input (touch/keyboard) stays on WebSocket — DataChannel not used.
+MJPEG path kept as fallback if WebRTC negotiation fails.
+"""
+
+import asyncio
+import fractions
+import sys
+import threading
+import time
+import traceback
+
+# Python 3.12 event loop compatibility with uvicorn
+if sys.version_info >= (3, 12):
+    try:
+        import nest_asyncio
+        nest_asyncio.apply()
+    except ImportError:
+        pass
+
+
+def _log(msg: str):
+    import os
+    for _p in [r"C:\ProgramData\WindowControl", r"C:\Windows\Temp"]:
+        try:
+            os.makedirs(_p, exist_ok=True)
+            with open(os.path.join(_p, "service_crash.log"), "a") as f:
+                f.write(msg + "\n")
+            return
+        except Exception:
+            continue
+
+
+# ── Annex B NAL unit parser ───────────────────────────────────────────────────
+
+_START4 = b"\x00\x00\x00\x01"
+_START3 = b"\x00\x00\x01"
+
+
+def _iter_nalus(pipe):
+    """Read Annex B H.264 stream from pipe, yield raw NAL unit bytes (no start code)."""
+    buf = b""
+    while True:
+        chunk = pipe.read(65536)
+        if not chunk:
+            break
+        buf += chunk
+        while True:
+            # Find next start code after position 1
+            i4 = buf.find(_START4, 1)
+            i3 = buf.find(_START3, 1)
+            candidates = [x for x in [i4, i3] if x > 0]
+            if not candidates:
+                break
+            i = min(candidates)
+            # Strip leading start code from current NAL
+            if buf[:4] == _START4:
+                nalu = buf[4:i]
+            elif buf[:3] == _START3:
+                nalu = buf[3:i]
+            else:
+                nalu = buf[:i]
+            if nalu:
+                yield nalu
+            buf = buf[i:]
+
+
+# ── H.264 VideoStreamTrack ────────────────────────────────────────────────────
+
+try:
+    from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack
+    import av
+    _AIORTC_AVAILABLE = True
+except ImportError:
+    _AIORTC_AVAILABLE = False
+    _log("[webrtc] aiortc not installed — WebRTC unavailable")
+
+
+if _AIORTC_AVAILABLE:
+    class H264StreamTrack(VideoStreamTrack):
+        """Feeds raw H.264 NAL units from ADB screenrecord into WebRTC."""
+
+        kind = "video"
+
+        def __init__(self, pipe, loop: asyncio.AbstractEventLoop):
+            super().__init__()
+            self._queue: asyncio.Queue = asyncio.Queue(maxsize=60)
+            self._loop = loop
+            self._stopped = False
+            self._pts = 0
+            self._time_base = fractions.Fraction(1, 90000)  # RTP 90kHz clock
+            t = threading.Thread(target=self._read_thread, args=(pipe,), daemon=True)
+            t.start()
+
+        def _read_thread(self, pipe):
+            try:
+                for nalu in _iter_nalus(pipe):
+                    if self._stopped:
+                        break
+                    asyncio.run_coroutine_threadsafe(
+                        self._queue.put(nalu), self._loop
+                    )
+            except Exception:
+                _log(f"[webrtc] NAL reader error: {traceback.format_exc()[:300]}")
+
+        async def recv(self):
+            nalu = await self._queue.get()
+            # Build av.Packet from raw NAL unit bytes
+            packet = av.Packet(nalu)
+            # Monotonic PTS in 90kHz units — avoids jitter from wall clock
+            self._pts += int(90000 / 30)  # assume max 30fps for timestamp spacing
+            packet.pts = self._pts
+            packet.dts = self._pts
+            packet.time_base = self._time_base
+            return packet
+
+        def stop(self):
+            self._stopped = True
+            super().stop()
+
+
+# ── SDP patching for Safari H.264 compatibility ───────────────────────────────
+
+def _patch_sdp_for_safari(sdp: str) -> str:
+    """Ensure H.264 Baseline 3.1 profile in SDP answer — required by Safari."""
+    lines = sdp.splitlines()
+    out = []
+    for line in lines:
+        out.append(line)
+        # After the H264 rtpmap line, inject fmtp if not already present
+        if "H264/90000" in line and "a=rtpmap" in line:
+            pt = line.split(":")[1].split(" ")[0]
+            # Check if fmtp already follows
+            has_fmtp = any(f"a=fmtp:{pt}" in l for l in lines)
+            if not has_fmtp:
+                out.append(
+                    f"a=fmtp:{pt} level-asymmetry-allowed=1;"
+                    f"packetization-mode=1;profile-level-id=42e01f"
+                )
+    return "\r\n".join(out)
+
+
+# ── WebRTC session and manager ────────────────────────────────────────────────
+
+class WebRTCSession:
+    def __init__(self, pc, track, raw_session):
+        self.pc = pc
+        self.track = track
+        self.raw_session = raw_session
+
+    def stop(self):
+        try:
+            if self.track:
+                self.track.stop()
+        except Exception:
+            pass
+        try:
+            if self.raw_session:
+                self.raw_session.stop()
+        except Exception:
+            pass
+
+
+class WebRTCManager:
+    def __init__(self):
+        self._session: WebRTCSession | None = None
+        self._lock = asyncio.Lock()
+
+    @property
+    def available(self) -> bool:
+        return _AIORTC_AVAILABLE
+
+    async def offer(
+        self,
+        offer_sdp: str,
+        offer_type: str,
+        serial: str,
+        w: int,
+        h: int,
+    ) -> tuple[str, str]:
+        """Handle WebRTC offer. Returns (answer_sdp, answer_type)."""
+        if not _AIORTC_AVAILABLE:
+            raise RuntimeError("aiortc not installed")
+
+        async with self._lock:
+            # Close any existing session first
+            await self._close_session()
+
+            from server.adb_manager import RawH264Session
+            raw = RawH264Session(serial, w, h)
+            if not raw.start():
+                raise RuntimeError("Could not start RawH264Session")
+
+            loop = asyncio.get_event_loop()
+            track = H264StreamTrack(raw.stdout, loop)
+            pc = RTCPeerConnection()
+
+            @pc.on("iceconnectionstatechange")
+            async def _on_ice():
+                _log(f"[webrtc] ICE state: {pc.iceConnectionState}")
+                if pc.iceConnectionState in ("failed", "closed"):
+                    await self._close_session()
+
+            pc.addTrack(track)
+            await pc.setRemoteDescription(
+                RTCSessionDescription(sdp=offer_sdp, type=offer_type)
+            )
+            answer = await pc.createAnswer()
+            await pc.setLocalDescription(answer)
+
+            patched_sdp = _patch_sdp_for_safari(pc.localDescription.sdp)
+            self._session = WebRTCSession(pc, track, raw)
+            _log(f"[webrtc] session started serial={serial}")
+            return patched_sdp, pc.localDescription.type
+
+    async def close(self):
+        async with self._lock:
+            await self._close_session()
+
+    async def _close_session(self):
+        if self._session:
+            s = self._session
+            self._session = None
+            s.stop()
+            try:
+                await s.pc.close()
+            except Exception:
+                pass
+            _log("[webrtc] session closed")

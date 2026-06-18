@@ -10,6 +10,7 @@ from typing import Literal
 from config import CLIENT_DIR, QUALITY_MAP
 from server.stream import CaptureState, FrameQueue, mjpeg_generator
 from server import adb_manager
+from server.webrtc_handler import WebRTCManager
 
 
 class SelectRequest(BaseModel):
@@ -34,9 +35,16 @@ def _make_exception_handler(default_handler):
     return handler
 
 
+class WebRTCOfferRequest(BaseModel):
+    sdp: str
+    type: str
+    id: str  # "adb:SERIAL"
+
+
 def create_app(state: CaptureState, frame_queue: FrameQueue) -> FastAPI:
     import asyncio
     app = FastAPI()
+    webrtc_manager = WebRTCManager()
 
     @app.on_event("startup")
     async def _suppress_connection_reset():
@@ -98,6 +106,29 @@ def create_app(state: CaptureState, frame_queue: FrameQueue) -> FastAPI:
         ok = session.start()
         if not ok:
             raise HTTPException(status_code=503, detail="Could not restart session")
+        return {"ok": True}
+
+    @app.post("/webrtc/offer")
+    async def webrtc_offer(req: WebRTCOfferRequest):
+        if not webrtc_manager.available:
+            raise HTTPException(status_code=501, detail="aiortc not installed")
+        if not req.id.startswith("adb:"):
+            raise HTTPException(status_code=400, detail="Invalid id")
+        serial = req.id[4:]
+        session = state.adb_session
+        if session is None:
+            raise HTTPException(status_code=404, detail="No active session — call /select first")
+        try:
+            answer_sdp, answer_type = await webrtc_manager.offer(
+                req.sdp, req.type, serial, session.w, session.h
+            )
+            return {"sdp": answer_sdp, "type": answer_type}
+        except Exception as e:
+            raise HTTPException(status_code=503, detail=str(e))
+
+    @app.delete("/webrtc")
+    async def webrtc_close():
+        await webrtc_manager.close()
         return {"ok": True}
 
     @app.get("/window/{window_id}/preview")

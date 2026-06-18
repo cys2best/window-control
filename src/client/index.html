@@ -23,8 +23,9 @@
   <!-- SCREEN 2: Stream -->
   <div id="screen-stream" class="screen">
 
-    <!-- Stream image -->
+    <!-- Stream: WebRTC video (primary) + MJPEG img (fallback) -->
     <div id="stream-container">
+      <video id="stream-video" autoplay playsinline muted style="display:none"></video>
       <img id="stream-img" alt="stream" draggable="false">
     </div>
 

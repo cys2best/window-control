@@ -2,6 +2,11 @@
 let ws = null;
 let wsRetryDelay = 1000;
 
+// WebRTC state
+let _pc = null;
+let _webrtcActive = false;
+let _activeWindowId = null;
+
 // Drag state
 let _dragActive = false;
 let _dragStartX = 0;
@@ -70,7 +75,71 @@ function clearUnavailable() {
 }
 
 function getStreamRect() {
+  // Use whichever stream element is currently visible
+  const video = document.getElementById('stream-video');
+  if (_webrtcActive && video.style.display !== 'none') {
+    return video.getBoundingClientRect();
+  }
   return document.getElementById('stream-img').getBoundingClientRect();
+}
+
+// ── WebRTC ────────────────────────────────────────────────────────────────────
+
+function _fallbackToMJPEG() {
+  _webrtcActive = false;
+  if (_pc) { try { _pc.close(); } catch(_) {} _pc = null; }
+  document.getElementById('stream-video').style.display = 'none';
+  document.getElementById('stream-img').style.display = 'block';
+  initStream();
+}
+
+async function initWebRTC(windowId) {
+  _activeWindowId = windowId;
+  try {
+    if (_pc) { try { _pc.close(); } catch(_) {} _pc = null; }
+
+    _pc = new RTCPeerConnection({ iceServers: [] }); // direct Tailscale IP, no STUN needed
+
+    const video = document.getElementById('stream-video');
+    const img   = document.getElementById('stream-img');
+
+    _pc.ontrack = e => {
+      video.srcObject = e.streams[0];
+      video.style.display = 'block';
+      img.style.display = 'none';
+      _webrtcActive = true;
+      clearUnavailable();
+    };
+
+    _pc.oniceconnectionstatechange = () => {
+      const s = _pc ? _pc.iceConnectionState : '';
+      if (s === 'failed' || s === 'closed' || s === 'disconnected') {
+        _fallbackToMJPEG();
+      }
+    };
+
+    _pc.addTransceiver('video', { direction: 'recvonly' });
+    const offer = await _pc.createOffer();
+    await _pc.setLocalDescription(offer);
+
+    // 5s negotiation timeout → fallback to MJPEG
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
+    const r = await fetch('/webrtc/offer', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sdp: offer.sdp, type: offer.type, id: windowId }),
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+
+    if (!r.ok) { _fallbackToMJPEG(); return; }
+    const ans = await r.json();
+    await _pc.setRemoteDescription(ans);
+    // Video will appear via ontrack callback
+  } catch (_) {
+    _fallbackToMJPEG();
+  }
 }
 
 function normalizeCoords(clientX, clientY) {
@@ -198,9 +267,12 @@ document.addEventListener('DOMContentLoaded', () => {
         wsRetryDelay = 1000;
         connectWS();
       }
-      // Only reinit stream if we're on the stream screen
       if (document.getElementById('screen-stream').classList.contains('active')) {
-        initStream();
+        if (_webrtcActive && _activeWindowId) {
+          initWebRTC(_activeWindowId);
+        } else {
+          initStream();
+        }
       }
     }
   });
