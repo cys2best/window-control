@@ -108,22 +108,32 @@ def _find_ldplayer_window(index: int) -> int | None:
 
 
 def maximize_ldplayer_window(index: int):
-    """Bring LDPlayer instance window to foreground and maximize it."""
+    """Bring LDPlayer instance window to foreground and send F11 to toggle fullscreen."""
     if sys.platform != "win32":
         return
-    hwnd = _find_ldplayer_window(index)
-    if not hwnd:
-        _log(f"[ldplayer] window not found for index={index}")
-        return
+    # EnumWindows fails when app runs in a different desktop session than LDPlayer.
+    # Use PowerShell AppActivate + SendKeys F11 which works across sessions.
     try:
-        import ctypes
-        user32 = ctypes.windll.user32
-        SW_MAXIMIZE = 3
-        user32.ShowWindow(hwnd, SW_MAXIMIZE)
-        user32.SetForegroundWindow(hwnd)
-        _log(f"[ldplayer] maximized hwnd={hwnd} index={index}")
+        import subprocess
+        # LDPlayer process names vary by version
+        ps = (
+            "$p = Get-Process | Where-Object { $_.MainWindowTitle -like '*LDPlayer*' } | "
+            "Select-Object -First 1; "
+            "if ($p) { "
+            "  $wsh = New-Object -ComObject WScript.Shell; "
+            "  $wsh.AppActivate($p.Id); "
+            "  Start-Sleep -Milliseconds 200; "
+            "  $wsh.SendKeys('{F11}'); "
+            "  Write-Output ('activated pid=' + $p.Id + ' title=' + $p.MainWindowTitle) "
+            "} else { Write-Output 'no LDPlayer window found' }"
+        )
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+            capture_output=True, text=True, timeout=5
+        )
+        _log(f"[ldplayer] fullscreen: {result.stdout.strip() or result.stderr.strip()[:100]}")
     except Exception:
-        _log(f"[ldplayer] maximize failed: {traceback.format_exc()[:200]}")
+        _log(f"[ldplayer] fullscreen failed: {traceback.format_exc()[:200]}")
 
 
 def list_vms() -> list[dict]:
