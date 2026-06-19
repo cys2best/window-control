@@ -1,28 +1,26 @@
 """
 ScrcpySession: captures H.264 from LDPlayer via scrcpy-server TCP protocol.
 
-Setup (done once per instance, outside this class):
+Setup (per instance, done by _start_server()):
   adb push scrcpy-server /data/local/tmp/scrcpy-server.jar
-  adb shell CLASSPATH=/data/local/tmp/scrcpy-server.jar \
-      app_process / com.genymobile.scrcpy.Server 2.7 \
+  adb shell CLASSPATH=... app_process / com.genymobile.scrcpy.Server 3.1 \
       tunnel_forward=true video_codec=h264 max_fps=30 bit_rate=4000000 \
       send_device_meta=true send_frame_meta=true control=false audio=false &
-
   adb forward tcp:<port> localabstract:scrcpy
 
-Protocol (scrcpy-server 2.x, tunnel_forward=true):
-  1. Open two TCP sockets to 127.0.0.1:<port>
-     - First connection  → video socket
-     - Second connection → control socket (we send nothing, just hold it open)
-  2. Video socket: read 1-byte "dummy byte" (0x00)
-  3. Video socket: read 64-byte device name (zero-padded UTF-8)
-  4. Video socket: read 4-byte codec id  (big-endian, 0x68323634 = 'h264')
-  5. Video socket: read 4-byte width, 4-byte height  (big-endian uint32 each)
-  6. Loop — each frame:
-     a. 8-byte PTS       (big-endian uint64, µs; 0xFFFFFFFFFFFFFFFF = config packet)
-     b. 4-byte size      (big-endian uint32)
-     c. <size> bytes     raw H.264 Annex B payload
-     Config packets (SPS/PPS) pass through to ffmpeg unchanged.
+Protocol (scrcpy-server 3.x, tunnel_forward=true, video only, no audio/control):
+  1. Open ONE TCP socket to 127.0.0.1:<port>  (video socket)
+  2. Read 1-byte dummy (connection probe byte)
+  3. Read 64-byte device name (zero-padded UTF-8, only if send_device_meta=true)
+  4. Read 4-byte codec_id (big-endian uint32, 0x68323634 = 'h264')
+  5. Read 8-byte video size: 4-byte width + 4-byte height (big-endian uint32 each)
+  6. Frame loop:
+     a. 8-byte pts_flags  (big-endian uint64)
+        bit 63 = config packet (SPS/PPS), bit 62 = key frame
+        pts = pts_flags & 0x3FFFFFFFFFFFFFFF
+     b. 4-byte size       (big-endian uint32)
+     c. <size> bytes      raw H.264 Annex B payload
+     Config packets pass through to ffmpeg unchanged.
 
 Pipeline per instance:
   scrcpy-server (on device) → TCP → Python → ffmpeg stdin → RTSP → mediamtx → WHEP
@@ -41,8 +39,6 @@ from config import ASSETS_DIR
 
 _SCRCPY_BASE_PORT = 27183   # instance 0 → 27183, instance 1 → 27184, …
 _SERVER_JAR = "scrcpy-server"  # filename in assets/scrcpy/
-_CONFIG_PTS = 0xFFFFFFFFFFFFFFFF
-
 
 def _log(msg: str):
     for _p in [r"C:\ProgramData\WindowControl", r"C:\Windows\Temp"]:
@@ -113,7 +109,7 @@ def _start_server(adb: str, serial: str, port: int) -> bool:
             [
                 adb, "-s", serial, "shell",
                 "CLASSPATH=/data/local/tmp/scrcpy-server.jar"
-                " app_process / com.genymobile.scrcpy.Server 2.7"
+                " app_process / com.genymobile.scrcpy.Server 3.1"
                 " tunnel_forward=true video_codec=h264"
                 " max_fps=30 bit_rate=4000000"
                 " send_device_meta=true send_frame_meta=true"
@@ -185,19 +181,14 @@ class ScrcpySession:
         ffmpeg_exe = _get_ffmpeg()
         ffmpeg_proc: subprocess.Popen | None = None
         video_sock: socket.socket | None = None
-        control_sock: socket.socket | None = None
         try:
-            # Two connections required: video first, then control
+            # One connection: video socket (audio=false, control=false)
             video_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             video_sock.settimeout(10)
             video_sock.connect(("127.0.0.1", self._tcp_port))
 
-            control_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            control_sock.settimeout(10)
-            control_sock.connect(("127.0.0.1", self._tcp_port))
-
-            # Read protocol header from video socket
-            _recvall(video_sock, 1)  # dummy byte
+            # Protocol header
+            _recvall(video_sock, 1)   # dummy byte (connection probe)
             device_name = _recvall(video_sock, 64).rstrip(b"\x00").decode("utf-8", errors="replace")
             codec_id = struct.unpack(">I", _recvall(video_sock, 4))[0]
             init_w = struct.unpack(">I", _recvall(video_sock, 4))[0]
@@ -231,17 +222,18 @@ class ScrcpySession:
 
             _log(f"[scrcpy] streaming serial={self.serial} → {self.rtsp_url}")
 
+            _FLAG_CONFIG = (1 << 63)
             while self._running:
                 header = _recvall(video_sock, 12)
                 if len(header) < 12:
                     break
-                pts = struct.unpack(">Q", header[:8])[0]
+                pts_flags = struct.unpack(">Q", header[:8])[0]
                 size = struct.unpack(">I", header[8:12])[0]
                 payload = _recvall(video_sock, size)
                 if len(payload) < size:
                     break
-                # Config packets (SPS/PPS) pass through — valid H.264
-                _ = (pts == _CONFIG_PTS)
+                # Config packets (SPS/PPS) are valid H.264 — pass through
+                _ = bool(pts_flags & _FLAG_CONFIG)
                 try:
                     ffmpeg_proc.stdin.write(payload)
                     ffmpeg_proc.stdin.flush()
@@ -251,12 +243,11 @@ class ScrcpySession:
         except Exception:
             _log(f"[scrcpy] stream_loop error serial={self.serial}: {traceback.format_exc()[:400]}")
         finally:
-            for s in [video_sock, control_sock]:
-                if s:
-                    try:
-                        s.close()
-                    except Exception:
-                        pass
+            if video_sock:
+                try:
+                    video_sock.close()
+                except Exception:
+                    pass
             if ffmpeg_proc:
                 try:
                     ffmpeg_proc.stdin.close()
