@@ -173,12 +173,9 @@ class AdbSession:
             return False
         try:
             nw = _no_window_flags()
-            # Scale stream resolution to 75% — reduces transcode load and bandwidth
-            sw = (self.w * 3 // 4) & ~1
-            sh = (self.h * 3 // 4) & ~1
             self._record_proc = subprocess.Popen(
                 [adb, "-s", self.serial, "exec-out",
-                 f"screenrecord --output-format=h264 --bit-rate=1000000 --size={sw}x{sh} -"],
+                 f"screenrecord --output-format=h264 --bit-rate=2000000 -"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
                 **nw,
@@ -275,18 +272,16 @@ class RawH264Session:
         if not adb:
             _log("[raw264] adb not found")
             return False
-        sw = (self.w * 3 // 4) & ~1
-        sh = (self.h * 3 // 4) & ~1
         try:
             self._proc = subprocess.Popen(
                 [adb, "-s", self.serial, "exec-out",
-                 f"screenrecord --output-format=h264 --bit-rate=2000000 --size={sw}x{sh} -"],
+                 f"screenrecord --output-format=h264 --bit-rate=2000000 -"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
                 **_no_window_flags(),
             )
             self.stdout = self._proc.stdout
-            _log(f"[raw264] started serial={self.serial} {sw}x{sh}")
+            _log(f"[raw264] started serial={self.serial} {self.w}x{self.h}")
             return True
         except Exception:
             _log(f"[raw264] start failed: {traceback.format_exc()[:300]}")

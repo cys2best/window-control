@@ -239,7 +239,11 @@ class WebRTCManager:
             raise RuntimeError("aiortc not installed")
 
         async with self._lock:
+            had_session = self._session is not None
             await self._close_session()
+            if had_session:
+                # Give Android screenrecord time to release — ADB kill is async on device side
+                await asyncio.sleep(0.5)
 
             # Use pre-warmed session if serial matches, else start fresh
             if self._warm_raw and self._warm_serial == serial:
@@ -319,6 +323,14 @@ class WebRTCManager:
             await self._close_session()
 
     async def _close_session(self):
+        # Stop any pre-warmed session too — frees the Android screenrecord slot
+        if self._warm_raw:
+            try: self._warm_raw.stop()
+            except Exception: pass
+        if self._warm_pc:
+            try: await self._warm_pc.close()
+            except Exception: pass
+        self._warm_raw = self._warm_track = self._warm_serial = self._warm_pc = None
         if self._session:
             s = self._session
             self._session = None
