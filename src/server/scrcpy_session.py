@@ -89,7 +89,7 @@ class ScrcpySession:
                         "--video-codec", "h264",
                         "--video-bit-rate", "4M",
                         "--max-fps", "30",
-                        "--output-file", "pipe:1",
+                        "--output-file=pipe:1",
                     ],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
