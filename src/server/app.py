@@ -96,8 +96,11 @@ def create_app(state: CaptureState, frame_queue: FrameQueue) -> FastAPI:
         import threading as _t
         _t.Thread(target=adb_manager.maximize_ldplayer_window,
                   args=(ldplayer_index,), daemon=True).start()
-        # Pre-warm WebRTC session so offer round-trip is fast
-        asyncio.create_task(webrtc_manager.prepare(serial, w, h))
+        # Pre-warm WebRTC after fullscreen settles — Alt+Enter restarts display pipe
+        async def _delayed_prepare():
+            await asyncio.sleep(2)
+            await webrtc_manager.prepare(serial, w, h)
+        asyncio.create_task(_delayed_prepare())
         return {"ok": True, "id": req.id, "w": w, "h": h}
 
     @app.get("/stream")
