@@ -177,53 +177,14 @@ class WebRTCManager:
     def __init__(self):
         self._session: WebRTCSession | None = None
         self._lock = asyncio.Lock()
-        # Pre-warmed state from /select — avoids cold-start delay on /webrtc/offer
-        self._warm_raw: object | None = None
-        self._warm_track: object | None = None
-        self._warm_serial: str | None = None
-        self._warm_pc: object | None = None
 
     @property
     def available(self) -> bool:
         return _AIORTC_AVAILABLE
 
     async def prepare(self, serial: str, w: int, h: int):
-        """Pre-start RawH264Session + bind ICE sockets during /select so offer is fast."""
-        if not _AIORTC_AVAILABLE:
-            return
-        async with self._lock:
-            # Discard previous warm state
-            if self._warm_raw:
-                try: self._warm_raw.stop()
-                except Exception: pass
-            if self._warm_pc:
-                try: await self._warm_pc.close()
-                except Exception: pass
-
-            from server.adb_manager import RawH264Session
-            raw = RawH264Session(serial, w, h)
-            if not raw.start():
-                self._warm_raw = self._warm_track = self._warm_serial = self._warm_pc = None
-                return
-
-            loop = asyncio.get_event_loop()
-            track = H264StreamTrack(raw.stdout, loop)
-
-            # Create RTCPeerConnection and do a dummy offer to bind UDP sockets now.
-            # When real offer arrives, sockets already bound → setLocalDescription is fast.
-            pc = RTCPeerConnection()
-            pc.addTrack(track)
-            try:
-                dummy_offer = await pc.createOffer()
-                await pc.setLocalDescription(dummy_offer)
-                _log(f"[webrtc] pre-warmed serial={serial} — ICE sockets bound")
-            except Exception:
-                _log(f"[webrtc] pre-warm ICE bind failed: {traceback.format_exc()[:200]}")
-
-            self._warm_raw = raw
-            self._warm_track = track
-            self._warm_pc = pc
-            self._warm_serial = serial
+        """No-op — pre-warming removed to prevent RTCPeerConnection/port leaks on rapid switches."""
+        pass
 
     async def offer(
         self,
@@ -245,23 +206,12 @@ class WebRTCManager:
                 # Give Android screenrecord time to release — ADB kill is async on device side
                 await asyncio.sleep(0.5)
 
-            # Use pre-warmed session if serial matches, else start fresh
-            if self._warm_raw and self._warm_serial == serial:
-                raw = self._warm_raw
-                track = self._warm_track
-                # Close dummy pc — real negotiation uses a fresh one below
-                if self._warm_pc:
-                    try: await self._warm_pc.close()
-                    except Exception: pass
-                self._warm_raw = self._warm_track = self._warm_serial = self._warm_pc = None
-                _log(f"[webrtc] using pre-warmed session serial={serial}")
-            else:
-                from server.adb_manager import RawH264Session
-                raw = RawH264Session(serial, w, h)
-                if not raw.start():
-                    raise RuntimeError("Could not start RawH264Session")
-                loop = asyncio.get_event_loop()
-                track = H264StreamTrack(raw.stdout, loop)
+            from server.adb_manager import RawH264Session
+            raw = RawH264Session(serial, w, h)
+            if not raw.start():
+                raise RuntimeError("Could not start RawH264Session")
+            loop = asyncio.get_event_loop()
+            track = H264StreamTrack(raw.stdout, loop)
 
             pc = RTCPeerConnection()
 
@@ -323,14 +273,6 @@ class WebRTCManager:
             await self._close_session()
 
     async def _close_session(self):
-        # Stop any pre-warmed session too — frees the Android screenrecord slot
-        if self._warm_raw:
-            try: self._warm_raw.stop()
-            except Exception: pass
-        if self._warm_pc:
-            try: await self._warm_pc.close()
-            except Exception: pass
-        self._warm_raw = self._warm_track = self._warm_serial = self._warm_pc = None
         if self._session:
             s = self._session
             self._session = None
