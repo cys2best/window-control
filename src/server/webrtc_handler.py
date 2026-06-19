@@ -177,10 +177,34 @@ class WebRTCManager:
     def __init__(self):
         self._session: WebRTCSession | None = None
         self._lock = asyncio.Lock()
+        # Pre-warmed state from /select — avoids cold-start delay on /webrtc/offer
+        self._warm_raw: object | None = None
+        self._warm_track: object | None = None
+        self._warm_serial: str | None = None
 
     @property
     def available(self) -> bool:
         return _AIORTC_AVAILABLE
+
+    async def prepare(self, serial: str, w: int, h: int):
+        """Pre-start RawH264Session during /select so offer round-trip is faster."""
+        if not _AIORTC_AVAILABLE:
+            return
+        async with self._lock:
+            # Discard previous warm state
+            if self._warm_raw:
+                try: self._warm_raw.stop()
+                except Exception: pass
+            from server.adb_manager import RawH264Session
+            raw = RawH264Session(serial, w, h)
+            if raw.start():
+                loop = asyncio.get_event_loop()
+                self._warm_raw = raw
+                self._warm_track = H264StreamTrack(raw.stdout, loop)
+                self._warm_serial = serial
+                _log(f"[webrtc] pre-warmed serial={serial}")
+            else:
+                self._warm_raw = self._warm_track = self._warm_serial = None
 
     async def offer(
         self,
@@ -196,18 +220,22 @@ class WebRTCManager:
             raise RuntimeError("aiortc not installed")
 
         async with self._lock:
-            # Close any existing session first
             await self._close_session()
 
-            from server.adb_manager import RawH264Session
-            raw = RawH264Session(serial, w, h)
-            if not raw.start():
-                raise RuntimeError("Could not start RawH264Session")
+            # Use pre-warmed session if serial matches, else start fresh
+            if self._warm_raw and self._warm_serial == serial:
+                raw = self._warm_raw
+                track = self._warm_track
+                self._warm_raw = self._warm_track = self._warm_serial = None
+                _log(f"[webrtc] using pre-warmed session serial={serial}")
+            else:
+                from server.adb_manager import RawH264Session
+                raw = RawH264Session(serial, w, h)
+                if not raw.start():
+                    raise RuntimeError("Could not start RawH264Session")
+                loop = asyncio.get_event_loop()
+                track = H264StreamTrack(raw.stdout, loop)
 
-            loop = asyncio.get_event_loop()
-            track = H264StreamTrack(raw.stdout, loop)
-            # No STUN on server — server has real IPs (Tailscale + LAN) as host candidates.
-            # STUN would block setLocalDescription waiting for external response.
             pc = RTCPeerConnection()
 
             @pc.on("iceconnectionstatechange")
