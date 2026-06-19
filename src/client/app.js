@@ -280,16 +280,7 @@ function initKeyboard() {
   });
 }
 
-function initFPS() {
-  // Poll /stats every second — server counts frames served, resets counter each call.
-  // Avoids opening a second /stream connection that would starve the img tag.
-  setInterval(() => {
-    fetch('/stats').then(r => r.json()).then(d => {
-      const pill = document.getElementById('fps-pill');
-      if (pill) pill.textContent = `${d.frames} fps`;
-    }).catch(() => {});
-  }, 1000);
-}
+function initFPS() {}
 
 document.addEventListener('DOMContentLoaded', () => {
   connectWS();
