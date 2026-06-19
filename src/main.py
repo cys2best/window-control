@@ -73,13 +73,22 @@ def main():
 
     # Remove legacy lock-screen service if still installed from older versions
     if sys.platform == "win32":
-        def _remove_legacy_service():
+        def _win32_setup():
             import subprocess
             subprocess.run(["sc.exe", "stop", "WindowControlService"],
                            capture_output=True, timeout=10)
             subprocess.run(["sc.exe", "delete", "WindowControlService"],
                            capture_output=True, timeout=10)
-        threading.Thread(target=_remove_legacy_service, daemon=True).start()
+            # Allow mediamtx WHEP port through Windows Firewall (idempotent)
+            from config import WHEP_PORT
+            subprocess.run([
+                "netsh", "advfirewall", "firewall", "add", "rule",
+                f"name=WindowControl-WHEP-{WHEP_PORT}",
+                "dir=in", "action=allow", "protocol=TCP",
+                f"localport={WHEP_PORT}",
+            ], capture_output=True, timeout=10)
+            _log(f"[GUI] firewall rule ensured for WHEP port {WHEP_PORT}")
+        threading.Thread(target=_win32_setup, daemon=True).start()
 
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
