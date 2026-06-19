@@ -44,11 +44,15 @@ def _mediamtx_exe() -> str:
     return bundled  # will fail at Popen time with a clear error
 
 
-def _generate_config(instance_names: list[str]) -> str:
+def _generate_config(instance_names: list[str], tailscale_ip: str | None = None) -> str:
     """Generate mediamtx.yml content for the given instance path names."""
-    # Each path accepts RTSP push (default source=publisher) and serves WHEP.
-    # No extra keys needed — empty path block is sufficient.
     paths = "\n".join(f"  {name}:" for name in instance_names)
+    # Advertise Tailscale IP as the ICE host so the browser connects directly
+    # instead of waiting 20-30s for UDP probes to time out.
+    if tailscale_ip:
+        nat_line = f"webrtcICEHostNAT1To1IPs: [{tailscale_ip}]"
+    else:
+        nat_line = "# webrtcICEHostNAT1To1IPs: []  # set to Tailscale IP for fast ICE"
     return f"""\
 logLevel: info
 logDestinations: [stdout]
@@ -57,6 +61,7 @@ rtspAddress: :{MEDIAMTX_PORT}
 rtmpAddress: :{RTMP_PORT}
 hlsAddress: :8888
 webrtcAddress: :{WHEP_PORT}
+{nat_line}
 
 paths:
 {paths}
@@ -71,11 +76,11 @@ class MediamtxManager:
         self._config_file: str | None = None
         self._lock = threading.Lock()
 
-    def start(self, instance_names: list[str]):
+    def start(self, instance_names: list[str], tailscale_ip: str | None = None):
         """Start (or restart) mediamtx with paths for the given instances."""
         with self._lock:
             self._stop_locked()
-            cfg = _generate_config(instance_names)
+            cfg = _generate_config(instance_names, tailscale_ip)
             fd, path = tempfile.mkstemp(suffix=".yml", prefix="mediamtx_")
             try:
                 os.write(fd, cfg.encode())
