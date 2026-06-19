@@ -42,16 +42,24 @@ def _log(msg: str):
             continue
 
 
+_adb_path_cache: str | None = None
+_adb_path_searched: bool = False
+
 def _find_adb() -> str | None:
+    global _adb_path_cache, _adb_path_searched
+    if _adb_path_searched:
+        return _adb_path_cache
+    _adb_path_searched = True
     for path in _ADB_PATH_FALLBACKS:
         if os.path.exists(path):
             _log(f"[adb] found at {path}")
+            _adb_path_cache = path
             return path
-    # Try adb.exe on PATH
     import shutil
     found = shutil.which("adb")
     if found:
         _log(f"[adb] found on PATH: {found}")
+        _adb_path_cache = found
         return found
     _log(f"[adb] not found — tried: {_ADB_PATH_FALLBACKS}")
     return None
