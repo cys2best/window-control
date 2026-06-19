@@ -50,9 +50,12 @@ def _generate_config(instance_names: list[str], tailscale_ip: str | None = None)
     # Advertise Tailscale IP as the ICE host so the browser connects directly
     # instead of waiting 20-30s for UDP probes to time out.
     if tailscale_ip:
-        nat_line = f"webrtcICEHostNAT1To1IPs: [{tailscale_ip}]"
+        nat_lines = (
+            f"webrtcICEHostNAT1To1IPs: [{tailscale_ip}]\n"
+            f"webrtcICETCPMuxAddress: :{8189}"
+        )
     else:
-        nat_line = "# webrtcICEHostNAT1To1IPs: []  # set to Tailscale IP for fast ICE"
+        nat_lines = ""
     return f"""\
 logLevel: info
 logDestinations: [stdout]
@@ -61,7 +64,7 @@ rtspAddress: :{MEDIAMTX_PORT}
 rtmpAddress: :{RTMP_PORT}
 hlsAddress: :8888
 webrtcAddress: :{WHEP_PORT}
-{nat_line}
+{nat_lines}
 
 paths:
 {paths}

@@ -81,13 +81,14 @@ def main():
                            capture_output=True, timeout=10)
             # Allow mediamtx WHEP port through Windows Firewall (idempotent)
             from config import WHEP_PORT
-            subprocess.run([
-                "netsh", "advfirewall", "firewall", "add", "rule",
-                f"name=WindowControl-WHEP-{WHEP_PORT}",
-                "dir=in", "action=allow", "protocol=TCP",
-                f"localport={WHEP_PORT}",
-            ], capture_output=True, timeout=10)
-            _log(f"[GUI] firewall rule ensured for WHEP port {WHEP_PORT}")
+            for proto, port in [("TCP", WHEP_PORT), ("TCP", 8189), ("UDP", 8189)]:
+                subprocess.run([
+                    "netsh", "advfirewall", "firewall", "add", "rule",
+                    f"name=WindowControl-WebRTC-{proto}-{port}",
+                    "dir=in", "action=allow", f"protocol={proto}",
+                    f"localport={port}",
+                ], capture_output=True, timeout=10)
+            _log(f"[GUI] firewall rules ensured for WHEP {WHEP_PORT} and ICE 8189")
         threading.Thread(target=_win32_setup, daemon=True).start()
 
     app = QApplication(sys.argv)
