@@ -3,7 +3,7 @@ import sys
 
 PORT = 8080
 DEV_MODE = sys.platform != "win32"
-VERSION = "1.2.40"
+VERSION = "2.0.0"
 GITHUB_REPO = "cys2best/window-control"
 
 QUALITY_MAP = {
@@ -18,6 +18,15 @@ SYSTEM_WINDOW_TITLES = {
     "Program Manager", "Desktop", "Taskbar",
     "Task Manager", "Start", "",
 }
+
+# mediamtx / scrcpy
+MEDIAMTX_PORT = 8554   # RTSP
+WHEP_PORT = 8889       # WebRTC/WHEP (mediamtx default)
+RTMP_PORT = 1935       # mediamtx RTMP (unused by us, kept for mediamtx default config)
+
+ADB_PATH = "adb"       # overridden at runtime by _find_adb()
+SCRCPY_PATH = os.path.join("assets", "scrcpy", "scrcpy.exe")
+MEDIAMTX_PATH = os.path.join("assets", "mediamtx", "mediamtx.exe")
 
 
 def get_base_path():

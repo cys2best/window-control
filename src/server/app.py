@@ -1,5 +1,19 @@
+import io
 import os
+import subprocess
 from pathlib import Path
+
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse, Response, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+from typing import Literal
+
+from config import CLIENT_DIR, QUALITY_MAP, WHEP_PORT
+from server.stream import CaptureState, FrameQueue, mjpeg_generator
+from server import adb_manager
+from server.instance_manager import InstanceManager
+from server.tailscale import get_best_ip
 
 
 def _log(msg: str):
@@ -11,17 +25,6 @@ def _log(msg: str):
             return
         except Exception:
             continue
-
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, Response, StreamingResponse
-from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
-from typing import Literal
-
-from config import CLIENT_DIR, QUALITY_MAP
-from server.stream import CaptureState, FrameQueue, mjpeg_generator
-from server import adb_manager
-from server.webrtc_handler import WebRTCManager
 
 
 class SelectRequest(BaseModel):
@@ -46,27 +49,20 @@ def _make_exception_handler(default_handler):
     return handler
 
 
-class WebRTCOfferRequest(BaseModel):
-    sdp: str
-    type: str
-    id: str  # "adb:SERIAL"
-
-
-class WebRTCIceCandidateRequest(BaseModel):
-    candidate: str = ""
-    sdpMid: str | None = None
-    sdpMLineIndex: int | None = None
-
-
-def create_app(state: CaptureState, frame_queue: FrameQueue) -> FastAPI:
+def create_app(state: CaptureState, frame_queue: FrameQueue,
+               instance_manager: InstanceManager) -> FastAPI:
     import asyncio
     app = FastAPI()
-    webrtc_manager = WebRTCManager()
 
     @app.on_event("startup")
-    async def _suppress_connection_reset():
+    async def _startup():
         loop = asyncio.get_event_loop()
         loop.set_exception_handler(_make_exception_handler(loop.get_exception_handler()))
+        # Discover LDPlayer instances on startup
+        import threading
+        threading.Thread(target=instance_manager.refresh, daemon=True).start()
+
+    # ── Static / index ───────────────────────────────────────────────────────
 
     @app.get("/")
     async def index():
@@ -75,30 +71,92 @@ def create_app(state: CaptureState, frame_queue: FrameQueue) -> FastAPI:
             return HTMLResponse(Path(html_path).read_text())
         return HTMLResponse("<h1>Client not found</h1>", status_code=500)
 
+    # ── Instance management ──────────────────────────────────────────────────
+
+    @app.get("/instances")
+    async def get_instances():
+        return instance_manager.list_instances()
+
+    @app.post("/instances/{instance_id}/select")
+    async def select_instance(instance_id: str, request: Request):
+        """Switch active stream. instance_id is the ADB serial (no prefix)."""
+        ok = instance_manager.select(instance_id)
+        if not ok:
+            raise HTTPException(status_code=404, detail="Instance not found")
+        inst = instance_manager.active
+        if inst is None:
+            raise HTTPException(status_code=404, detail="Instance disappeared")
+        # Also start MJPEG session for fallback path
+        session = adb_manager.AdbSession(inst.serial, inst.w, inst.h, fps=15,
+                                         ldplayer_index=inst.ldplayer_index)
+        if session.start():
+            state.set_adb_session(session)
+
+        host = get_best_ip() or request.client.host
+        whep_url = f"http://{host}:{WHEP_PORT}/{inst.name}"
+        return {
+            "ok": True,
+            "id": inst.id,
+            "serial": inst.serial,
+            "name": inst.name,
+            "w": inst.w,
+            "h": inst.h,
+            "whep_url": whep_url,
+        }
+
+    @app.get("/instances/{instance_id}/preview")
+    async def instance_preview(instance_id: str):
+        from PIL import Image
+        adb = adb_manager._find_adb()
+        if not adb:
+            raise HTTPException(status_code=503, detail="adb not found")
+        nw = adb_manager._no_window_flags()
+        try:
+            png = subprocess.check_output(
+                [adb, "-s", instance_id, "exec-out", "screencap -p"],
+                timeout=5, **nw
+            )
+            img = Image.open(io.BytesIO(png))
+            img.thumbnail((200, 120))
+            buf = io.BytesIO()
+            img.convert("RGB").save(buf, format="JPEG", quality=60)
+            return Response(content=buf.getvalue(), media_type="image/jpeg")
+        except Exception:
+            raise HTTPException(status_code=503, detail="Preview capture failed")
+
+    # ── Legacy /windows + /select (kept for backward compat) ────────────────
+
     @app.get("/windows")
     async def get_windows():
-        return adb_manager.list_vms()
+        return instance_manager.list_instances()
 
     @app.post("/select")
-    async def select_window(req: SelectRequest):
+    async def select_window(req: SelectRequest, request: Request):
         if not req.id.startswith("adb:"):
             raise HTTPException(status_code=400, detail="Invalid id — must be adb:SERIAL")
         serial = req.id[4:]
-        # Find ldplayer_index from cached VM list
-        vms = adb_manager.list_vms()
-        vm = next((v for v in vms if v["id"] == req.id), None)
-        ldplayer_index = vm.get("ldplayer_index", 0) if vm else 0
-        ldplayer_title = vm.get("title") if vm else None
-        w, h = adb_manager.get_screen_size(serial)
-        session = adb_manager.AdbSession(serial, w, h, fps=15, ldplayer_index=ldplayer_index)
+        ok = instance_manager.select(serial)
+        if not ok:
+            # Instance may not be discovered yet — try refresh
+            instance_manager.refresh()
+            ok = instance_manager.select(serial)
+        if not ok:
+            raise HTTPException(status_code=404, detail="Instance not found")
+        inst = instance_manager.active
+        if inst is None:
+            raise HTTPException(status_code=404, detail="Instance disappeared")
+        session = adb_manager.AdbSession(inst.serial, inst.w, inst.h, fps=15,
+                                         ldplayer_index=inst.ldplayer_index)
         if not session.start():
             raise HTTPException(status_code=503, detail="Could not start ADB session")
         state.set_adb_session(session)
-        # Maximize LDPlayer window on Windows so user sees the instance
-        import threading as _t
-        _t.Thread(target=adb_manager.maximize_ldplayer_window,
-                  args=(ldplayer_index, ldplayer_title), daemon=True).start()
-        return {"ok": True, "id": req.id, "w": w, "h": h}
+
+        host = get_best_ip() or request.client.host
+        whep_url = f"http://{host}:{WHEP_PORT}/{inst.name}"
+        return {"ok": True, "id": req.id, "w": inst.w, "h": inst.h,
+                "whep_url": whep_url}
+
+    # ── MJPEG fallback stream ────────────────────────────────────────────────
 
     @app.get("/stream")
     async def stream():
@@ -109,7 +167,6 @@ def create_app(state: CaptureState, frame_queue: FrameQueue) -> FastAPI:
 
     @app.get("/stats")
     async def stats():
-        """Lightweight FPS counter — client polls every second."""
         count = state.frames_served
         state.frames_served = 0
         session = state.adb_session
@@ -117,7 +174,6 @@ def create_app(state: CaptureState, frame_queue: FrameQueue) -> FastAPI:
 
     @app.post("/reconnect")
     async def reconnect():
-        """Re-start the ADB capture pipeline for the current session."""
         session = state.adb_session
         if session is None:
             raise HTTPException(status_code=404, detail="No active session")
@@ -127,49 +183,10 @@ def create_app(state: CaptureState, frame_queue: FrameQueue) -> FastAPI:
             raise HTTPException(status_code=503, detail="Could not restart session")
         return {"ok": True}
 
-    @app.post("/webrtc/offer")
-    async def webrtc_offer(req: WebRTCOfferRequest, http_req: Request):
-        if not webrtc_manager.available:
-            _log("[webrtc] offer rejected — aiortc not available in this build")
-            raise HTTPException(status_code=501, detail="aiortc not installed")
-        if not req.id.startswith("adb:"):
-            raise HTTPException(status_code=400, detail="Invalid id")
-        serial = req.id[4:]
-        session = state.adb_session
-        if session is None:
-            raise HTTPException(status_code=404, detail="No active session — call /select first")
-        # Extract client IP — inject as remote candidate so server can reach client
-        # even when STUN is blocked and client only generates mDNS candidates
-        client_ip = http_req.client.host if http_req.client else None
-        _log(f"[webrtc] offer from client_ip={client_ip}")
-        try:
-            answer_sdp, answer_type = await webrtc_manager.offer(
-                req.sdp, req.type, serial, session.w, session.h, client_ip=client_ip
-            )
-            return {"sdp": answer_sdp, "type": answer_type}
-        except Exception as e:
-            raise HTTPException(status_code=503, detail=str(e))
-
-    @app.post("/webrtc/ice-candidate")
-    async def webrtc_ice_candidate(req: WebRTCIceCandidateRequest):
-        _log(f"[webrtc] /ice-candidate received: {(req.candidate or '')[:80]}")
-        await webrtc_manager.add_ice_candidate({
-            "candidate": req.candidate,
-            "sdpMid": req.sdpMid,
-            "sdpMLineIndex": req.sdpMLineIndex,
-        })
-        return {"ok": True}
-
-    @app.delete("/webrtc")
-    async def webrtc_close():
-        await webrtc_manager.close()
-        return {"ok": True}
-
+    # ── Preview (legacy URL) ─────────────────────────────────────────────────
 
     @app.get("/window/{window_id}/preview")
     async def preview(window_id: str):
-        # window_id is the serial (adb: prefix already stripped by JS)
-        import subprocess, io
         from PIL import Image
         adb = adb_manager._find_adb()
         if not adb:
@@ -188,10 +205,14 @@ def create_app(state: CaptureState, frame_queue: FrameQueue) -> FastAPI:
         except Exception:
             raise HTTPException(status_code=503, detail="Preview capture failed")
 
+    # ── Quality ──────────────────────────────────────────────────────────────
+
     @app.post("/quality")
     async def set_quality(req: QualityRequest):
         state.set_quality(QUALITY_MAP[req.quality])
         return {"quality": req.quality}
+
+    # ── WebSocket input ──────────────────────────────────────────────────────
 
     @app.websocket("/input")
     async def ws_input(websocket: WebSocket):
@@ -207,45 +228,44 @@ def create_app(state: CaptureState, frame_queue: FrameQueue) -> FastAPI:
                     return
         _asyncio.create_task(_ping())
 
+        drag_pos: tuple | None = None
         try:
             while True:
                 data = await websocket.receive_json()
-                session = state.adb_session
-                if session is None:
+                inst = instance_manager.active
+                if inst is None:
                     continue
                 try:
                     t = data.get("type")
                     nx, ny = data.get("x", 0.5), data.get("y", 0.5)
-                    w, h = session.w, session.h
+                    w, h = inst.w, inst.h
+                    serial = inst.serial
                     if t == "click":
-                        adb_manager.tap(session.serial, nx, ny, w, h)
+                        adb_manager.tap(serial, nx, ny, w, h)
                     elif t == "drag_start":
-                        websocket._drag_pos = (nx, ny)
+                        drag_pos = (nx, ny)
                     elif t == "drag_move":
-                        prev = getattr(websocket, "_drag_pos", (nx, ny))
+                        prev = drag_pos or (nx, ny)
                         dx = abs(nx - prev[0]) * w
                         dy = abs(ny - prev[1]) * h
                         if dx + dy > 2:
-                            # Scroll needs 200ms+ so Android recognises as scroll not fling.
                             dur = 200 if data.get("scroll") else 30
-                            adb_manager.swipe(session.serial,
-                                              prev[0], prev[1], nx, ny, w, h,
-                                              duration_ms=dur)
-                            websocket._drag_pos = (nx, ny)
+                            adb_manager.swipe(serial, prev[0], prev[1], nx, ny,
+                                              w, h, duration_ms=dur)
+                            drag_pos = (nx, ny)
                     elif t == "drag_end":
-                        prev = getattr(websocket, "_drag_pos", (nx, ny))
+                        prev = drag_pos or (nx, ny)
                         dx = abs(nx - prev[0]) * w
                         dy = abs(ny - prev[1]) * h
                         if dx + dy > 2:
                             dur = 200 if data.get("scroll") else 30
-                            adb_manager.swipe(session.serial,
-                                              prev[0], prev[1], nx, ny, w, h,
-                                              duration_ms=dur)
-                        websocket._drag_pos = None
+                            adb_manager.swipe(serial, prev[0], prev[1], nx, ny,
+                                              w, h, duration_ms=dur)
+                        drag_pos = None
                     elif t == "scroll":
-                        adb_manager.scroll(session.serial, nx, ny, data.get("dy", 0), w, h)
+                        adb_manager.scroll(serial, nx, ny, data.get("dy", 0), w, h)
                     elif t == "key":
-                        adb_manager.send_key(session.serial, data["key"])
+                        adb_manager.send_key(serial, data["key"])
                 except (KeyError, TypeError):
                     pass
         except WebSocketDisconnect:

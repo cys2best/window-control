@@ -18,8 +18,9 @@ function renderWindowsGrid() {
 
     const thumb = document.createElement('img');
     thumb.className = 'window-card-thumb';
-    const previewId = w.id.startsWith('adb:') ? w.id.slice(4) : w.id;
-    thumb.src = `/window/${previewId}/preview?t=${Date.now()}`;
+    // serial is either in w.serial or parsed from w.id ("adb:SERIAL")
+    const serial = w.serial || (w.id.startsWith('adb:') ? w.id.slice(4) : w.id);
+    thumb.src = `/instances/${serial}/preview?t=${Date.now()}`;
     thumb.alt = '';
 
     const title = document.createElement('div');
@@ -28,34 +29,33 @@ function renderWindowsGrid() {
 
     card.appendChild(thumb);
     card.appendChild(title);
-    card.addEventListener('click', () => selectWindow(w.id));
+    card.addEventListener('click', () => selectWindow(w.id, w.serial));
     grid.appendChild(card);
   });
 }
 
 async function fetchWindows() {
   try {
-    const r = await fetch('/windows');
+    const r = await fetch('/instances');
     _windows = await r.json();
     renderWindowsGrid();
   } catch (_) {}
 }
 
-async function selectWindow(id) {
+async function selectWindow(id, serial) {
+  // serial may be undefined if called from legacy path
+  const _serial = serial || (id.startsWith('adb:') ? id.slice(4) : id);
   try {
-    await fetch('/select', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id })
-    });
+    const r = await fetch(`/instances/${_serial}/select`, { method: 'POST' });
+    const data = await r.json();
     _activeId = id;
     const w = _windows.find(w => w.id === id);
     const titleEl = document.getElementById('stream-title');
     if (titleEl && w) titleEl.textContent = w.title;
     renderWindowsGrid();
     showScreen('screen-stream');
-    // Try WebRTC first; falls back to MJPEG automatically on failure
-    initWebRTC(id);
+    // Pass WHEP URL from server response so client connects to mediamtx directly
+    initWebRTC(id, data.whep_url);
   } catch (_) {}
 }
 
@@ -63,19 +63,22 @@ async function selectWindow(id) {
 function selectPrev() {
   if (!_windows.length) return;
   const idx = _windows.findIndex(w => w.id === _activeId);
-  selectWindow(_windows[(idx - 1 + _windows.length) % _windows.length].id);
+  const w = _windows[(idx - 1 + _windows.length) % _windows.length];
+  selectWindow(w.id, w.serial);
 }
 
 function selectNext() {
   if (!_windows.length) return;
   const idx = _windows.findIndex(w => w.id === _activeId);
-  selectWindow(_windows[(idx + 1) % _windows.length].id);
+  const w = _windows[(idx + 1) % _windows.length];
+  selectWindow(w.id, w.serial);
 }
 
 function refreshThumbnails() {
   document.querySelectorAll('.window-card-thumb').forEach(img => {
     const id = img.closest('.window-card').dataset.id;
-    img.src = `/window/${id}/preview?t=${Date.now()}`;
+    const serial = id.startsWith('adb:') ? id.slice(4) : id;
+    img.src = `/instances/${serial}/preview?t=${Date.now()}`;
   });
 }
 

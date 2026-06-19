@@ -37,6 +37,8 @@ try:
     from config import PORT, QUALITY_MAP, DEFAULT_QUALITY
     from server.app import create_app
     from server.stream import CaptureState, FrameQueue, capture_loop
+    from server.mediamtx_manager import MediamtxManager
+    from server.instance_manager import InstanceManager
     from gui.launcher import LauncherWindow
     from gui.tray import TrayIcon
     _log_early("[gui-imports] app modules OK")
@@ -86,7 +88,10 @@ def main():
     state.set_quality(QUALITY_MAP[DEFAULT_QUALITY])
     frame_queue = FrameQueue()
 
-    fastapi_app = create_app(state, frame_queue)
+    mediamtx = MediamtxManager()
+    instance_manager = InstanceManager(mediamtx)
+
+    fastapi_app = create_app(state, frame_queue, instance_manager)
 
     server = None
     _server_thread = None
@@ -169,6 +174,7 @@ def main():
     exit_code = app.exec_()
     _log(f"[GUI] app.exec_() returned exit_code={exit_code} — process exiting")
     stop_server()
+    instance_manager.stop_all()
     tray.stop()
     sys.exit(exit_code)
 

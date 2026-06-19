@@ -1,6 +1,6 @@
 [project]
 name = "window-control"
-version = "1.2.40"
+version = "2.0.0"
 description = "Stream Windows app windows to iPhone over Tailscale"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -15,9 +15,6 @@ dependencies = [
     "psutil>=5.9.0",
     "httpx>=0.27.0",
     "imageio-ffmpeg>=0.4.9",
-    "aiortc>=1.9.0",
-    "nest-asyncio>=1.6.0",
-    "aiohttp>=3.9.0",
 ]
 
 [dependency-groups]

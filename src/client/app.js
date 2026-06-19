@@ -7,6 +7,7 @@ let wsRetryDelay = 1000;
 let _pc = null;
 let _webrtcActive = false;
 let _activeWindowId = null;
+let _whepUrl = null;           // mediamtx WHEP endpoint for active instance
 let _webrtcInProgress = false; // prevent concurrent initWebRTC calls
 
 // Drag state
@@ -86,7 +87,7 @@ function getStreamRect() {
   return document.getElementById('stream-img').getBoundingClientRect();
 }
 
-// ── WebRTC ────────────────────────────────────────────────────────────────────
+// ── WebRTC via WHEP (mediamtx) ────────────────────────────────────────────────
 
 function _fallbackToMJPEG() {
   _webrtcActive = false;
@@ -96,21 +97,21 @@ function _fallbackToMJPEG() {
   initStream();
 }
 
-async function initWebRTC(windowId) {
-  // Cancel any in-flight negotiation by closing the current pc
+async function initWebRTC(windowId, whepUrl) {
+  // Cancel any in-flight negotiation
   if (_pc) { try { _pc.close(); } catch(_) {} _pc = null; }
   if (_webrtcInProgress) {
-    // Previous call will see _pc===null and exit; wait a tick then proceed
     _webrtcInProgress = false;
     await new Promise(r => setTimeout(r, 50));
   }
   _webrtcInProgress = true;
   _activeWindowId = windowId;
-  try {
+  _whepUrl = whepUrl || _whepUrl;
 
-    _pc = new RTCPeerConnection({ iceServers: [
-      { urls: 'stun:stun.l.google.com:19302' },
-    ] });
+  if (!_whepUrl) { _fallbackToMJPEG(); _webrtcInProgress = false; return; }
+
+  try {
+    _pc = new RTCPeerConnection({ iceServers: [] });
 
     const video = document.getElementById('stream-video');
     const img   = document.getElementById('stream-img');
@@ -129,7 +130,6 @@ async function initWebRTC(windowId) {
         const retryId = _activeWindowId;
         const retryPc = _pc;
         setTimeout(() => {
-          // Only retry if this pc is still the active one and no new negotiation started
           if (_activeWindowId === retryId && _pc === retryPc && !_webrtcInProgress) {
             initWebRTC(retryId);
           }
@@ -137,53 +137,26 @@ async function initWebRTC(windowId) {
       }
     };
 
-    // Buffer candidates until server session exists (offer round-trip done).
-    // onicecandidate fires immediately after setLocalDescription.
-    const pendingCandidates = [];
-    let offerDone = false;
-
-    function _sendCandidate(c) {
-      fetch('/webrtc/ice-candidate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(c) })
-        .then(r => console.log('[webrtc] ice-candidate sent, status:', r.status))
-        .catch(e => console.error('[webrtc] ice-candidate send failed:', e));
-    }
-
-    function _flushCandidates() {
-      offerDone = true;
-      for (const c of pendingCandidates.splice(0)) _sendCandidate(c);
-    }
-
-    _pc.onicecandidate = e => {
-      console.log('[webrtc] onicecandidate:', e.candidate ? e.candidate.candidate.slice(0, 80) : 'end-of-candidates');
-      if (!e.candidate) return;
-      const c = { candidate: e.candidate.candidate, sdpMid: e.candidate.sdpMid, sdpMLineIndex: e.candidate.sdpMLineIndex };
-      if (offerDone) _sendCandidate(c); else pendingCandidates.push(c);
-    };
-
-    _pc.onicegatheringstatechange = () => console.log('[webrtc] gathering:', _pc ? _pc.iceGatheringState : '?');
-
     const thisPc = _pc;
     _pc.addTransceiver('video', { direction: 'recvonly' });
+
+    // WHEP: create offer, POST to mediamtx WHEP endpoint, get SDP answer back.
+    // No trickle ICE — mediamtx handles ICE internally.
     const offer = await thisPc.createOffer();
-    if (_pc !== thisPc) return; // superseded
+    if (_pc !== thisPc) return;
     await thisPc.setLocalDescription(offer);
 
-    let r;
-    try {
-      r = await fetch('/webrtc/offer', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sdp: offer.sdp, type: offer.type, id: windowId }),
-      });
-    } finally {
-      _flushCandidates();
-    }
-
-    if (_pc !== thisPc) return; // superseded
+    const r = await fetch(_whepUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/sdp' },
+      body: offer.sdp,
+    });
+    if (_pc !== thisPc) return;
     if (!r || !r.ok) { _fallbackToMJPEG(); return; }
-    const ans = await r.json();
-    if (_pc !== thisPc) return; // superseded
-    await thisPc.setRemoteDescription(ans);
+
+    const answerSdp = await r.text();
+    if (_pc !== thisPc) return;
+    await thisPc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
   } catch (err) {
     console.error('[webrtc] initWebRTC error, falling back to MJPEG:', err);
     _fallbackToMJPEG();
@@ -334,7 +307,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
       if (document.getElementById('screen-stream').classList.contains('active')) {
         if (_webrtcActive && _activeWindowId) {
-          initWebRTC(_activeWindowId);
+          initWebRTC(_activeWindowId, _whepUrl);
         } else {
           initStream();
         }

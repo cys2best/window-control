@@ -19,7 +19,13 @@ import threading
 import traceback
 
 
+def _bundled_adb() -> str:
+    from config import ASSETS_DIR
+    return os.path.join(ASSETS_DIR, "scrcpy", "adb.exe")
+
+
 _ADB_PATH_FALLBACKS = [
+    _bundled_adb(),                           # shipped by download_assets.py via scrcpy zip
     r"C:\LDPlayer\LDPlayer9\adb.exe",
     r"C:\LDPlayer\LDPlayer4.0\adb.exe",
     r"C:\LDPlayer\LDPlayer4.0\vbox64\adb.exe",
@@ -263,47 +269,6 @@ class AdbSession:
         self._ffmpeg_proc = None
         self._record_proc = None
         _log(f"[adb] session stopped serial={self.serial}")
-
-
-class RawH264Session:
-    """screenrecord pipe only — no ffmpeg transcode. For WebRTC path."""
-
-    def __init__(self, serial: str, w: int, h: int):
-        self.serial = serial
-        self.w = w
-        self.h = h
-        self._proc: subprocess.Popen | None = None
-        self.stdout = None
-
-    def start(self) -> bool:
-        adb = _find_adb()
-        if not adb:
-            _log("[raw264] adb not found")
-            return False
-        try:
-            self._proc = subprocess.Popen(
-                [adb, "-s", self.serial, "exec-out",
-                 f"screenrecord --output-format=h264 --bit-rate=2000000 -"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                **_no_window_flags(),
-            )
-            self.stdout = self._proc.stdout
-            _log(f"[raw264] started serial={self.serial} {self.w}x{self.h}")
-            return True
-        except Exception:
-            _log(f"[raw264] start failed: {traceback.format_exc()[:300]}")
-            return False
-
-    def stop(self):
-        if self._proc:
-            try:
-                self._proc.kill()
-            except Exception:
-                pass
-            self._proc = None
-        self.stdout = None
-        _log(f"[raw264] stopped serial={self.serial}")
 
 
 # ── Input ─────────────────────────────────────────────────────────────────────
