@@ -115,17 +115,19 @@ def maximize_ldplayer_window(index: int):
     # Use PowerShell AppActivate + SendKeys F11 which works across sessions.
     try:
         import subprocess
-        # LDPlayer process names vary by version
+        # dnplayer.exe is the LDPlayer9 window process — pick by instance index
         ps = (
-            "$p = Get-Process | Where-Object { $_.MainWindowTitle -like '*LDPlayer*' } | "
-            "Select-Object -First 1; "
-            "if ($p) { "
-            "  $wsh = New-Object -ComObject WScript.Shell; "
-            "  $wsh.AppActivate($p.Id); "
-            "  Start-Sleep -Milliseconds 200; "
-            "  $wsh.SendKeys('{F11}'); "
-            "  Write-Output ('activated pid=' + $p.Id + ' title=' + $p.MainWindowTitle) "
-            "} else { Write-Output 'no LDPlayer window found' }"
+            f"$procs = Get-Process dnplayer -ErrorAction SilentlyContinue | "
+            f"Where-Object {{ $_.MainWindowTitle -ne '' }} | "
+            f"Sort-Object Id; "
+            f"$p = $procs[{index}]; "
+            f"if ($p) {{ "
+            f"  $wsh = New-Object -ComObject WScript.Shell; "
+            f"  $wsh.AppActivate($p.Id); "
+            f"  Start-Sleep -Milliseconds 300; "
+            f"  $wsh.SendKeys('%{{ENTER}}'); "
+            f"  Write-Output ('activated pid=' + $p.Id + ' title=' + $p.MainWindowTitle) "
+            f"}} else {{ Write-Output 'no dnplayer window found at index={index}' }}"
         )
         result = subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
