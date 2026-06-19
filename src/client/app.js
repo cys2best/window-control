@@ -14,6 +14,7 @@ let _dragStartX = 0;
 let _dragStartY = 0;
 let _dragMoved = false;
 let _lastDragSendTime = 0;   // throttle drag_move sends
+let _lastScrollSendTime = 0; // suppress drag_end after scroll
 
 // Two-finger scroll state
 let _twoFingerLastY = null;
@@ -245,6 +246,7 @@ function initTouch() {
       if (now - _lastDragSendTime >= 50) {
         sendInput({ type: 'drag_move', x, y, scroll: scrollDominant });
         _lastDragSendTime = now;
+        if (scrollDominant) _lastScrollSendTime = now;
       }
     } else if (e.touches.length === 2 && _twoFingerLastY !== null) {
       const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
@@ -263,9 +265,9 @@ function initTouch() {
       const t = e.changedTouches[0];
       const { x, y } = normalizeCoords(t.clientX, t.clientY);
       if (!_dragMoved) {
-        // Short tap with no movement — fire click, no drag_end needed
         sendInput({ type: 'click', x, y });
-      } else {
+      } else if (Date.now() - _lastScrollSendTime > 300) {
+        // Suppress drag_end within 300ms of last scroll — avoids spurious tap after scroll
         sendInput({ type: 'drag_end', x, y });
       }
       _dragActive = false;
