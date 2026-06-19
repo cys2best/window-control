@@ -85,7 +85,7 @@ class ScrcpySession:
                     [
                         exe,
                         "--serial", self.serial,
-                        "--no-display",
+                        "--no-playback",
                         "--video-codec", "h264",
                         "--video-bit-rate", "4M",
                         "--max-fps", "30",
