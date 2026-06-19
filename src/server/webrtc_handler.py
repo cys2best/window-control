@@ -220,9 +220,10 @@ class WebRTCManager:
 
             @pc.on("iceconnectionstatechange")
             async def _on_ice():
-                _log(f"[webrtc] ICE state: {pc.iceConnectionState}")
-                if pc.iceConnectionState in ("failed", "closed"):
-                    await self._close_session()
+                state = pc.iceConnectionState
+                _log(f"[webrtc] ICE state: {state}")
+                # Do NOT call _close_session here — it races with offer() building the next
+                # session. offer() always closes the previous session before starting a new one.
 
             @pc.on("icegatheringstatechange")
             async def _on_gather():
