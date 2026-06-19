@@ -84,13 +84,22 @@ def _recvall(sock: socket.socket, n: int) -> bytes:
     return buf
 
 
-def _start_server(adb: str, serial: str, port: int) -> bool:
-    """Push server jar, launch it, set up adb forward. Idempotent."""
+def _start_server(adb: str, serial: str, port: int, scid: int) -> bool:
+    """Push server jar, launch it, set up adb forward. Idempotent.
+
+    scid gives each instance a unique abstract socket name:
+      scid=-1 → localabstract:scrcpy
+      scid=N  → localabstract:scrcpy_<N as 8-digit hex>
+    Without unique scids, all instances share the same socket and conflict.
+    """
     nw = _no_window_flags()
     jar = _server_jar_path()
     if not os.path.exists(jar):
         _log(f"[scrcpy] server jar not found: {jar}")
         return False
+
+    # Socket name must match scrcpy-server's getSocketName() logic
+    socket_name = f"scrcpy_{scid:08x}"
 
     try:
         # Push jar to device
@@ -98,22 +107,23 @@ def _start_server(adb: str, serial: str, port: int) -> bool:
             [adb, "-s", serial, "push", jar, "/data/local/tmp/scrcpy-server.jar"],
             capture_output=True, timeout=15, **nw,
         )
-        # Kill any existing server instance
+        # Kill any existing server for this scid
         subprocess.run(
-            [adb, "-s", serial, "shell", "pkill", "-f", "scrcpy-server"],
+            [adb, "-s", serial, "shell", f"pkill -f 'scrcpy-server.*scid={scid:x}'"],
             capture_output=True, timeout=5, **nw,
         )
         time.sleep(0.3)
-        # Launch server in background — tunnel_forward so it listens on abstract socket
+        # Launch server — unique scid → unique abstract socket, no collision between instances
         subprocess.Popen(
             [
                 adb, "-s", serial, "shell",
                 "CLASSPATH=/data/local/tmp/scrcpy-server.jar"
-                " app_process / com.genymobile.scrcpy.Server 3.1"
-                " tunnel_forward=true video_codec=h264"
-                " max_fps=30 bit_rate=4000000"
-                " send_device_meta=true send_frame_meta=true"
-                " control=false audio=false",
+                f" app_process / com.genymobile.scrcpy.Server 3.1"
+                f" tunnel_forward=true video_codec=h264"
+                f" max_fps=30 bit_rate=4000000"
+                f" send_device_meta=true send_frame_meta=true"
+                f" control=false audio=false"
+                f" scid={scid:x}",
             ],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -122,13 +132,13 @@ def _start_server(adb: str, serial: str, port: int) -> bool:
         time.sleep(0.5)
         # Forward local TCP port to device abstract socket
         result = subprocess.run(
-            [adb, "-s", serial, "forward", f"tcp:{port}", "localabstract:scrcpy"],
+            [adb, "-s", serial, "forward", f"tcp:{port}", f"localabstract:{socket_name}"],
             capture_output=True, timeout=5, **nw,
         )
         if result.returncode != 0:
             _log(f"[scrcpy] forward failed serial={serial}: {result.stderr.decode()[:200]}")
             return False
-        _log(f"[scrcpy] server ready serial={serial} port={port}")
+        _log(f"[scrcpy] server ready serial={serial} scid={scid} port={port} socket={socket_name}")
         return True
     except Exception:
         _log(f"[scrcpy] _start_server error serial={serial}: {traceback.format_exc()[:400]}")
@@ -164,7 +174,7 @@ class ScrcpySession:
             self._stop_locked()
             self._running = True
 
-        if not _start_server(adb, self.serial, self._tcp_port):
+        if not _start_server(adb, self.serial, self._tcp_port, self.instance_index):
             with self._lock:
                 self._running = False
             return False
