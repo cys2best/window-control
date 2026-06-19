@@ -1,9 +1,9 @@
 """
-ScrcpySession: captures H.264 from a LDPlayer instance via scrcpy stdout pipe,
-passes raw H.264 to ffmpeg which pushes an RTSP stream to mediamtx.
+ScrcpySession: captures H.264 from a LDPlayer instance via ADB screenrecord,
+pipes raw H.264 to ffmpeg which pushes an RTSP stream to mediamtx.
 
 Pipeline:
-  scrcpy.exe --output-file pipe:1  →  stdout H.264 Annex B
+  adb exec-out screenrecord --output-format=h264 --time-limit=3600 -
     →  ffmpeg -f h264 -i pipe:0 -c:v copy -f rtsp <rtsp_url>
     →  mediamtx RTSP path
     →  mediamtx serves WebRTC/WHEP to iPhone
@@ -14,8 +14,6 @@ import subprocess
 import sys
 import threading
 import traceback
-
-from config import ASSETS_DIR
 
 
 def _log(msg: str):
@@ -35,15 +33,9 @@ def _no_window_flags():
     return {}
 
 
-def _scrcpy_exe() -> str:
-    bundled = os.path.join(ASSETS_DIR, "scrcpy", "scrcpy.exe")
-    if os.path.exists(bundled):
-        return bundled
-    import shutil
-    found = shutil.which("scrcpy")
-    if found:
-        return found
-    return bundled
+def _find_adb() -> str | None:
+    from server.adb_manager import _find_adb as adb_find
+    return adb_find()
 
 
 def _get_ffmpeg() -> str | None:
@@ -55,7 +47,7 @@ def _get_ffmpeg() -> str | None:
 
 
 class ScrcpySession:
-    """Manages one scrcpy capture + ffmpeg RTSP push for one LDPlayer instance."""
+    """Manages one ADB screenrecord capture + ffmpeg RTSP push for one LDPlayer instance."""
 
     def __init__(self, serial: str, instance_index: int, rtsp_url: str,
                  w: int, h: int):
@@ -64,38 +56,37 @@ class ScrcpySession:
         self.rtsp_url = rtsp_url
         self.w = w
         self.h = h
-        self._scrcpy_proc: subprocess.Popen | None = None
+        self._record_proc: subprocess.Popen | None = None
         self._ffmpeg_proc: subprocess.Popen | None = None
         self._running = False
         self._lock = threading.Lock()
 
     def start(self) -> bool:
+        adb = _find_adb()
         ffmpeg_exe = _get_ffmpeg()
+        if not adb:
+            _log(f"[scrcpy] adb not found serial={self.serial}")
+            return False
         if not ffmpeg_exe:
-            _log("[scrcpy] ffmpeg not found")
+            _log(f"[scrcpy] ffmpeg not found serial={self.serial}")
             return False
 
         with self._lock:
             self._stop_locked()
             self._running = True
             try:
-                exe = _scrcpy_exe()
-                # scrcpy writes raw H.264 Annex B to stdout when --output-file=pipe:1
-                self._scrcpy_proc = subprocess.Popen(
+                nw = _no_window_flags()
+                self._record_proc = subprocess.Popen(
                     [
-                        exe,
-                        "--serial", self.serial,
-                        "--no-playback",
-                        "--video-codec", "h264",
-                        "--video-bit-rate", "4M",
-                        "--max-fps", "30",
-                        "--output-file=pipe:1",
+                        adb, "-s", self.serial,
+                        "exec-out",
+                        "screenrecord", "--output-format=h264",
+                        "--bit-rate=4000000", "--time-limit=3600", "-",
                     ],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
-                    **_no_window_flags(),
+                    **nw,
                 )
-                # ffmpeg reads H.264 from scrcpy stdout, pushes RTSP to mediamtx
                 self._ffmpeg_proc = subprocess.Popen(
                     [
                         ffmpeg_exe,
@@ -111,32 +102,30 @@ class ScrcpySession:
                         "-rtsp_transport", "tcp",
                         self.rtsp_url,
                     ],
-                    stdin=self._scrcpy_proc.stdout,
+                    stdin=self._record_proc.stdout,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
-                    **_no_window_flags(),
+                    **nw,
                 )
-                # Close parent's copy so ffmpeg owns the pipe end
-                self._scrcpy_proc.stdout.close()
+                self._record_proc.stdout.close()
                 _log(f"[scrcpy] started serial={self.serial} → {self.rtsp_url}")
             except Exception:
                 _log(f"[scrcpy] start failed serial={self.serial}: {traceback.format_exc()[:400]}")
                 self._stop_locked()
                 return False
 
-        # Monitor in background so alive property reflects reality
         threading.Thread(target=self._monitor, daemon=True).start()
         return True
 
     def _monitor(self):
-        """Wait for scrcpy to exit, log stderr, then mark session dead."""
-        proc = self._scrcpy_proc
+        """Wait for screenrecord to exit, log stderr, mark session dead."""
+        proc = self._record_proc
         if proc:
             try:
-                _, stderr_bytes = proc.communicate(timeout=300)
+                _, stderr_bytes = proc.communicate(timeout=3700)
                 stderr_text = (stderr_bytes or b"").decode("utf-8", errors="replace").strip()
                 if stderr_text:
-                    _log(f"[scrcpy] stderr serial={self.serial}: {stderr_text[:800]}")
+                    _log(f"[scrcpy] adb stderr serial={self.serial}: {stderr_text[:400]}")
             except Exception:
                 try:
                     proc.wait()
@@ -153,14 +142,14 @@ class ScrcpySession:
     def _stop_locked(self):
         """Must be called with self._lock held."""
         self._running = False
-        for proc in [self._ffmpeg_proc, self._scrcpy_proc]:
+        for proc in [self._ffmpeg_proc, self._record_proc]:
             if proc:
                 try:
                     proc.kill()
                 except Exception:
                     pass
         self._ffmpeg_proc = None
-        self._scrcpy_proc = None
+        self._record_proc = None
         _log(f"[scrcpy] stopped serial={self.serial}")
 
     @property
@@ -168,6 +157,6 @@ class ScrcpySession:
         with self._lock:
             return (
                 self._running
-                and self._scrcpy_proc is not None
-                and self._scrcpy_proc.poll() is None
+                and self._record_proc is not None
+                and self._record_proc.poll() is None
             )
