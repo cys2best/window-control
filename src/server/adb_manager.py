@@ -138,6 +138,27 @@ def maximize_ldplayer_window(index: int):
         _log(f"[ldplayer] fullscreen failed: {traceback.format_exc()[:200]}")
 
 
+def _get_dnplayer_titles() -> list[str]:
+    """Return window titles of running dnplayer instances sorted by pid, Windows only."""
+    if sys.platform != "win32":
+        return []
+    try:
+        import subprocess as _sp
+        ps = (
+            "Get-Process dnplayer -ErrorAction SilentlyContinue | "
+            "Where-Object { $_.MainWindowTitle -ne '' } | "
+            "Sort-Object Id | "
+            "ForEach-Object { $_.MainWindowTitle }"
+        )
+        out = _sp.check_output(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+            text=True, timeout=5
+        )
+        return [l.strip() for l in out.splitlines() if l.strip()]
+    except Exception:
+        return []
+
+
 def list_vms() -> list[dict]:
     """Return list of connected ADB devices as VM dicts with id='adb:SERIAL'."""
     adb = _find_adb()
@@ -148,6 +169,7 @@ def list_vms() -> list[dict]:
         out = subprocess.check_output([adb, "devices"], timeout=5, text=True,
                                       **_no_window_flags())
         _log(f"[adb] devices output: {out.strip()!r}")
+        window_titles = _get_dnplayer_titles()
         result = []
         for line in out.splitlines()[1:]:
             line = line.strip()
@@ -160,13 +182,13 @@ def list_vms() -> list[dict]:
             if m:
                 port = int(m.group(1))
                 idx = (port - 5554) // 2
-                name = f"LDPlayer #{idx}"
+                name = window_titles[idx] if idx < len(window_titles) else f"LDPlayer #{idx}"
             else:
                 idx = 0
-                name = serial
+                name = window_titles[0] if window_titles else serial
             result.append({
                 "id": f"adb:{serial}",
-                "title": f"[VM] {name}",
+                "title": name,
                 "ldplayer_index": idx,
             })
         return result
