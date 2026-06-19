@@ -214,7 +214,7 @@ class ScrcpySession:
                 ],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
                 **_no_window_flags(),
             )
             with self._lock:
@@ -255,6 +255,13 @@ class ScrcpySession:
                     pass
                 try:
                     ffmpeg_proc.kill()
+                except Exception:
+                    pass
+                try:
+                    stderr_bytes = ffmpeg_proc.stderr.read()
+                    if stderr_bytes:
+                        _log(f"[scrcpy] ffmpeg stderr serial={self.serial}: "
+                             f"{stderr_bytes.decode('utf-8', errors='replace')[:600]}")
                 except Exception:
                     pass
             with self._lock:
