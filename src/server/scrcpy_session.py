@@ -211,6 +211,7 @@ class ScrcpySession:
                 [
                     ffmpeg_exe,
                     "-loglevel", "warning",
+                    "-use_wallclock_as_timestamps", "1",
                     "-f", "h264",
                     "-i", "pipe:0",
                     "-c:v", "copy",
