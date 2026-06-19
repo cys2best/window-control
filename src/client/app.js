@@ -128,7 +128,9 @@ async function initWebRTC(windowId) {
     let offerDone = false;
 
     function _sendCandidate(c) {
-      fetch('/webrtc/ice-candidate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(c) }).catch(() => {});
+      fetch('/webrtc/ice-candidate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(c) })
+        .then(r => console.log('[webrtc] ice-candidate sent, status:', r.status))
+        .catch(e => console.error('[webrtc] ice-candidate send failed:', e));
     }
 
     function _flushCandidates() {
