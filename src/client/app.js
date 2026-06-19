@@ -101,8 +101,6 @@ async function initWebRTC(windowId) {
 
     _pc = new RTCPeerConnection({ iceServers: [
       { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' },
-      { urls: 'stun:stun.cloudflare.com:3478' },
     ] });
 
     const video = document.getElementById('stream-video');
