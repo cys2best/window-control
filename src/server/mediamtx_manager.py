@@ -46,12 +46,11 @@ def _mediamtx_exe() -> str:
 
 def _generate_config(instance_names: list[str]) -> str:
     """Generate mediamtx.yml content for the given instance path names."""
-    paths = "\n".join(
-        f"  {name}:\n    source: publisher\n    sourceOnDemand: no"
-        for name in instance_names
-    )
+    # Each path accepts RTSP push (default source=publisher) and serves WHEP.
+    # No extra keys needed — empty path block is sufficient.
+    paths = "\n".join(f"  {name}:" for name in instance_names)
     return f"""\
-logLevel: warn
+logLevel: info
 logDestinations: [stdout]
 
 rtspAddress: :{MEDIAMTX_PORT}
@@ -97,11 +96,12 @@ class MediamtxManager:
             try:
                 self._proc = subprocess.Popen(
                     [exe, path],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
                     **_no_window_flags(),
                 )
                 _log(f"[mediamtx] started pid={self._proc.pid} paths={instance_names}")
+                threading.Thread(target=self._log_output, daemon=True).start()
             except Exception:
                 _log(f"[mediamtx] start failed: {traceback.format_exc()[:400]}")
                 self._proc = None
@@ -110,6 +110,16 @@ class MediamtxManager:
                 except Exception:
                     pass
                 self._config_file = None
+
+    def _log_output(self):
+        proc = self._proc
+        if not proc or not proc.stdout:
+            return
+        try:
+            for line in proc.stdout:
+                _log(f"[mediamtx] {line.decode('utf-8', errors='replace').rstrip()}")
+        except Exception:
+            pass
 
     def stop(self):
         with self._lock:
