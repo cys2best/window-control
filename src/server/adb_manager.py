@@ -107,33 +107,54 @@ def _find_ldplayer_window(index: int) -> int | None:
     return None
 
 
-def maximize_ldplayer_window(index: int):
-    """Bring LDPlayer instance window to foreground and send F11 to toggle fullscreen."""
+def maximize_ldplayer_window(index: int, title: str | None = None):
+    """Bring LDPlayer instance window to foreground and send Alt+Enter to toggle fullscreen.
+
+    Tries title match first (exact), falls back to sorted-pid index.
+    title: MainWindowTitle from list_vms() — if provided, skip index lookup.
+    """
     if sys.platform != "win32":
         return
-    # EnumWindows fails when app runs in a different desktop session than LDPlayer.
-    # Use PowerShell AppActivate + SendKeys F11 which works across sessions.
     try:
-        import subprocess
-        # dnplayer.exe is the LDPlayer9 window process — pick by instance index
+        # Build selector: prefer title match to avoid pid-sort drift
+        if title:
+            # Match by title — most reliable when title is known
+            selector = (
+                f"$procs = Get-Process dnplayer -ErrorAction SilentlyContinue | "
+                f"Where-Object {{ $_.MainWindowTitle -ne '' }}; "
+                f"$p = $procs | Where-Object {{ $_.MainWindowTitle -eq '{title}' }} | "
+                f"Select-Object -First 1; "
+                f"if (-not $p) {{ "
+                f"  $sorted = $procs | Sort-Object Id; "
+                f"  $p = $sorted[{index}] "
+                f"}}"
+            )
+        else:
+            selector = (
+                f"$procs = Get-Process dnplayer -ErrorAction SilentlyContinue | "
+                f"Where-Object {{ $_.MainWindowTitle -ne '' }} | Sort-Object Id; "
+                f"$p = $procs[{index}]"
+            )
         ps = (
-            f"$procs = Get-Process dnplayer -ErrorAction SilentlyContinue | "
-            f"Where-Object {{ $_.MainWindowTitle -ne '' }} | "
-            f"Sort-Object Id; "
-            f"$p = $procs[{index}]; "
-            f"if ($p) {{ "
+            selector +
+            f"; if ($p) {{ "
             f"  $wsh = New-Object -ComObject WScript.Shell; "
             f"  $wsh.AppActivate($p.Id); "
             f"  Start-Sleep -Milliseconds 300; "
             f"  $wsh.SendKeys('%{{ENTER}}'); "
             f"  Write-Output ('activated pid=' + $p.Id + ' title=' + $p.MainWindowTitle) "
-            f"}} else {{ Write-Output 'no dnplayer window found at index={index}' }}"
+            f"}} else {{ "
+            f"  $all = (Get-Process dnplayer -ErrorAction SilentlyContinue | "
+            f"    Where-Object {{ $_.MainWindowTitle -ne '' }} | "
+            f"    ForEach-Object {{ $_.MainWindowTitle }}) -join ','; "
+            f"  Write-Output ('no dnplayer window found index={index} title={title} available=' + $all) "
+            f"}}"
         )
         result = subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
             capture_output=True, text=True, timeout=5
         )
-        _log(f"[ldplayer] fullscreen: {result.stdout.strip() or result.stderr.strip()[:100]}")
+        _log(f"[ldplayer] fullscreen: {result.stdout.strip() or result.stderr.strip()[:200]}")
     except Exception:
         _log(f"[ldplayer] fullscreen failed: {traceback.format_exc()[:200]}")
 

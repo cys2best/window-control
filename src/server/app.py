@@ -86,7 +86,9 @@ def create_app(state: CaptureState, frame_queue: FrameQueue) -> FastAPI:
         serial = req.id[4:]
         # Find ldplayer_index from cached VM list
         vms = adb_manager.list_vms()
-        ldplayer_index = next((v.get("ldplayer_index", 0) for v in vms if v["id"] == req.id), 0)
+        vm = next((v for v in vms if v["id"] == req.id), None)
+        ldplayer_index = vm.get("ldplayer_index", 0) if vm else 0
+        ldplayer_title = vm.get("title") if vm else None
         w, h = adb_manager.get_screen_size(serial)
         session = adb_manager.AdbSession(serial, w, h, fps=15, ldplayer_index=ldplayer_index)
         if not session.start():
@@ -95,7 +97,7 @@ def create_app(state: CaptureState, frame_queue: FrameQueue) -> FastAPI:
         # Maximize LDPlayer window on Windows so user sees the instance
         import threading as _t
         _t.Thread(target=adb_manager.maximize_ldplayer_window,
-                  args=(ldplayer_index,), daemon=True).start()
+                  args=(ldplayer_index, ldplayer_title), daemon=True).start()
         # Pre-warm WebRTC after fullscreen settles — Alt+Enter restarts display pipe
         async def _delayed_prepare():
             await asyncio.sleep(2)

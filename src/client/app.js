@@ -97,11 +97,16 @@ function _fallbackToMJPEG() {
 }
 
 async function initWebRTC(windowId) {
-  if (_webrtcInProgress) return; // drop concurrent call
+  // Cancel any in-flight negotiation by closing the current pc
+  if (_pc) { try { _pc.close(); } catch(_) {} _pc = null; }
+  if (_webrtcInProgress) {
+    // Previous call will see _pc===null and exit; wait a tick then proceed
+    _webrtcInProgress = false;
+    await new Promise(r => setTimeout(r, 50));
+  }
   _webrtcInProgress = true;
   _activeWindowId = windowId;
   try {
-    if (_pc) { try { _pc.close(); } catch(_) {} _pc = null; }
 
     _pc = new RTCPeerConnection({ iceServers: [
       { urls: 'stun:stun.l.google.com:19302' },
@@ -155,12 +160,13 @@ async function initWebRTC(windowId) {
       if (offerDone) _sendCandidate(c); else pendingCandidates.push(c);
     };
 
-    _pc.onicegatheringstatechange = () => console.log('[webrtc] gathering:', _pc.iceGatheringState);
-    _pc.oniceconnectionstatechange = () => console.log('[webrtc] ICE connection:', _pc ? _pc.iceConnectionState : '?');
+    _pc.onicegatheringstatechange = () => console.log('[webrtc] gathering:', _pc ? _pc.iceGatheringState : '?');
 
+    const thisPc = _pc;
     _pc.addTransceiver('video', { direction: 'recvonly' });
-    const offer = await _pc.createOffer();
-    await _pc.setLocalDescription(offer);
+    const offer = await thisPc.createOffer();
+    if (_pc !== thisPc) return; // superseded
+    await thisPc.setLocalDescription(offer);
 
     let r;
     try {
@@ -173,9 +179,11 @@ async function initWebRTC(windowId) {
       _flushCandidates();
     }
 
+    if (_pc !== thisPc) return; // superseded
     if (!r || !r.ok) { _fallbackToMJPEG(); return; }
     const ans = await r.json();
-    await _pc.setRemoteDescription(ans);
+    if (_pc !== thisPc) return; // superseded
+    await thisPc.setRemoteDescription(ans);
   } catch (err) {
     console.error('[webrtc] initWebRTC error, falling back to MJPEG:', err);
     _fallbackToMJPEG();
