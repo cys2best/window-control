@@ -179,9 +179,32 @@ async function initWebRTC(windowId) {
 
 function normalizeCoords(clientX, clientY) {
   const r = getStreamRect();
+  const el = _webrtcActive
+    ? document.getElementById('stream-video')
+    : document.getElementById('stream-img');
+
+  // Account for object-fit:contain letterboxing.
+  // The element box may be larger than the actual rendered content.
+  let contentW = r.width, contentH = r.height, offsetX = 0, offsetY = 0;
+  if (el && el.naturalWidth && el.naturalHeight) {
+    // img: use naturalWidth/naturalHeight
+    const scale = Math.min(r.width / el.naturalWidth, r.height / el.naturalHeight);
+    contentW = el.naturalWidth * scale;
+    contentH = el.naturalHeight * scale;
+    offsetX = (r.width - contentW) / 2;
+    offsetY = (r.height - contentH) / 2;
+  } else if (el && el.videoWidth && el.videoHeight) {
+    // video: use videoWidth/videoHeight
+    const scale = Math.min(r.width / el.videoWidth, r.height / el.videoHeight);
+    contentW = el.videoWidth * scale;
+    contentH = el.videoHeight * scale;
+    offsetX = (r.width - contentW) / 2;
+    offsetY = (r.height - contentH) / 2;
+  }
+
   return {
-    x: Math.max(0, Math.min(1, (clientX - r.left) / r.width)),
-    y: Math.max(0, Math.min(1, (clientY - r.top) / r.height))
+    x: Math.max(0, Math.min(1, (clientX - r.left - offsetX) / contentW)),
+    y: Math.max(0, Math.min(1, (clientY - r.top - offsetY) / contentH)),
   };
 }
 
