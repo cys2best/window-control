@@ -92,7 +92,7 @@ class ScrcpySession:
                         "--output-file", "pipe:1",
                     ],
                     stdout=subprocess.PIPE,
-                    stderr=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
                     **_no_window_flags(),
                 )
                 # ffmpeg reads H.264 from scrcpy stdout, pushes RTSP to mediamtx
@@ -129,10 +129,19 @@ class ScrcpySession:
         return True
 
     def _monitor(self):
-        """Wait for scrcpy to exit, then mark session dead."""
+        """Wait for scrcpy to exit, log stderr, then mark session dead."""
         proc = self._scrcpy_proc
         if proc:
-            proc.wait()
+            try:
+                _, stderr_bytes = proc.communicate(timeout=300)
+                stderr_text = (stderr_bytes or b"").decode("utf-8", errors="replace").strip()
+                if stderr_text:
+                    _log(f"[scrcpy] stderr serial={self.serial}: {stderr_text[:800]}")
+            except Exception:
+                try:
+                    proc.wait()
+                except Exception:
+                    pass
         _log(f"[scrcpy] process exited serial={self.serial}")
         with self._lock:
             self._running = False
