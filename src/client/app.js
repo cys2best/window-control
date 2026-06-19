@@ -7,6 +7,7 @@ let wsRetryDelay = 1000;
 let _pc = null;
 let _webrtcActive = false;
 let _activeWindowId = null;
+let _webrtcInProgress = false; // prevent concurrent initWebRTC calls
 
 // Drag state
 let _dragActive = false;
@@ -96,6 +97,8 @@ function _fallbackToMJPEG() {
 }
 
 async function initWebRTC(windowId) {
+  if (_webrtcInProgress) return; // drop concurrent call
+  _webrtcInProgress = true;
   _activeWindowId = windowId;
   try {
     if (_pc) { try { _pc.close(); } catch(_) {} _pc = null; }
@@ -118,13 +121,14 @@ async function initWebRTC(windowId) {
     _pc.oniceconnectionstatechange = () => {
       const s = _pc ? _pc.iceConnectionState : '';
       if (s === 'failed' || s === 'closed') {
-        // Retry WebRTC after a short delay; fall back to MJPEG if retry also fails
         const retryId = _activeWindowId;
+        const retryPc = _pc;
         setTimeout(() => {
-          if (_activeWindowId === retryId) initWebRTC(retryId);
+          // Only retry if this pc is still the active one and no new negotiation started
+          if (_activeWindowId === retryId && _pc === retryPc && !_webrtcInProgress) {
+            initWebRTC(retryId);
+          }
         }, 2000);
-      } else if (s === 'disconnected') {
-        // Disconnected can recover — wait for failed before acting
       }
     };
 
@@ -175,6 +179,8 @@ async function initWebRTC(windowId) {
   } catch (err) {
     console.error('[webrtc] initWebRTC error, falling back to MJPEG:', err);
     _fallbackToMJPEG();
+  } finally {
+    _webrtcInProgress = false;
   }
 }
 
