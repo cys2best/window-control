@@ -147,7 +147,7 @@ class MediamtxManager:
             return self._proc is not None and self._proc.poll() is None
 
     def whep_url(self, instance_name: str, host: str) -> str:
-        return f"http://{host}:{WHEP_PORT}/{instance_name}"
+        return f"http://{host}:{WHEP_PORT}/{instance_name}/whep"
 
     def rtsp_url(self, instance_name: str) -> str:
         return f"rtsp://localhost:{MEDIAMTX_PORT}/{instance_name}"

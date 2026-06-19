@@ -21,7 +21,7 @@ def test_whep_url():
     m = MediamtxManager()
     url = m.whep_url("instance0", "100.64.1.1")
     from config import WHEP_PORT
-    assert url == f"http://100.64.1.1:{WHEP_PORT}/instance0"
+    assert url == f"http://100.64.1.1:{WHEP_PORT}/instance0/whep"
 
 
 def test_rtsp_url():
