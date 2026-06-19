@@ -110,53 +110,59 @@ def _find_ldplayer_window(index: int) -> int | None:
 def maximize_ldplayer_window(index: int, title: str | None = None):
     """Bring LDPlayer instance window to foreground and send Alt+Enter to toggle fullscreen.
 
-    Tries title match first (exact), falls back to sorted-pid index.
-    title: MainWindowTitle from list_vms() — if provided, skip index lookup.
+    Retries up to 5 times with 1s delay — dnplayer MainWindowTitle may be empty briefly
+    after window switch. Tries title match first (exact), falls back to sorted-pid index.
     """
     if sys.platform != "win32":
         return
-    try:
-        # Build selector: prefer title match to avoid pid-sort drift
-        if title:
-            # Match by title — most reliable when title is known
-            selector = (
-                f"$procs = Get-Process dnplayer -ErrorAction SilentlyContinue | "
-                f"Where-Object {{ $_.MainWindowTitle -ne '' }}; "
-                f"$p = $procs | Where-Object {{ $_.MainWindowTitle -eq '{title}' }} | "
-                f"Select-Object -First 1; "
-                f"if (-not $p) {{ "
-                f"  $sorted = $procs | Sort-Object Id; "
-                f"  $p = $sorted[{index}] "
+    import time
+    # Escape title for PowerShell string (single-quote safe)
+    safe_title = (title or "").replace("'", "''")
+    for attempt in range(5):
+        try:
+            if safe_title:
+                selector = (
+                    f"$procs = Get-Process dnplayer -ErrorAction SilentlyContinue | "
+                    f"Where-Object {{ $_.MainWindowTitle -ne '' }}; "
+                    f"$p = $procs | Where-Object {{ $_.MainWindowTitle -eq '{safe_title}' }} | "
+                    f"Select-Object -First 1; "
+                    f"if (-not $p) {{ $p = ($procs | Sort-Object Id)[{index}] }}"
+                )
+            else:
+                selector = (
+                    f"$procs = Get-Process dnplayer -ErrorAction SilentlyContinue | "
+                    f"Where-Object {{ $_.MainWindowTitle -ne '' }} | Sort-Object Id; "
+                    f"$p = $procs[{index}]"
+                )
+            ps = (
+                selector +
+                f"; if ($p) {{ "
+                f"  $wsh = New-Object -ComObject WScript.Shell; "
+                f"  $wsh.AppActivate($p.Id); "
+                f"  Start-Sleep -Milliseconds 300; "
+                f"  $wsh.SendKeys('%{{ENTER}}'); "
+                f"  Write-Output ('ok pid=' + $p.Id + ' title=' + $p.MainWindowTitle) "
+                f"}} else {{ "
+                f"  $all = ((Get-Process dnplayer -ErrorAction SilentlyContinue | "
+                f"    Where-Object {{ $_.MainWindowTitle -ne '' }}) | "
+                f"    ForEach-Object {{ $_.MainWindowTitle }}) -join ','; "
+                f"  Write-Output ('miss available=' + $all) "
                 f"}}"
             )
-        else:
-            selector = (
-                f"$procs = Get-Process dnplayer -ErrorAction SilentlyContinue | "
-                f"Where-Object {{ $_.MainWindowTitle -ne '' }} | Sort-Object Id; "
-                f"$p = $procs[{index}]"
+            result = subprocess.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+                capture_output=True, text=True, timeout=5
             )
-        ps = (
-            selector +
-            f"; if ($p) {{ "
-            f"  $wsh = New-Object -ComObject WScript.Shell; "
-            f"  $wsh.AppActivate($p.Id); "
-            f"  Start-Sleep -Milliseconds 300; "
-            f"  $wsh.SendKeys('%{{ENTER}}'); "
-            f"  Write-Output ('activated pid=' + $p.Id + ' title=' + $p.MainWindowTitle) "
-            f"}} else {{ "
-            f"  $all = (Get-Process dnplayer -ErrorAction SilentlyContinue | "
-            f"    Where-Object {{ $_.MainWindowTitle -ne '' }} | "
-            f"    ForEach-Object {{ $_.MainWindowTitle }}) -join ','; "
-            f"  Write-Output ('no dnplayer window found index={index} title={title} available=' + $all) "
-            f"}}"
-        )
-        result = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
-            capture_output=True, text=True, timeout=5
-        )
-        _log(f"[ldplayer] fullscreen: {result.stdout.strip() or result.stderr.strip()[:200]}")
-    except Exception:
-        _log(f"[ldplayer] fullscreen failed: {traceback.format_exc()[:200]}")
+            out = result.stdout.strip() or result.stderr.strip()[:200]
+            _log(f"[ldplayer] fullscreen attempt={attempt}: {out}")
+            if out.startswith("ok"):
+                return
+            # miss — wait and retry
+            time.sleep(1)
+        except Exception:
+            _log(f"[ldplayer] fullscreen failed attempt={attempt}: {traceback.format_exc()[:200]}")
+            time.sleep(1)
+    _log(f"[ldplayer] fullscreen gave up after 5 attempts index={index} title={title}")
 
 
 def _get_dnplayer_titles() -> list[str]:

@@ -62,6 +62,7 @@ def create_app(state: CaptureState, frame_queue: FrameQueue) -> FastAPI:
     import asyncio
     app = FastAPI()
     webrtc_manager = WebRTCManager()
+    _prepare_task: asyncio.Task | None = None
 
     @app.on_event("startup")
     async def _suppress_connection_reset():
@@ -98,11 +99,14 @@ def create_app(state: CaptureState, frame_queue: FrameQueue) -> FastAPI:
         import threading as _t
         _t.Thread(target=adb_manager.maximize_ldplayer_window,
                   args=(ldplayer_index, ldplayer_title), daemon=True).start()
-        # Pre-warm WebRTC after fullscreen settles — Alt+Enter restarts display pipe
+        # Pre-warm WebRTC after fullscreen settles — cancel any pending prepare from prior select
+        nonlocal _prepare_task
+        if _prepare_task and not _prepare_task.done():
+            _prepare_task.cancel()
         async def _delayed_prepare():
             await asyncio.sleep(2)
             await webrtc_manager.prepare(serial, w, h)
-        asyncio.create_task(_delayed_prepare())
+        _prepare_task = asyncio.create_task(_delayed_prepare())
         return {"ok": True, "id": req.id, "w": w, "h": h}
 
     @app.get("/stream")
