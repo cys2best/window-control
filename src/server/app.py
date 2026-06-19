@@ -165,14 +165,6 @@ def create_app(state: CaptureState, frame_queue: FrameQueue) -> FastAPI:
         await webrtc_manager.close()
         return {"ok": True}
 
-    class DebugLogRequest(BaseModel):
-        msg: str
-
-    @app.post("/debug-log")
-    async def debug_log(req: DebugLogRequest, http_req: Request):
-        client = http_req.client.host if http_req.client else "?"
-        _log(f"[client:{client}] {req.msg}")
-        return {"ok": True}
 
     @app.get("/window/{window_id}/preview")
     async def preview(window_id: str):
