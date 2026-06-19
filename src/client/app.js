@@ -1,4 +1,13 @@
 // app.js — stream display, touch→input, reconnect, stats
+
+// Remote logging — POST console messages to server so we can debug without USB cable
+function _rlog(msg) {
+  fetch('/debug-log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ msg: String(msg) }) }).catch(() => {});
+}
+const _origLog = console.log.bind(console);
+const _origError = console.error.bind(console);
+console.log = (...a) => { _origLog(...a); _rlog(a.map(String).join(' ')); };
+console.error = (...a) => { _origError(...a); _rlog('[ERR] ' + a.map(String).join(' ')); };
 let ws = null;
 let wsRetryDelay = 1000;
 
