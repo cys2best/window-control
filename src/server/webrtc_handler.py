@@ -201,6 +201,7 @@ class WebRTCManager:
 
         async with self._lock:
             had_session = self._session is not None
+            _log(f"[webrtc] offer start serial={serial} had_session={had_session}")
             await self._close_session()
             if had_session:
                 # Give Android screenrecord time to release — ADB kill is async on device side
@@ -208,7 +209,9 @@ class WebRTCManager:
 
             from server.adb_manager import RawH264Session
             raw = RawH264Session(serial, w, h)
+            _log(f"[webrtc] starting RawH264Session serial={serial}")
             if not raw.start():
+                _log(f"[webrtc] RawH264Session failed to start serial={serial}")
                 raise RuntimeError("Could not start RawH264Session")
             loop = asyncio.get_event_loop()
             track = H264StreamTrack(raw.stdout, loop)
@@ -281,4 +284,6 @@ class WebRTCManager:
                 await s.pc.close()
             except Exception:
                 pass
+            import gc
+            gc.collect()
             _log("[webrtc] session closed")
