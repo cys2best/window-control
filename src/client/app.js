@@ -117,8 +117,14 @@ async function initWebRTC(windowId) {
 
     _pc.oniceconnectionstatechange = () => {
       const s = _pc ? _pc.iceConnectionState : '';
-      if (s === 'failed' || s === 'closed' || s === 'disconnected') {
-        _fallbackToMJPEG();
+      if (s === 'failed' || s === 'closed') {
+        // Retry WebRTC after a short delay; fall back to MJPEG if retry also fails
+        const retryId = _activeWindowId;
+        setTimeout(() => {
+          if (_activeWindowId === retryId) initWebRTC(retryId);
+        }, 2000);
+      } else if (s === 'disconnected') {
+        // Disconnected can recover — wait for failed before acting
       }
     };
 
