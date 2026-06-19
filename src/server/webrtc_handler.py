@@ -282,7 +282,7 @@ class WebRTCManager:
             self._session = None
             s.stop()
             try:
-                await s.pc.close()
+                await asyncio.wait_for(s.pc.close(), timeout=2.0)
             except Exception:
                 pass
             import gc
