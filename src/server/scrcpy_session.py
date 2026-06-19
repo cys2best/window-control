@@ -200,11 +200,7 @@ class ScrcpySession:
             ffmpeg_proc = subprocess.Popen(
                 [
                     ffmpeg_exe,
-                    "-loglevel", "quiet",
-                    "-fflags", "nobuffer",
-                    "-flags", "low_delay",
-                    "-probesize", "32",
-                    "-analyzeduration", "0",
+                    "-loglevel", "warning",
                     "-f", "h264",
                     "-i", "pipe:0",
                     "-c:v", "copy",
