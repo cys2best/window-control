@@ -313,13 +313,21 @@ class ScrcpySession:
         ffmpeg_proc: subprocess.Popen | None = None
         video_sock: socket.socket | None = None
         try:
-            # Connect video socket first — scrcpy-server accepts video, then control, in order
+            # scrcpy-server (tunnel_forward=true, control=true) accept order:
+            #   1. accept video  → sends dummy byte immediately
+            #   2. accept control (blocks here)
+            #   3. sends device_meta + codec header on video socket
+            # So: connect video, read dummy byte, connect control, then read the rest.
             video_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             video_sock.settimeout(10)
             video_sock.connect(("127.0.0.1", self._tcp_port))
 
-            # Protocol header
-            _recvall(video_sock, 1)   # dummy byte (connection probe)
+            _recvall(video_sock, 1)   # dummy byte — sent right after video accept
+
+            # Server now blocks on accept() for control socket.
+            # Connect control to unblock it so it proceeds to send device_meta.
+            self.control.connect()
+
             device_name = _recvall(video_sock, 64).rstrip(b"\x00").decode("utf-8", errors="replace")
             codec_id = struct.unpack(">I", _recvall(video_sock, 4))[0]
             init_w = struct.unpack(">I", _recvall(video_sock, 4))[0]
@@ -327,9 +335,6 @@ class ScrcpySession:
             _log(f"[scrcpy] handshake device={device_name!r} codec=0x{codec_id:08x} {init_w}x{init_h}")
 
             video_sock.settimeout(None)
-
-            # Connect control socket after video handshake — server expects this order
-            self.control.connect()
 
             ffmpeg_proc = subprocess.Popen(
                 [
