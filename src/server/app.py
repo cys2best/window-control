@@ -1,8 +1,6 @@
 import io
 import os
 import subprocess
-import urllib.request
-import urllib.error
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -101,44 +99,7 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
             "whep_url": whep_url,
         }
 
-    @app.post("/instances/{instance_name}/whep")
-    async def whep_proxy(instance_name: str, request: Request):
-        """Proxy WHEP SDP offer to mediamtx — avoids cross-origin fetch from browser."""
-        import asyncio
-        body = await request.body()
-        target = f"http://127.0.0.1:{WHEP_PORT}/{instance_name}/whep"
-
-        _log(f"[whep] proxy POST {target} body_len={len(body)}")
-
-        def _do_request():
-            req = urllib.request.Request(
-                target, data=body,
-                headers={"Content-Type": "application/sdp"},
-                method="POST",
-            )
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                data = resp.read()
-                loc = resp.headers.get("Location", "")
-                return data, loc
-
-        try:
-            loop = asyncio.get_event_loop()
-            answer, location = await loop.run_in_executor(None, _do_request)
-            _log(f"[whep] proxy OK answer_len={len(answer)} location={location!r}")
-            _log(f"[whep] answer SDP:\n{answer.decode(errors='replace')}")
-            headers = {}
-            if location:
-                headers["Location"] = location
-            return Response(content=answer, media_type="application/sdp", headers=headers)
-        except urllib.error.HTTPError as e:
-            body_err = e.read().decode(errors="replace")[:200]
-            _log(f"[whep] proxy HTTP {e.code} {e.reason}: {body_err}")
-            raise HTTPException(status_code=e.code, detail=f"mediamtx: {e.reason}: {body_err}")
-        except Exception as exc:
-            _log(f"[whep] proxy error: {exc}")
-            raise HTTPException(status_code=503, detail=str(exc))
-
-    @app.get("/instances/{instance_id}/preview")
+@app.get("/instances/{instance_id}/preview")
     async def instance_preview(instance_id: str):
         from PIL import Image
         adb = adb_manager._find_adb()
