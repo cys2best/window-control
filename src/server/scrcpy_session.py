@@ -334,6 +334,12 @@ class ScrcpySession:
             init_h = struct.unpack(">I", _recvall(video_sock, 4))[0]
             _log(f"[scrcpy] handshake device={device_name!r} codec=0x{codec_id:08x} {init_w}x{init_h}")
 
+            # Use actual frame dimensions from scrcpy handshake — may differ from wm size
+            # if the device is rotated or LDPlayer reports a different logical resolution.
+            # These are the dimensions scrcpy uses for coordinate mapping.
+            self.w = init_w
+            self.h = init_h
+
             video_sock.settimeout(None)
 
             ffmpeg_proc = subprocess.Popen(

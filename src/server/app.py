@@ -258,8 +258,11 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
                 try:
                     t = data.get("type")
                     nx, ny = data.get("x", 0.5), data.get("y", 0.5)
-                    w, h = inst.w, inst.h
-                    ctrl: ScrcpyControl = inst.session.control
+                    # Use session dimensions (from scrcpy handshake) — authoritative actual frame size.
+                    # Falls back to inst.w/h (from wm size) before session handshake completes.
+                    sess = inst.session
+                    w, h = sess.w, sess.h
+                    ctrl: ScrcpyControl = sess.control
 
                     if ctrl.connected:
                         # ── Scrcpy control socket path (low-latency) ──────────
