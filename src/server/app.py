@@ -49,6 +49,30 @@ def _make_exception_handler(default_handler):
     return handler
 
 
+_JS_KEY_TO_KEYCODE = {
+    "Return":    66,
+    "BackSpace": 67,
+    "Tab":       61,
+    "Escape":    111,
+    "Delete":    112,
+    "ArrowLeft": 21,
+    "ArrowUp":   19,
+    "ArrowRight": 22,
+    "ArrowDown": 20,
+    " ":         62,
+    "Space":     62,
+    "Back":      4,
+    "Home":      3,
+    "Menu":      82,
+}
+
+
+def _dispatch_key_control(ctrl, key: str):
+    kc = _JS_KEY_TO_KEYCODE.get(key)
+    if kc:
+        ctrl.send_keycode(kc)
+
+
 def create_app(state: CaptureState, frame_queue: FrameQueue,
                instance_manager: InstanceManager) -> FastAPI:
     import asyncio
@@ -208,6 +232,7 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
     async def ws_input(websocket: WebSocket):
         await websocket.accept()
         import asyncio as _asyncio
+        from server.scrcpy_session import ScrcpyControl
 
         async def _ping():
             while True:
@@ -220,52 +245,90 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
 
         drag_pos: tuple | None = None
         drag_start_pos: tuple | None = None
+        finger_down = False  # track whether touch DOWN was sent (to pair with UP)
         try:
             while True:
                 data = await websocket.receive_json()
                 inst = instance_manager.active
                 if inst is None:
+                    finger_down = False
+                    drag_pos = None
+                    drag_start_pos = None
                     continue
                 try:
                     t = data.get("type")
                     nx, ny = data.get("x", 0.5), data.get("y", 0.5)
                     w, h = inst.w, inst.h
-                    serial = inst.serial
-                    if t == "click":
-                        adb_manager.tap(serial, nx, ny, w, h)
-                    elif t == "drag_start":
-                        drag_start_pos = (nx, ny)
-                        drag_pos = (nx, ny)
-                    elif t == "drag_move":
-                        if data.get("scroll"):
-                            # Scroll: swipe prev→cur (relative delta), short duration avoids queue buildup
-                            prev = drag_pos or (nx, ny)
-                            dx = abs(nx - prev[0]) * w
-                            dy = abs(ny - prev[1]) * h
-                            if dx + dy > 2:
-                                adb_manager.swipe(serial, prev[0], prev[1], nx, ny,
-                                                  w, h, duration_ms=45)
-                        else:
-                            # Joystick: swipe start→cur — simulates finger held at direction
-                            start = drag_start_pos or (nx, ny)
-                            adb_manager.swipe(serial, start[0], start[1], nx, ny,
-                                              w, h, duration_ms=25)
-                        drag_pos = (nx, ny)
-                    elif t == "drag_end":
-                        if data.get("scroll"):
-                            # Fling: one final scroll swipe
-                            prev = drag_pos or (nx, ny)
-                            dx = abs(nx - prev[0]) * w
-                            dy = abs(ny - prev[1]) * h
-                            if dx + dy > 2:
-                                adb_manager.swipe(serial, prev[0], prev[1], nx, ny,
-                                                  w, h, duration_ms=45)
-                        drag_pos = None
-                        drag_start_pos = None
-                    elif t == "scroll":
-                        adb_manager.scroll(serial, nx, ny, data.get("dy", 0), w, h)
-                    elif t == "key":
-                        adb_manager.send_key(serial, data["key"])
+                    ctrl: ScrcpyControl = inst.session.control
+
+                    if ctrl.connected:
+                        # ── Scrcpy control socket path (low-latency) ──────────
+                        if t == "click":
+                            ctrl.send_touch(ScrcpyControl.ACTION_DOWN, nx, ny, w, h)
+                            ctrl.send_touch(ScrcpyControl.ACTION_UP, nx, ny, w, h)
+                            finger_down = False
+                        elif t == "drag_start":
+                            drag_start_pos = (nx, ny)
+                            drag_pos = (nx, ny)
+                            ctrl.send_touch(ScrcpyControl.ACTION_DOWN, nx, ny, w, h)
+                            finger_down = True
+                        elif t == "drag_move":
+                            if finger_down:
+                                ctrl.send_touch(ScrcpyControl.ACTION_MOVE, nx, ny, w, h)
+                            drag_pos = (nx, ny)
+                        elif t == "drag_end":
+                            if finger_down:
+                                ctrl.send_touch(ScrcpyControl.ACTION_UP, nx, ny, w, h)
+                                finger_down = False
+                            drag_pos = None
+                            drag_start_pos = None
+                        elif t == "scroll":
+                            # Two-finger scroll: cancel any active drag first, then swipe
+                            if finger_down:
+                                ctrl.send_touch(ScrcpyControl.ACTION_UP, nx, ny, w, h)
+                                finger_down = False
+                            dy = data.get("dy", 0)
+                            ny2 = max(0.0, min(1.0, ny + dy * 120 / h)) if h else ny
+                            ctrl.send_touch(ScrcpyControl.ACTION_DOWN, nx, ny, w, h)
+                            ctrl.send_touch(ScrcpyControl.ACTION_MOVE, nx, ny2, w, h)
+                            ctrl.send_touch(ScrcpyControl.ACTION_UP, nx, ny2, w, h)
+                        elif t == "key":
+                            _dispatch_key_control(ctrl, data["key"])
+                    else:
+                        # ── ADB shell fallback (control socket not connected) ──
+                        serial = inst.serial
+                        if t == "click":
+                            adb_manager.tap(serial, nx, ny, w, h)
+                        elif t == "drag_start":
+                            drag_start_pos = (nx, ny)
+                            drag_pos = (nx, ny)
+                        elif t == "drag_move":
+                            if data.get("scroll"):
+                                prev = drag_pos or (nx, ny)
+                                dx = abs(nx - prev[0]) * w
+                                dy = abs(ny - prev[1]) * h
+                                if dx + dy > 2:
+                                    adb_manager.swipe(serial, prev[0], prev[1], nx, ny,
+                                                      w, h, duration_ms=45)
+                            else:
+                                start = drag_start_pos or (nx, ny)
+                                adb_manager.swipe(serial, start[0], start[1], nx, ny,
+                                                  w, h, duration_ms=25)
+                            drag_pos = (nx, ny)
+                        elif t == "drag_end":
+                            if data.get("scroll"):
+                                prev = drag_pos or (nx, ny)
+                                dx = abs(nx - prev[0]) * w
+                                dy = abs(ny - prev[1]) * h
+                                if dx + dy > 2:
+                                    adb_manager.swipe(serial, prev[0], prev[1], nx, ny,
+                                                      w, h, duration_ms=45)
+                            drag_pos = None
+                            drag_start_pos = None
+                        elif t == "scroll":
+                            adb_manager.scroll(serial, nx, ny, data.get("dy", 0), w, h)
+                        elif t == "key":
+                            adb_manager.send_key(serial, data["key"])
                 except (KeyError, TypeError):
                     pass
         except WebSocketDisconnect:

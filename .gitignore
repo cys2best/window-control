@@ -10,3 +10,7 @@ wheels/
 .venv
 .superpowers/*
 docs/*
+
+# Downloaded binary assets (fetched at startup by download_assets.py)
+src/assets/mediamtx/
+src/assets/scrcpy/

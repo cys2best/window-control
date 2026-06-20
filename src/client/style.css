@@ -94,6 +94,10 @@ html, body {
 #stream-container {
   position: absolute; top: 0; bottom: 0; left: 0; right: 52px;
   display: flex; align-items: center; justify-content: center;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 #stream-img,
@@ -103,7 +107,10 @@ html, body {
   transform-origin: center center;
   user-select: none;
   -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: none;
   background: #000;
+  pointer-events: none;
 }
 
 /* Fullscreen: fill entire screen */

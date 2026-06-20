@@ -60,6 +60,26 @@ def _log(msg: str):
             continue
 
 
+def _ensure_assets():
+    """Download missing binaries (mediamtx, scrcpy) before the app needs them."""
+    import importlib.util, pathlib
+    script = pathlib.Path(__file__).parent.parent / "scripts" / "download_assets.py"
+    if not script.exists():
+        _log(f"[assets] download script not found: {script}")
+        return
+    spec = importlib.util.spec_from_file_location("download_assets", script)
+    mod = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(mod)
+        mod.main()
+    except SystemExit as e:
+        if e.code != 0:
+            _log(f"[assets] download failed (exit {e.code}) — app may not work correctly")
+    except Exception:
+        import traceback as _tb
+        _log(f"[assets] download error: {_tb.format_exc()[:400]}")
+
+
 def main():
     # Delegate service CLI args before starting GUI
     _svc_args = {"--install", "--uninstall", "--start", "--stop", "--run-service"}
@@ -70,6 +90,8 @@ def main():
 
     from config import VERSION
     _log(f"[GUI] starting v{VERSION} pid={os.getpid()} user={os.environ.get('USERNAME','?')}")
+
+    _ensure_assets()
 
     # Remove legacy lock-screen service if still installed from older versions
     if sys.platform == "win32":

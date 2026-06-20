@@ -210,6 +210,7 @@ function initTouch() {
 
   container.addEventListener('touchstart', e => {
     if (e.target.closest('#right-toolbar')) return;
+    e.preventDefault();
     if (e.touches.length === 1) {
       const t = e.touches[0];
       _dragStartX = t.clientX;
@@ -227,9 +228,10 @@ function initTouch() {
       }
       _twoFingerLastY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
     }
-  }, { passive: true });
+  }, { passive: false });
 
   container.addEventListener('touchmove', e => {
+    e.preventDefault();
     if (e.touches.length === 1 && _dragActive) {
       const t = e.touches[0];
       const dx = t.clientX - _dragStartX;
@@ -238,7 +240,7 @@ function initTouch() {
       const { x, y } = normalizeCoords(t.clientX, t.clientY);
       const scrollDominant = Math.abs(dy) > Math.abs(dx) * 1.5;
       const now = Date.now();
-      if (now - _lastDragSendTime >= 30) {
+      if (now - _lastDragSendTime >= 16) {
         sendInput({ type: 'drag_move', x, y, scroll: scrollDominant });
         _lastDragSendTime = now;
         if (scrollDominant) _lastScrollSendTime = now;
@@ -253,22 +255,22 @@ function initTouch() {
         _twoFingerLastY = midY;
       }
     }
-  }, { passive: true });
+  }, { passive: false });
 
   container.addEventListener('touchend', e => {
+    e.preventDefault();
     if (_dragActive && e.touches.length === 0) {
       const t = e.changedTouches[0];
       const { x, y } = normalizeCoords(t.clientX, t.clientY);
       if (!_dragMoved) {
         sendInput({ type: 'click', x, y });
-      } else if (Date.now() - _lastScrollSendTime > 300) {
-        // Suppress drag_end within 300ms of last scroll — avoids spurious tap after scroll
+      } else {
         sendInput({ type: 'drag_end', x, y });
       }
       _dragActive = false;
     }
     if (e.touches.length < 2) _twoFingerLastY = null;
-  }, { passive: true });
+  }, { passive: false });
 }
 
 function initMouse() {
