@@ -49,7 +49,16 @@ def _generate_config(instance_names: list[str], tailscale_ip: str | None = None)
     paths = "\n".join(f"  {name}:" for name in instance_names)
     # Advertise Tailscale IP as the ICE host so the browser connects directly
     # instead of waiting 20-30s for UDP probes to time out.
-    stun_lines = "webrtcICEServers2:\n- url: stun:stun.l.google.com:19302"
+    stun_lines = (
+        "webrtcICEServers2:\n"
+        "- url: stun:stun.l.google.com:19302\n"
+        "- url: turn:openrelay.metered.ca:80\n"
+        "  username: openrelayproject\n"
+        "  password: openrelayproject\n"
+        "- url: turn:openrelay.metered.ca:443\n"
+        "  username: openrelayproject\n"
+        "  password: openrelayproject"
+    )
     if tailscale_ip:
         nat_lines = (
             f"webrtcICEHostNAT1To1IPs: [{tailscale_ip}]\n"
