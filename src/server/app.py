@@ -125,7 +125,7 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
             loop = asyncio.get_event_loop()
             answer, location = await loop.run_in_executor(None, _do_request)
             _log(f"[whep] proxy OK answer_len={len(answer)} location={location!r}")
-            _log(f"[whep] answer SDP: {answer.decode(errors='replace')[:600]}")
+            _log(f"[whep] answer SDP:\n{answer.decode(errors='replace')}")
             headers = {}
             if location:
                 headers["Location"] = location
