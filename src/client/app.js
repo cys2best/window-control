@@ -111,7 +111,9 @@ async function initWebRTC(windowId, whepUrl) {
   if (!_whepUrl) { _fallbackToMJPEG(); _webrtcInProgress = false; return; }
 
   try {
-    _pc = new RTCPeerConnection({ iceServers: [] });
+    _pc = new RTCPeerConnection({
+      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+    });
 
     const video = document.getElementById('stream-video');
     const img   = document.getElementById('stream-img');

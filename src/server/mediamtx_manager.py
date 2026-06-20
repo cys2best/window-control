@@ -65,7 +65,7 @@ logDestinations: [stdout]
 
 rtspAddress: :{MEDIAMTX_PORT}
 rtmpAddress: :{RTMP_PORT}
-hlsAddress: :8888
+hlsAddress: :8890
 webrtcAddress: :{WHEP_PORT}
 api: no
 {nat_lines}
