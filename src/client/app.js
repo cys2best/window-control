@@ -286,7 +286,6 @@ function initFPS() {}
 
 document.addEventListener('DOMContentLoaded', () => {
   connectWS();
-  initStream();
   initTouch();
   initKeyboard();
   initFPS();

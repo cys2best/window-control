@@ -8,7 +8,25 @@ function showScreen(id) {
 }
 
 // ── Window grid rendering ────────────────────────────────────────
+let _thumbObserver = null;
+
+function _initThumbObserver() {
+  if (_thumbObserver) return;
+  _thumbObserver = new IntersectionObserver(entries => {
+    entries.forEach(entry => {
+      if (!entry.isIntersecting) return;
+      const img = entry.target;
+      if (img.dataset.lazySrc) {
+        img.src = img.dataset.lazySrc;
+        delete img.dataset.lazySrc;
+        _thumbObserver.unobserve(img);
+      }
+    });
+  }, { rootMargin: '50px' });
+}
+
 function renderWindowsGrid() {
+  _initThumbObserver();
   const grid = document.getElementById('windows-grid');
   grid.innerHTML = '';
   _windows.forEach(w => {
@@ -18,10 +36,11 @@ function renderWindowsGrid() {
 
     const thumb = document.createElement('img');
     thumb.className = 'window-card-thumb';
-    // serial is either in w.serial or parsed from w.id ("adb:SERIAL")
     const serial = w.serial || (w.id.startsWith('adb:') ? w.id.slice(4) : w.id);
-    thumb.src = `/instances/${serial}/preview?t=${Date.now()}`;
+    // Lazy-load: only fetch preview when card scrolls into view
+    thumb.dataset.lazySrc = `/instances/${serial}/preview?t=${Date.now()}`;
     thumb.alt = '';
+    _thumbObserver.observe(thumb);
 
     const title = document.createElement('div');
     title.className = 'window-card-title';
@@ -78,7 +97,12 @@ function refreshThumbnails() {
   document.querySelectorAll('.window-card-thumb').forEach(img => {
     const id = img.closest('.window-card').dataset.id;
     const serial = id.startsWith('adb:') ? id.slice(4) : id;
-    img.src = `/instances/${serial}/preview?t=${Date.now()}`;
+    const url = `/instances/${serial}/preview?t=${Date.now()}`;
+    if (img.dataset.lazySrc) {
+      img.dataset.lazySrc = url;
+    } else {
+      img.src = url;
+    }
   });
 }
 

@@ -52,10 +52,15 @@ def _generate_config(instance_names: list[str], tailscale_ip: str | None = None)
     if tailscale_ip:
         nat_lines = (
             f"webrtcICEHostNAT1To1IPs: [{tailscale_ip}]\n"
-            f"webrtcICETCPMuxAddress: :{8189}"
+            f"webrtcICETCPMuxAddress: 0.0.0.0:{8189}"
         )
     else:
         nat_lines = ""
+    # readTimeout/writeTimeout: keep RTSP session alive even when no WebRTC reader
+    # sourceOnDemand: false keeps path alive regardless of readers
+    paths_config = "\n".join(
+        f"  {name}:\n    sourceOnDemand: no" for name in instance_names
+    )
     return f"""\
 logLevel: info
 logDestinations: [stdout]
@@ -64,10 +69,12 @@ rtspAddress: :{MEDIAMTX_PORT}
 rtmpAddress: :{RTMP_PORT}
 hlsAddress: :8888
 webrtcAddress: :{WHEP_PORT}
+readTimeout: 0
+writeTimeout: 0
 {nat_lines}
 
 paths:
-{paths}
+{paths_config}
 """
 
 
