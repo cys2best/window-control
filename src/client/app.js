@@ -111,26 +111,7 @@ async function initWebRTC(windowId, whepUrl) {
   if (!_whepUrl) { _fallbackToMJPEG(); _webrtcInProgress = false; return; }
 
   try {
-    _pc = new RTCPeerConnection({
-      iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
-        {
-          urls: 'turn:openrelay.metered.ca:80',
-          username: 'openrelayproject',
-          credential: 'openrelayproject',
-        },
-        {
-          urls: 'turn:openrelay.metered.ca:443',
-          username: 'openrelayproject',
-          credential: 'openrelayproject',
-        },
-        {
-          urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-          username: 'openrelayproject',
-          credential: 'openrelayproject',
-        },
-      ],
-    });
+    _pc = new RTCPeerConnection({ iceServers: [] });
 
     const video = document.getElementById('stream-video');
     const img   = document.getElementById('stream-img');
@@ -165,29 +146,15 @@ async function initWebRTC(windowId, whepUrl) {
     const thisPc = _pc;
     _pc.addTransceiver('video', { direction: 'recvonly' });
 
-    // WHEP: gather all ICE candidates first so mediamtx gets real IPs (not just .local mDNS).
+    // WHEP: create offer, POST to mediamtx WHEP endpoint, get SDP answer back.
     const offer = await thisPc.createOffer();
     if (_pc !== thisPc) return;
     await thisPc.setLocalDescription(offer);
 
-    // Wait for ICE gathering to complete (srflx candidates need STUN round-trip ~200ms)
-    await new Promise(resolve => {
-      if (thisPc.iceGatheringState === 'complete') { resolve(); return; }
-      const check = () => {
-        if (thisPc.iceGatheringState === 'complete') {
-          thisPc.removeEventListener('icegatheringstatechange', check);
-          resolve();
-        }
-      };
-      thisPc.addEventListener('icegatheringstatechange', check);
-      setTimeout(resolve, 4000); // max wait 4s
-    });
-    if (_pc !== thisPc) return;
-
     const r = await fetch(_whepUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/sdp' },
-      body: thisPc.localDescription.sdp,  // use final SDP with all candidates
+      body: offer.sdp,
     });
     if (_pc !== thisPc) return;
     if (!r || !r.ok) { _fallbackToMJPEG(); return; }
