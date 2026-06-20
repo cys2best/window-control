@@ -88,7 +88,9 @@ class InstanceManager:
 
         # Restart mediamtx with updated path list, advertising Tailscale IP for fast ICE
         from server.tailscale import get_best_ip
-        self._mediamtx.start(all_names, tailscale_ip=get_best_ip())
+        _ip = get_best_ip()
+        _log(f"[mediamtx] advertising IP for ICE: {_ip}")
+        self._mediamtx.start(all_names, tailscale_ip=_ip)
 
         # Start scrcpy sessions for new devices
         for vm in new_vms:
