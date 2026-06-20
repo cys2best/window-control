@@ -124,8 +124,14 @@ async function initWebRTC(windowId, whepUrl) {
       clearUnavailable();
     };
 
+    _pc.onicecandidate = e => {
+      if (e.candidate) console.log('[ice] local candidate:', e.candidate.candidate);
+      else console.log('[ice] local gathering complete');
+    };
+
     _pc.oniceconnectionstatechange = () => {
       const s = _pc ? _pc.iceConnectionState : '';
+      console.log('[ice] state:', s);
       if (s === 'failed' || s === 'closed') {
         const retryId = _activeWindowId;
         const retryPc = _pc;

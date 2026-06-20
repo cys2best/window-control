@@ -62,18 +62,17 @@ async function fetchWindows() {
 }
 
 async function selectWindow(id, serial) {
-  // serial may be undefined if called from legacy path
   const _serial = serial || (id.startsWith('adb:') ? id.slice(4) : id);
+  // Navigate immediately — don't block on server round-trip
+  _activeId = id;
+  const w = _windows.find(w => w.id === id);
+  const titleEl = document.getElementById('stream-title');
+  if (titleEl && w) titleEl.textContent = w.title;
+  renderWindowsGrid();
+  showScreen('screen-stream');
   try {
     const r = await fetch(`/instances/${_serial}/select`, { method: 'POST' });
     const data = await r.json();
-    _activeId = id;
-    const w = _windows.find(w => w.id === id);
-    const titleEl = document.getElementById('stream-title');
-    if (titleEl && w) titleEl.textContent = w.title;
-    renderWindowsGrid();
-    showScreen('screen-stream');
-    // Pass WHEP URL from server response so client connects to mediamtx directly
     initWebRTC(id, data.whep_url);
   } catch (_) {}
 }
