@@ -123,6 +123,7 @@ def _start_server(adb: str, serial: str, port: int, scid: int) -> bool:
                 f" max_fps=30 bit_rate=4000000"
                 f" send_device_meta=true send_frame_meta=true"
                 f" control=false audio=false"
+                f" video_encoder_options=key-int-max=60"
                 f" scid={scid:x}",
             ],
             stdout=subprocess.DEVNULL,
