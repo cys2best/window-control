@@ -99,7 +99,7 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
             "whep_url": whep_url,
         }
 
-@app.get("/instances/{instance_id}/preview")
+    @app.get("/instances/{instance_id}/preview")
     async def instance_preview(instance_id: str):
         from PIL import Image
         adb = adb_manager._find_adb()
