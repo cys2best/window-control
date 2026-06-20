@@ -104,21 +104,26 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
     @app.post("/instances/{instance_name}/whep")
     async def whep_proxy(instance_name: str, request: Request):
         """Proxy WHEP SDP offer to mediamtx — avoids cross-origin fetch from browser."""
+        import asyncio
         body = await request.body()
         target = f"http://127.0.0.1:{WHEP_PORT}/{instance_name}/whep"
-        try:
+
+        def _do_request():
             req = urllib.request.Request(
                 target, data=body,
                 headers={"Content-Type": "application/sdp"},
                 method="POST",
             )
             with urllib.request.urlopen(req, timeout=10) as resp:
-                answer = resp.read()
-                location = resp.headers.get("Location", "")
-                headers = {"Content-Type": "application/sdp"}
-                if location:
-                    headers["Location"] = location
-                return Response(content=answer, media_type="application/sdp", headers=headers)
+                return resp.read(), resp.headers.get("Location", "")
+
+        try:
+            loop = asyncio.get_event_loop()
+            answer, location = await loop.run_in_executor(None, _do_request)
+            headers = {}
+            if location:
+                headers["Location"] = location
+            return Response(content=answer, media_type="application/sdp", headers=headers)
         except urllib.error.HTTPError as e:
             raise HTTPException(status_code=e.code, detail=f"mediamtx: {e.reason}")
         except Exception as exc:
