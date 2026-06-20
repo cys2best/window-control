@@ -56,10 +56,8 @@ def _generate_config(instance_names: list[str], tailscale_ip: str | None = None)
         )
     else:
         nat_lines = ""
-    # readTimeout/writeTimeout: keep RTSP session alive even when no WebRTC reader
-    # sourceOnDemand: false keeps path alive regardless of readers
     paths_config = "\n".join(
-        f"  {name}:\n    sourceOnDemand: no" for name in instance_names
+        f"  {name}:" for name in instance_names
     )
     return f"""\
 logLevel: info
@@ -69,8 +67,7 @@ rtspAddress: :{MEDIAMTX_PORT}
 rtmpAddress: :{RTMP_PORT}
 hlsAddress: :8888
 webrtcAddress: :{WHEP_PORT}
-readTimeout: 0
-writeTimeout: 0
+api: no
 {nat_lines}
 
 paths:

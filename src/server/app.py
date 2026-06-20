@@ -1,6 +1,8 @@
 import io
 import os
 import subprocess
+import urllib.request
+import urllib.error
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -87,8 +89,8 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
         if inst is None:
             raise HTTPException(status_code=404, detail="Instance disappeared")
 
-        host = get_best_ip() or request.client.host
-        whep_url = f"http://{host}:{WHEP_PORT}/{inst.name}/whep"
+        # Use same-origin proxy URL — avoids CORS on cross-port mediamtx fetch
+        whep_url = f"/instances/{inst.name}/whep"
         return {
             "ok": True,
             "id": inst.id,
@@ -98,6 +100,29 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
             "h": inst.h,
             "whep_url": whep_url,
         }
+
+    @app.post("/instances/{instance_name}/whep")
+    async def whep_proxy(instance_name: str, request: Request):
+        """Proxy WHEP SDP offer to mediamtx — avoids cross-origin fetch from browser."""
+        body = await request.body()
+        target = f"http://127.0.0.1:{WHEP_PORT}/{instance_name}/whep"
+        try:
+            req = urllib.request.Request(
+                target, data=body,
+                headers={"Content-Type": "application/sdp"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                answer = resp.read()
+                location = resp.headers.get("Location", "")
+                headers = {"Content-Type": "application/sdp"}
+                if location:
+                    headers["Location"] = location
+                return Response(content=answer, media_type="application/sdp", headers=headers)
+        except urllib.error.HTTPError as e:
+            raise HTTPException(status_code=e.code, detail=f"mediamtx: {e.reason}")
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail=str(exc))
 
     @app.get("/instances/{instance_id}/preview")
     async def instance_preview(instance_id: str):
@@ -141,8 +166,7 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
         if inst is None:
             raise HTTPException(status_code=404, detail="Instance disappeared")
 
-        host = get_best_ip() or request.client.host
-        whep_url = f"http://{host}:{WHEP_PORT}/{inst.name}/whep"
+        whep_url = f"/instances/{inst.name}/whep"
         return {"ok": True, "id": req.id, "w": inst.w, "h": inst.h,
                 "whep_url": whep_url}
 
