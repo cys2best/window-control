@@ -237,9 +237,8 @@ function initTouch() {
       if (Math.hypot(dx, dy) > 8) _dragMoved = true;
       const { x, y } = normalizeCoords(t.clientX, t.clientY);
       const scrollDominant = Math.abs(dy) > Math.abs(dx) * 1.5;
-      // Throttle: max one drag_move per 50ms to avoid flooding ADB
       const now = Date.now();
-      if (now - _lastDragSendTime >= 50) {
+      if (now - _lastDragSendTime >= 30) {
         sendInput({ type: 'drag_move', x, y, scroll: scrollDominant });
         _lastDragSendTime = now;
         if (scrollDominant) _lastScrollSendTime = now;
@@ -272,6 +271,64 @@ function initTouch() {
   }, { passive: true });
 }
 
+function initMouse() {
+  const container = document.getElementById('stream-container');
+  let _mouseDown = false;
+  let _mouseMoved = false;
+  let _mouseStartX = 0;
+  let _mouseStartY = 0;
+  let _mouseLastSendTime = 0;
+  let _mouseLastScrollSendTime = 0;
+
+  container.addEventListener('mousedown', e => {
+    if (e.target.closest('#right-toolbar')) return;
+    if (e.button !== 0) return;
+    e.preventDefault();
+    _mouseDown = true;
+    _mouseMoved = false;
+    _mouseStartX = e.clientX;
+    _mouseStartY = e.clientY;
+    _mouseLastSendTime = 0;
+    const { x, y } = normalizeCoords(e.clientX, e.clientY);
+    sendInput({ type: 'drag_start', x, y });
+  });
+
+  container.addEventListener('mousemove', e => {
+    if (!_mouseDown) return;
+    const dx = e.clientX - _mouseStartX;
+    const dy = e.clientY - _mouseStartY;
+    if (Math.hypot(dx, dy) > 8) _mouseMoved = true;
+    const { x, y } = normalizeCoords(e.clientX, e.clientY);
+    const scrollDominant = Math.abs(dy) > Math.abs(dx) * 1.5;
+    const now = Date.now();
+    if (now - _mouseLastSendTime >= 30) {
+      sendInput({ type: 'drag_move', x, y, scroll: scrollDominant });
+      _mouseLastSendTime = now;
+      if (scrollDominant) _mouseLastScrollSendTime = now;
+    }
+  });
+
+  const _mouseUp = e => {
+    if (e.button !== 0 || !_mouseDown) return;
+    _mouseDown = false;
+    const { x, y } = normalizeCoords(e.clientX, e.clientY);
+    if (!_mouseMoved) {
+      sendInput({ type: 'click', x, y });
+    } else if (Date.now() - _mouseLastScrollSendTime > 300) {
+      sendInput({ type: 'drag_end', x, y });
+    }
+  };
+
+  container.addEventListener('mouseup', _mouseUp);
+  container.addEventListener('mouseleave', e => {
+    if (_mouseDown) {
+      _mouseDown = false;
+      const { x, y } = normalizeCoords(e.clientX, e.clientY);
+      sendInput({ type: 'drag_end', x, y });
+    }
+  });
+}
+
 function initKeyboard() {
   const btn = document.getElementById('keyboard-btn');
   const input = document.getElementById('keyboard-input');
@@ -296,6 +353,7 @@ function initFPS() {}
 document.addEventListener('DOMContentLoaded', () => {
   connectWS();
   initTouch();
+  initMouse();
   initKeyboard();
   initFPS();
   initDrawer();

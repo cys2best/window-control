@@ -86,11 +86,6 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
         inst = instance_manager.active
         if inst is None:
             raise HTTPException(status_code=404, detail="Instance disappeared")
-        # Also start MJPEG session for fallback path
-        session = adb_manager.AdbSession(inst.serial, inst.w, inst.h, fps=15,
-                                         ldplayer_index=inst.ldplayer_index)
-        if session.start():
-            state.set_adb_session(session)
 
         host = get_best_ip() or request.client.host
         whep_url = f"http://{host}:{WHEP_PORT}/{inst.name}/whep"
@@ -145,11 +140,6 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
         inst = instance_manager.active
         if inst is None:
             raise HTTPException(status_code=404, detail="Instance disappeared")
-        session = adb_manager.AdbSession(inst.serial, inst.w, inst.h, fps=15,
-                                         ldplayer_index=inst.ldplayer_index)
-        if not session.start():
-            raise HTTPException(status_code=503, detail="Could not start ADB session")
-        state.set_adb_session(session)
 
         host = get_best_ip() or request.client.host
         whep_url = f"http://{host}:{WHEP_PORT}/{inst.name}/whep"
@@ -229,6 +219,7 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
         _asyncio.create_task(_ping())
 
         drag_pos: tuple | None = None
+        drag_start_pos: tuple | None = None
         try:
             while True:
                 data = await websocket.receive_json()
@@ -243,25 +234,34 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
                     if t == "click":
                         adb_manager.tap(serial, nx, ny, w, h)
                     elif t == "drag_start":
+                        drag_start_pos = (nx, ny)
                         drag_pos = (nx, ny)
                     elif t == "drag_move":
-                        prev = drag_pos or (nx, ny)
-                        dx = abs(nx - prev[0]) * w
-                        dy = abs(ny - prev[1]) * h
-                        if dx + dy > 2:
-                            dur = 200 if data.get("scroll") else 30
-                            adb_manager.swipe(serial, prev[0], prev[1], nx, ny,
-                                              w, h, duration_ms=dur)
-                            drag_pos = (nx, ny)
+                        if data.get("scroll"):
+                            # Scroll: swipe prev→cur (relative delta), short duration avoids queue buildup
+                            prev = drag_pos or (nx, ny)
+                            dx = abs(nx - prev[0]) * w
+                            dy = abs(ny - prev[1]) * h
+                            if dx + dy > 2:
+                                adb_manager.swipe(serial, prev[0], prev[1], nx, ny,
+                                                  w, h, duration_ms=45)
+                        else:
+                            # Joystick: swipe start→cur — simulates finger held at direction
+                            start = drag_start_pos or (nx, ny)
+                            adb_manager.swipe(serial, start[0], start[1], nx, ny,
+                                              w, h, duration_ms=25)
+                        drag_pos = (nx, ny)
                     elif t == "drag_end":
-                        prev = drag_pos or (nx, ny)
-                        dx = abs(nx - prev[0]) * w
-                        dy = abs(ny - prev[1]) * h
-                        if dx + dy > 2:
-                            dur = 200 if data.get("scroll") else 30
-                            adb_manager.swipe(serial, prev[0], prev[1], nx, ny,
-                                              w, h, duration_ms=dur)
+                        if data.get("scroll"):
+                            # Fling: one final scroll swipe
+                            prev = drag_pos or (nx, ny)
+                            dx = abs(nx - prev[0]) * w
+                            dy = abs(ny - prev[1]) * h
+                            if dx + dy > 2:
+                                adb_manager.swipe(serial, prev[0], prev[1], nx, ny,
+                                                  w, h, duration_ms=45)
                         drag_pos = None
+                        drag_start_pos = None
                     elif t == "scroll":
                         adb_manager.scroll(serial, nx, ny, data.get("dy", 0), w, h)
                     elif t == "key":
