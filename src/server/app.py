@@ -86,6 +86,11 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
         inst = instance_manager.active
         if inst is None:
             raise HTTPException(status_code=404, detail="Instance disappeared")
+        # Also start MJPEG session for fallback path
+        session = adb_manager.AdbSession(inst.serial, inst.w, inst.h, fps=15,
+                                         ldplayer_index=inst.ldplayer_index)
+        if session.start():
+            state.set_adb_session(session)
 
         host = get_best_ip() or request.client.host
         whep_url = f"http://{host}:{WHEP_PORT}/{inst.name}/whep"
@@ -140,6 +145,11 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
         inst = instance_manager.active
         if inst is None:
             raise HTTPException(status_code=404, detail="Instance disappeared")
+        session = adb_manager.AdbSession(inst.serial, inst.w, inst.h, fps=15,
+                                         ldplayer_index=inst.ldplayer_index)
+        if not session.start():
+            raise HTTPException(status_code=503, detail="Could not start ADB session")
+        state.set_adb_session(session)
 
         host = get_best_ip() or request.client.host
         whep_url = f"http://{host}:{WHEP_PORT}/{inst.name}/whep"

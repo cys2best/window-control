@@ -111,9 +111,7 @@ async function initWebRTC(windowId, whepUrl) {
   if (!_whepUrl) { _fallbackToMJPEG(); _webrtcInProgress = false; return; }
 
   try {
-    _pc = new RTCPeerConnection({
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
-    });
+    _pc = new RTCPeerConnection({ iceServers: [] });
 
     const video = document.getElementById('stream-video');
     const img   = document.getElementById('stream-img');
@@ -148,28 +146,15 @@ async function initWebRTC(windowId, whepUrl) {
     const thisPc = _pc;
     _pc.addTransceiver('video', { direction: 'recvonly' });
 
-    // WHEP: wait for ICE gathering so offer includes srflx candidate with real IP.
     const offer = await thisPc.createOffer();
     if (_pc !== thisPc) return;
     await thisPc.setLocalDescription(offer);
-
-    await new Promise(resolve => {
-      if (thisPc.iceGatheringState === 'complete') { resolve(); return; }
-      const check = () => {
-        if (thisPc.iceGatheringState === 'complete') {
-          thisPc.removeEventListener('icegatheringstatechange', check);
-          resolve();
-        }
-      };
-      thisPc.addEventListener('icegatheringstatechange', check);
-      setTimeout(resolve, 3000);
-    });
     if (_pc !== thisPc) return;
 
     const r = await fetch(_whepUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/sdp' },
-      body: thisPc.localDescription.sdp,
+      body: offer.sdp,
     });
     if (_pc !== thisPc) return;
     if (!r || !r.ok) { _fallbackToMJPEG(); return; }
