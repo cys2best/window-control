@@ -117,7 +117,11 @@ async function initWebRTC(windowId, whepUrl) {
     const img   = document.getElementById('stream-img');
 
     _pc.ontrack = e => {
+      console.log('[webrtc] ontrack fired');
       video.srcObject = e.streams[0];
+      video.onloadedmetadata = () => console.log('[webrtc] video loadedmetadata');
+      video.oncanplay = () => console.log('[webrtc] video canplay');
+      video.onplaying = () => console.log('[webrtc] video playing');
       video.style.display = 'block';
       img.style.display = 'none';
       _webrtcActive = true;
