@@ -7,8 +7,7 @@ Setup (per instance, done by _start_server()):
   adb shell CLASSPATH=... app_process / com.genymobile.scrcpy.Server 3.1 \
       tunnel_forward=true video_codec=h264 max_fps=30 bit_rate=4000000 \
       send_device_meta=true send_frame_meta=true control=true audio=false &
-  adb forward tcp:<port>   localabstract:scrcpy_<scid>   (video)
-  adb forward tcp:<port+1> localabstract:scrcpy_<scid>   (control, same socket — 2nd conn)
+  adb forward tcp:<port> localabstract:scrcpy_<scid>   (ONE forward — video+control share it)
 
 Protocol (scrcpy-server 3.x, tunnel_forward=true, control=true, audio=false):
   Connect order: video socket first, then control socket (server expects this order).
@@ -56,8 +55,7 @@ import traceback
 
 from config import ASSETS_DIR
 
-_SCRCPY_BASE_PORT = 27183   # instance 0: video=27183 control=27283, instance 1: video=27184 control=27284
-_SCRCPY_CONTROL_PORT_OFFSET = 100  # control port = video port + offset
+_SCRCPY_BASE_PORT = 27183   # instance 0 → 27183, instance 1 → 27184, …
 _SERVER_JAR = "scrcpy-server"  # filename in assets/scrcpy/
 
 def _log(msg: str):
@@ -104,13 +102,12 @@ def _recvall(sock: socket.socket, n: int) -> bytes:
     return buf
 
 
-def _start_server(adb: str, serial: str, video_port: int, control_port: int, scid: int) -> bool:
-    """Push server jar, launch it, set up adb forwards for video + control sockets.
+def _start_server(adb: str, serial: str, port: int, scid: int) -> bool:
+    """Push server jar, launch it, set up ONE adb forward.
 
-    scid gives each instance a unique abstract socket name so multiple instances
-    don't collide on the same device-side abstract socket.
-    Both video and control connections go to the same abstract socket (scrcpy-server
-    accepts them in order: video first, then control).
+    With tunnel_forward=true, scrcpy-server opens a single LocalServerSocket and
+    accepts connections in order: video first, then control. Both go to the same
+    abstract socket — one adb forward covers both.
     """
     nw = _no_window_flags()
     jar = _server_jar_path()
@@ -147,23 +144,14 @@ def _start_server(adb: str, serial: str, video_port: int, control_port: int, sci
             **nw,
         )
         time.sleep(0.5)
-        # Forward video port
-        r1 = subprocess.run(
-            [adb, "-s", serial, "forward", f"tcp:{video_port}", f"localabstract:{socket_name}"],
+        result = subprocess.run(
+            [adb, "-s", serial, "forward", f"tcp:{port}", f"localabstract:{socket_name}"],
             capture_output=True, timeout=5, **nw,
         )
-        if r1.returncode != 0:
-            _log(f"[scrcpy] video forward failed serial={serial}: {r1.stderr.decode()[:200]}")
+        if result.returncode != 0:
+            _log(f"[scrcpy] forward failed serial={serial}: {result.stderr.decode()[:200]}")
             return False
-        # Forward control port to same abstract socket (server accepts video conn first, then control)
-        r2 = subprocess.run(
-            [adb, "-s", serial, "forward", f"tcp:{control_port}", f"localabstract:{socket_name}"],
-            capture_output=True, timeout=5, **nw,
-        )
-        if r2.returncode != 0:
-            _log(f"[scrcpy] control forward failed serial={serial}: {r2.stderr.decode()[:200]}")
-            return False
-        _log(f"[scrcpy] server ready serial={serial} scid={scid} video={video_port} control={control_port}")
+        _log(f"[scrcpy] server ready serial={serial} scid={scid} port={port} socket={socket_name}")
         return True
     except Exception:
         _log(f"[scrcpy] _start_server error serial={serial}: {traceback.format_exc()[:400]}")
@@ -286,13 +274,13 @@ class ScrcpySession:
         self.rtsp_url = rtsp_url
         self.w = w
         self.h = h
-        self._video_port = _SCRCPY_BASE_PORT + instance_index
-        self._control_port = self._video_port + _SCRCPY_CONTROL_PORT_OFFSET
+        self._tcp_port = _SCRCPY_BASE_PORT + instance_index
         self._ffmpeg_proc: subprocess.Popen | None = None
         self._stream_thread: threading.Thread | None = None
         self._running = False
         self._lock = threading.Lock()
-        self.control = ScrcpyControl(self._control_port, serial)
+        # Control socket connects to same port as video — server accepts both sequentially
+        self.control = ScrcpyControl(self._tcp_port, serial)
 
     def start(self) -> bool:
         adb = _find_adb()
@@ -307,8 +295,7 @@ class ScrcpySession:
             self._stop_locked()
             self._running = True
 
-        if not _start_server(adb, self.serial, self._video_port, self._control_port,
-                             self.instance_index):
+        if not _start_server(adb, self.serial, self._tcp_port, self.instance_index):
             with self._lock:
                 self._running = False
             return False
@@ -318,7 +305,7 @@ class ScrcpySession:
 
         self._stream_thread = threading.Thread(target=self._stream_loop, daemon=True)
         self._stream_thread.start()
-        _log(f"[scrcpy] started serial={self.serial} video={self._video_port} control={self._control_port}")
+        _log(f"[scrcpy] started serial={self.serial} port={self._tcp_port}")
         return True
 
     def _stream_loop(self):
@@ -326,10 +313,10 @@ class ScrcpySession:
         ffmpeg_proc: subprocess.Popen | None = None
         video_sock: socket.socket | None = None
         try:
-            # Connect video socket first — scrcpy-server expects video before control
+            # Connect video socket first — scrcpy-server accepts video, then control, in order
             video_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             video_sock.settimeout(10)
-            video_sock.connect(("127.0.0.1", self._video_port))
+            video_sock.connect(("127.0.0.1", self._tcp_port))
 
             # Protocol header
             _recvall(video_sock, 1)   # dummy byte (connection probe)
