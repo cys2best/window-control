@@ -148,16 +148,29 @@ async function initWebRTC(windowId, whepUrl) {
     const thisPc = _pc;
     _pc.addTransceiver('video', { direction: 'recvonly' });
 
-    // WHEP: create offer, POST to mediamtx WHEP endpoint, get SDP answer back.
-    // No trickle ICE — mediamtx handles ICE internally.
+    // WHEP: gather all ICE candidates first so mediamtx gets real IPs (not just .local mDNS).
     const offer = await thisPc.createOffer();
     if (_pc !== thisPc) return;
     await thisPc.setLocalDescription(offer);
 
+    // Wait for ICE gathering to complete (srflx candidates need STUN round-trip ~200ms)
+    await new Promise(resolve => {
+      if (thisPc.iceGatheringState === 'complete') { resolve(); return; }
+      const check = () => {
+        if (thisPc.iceGatheringState === 'complete') {
+          thisPc.removeEventListener('icegatheringstatechange', check);
+          resolve();
+        }
+      };
+      thisPc.addEventListener('icegatheringstatechange', check);
+      setTimeout(resolve, 4000); // max wait 4s
+    });
+    if (_pc !== thisPc) return;
+
     const r = await fetch(_whepUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/sdp' },
-      body: offer.sdp,
+      body: thisPc.localDescription.sdp,  // use final SDP with all candidates
     });
     if (_pc !== thisPc) return;
     if (!r || !r.ok) { _fallbackToMJPEG(); return; }
