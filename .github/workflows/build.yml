@@ -29,6 +29,10 @@ jobs:
         run: choco install innosetup -y --no-progress
         shell: cmd
 
+      - name: Download scrcpy/mediamtx binaries
+        run: uv run python scripts/download_assets.py
+        shell: cmd
+
       - name: Build EXE with PyInstaller
         run: uv run pyinstaller build/window_control.spec --distpath dist --workpath build/work --noconfirm
         shell: cmd
