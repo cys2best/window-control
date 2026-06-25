@@ -81,7 +81,7 @@ def _extract(data: bytes, dest_dir: str, only_file: str | None):
             dest = os.path.join(dest_dir, only_file)
             with open(dest, "wb") as f:
                 f.write(data)
-            print(f"  Extracted → {dest}")
+            print(f"  Extracted: {dest}")
         else:
             # Extract all, stripping the top-level zip directory
             names = zf.namelist()
@@ -97,7 +97,7 @@ def _extract(data: bytes, dest_dir: str, only_file: str | None):
                 os.makedirs(os.path.dirname(dest), exist_ok=True)
                 with zf.open(member) as src, open(dest, "wb") as dst:
                     shutil.copyfileobj(src, dst)
-            print(f"  Extracted {len(names)} files → {dest_dir}")
+            print(f"  Extracted {len(names)} files to {dest_dir}")
 
 
 def main():
