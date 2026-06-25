@@ -1,6 +1,6 @@
 [project]
 name = "window-control"
-version = "2.1.0"
+version = "2.1.2"
 description = "Stream Windows app windows to iPhone over Tailscale"
 readme = "README.md"
 requires-python = ">=3.11"
