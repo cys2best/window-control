@@ -68,6 +68,8 @@ rtmpAddress: :{RTMP_PORT}
 hlsAddress: :8890
 webrtcAddress: :{WHEP_PORT}
 api: no
+webrtcICEConnectionTimeout: 30s
+webrtcWriteQueueSize: 4096
 {nat_lines}
 
 paths:
