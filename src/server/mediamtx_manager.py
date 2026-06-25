@@ -51,8 +51,8 @@ def _generate_config(instance_names: list[str], tailscale_ip: str | None = None)
     # instead of waiting 20-30s for UDP probes to time out.
     if tailscale_ip:
         nat_lines = (
-            f"webrtcICEHostNAT1To1IPs: [{tailscale_ip}]\n"
-            f"webrtcICETCPMuxAddress: 0.0.0.0:{8189}"
+            f"webrtcAdditionalHosts: [{tailscale_ip}]\n"
+            f"webrtcLocalTCPAddress: :{8189}"
         )
     else:
         nat_lines = ""
@@ -68,8 +68,7 @@ rtmpAddress: :{RTMP_PORT}
 hlsAddress: :8890
 webrtcAddress: :{WHEP_PORT}
 api: no
-webrtcICEConnectionTimeout: 30s
-webrtcWriteQueueSize: 4096
+webrtcHandshakeTimeout: 30s
 {nat_lines}
 
 paths:
