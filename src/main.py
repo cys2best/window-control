@@ -61,8 +61,14 @@ def _log(msg: str):
 
 
 def _ensure_assets():
-    """Download missing binaries (mediamtx, scrcpy) before the app needs them."""
+    """Download missing binaries (mediamtx, scrcpy) before the app needs them.
+
+    In a frozen build assets must be pre-bundled by build.bat — skip download.
+    In dev mode, run download_assets.py to fetch missing binaries.
+    """
     import importlib.util, pathlib
+    if hasattr(sys, '_MEIPASS'):
+        return  # frozen build: assets must be in bundle
     script = pathlib.Path(__file__).parent.parent / "scripts" / "download_assets.py"
     if not script.exists():
         _log(f"[assets] download script not found: {script}")
