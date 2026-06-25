@@ -69,6 +69,8 @@ hlsAddress: :8890
 webrtcAddress: :{WHEP_PORT}
 api: no
 webrtcHandshakeTimeout: 30s
+webrtcICEServers2:
+  - url: stun:stun.l.google.com:19302
 {nat_lines}
 
 paths:
