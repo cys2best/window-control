@@ -56,7 +56,7 @@ html, body {
   -webkit-overflow-scrolling: touch;
   padding: 12px;
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 12px;
   align-content: start;
 }
