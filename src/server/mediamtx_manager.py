@@ -66,9 +66,15 @@ def _mediamtx_exe() -> str:
     return bundled  # will fail at Popen time with a clear error
 
 
-def _generate_config(instance_names: list[str], tailscale_ip: str | None = None, active_source: str | None = None) -> str:
-    """Generate mediamtx.yml content for the given instance path names."""
-    paths = "\n".join(f"  {name}:" for name in instance_names)
+def _generate_config(instance_names: list[str], tailscale_ip: str | None = None) -> str:
+    """Generate mediamtx.yml content for the given instance path names.
+
+    Each LDPlayer instance gets its own always-live mediamtx path
+    (instance0, instance1, …) that its scrcpy publishes to and that the browser
+    WHEPs directly. There is no shared 'active' mux path: switching instances is
+    a fresh WHEP negotiation to the target instance's path, which is simpler and
+    avoids the reader-teardown a runtime source-repoint caused.
+    """
     # Advertise Tailscale IP as the ICE host so the browser connects directly
     # instead of waiting 20-30s for UDP probes to time out.
     if tailscale_ip:
@@ -81,17 +87,6 @@ def _generate_config(instance_names: list[str], tailscale_ip: str | None = None,
     paths_config = "\n".join(
         f"  {name}:" for name in instance_names
     )
-    active_block = ""
-    if active_source:
-        active_block = (
-            "  active:\n"
-            f"    source: rtsp://localhost:{MEDIAMTX_PORT}/{active_source}\n"
-            # Pull the source over TCP — our scrcpy publishers use
-            # -rtsp_transport tcp, and the default UDP pull times out
-            # ('UDP timeout') against a TCP-only publisher.
-            "    rtspTransport: tcp\n"
-            "    sourceOnDemand: no\n"
-        )
     return f"""\
 logLevel: info
 logDestinations: [stdout]
@@ -110,7 +105,7 @@ webrtcICEServers2:
 
 paths:
 {paths_config}
-{active_block}"""
+"""
 
 
 class MediamtxManager:
@@ -120,19 +115,13 @@ class MediamtxManager:
         self._proc: subprocess.Popen | None = None
         self._config_file: str | None = None
         self._lock = threading.Lock()
-        self._active_source: str | None = None
 
-    def start(self, instance_names: list[str], tailscale_ip: str | None = None, active_source: str | None = None):
-        """Start (or restart) mediamtx with paths for the given instances."""
+    def start(self, instance_names: list[str], tailscale_ip: str | None = None):
+        """Start (or restart) mediamtx with one path per instance."""
         with self._lock:
-            # Fall back to the current active source so a restart never blanks a
-            # live active path when the caller doesn't specify one.
-            if active_source is None:
-                active_source = self._active_source
-            self._active_source = active_source
             self._stop_locked()
             _reap_orphan_mediamtx()
-            cfg = _generate_config(instance_names, tailscale_ip, active_source=active_source)
+            cfg = _generate_config(instance_names, tailscale_ip)
             fd, path = tempfile.mkstemp(suffix=".yml", prefix="mediamtx_")
             try:
                 os.write(fd, cfg.encode())
@@ -202,95 +191,6 @@ class MediamtxManager:
     def running(self) -> bool:
         with self._lock:
             return self._proc is not None and self._proc.poll() is None
-
-    def set_active_source(self, instance_name: str) -> bool:
-        """Repoint the live 'active' mux path to the given instance.
-
-        POSTs replace/active to (re)point the 'active' path's source via the
-        mediamtx HTTP API so switching instances does not tear down the
-        browser's WebRTC session. Idempotent; never raises.
-
-        Retries replace up to 4 times (0.25s apart) to close the boot-window
-        race where the process is up but the HTTP API on 127.0.0.1:9997 isn't
-        listening yet. After a successful replace, polls get/active until the
-        path reports ready/available (~2s budget), because mediamtx applies the
-        config change asynchronously and the source must connect to the
-        publisher before WHEP can serve — otherwise the client races ahead and
-        gets a 404 on /active/whep.
-
-        Returns:
-            True if replace succeeded (whether or not the path became ready in
-            budget — the browser's WHEP retry covers the tail), or if not
-            running (state recorded, no network). False only if every replace
-            attempt failed while running.
-        """
-        self._active_source = instance_name
-        if not self.running:
-            return True
-        import time
-        import urllib.request
-        import urllib.error
-        import json
-        body = json.dumps({
-            "source": f"rtsp://localhost:{MEDIAMTX_PORT}/{instance_name}",
-            # Match the config-gen source: pull over TCP, else UDP timeout
-            # against our TCP-only scrcpy publisher.
-            "rtspTransport": "tcp",
-            "sourceOnDemand": False,
-        }).encode()
-        # Step 1: POST replace/active — creates the 'active' path if absent,
-        # overwrites its source otherwise. Retries close the boot-window race
-        # where the process is up but the HTTP API isn't listening yet.
-        replaced = False
-        attempts = 4
-        for i in range(attempts):
-            req = urllib.request.Request(
-                "http://127.0.0.1:9997/v3/config/paths/replace/active",
-                data=body,
-                method="POST",
-                headers={"Content-Type": "application/json"},
-            )
-            try:
-                urllib.request.urlopen(req, timeout=3).read()
-                replaced = True
-                break
-            except urllib.error.HTTPError as e:
-                # 4xx from mediamtx carries the reason (bad field, validation) —
-                # log the body so a silent config rejection is visible.
-                try:
-                    detail = e.read().decode("utf-8", errors="replace")[:200]
-                except Exception:
-                    detail = ""
-                _log(f"[mediamtx] replace/active HTTP {e.code}: {detail}")
-                if i < attempts - 1:
-                    time.sleep(0.25)
-            except Exception as ex:
-                _log(f"[mediamtx] replace/active error: {ex!r}")
-                if i < attempts - 1:
-                    time.sleep(0.25)
-        if not replaced:
-            _log(f"[mediamtx] set_active_source failed for {instance_name} after {attempts} attempts")
-            return False
-        # Step 2: mediamtx applies config changes asynchronously (the API handler
-        # calls APIConfigSet in a goroutine), and the source must still connect
-        # to the publisher before WHEP can serve. Poll get/active until the path
-        # reports available, so select() doesn't return a WHEP URL that 404s
-        # because the client raced ahead of path materialization.
-        for _ in range(20):  # ~2s budget
-            try:
-                r = urllib.request.urlopen(
-                    "http://127.0.0.1:9997/v3/paths/get/active", timeout=2
-                )
-                info = json.loads(r.read().decode("utf-8", errors="replace"))
-                if info.get("ready") or info.get("available"):
-                    return True
-            except Exception:
-                pass
-            time.sleep(0.1)
-        # Path created but not yet publishing within budget — still return True:
-        # the browser's WHEP retry will pick it up once the source connects.
-        _log(f"[mediamtx] active path not ready within budget for {instance_name}")
-        return True
 
     def whep_url(self, instance_name: str, host: str) -> str:
         return f"http://{host}:{WHEP_PORT}/{instance_name}/whep"

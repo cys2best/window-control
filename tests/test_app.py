@@ -69,7 +69,8 @@ def test_select_instance_ok():
     assert "whep_url" in data
 
 
-def test_select_returns_active_whep():
+def test_select_returns_instance_whep():
+    # Option B: WHEP goes straight to the instance's own path, not a shared mux.
     inst = MagicMock()
     inst.serial = "emulator-5554"
     inst.id = "adb:emulator-5554"
@@ -86,7 +87,7 @@ def test_select_returns_active_whep():
         mock_adb.AdbSession.return_value = mock_session
         r = client.post("/instances/emulator-5554/select")
     if r.status_code == 200:
-        assert r.json()["whep_url"].endswith("/active/whep")
+        assert r.json()["whep_url"].endswith("/instance0/whep")
 
 
 def test_get_windows_alias():

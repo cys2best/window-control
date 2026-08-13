@@ -96,25 +96,9 @@ class InstanceManager:
         _ip = get_best_ip()
         _log(f"[mediamtx] advertising IP for ICE: {_ip}")
         self._ensure_stun(_ip)
-        # Seed the 'active' mux source ONLY from a live user selection. Do NOT
-        # fall back to all_names[0]: at this point no scrcpy session has started
-        # publishing yet, so pointing 'active' at an unpublished path makes
-        # mediamtx eagerly pull it and log a 404 storm ('no one is publishing').
-        # With no selection we pass active_source=None → no 'active' block is
-        # emitted; the first select() materializes it via replace/active once a
-        # publisher exists.
-        with self._lock:
-            _sel = self._active_serial
-        _seed = None
-        if _sel is not None:
-            _sname = instance_name(_sel)
-            if _sname in all_names:
-                _seed = _sname
-        self._mediamtx.start(
-            all_names,
-            tailscale_ip=_ip,
-            active_source=_seed,
-        )
+        # One always-live path per instance; the browser WHEPs directly to the
+        # selected instance's path. No shared 'active' mux to seed or repoint.
+        self._mediamtx.start(all_names, tailscale_ip=_ip)
 
         # Start scrcpy sessions for new devices
         for vm in new_vms:
@@ -151,25 +135,26 @@ class InstanceManager:
     # ── Active session ───────────────────────────────────────────────────────
 
     def select(self, serial: str) -> bool:
+        """Mark an instance active for input routing.
+
+        The browser WHEPs directly to this instance's own mediamtx path, so
+        there is no mux to repoint — select() only records which instance the
+        input path targets. It still ensures the target's scrcpy is publishing
+        (starts a dead session) so the WHEP the client is about to make lands on
+        a live path.
+        """
         with self._lock:
             inst = self._instances.get(serial)
             if inst is None:
                 return False
-        # Only repoint 'active' at an instance whose scrcpy session is actually
-        # publishing. Pointing the mux source at a serial whose session never
-        # came up (or died) makes mediamtx pull a path with no publisher and log
-        # a 404 storm ('no one is publishing to path <name>' / 'active: 404').
-        # Try to bring a dead session up before giving up.
         if not inst.session.alive:
             _log(f"[instance] select {serial}: session not alive — starting")
             inst.session.start()
         if not inst.session.alive:
-            _log(f"[instance] select {serial}: session still not alive — refusing repoint")
+            _log(f"[instance] select {serial}: session still not alive")
             return False
         with self._lock:
             self._active_serial = serial
-        # Repoint the live 'active' mux path outside the lock (network I/O).
-        self._mediamtx.set_active_source(instance_name(serial))
         return True
 
     @property

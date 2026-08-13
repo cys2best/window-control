@@ -108,8 +108,8 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
     @app.post("/instances/{instance_id}/select")
     async def select_instance(instance_id: str, request: Request):
         """Switch active stream. instance_id is the ADB serial (no prefix)."""
-        # select() does blocking network I/O (set_active_source retries) — offload
-        # so it never stalls the event loop / websocket input path.
+        # select() may start a dead scrcpy session (blocking) — offload so it
+        # never stalls the event loop / websocket input path.
         ok = await asyncio.to_thread(instance_manager.select, instance_id)
         if not ok:
             raise HTTPException(status_code=404, detail="Instance not found")
@@ -118,7 +118,8 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
             raise HTTPException(status_code=404, detail="Instance disappeared")
 
         host = get_best_ip() or request.client.host
-        whep_url = f"http://{host}:{WHEP_PORT}/active/whep"
+        # WHEP straight to this instance's own always-live path (no 'active' mux).
+        whep_url = f"http://{host}:{WHEP_PORT}/{inst.name}/whep"
         return {
             "ok": True,
             "id": inst.id,
@@ -185,7 +186,7 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
             raise HTTPException(status_code=404, detail="Instance disappeared")
 
         host = get_best_ip() or request.client.host
-        whep_url = f"http://{host}:{WHEP_PORT}/active/whep"
+        whep_url = f"http://{host}:{WHEP_PORT}/{inst.name}/whep"
         return {"ok": True, "id": req.id, "w": inst.w, "h": inst.h,
                 "whep_url": whep_url,
                 "stun_url": f"stun:{host}:{STUN_PORT}"}

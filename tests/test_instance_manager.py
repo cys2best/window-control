@@ -10,32 +10,22 @@ def test_set_tier_unknown_serial_false():
     assert im.set_tier("emulator-9999", "1080") is False
 
 
-def test_select_unknown_serial_false_no_repoint():
-    calls = []
-
-    class FakeMediamtx(MediamtxManager):
-        def set_active_source(self, name):
-            calls.append(name)
-
-    im = InstanceManager(FakeMediamtx())
+def test_select_unknown_serial_false():
+    im = InstanceManager(MediamtxManager())
     assert im.select("emulator-9999") is False
-    assert calls == []
+    assert im.active is None
 
 
-def test_select_known_serial_repoints():
-    from server.instance_manager import Instance, instance_name
+def test_select_known_serial_marks_active():
+    # Option B: select() no longer repoints a mux; it just records which live
+    # instance is active for input routing. The browser WHEPs to instanceN.
+    from server.instance_manager import Instance
 
-    calls = []
-
-    class FakeMediamtx(MediamtxManager):
-        def set_active_source(self, name):
-            calls.append(name)
-
-    im = InstanceManager(FakeMediamtx())
+    im = InstanceManager(MediamtxManager())
     serial = "emulator-5554"
 
     class FakeSession:
-        alive = True  # select() only repoints a live/publishing session
+        alive = True
 
     inst = Instance(
         {"id": f"adb:{serial}", "title": "t", "ldplayer_index": 0},
@@ -44,21 +34,15 @@ def test_select_known_serial_repoints():
     im._instances[serial] = inst
 
     assert im.select(serial) is True
-    assert calls == [instance_name(serial)]
+    assert im.active is inst
 
 
-def test_select_dead_session_refuses_repoint():
-    # A session that never came up (alive False even after start) must not
-    # repoint 'active' at a path with no publisher — that 404-storms mediamtx.
+def test_select_dead_session_refused():
+    # A session that never comes up (alive False even after start) can't be the
+    # WHEP target — select refuses so the client never WHEPs a sourceless path.
     from server.instance_manager import Instance
 
-    calls = []
-
-    class FakeMediamtx(MediamtxManager):
-        def set_active_source(self, name):
-            calls.append(name)
-
-    im = InstanceManager(FakeMediamtx())
+    im = InstanceManager(MediamtxManager())
     serial = "emulator-5554"
 
     class DeadSession:
@@ -74,4 +58,4 @@ def test_select_dead_session_refuses_repoint():
     im._instances[serial] = inst
 
     assert im.select(serial) is False
-    assert calls == []
+    assert im.active is None

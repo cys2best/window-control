@@ -36,23 +36,17 @@ def test_not_running_initially():
     assert not m.running
 
 
-def test_generate_config_active_path():
-    from config import MEDIAMTX_PORT
-    cfg = _generate_config(["instance0", "instance1"], active_source="instance1")
-    assert "active:" in cfg
-    assert f"rtsp://localhost:{MEDIAMTX_PORT}/instance1" in cfg
+def test_generate_config_one_path_per_instance():
+    # Each instance is its own always-live path; there is no shared 'active' mux.
+    cfg = _generate_config(["instance0", "instance1"])
+    assert "  instance0:" in cfg
+    assert "  instance1:" in cfg
 
 
-def test_generate_config_no_active_when_none():
-    cfg = _generate_config(["instance0"])
-    assert "\n  active:" not in cfg
-
-
-def test_generate_config_active_source_uses_tcp_transport():
-    # The 'active' mux source must pull over TCP; the default UDP pull times out
-    # ('UDP timeout') against our TCP-only scrcpy publisher.
-    cfg = _generate_config(["instance0"], active_source="instance0")
-    assert "rtspTransport: tcp" in cfg
+def test_generate_config_has_no_active_path():
+    # Option B removed the 'active' mux entirely — regression guard.
+    cfg = _generate_config(["instance0", "instance1"])
+    assert "active:" not in cfg
 
 
 def test_generate_config_api_enabled():
@@ -61,52 +55,14 @@ def test_generate_config_api_enabled():
     assert "apiAddress: 127.0.0.1:9997" in cfg
 
 
-def test_set_active_source_records_current():
+def test_no_set_active_source_method():
+    # The mux-repoint API is gone; switching is a direct WHEP to instanceN.
     m = MediamtxManager()
-    m.set_active_source("instance0")   # no process running → should not raise
-    assert m._active_source == "instance0"
+    assert not hasattr(m, "set_active_source")
 
 
-def test_active_source_initially_none():
+def test_start_accepts_instance_paths_without_active_source():
+    # start() no longer takes/records an active_source.
     m = MediamtxManager()
-    assert m._active_source is None
-
-
-def test_set_active_source_not_running_makes_no_network_call():
-    # When not running, set_active_source must return before any network I/O.
-    import server.mediamtx_manager as mm
-    called = {"urlopen": False}
-    orig = mm.__dict__.get("urllib", None)
-    m = MediamtxManager()
-    # Patch urllib.request.urlopen defensively via sys.modules if imported lazily.
-    import urllib.request
-    real_urlopen = urllib.request.urlopen
-
-    def fake_urlopen(*a, **k):
-        called["urlopen"] = True
-        raise AssertionError("network call made while not running")
-
-    urllib.request.urlopen = fake_urlopen
-    try:
-        m.set_active_source("instance1")
-    finally:
-        urllib.request.urlopen = real_urlopen
-    assert called["urlopen"] is False
-    assert m._active_source == "instance1"
-
-
-def test_start_sets_active_source_state():
-    # start() should record active_source even if the mediamtx exe is absent
-    # (Popen may fail, but _active_source is set before spawn).
-    m = MediamtxManager()
-    m.start(["instance0", "instance1"], active_source="instance0")
-    assert m._active_source == "instance0"
-
-
-def test_start_falls_back_to_current_active_source_when_none():
-    # A restart with active_source=None must NOT blank a live active path:
-    # start() falls back to the manager's current _active_source.
-    m = MediamtxManager()
-    m._active_source = "instance0"
-    m.start(["instance0", "instance1"], active_source=None)
-    assert m._active_source == "instance0"
+    m.start(["instance0", "instance1"])  # exe likely absent; must not raise
+    assert not hasattr(m, "_active_source")

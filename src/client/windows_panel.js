@@ -72,13 +72,11 @@ async function selectWindow(id, serial) {
   try {
     const r = await fetch(`/instances/${_serial}/select`, { method: 'POST' });
     const data = await r.json();
-    // Repointing the mediamtx 'active' path's source (server-side) tears down
-    // every reader of that path — the live WebRTC PC included (mediamtx logs
-    // 'torn down by … / path is closing'). The old assumption that the video
-    // "swaps automatically" was wrong: the PC dies, and waiting for its ICE to
-    // reach 'failed' takes ~15s, which is the slow-switch delay. So re-negotiate
-    // WebRTC immediately against the (already repointed, already ready) 'active'
-    // path instead of waiting for the dead PC to time out.
+    // Each instance has its own always-live mediamtx path; the select response
+    // carries that instance's WHEP URL. Switching is a fresh WHEP negotiation to
+    // the new path — initWebRTC closes the old PeerConnection and opens one to
+    // the new instance. No shared mux, no server-side repoint, no reader
+    // teardown to wait out.
     setAdaptiveSerial(_serial);
     initWebRTC(id, data.whep_url, data.stun_url, _serial);
   } catch (_) {}
