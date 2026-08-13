@@ -10,6 +10,7 @@ import threading
 import time
 import traceback
 
+from config import DEFAULT_TIER
 from server import adb_manager
 from server.scrcpy_session import ScrcpySession
 from server.mediamtx_manager import MediamtxManager
@@ -49,6 +50,7 @@ class Instance:
         self.w = w
         self.h = h
         self.session = session
+        self.tier = DEFAULT_TIER
 
 
 class InstanceManager:
@@ -143,6 +145,28 @@ class InstanceManager:
             if self._active_serial and self._active_serial in self._instances:
                 return self._instances[self._active_serial]
             return None
+
+    def set_tier(self, serial: str, tier: str) -> bool:
+        """Update quality tier for a specific instance.
+
+        Routes to the instance's session, which validates the tier and restarts
+        if running. Updates Instance.tier on success.
+
+        Args:
+            serial: Device serial (e.g., "emulator-5554").
+            tier: Quality tier name (must be in QUALITY_TIERS).
+
+        Returns:
+            True if tier was accepted/set, False if serial unknown or tier invalid.
+        """
+        with self._lock:
+            inst = self._instances.get(serial)
+        if inst is None:
+            return False
+        ok = inst.session.set_tier(tier)
+        if ok:
+            inst.tier = tier
+        return ok
 
     # ── REST data ────────────────────────────────────────────────────────────
 
