@@ -53,7 +53,7 @@ import threading
 import time
 import traceback
 
-from config import ASSETS_DIR
+from config import ASSETS_DIR, QUALITY_TIERS, DEFAULT_TIER
 
 _SCRCPY_BASE_PORT = 27183   # instance 0 → 27183, instance 1 → 27184, …
 _SERVER_JAR = "scrcpy-server"  # filename in assets/scrcpy/
@@ -92,6 +92,28 @@ def _server_jar_path() -> str:
     return os.path.join(ASSETS_DIR, "scrcpy", _SERVER_JAR)
 
 
+def build_scrcpy_args(tier: str, scid: int) -> list[str]:
+    """Build scrcpy-server arguments from a quality tier.
+
+    Returns the app_process arg tokens (the part after `com.genymobile.scrcpy.Server 3.1`).
+    Includes max_size, bit_rate, max_fps from the tier, plus video_encoder_options and scid.
+    """
+    t = QUALITY_TIERS.get(tier, QUALITY_TIERS[DEFAULT_TIER])
+    return [
+        "tunnel_forward=true",
+        "video_codec=h264",
+        f"max_size={t['max_size']}",
+        f"bit_rate={t['bit_rate']}",
+        f"max_fps={t['max_fps']}",
+        "send_device_meta=true",
+        "send_frame_meta=true",
+        "control=true",
+        "audio=false",
+        "video_encoder_options=i-frame-interval=1",
+        f"scid={scid:x}",
+    ]
+
+
 def _recvall(sock: socket.socket, n: int) -> bytes:
     buf = b""
     while len(buf) < n:
@@ -102,7 +124,7 @@ def _recvall(sock: socket.socket, n: int) -> bytes:
     return buf
 
 
-def _start_server(adb: str, serial: str, port: int, scid: int) -> bool:
+def _start_server(adb: str, serial: str, port: int, scid: int, tier: str) -> bool:
     """Push server jar, launch it, set up ONE adb forward.
 
     With tunnel_forward=true, scrcpy-server opens a single LocalServerSocket and
@@ -131,13 +153,8 @@ def _start_server(adb: str, serial: str, port: int, scid: int) -> bool:
             [
                 adb, "-s", serial, "shell",
                 "CLASSPATH=/data/local/tmp/scrcpy-server.jar"
-                f" app_process / com.genymobile.scrcpy.Server 3.1"
-                f" tunnel_forward=true video_codec=h264"
-                f" max_fps=30 bit_rate=4000000"
-                f" send_device_meta=true send_frame_meta=true"
-                f" control=true audio=false"
-                f" video_encoder_options=i-frame-interval=2"
-                f" scid={scid:x}",
+                " app_process / com.genymobile.scrcpy.Server 3.1 "
+                + " ".join(build_scrcpy_args(tier, scid)),
             ],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -268,12 +285,13 @@ class ScrcpySession:
     """Manages scrcpy-server capture + ffmpeg RTSP push for one LDPlayer instance."""
 
     def __init__(self, serial: str, instance_index: int, rtsp_url: str,
-                 w: int, h: int):
+                 w: int, h: int, tier: str = DEFAULT_TIER):
         self.serial = serial
         self.instance_index = instance_index
         self.rtsp_url = rtsp_url
         self.w = w
         self.h = h
+        self.tier = tier
         self._tcp_port = _SCRCPY_BASE_PORT + instance_index
         self._ffmpeg_proc: subprocess.Popen | None = None
         self._stream_thread: threading.Thread | None = None
@@ -295,7 +313,7 @@ class ScrcpySession:
             self._stop_locked()
             self._running = True
 
-        if not _start_server(adb, self.serial, self._tcp_port, self.instance_index):
+        if not _start_server(adb, self.serial, self._tcp_port, self.instance_index, self.tier):
             with self._lock:
                 self._running = False
             return False
