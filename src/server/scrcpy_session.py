@@ -359,6 +359,17 @@ class ScrcpySession:
             with self._lock:
                 self._stop_locked()
                 self._running = True
+                old_thread = self._stream_thread
+
+            # Wait for the PREVIOUS stream thread to fully exit before launching a
+            # new scrcpy-server on the same TCP port. _stop_locked signals it
+            # (kills ffmpeg, shuts the video socket) but does not block; if we
+            # raced ahead, the old thread would still hold/close the port while
+            # the new server tries to bind it, and the new handshake reads 0
+            # bytes ('handshake truncated'). Joining here is the actual fix the
+            # restart lock alone did not provide.
+            if old_thread is not None and old_thread is not threading.current_thread():
+                old_thread.join(timeout=5)
 
             if not _start_server(adb, self.serial, self._tcp_port, self.instance_index, self.tier):
                 with self._lock:

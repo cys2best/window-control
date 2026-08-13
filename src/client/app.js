@@ -17,7 +17,7 @@ const _TIER_ORDER = ["480", "720", "1080", "1440"];
 let _currentTier = "720";
 let _tierManualUntil = 0;      // ms epoch; manual override wins until then
 let _adaptiveTimer = null;
-let _goodStreak = 0;           // consecutive good samples (for step-up debounce)
+let _badStreak = 0;            // consecutive congested samples (for step-down debounce)
 let _lastTierChange = 0;
 let _adaptiveSerial = null;
 
@@ -56,23 +56,26 @@ async function _sampleAndAdapt() {
     }
   });
   if (!seen) return;
-  if (loss > 0.03 || rtt > 250) {
-    _goodStreak = 0;
-    await _applyTier(_stepTier(-1));
-  } else if (loss < 0.01 && rtt < 120) {
-    _goodStreak += 1;
-    if (_goodStreak >= 3) {  // ~15s at 5s cadence
-      _goodStreak = 0;
-      await _applyTier(_stepTier(+1));
+  // Downgrade-only adaptation. Each tier change RESTARTS scrcpy (resolution is
+  // set at the encoder), which drops the stream for ~2s and re-negotiates the
+  // 'active' source. Auto-UPGRADE on a healthy link therefore caused a restart
+  // storm — the stream stepped 720→1080→1280→… every ~15s and never settled,
+  // making game control unusable. So we only ever step DOWN, and only under
+  // real, sustained congestion. Upgrades are a deliberate manual action.
+  if (loss > 0.08 || rtt > 400) {
+    _badStreak += 1;
+    if (_badStreak >= 3) {   // ~15s sustained before we pay a restart
+      _badStreak = 0;
+      await _applyTier(_stepTier(-1));
     }
   } else {
-    _goodStreak = 0;
+    _badStreak = 0;
   }
 }
 
 function startAdaptiveQuality(serial) {
   _adaptiveSerial = serial;
-  _goodStreak = 0;
+  _badStreak = 0;
   stopAdaptiveQuality();
   _adaptiveTimer = setInterval(_sampleAndAdapt, 5000);
 }
@@ -89,7 +92,7 @@ function setAdaptiveSerial(serial) {
   _currentSerial = serial;
   _adaptiveSerial = serial;
   _currentTier = "720";
-  _goodStreak = 0;
+  _badStreak = 0;
 }
 
 // Drag state
