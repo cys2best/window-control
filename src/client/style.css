@@ -101,17 +101,17 @@ html, body {
 }
 
 /* Landscape rotate: device is portrait, stream is landscape. Rotate the
-   container 90° CW so the stream fills the tall viewport sideways. Pre-rotation
-   box is (viewport-height) x (viewport-width); rotate(90) then translate(0,-W)
-   maps it exactly onto the full viewport. The toolbar floats on top (z-40), so
-   the container spans the whole screen. Touch coords are remapped in JS
-   (normalizeCoords handles the _rotated case). */
+   container 90° CCW so the stream fills the tall viewport sideways with the
+   game's RIGHT edge on the physical right (where the toolbar lives). Pre-
+   rotation box is (viewport-height) x (viewport-width); rotate(-90) then
+   translate(-100vh,0) maps it onto the full viewport. The toolbar floats on top
+   (z-40). Touch coords are remapped in JS (normalizeCoords handles _rotated). */
 body.rotated #stream-container {
   top: 0; left: 0; right: auto; bottom: auto;
   width: 100vh;
   height: 100vw;
   transform-origin: 0 0;
-  transform: rotate(90deg) translate(0, -100vw);
+  transform: rotate(-90deg) translate(-100vh, 0);
 }
 
 #stream-img,

@@ -287,12 +287,12 @@ function normalizeCoords(clientX, clientY) {
   };
 }
 
-// Rotated (body.rotated) touch mapping. The container is rotated 90° CW, so we
+// Rotated (body.rotated) touch mapping. The container is rotated 90° CCW, so we
 // can't trust its getBoundingClientRect. Instead map screen coords into the
 // container's local (pre-rotation) frame, then apply object-fit:contain letter-
 // boxing against the swapped viewport dimensions.
 //
-// Screen (sx, sy) in viewport W×H maps to local (u, v) = (sy, W - sx), where the
+// Screen (sx, sy) in viewport W×H maps to local (u, v) = (H - sy, sx), where the
 // local box is H wide (stream horizontal) × W tall (stream vertical).
 function _normalizeCoordsRotated(sx, sy) {
   const W = window.innerWidth;
@@ -300,8 +300,8 @@ function _normalizeCoordsRotated(sx, sy) {
   const nat = _streamNaturalSize();
 
   // Local frame: horizontal axis length H, vertical axis length W.
-  const u = sy;          // along stream width  (0..H)
-  const v = W - sx;      // along stream height (0..W)
+  const u = H - sy;      // along stream width  (0..H)
+  const v = sx;          // along stream height (0..W)
 
   let contentW = H, contentH = W, offsetX = 0, offsetY = 0;
   if (nat) {
