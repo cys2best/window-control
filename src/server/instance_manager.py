@@ -167,6 +167,11 @@ class InstanceManager:
             self._active_serial = serial
         return True
 
+    def get(self, serial: str) -> Instance | None:
+        """Return the tracked Instance for a serial, or None."""
+        with self._lock:
+            return self._instances.get(serial)
+
     @property
     def active(self) -> Instance | None:
         with self._lock:

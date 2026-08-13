@@ -103,6 +103,27 @@ def test_select_returns_instance_whep():
         assert r.json()["whep_url"].endswith("/instance0/whep")
 
 
+def test_keyframe_requests_idr_on_instance():
+    # Switch prefetch: POST /keyframe forces a source-side IDR so a fresh WHEP
+    # paints instantly under copy-mux (no ffmpeg GOP).
+    inst = MagicMock()
+    client, im = _make_client()
+    im.get.return_value = inst
+    r = client.post("/instances/emulator-5554/keyframe")
+    assert r.status_code == 200
+    assert r.json()["ok"] is True
+    inst.session.control.request_idr.assert_called_once()
+
+
+def test_keyframe_unknown_instance_is_noop_ok():
+    # Unknown instance must not error — prefetch is best-effort fire-and-forget.
+    client, im = _make_client()
+    im.get.return_value = None
+    r = client.post("/instances/emulator-9999/keyframe")
+    assert r.status_code == 200
+    assert r.json()["ok"] is True
+
+
 def test_get_windows_alias():
     """GET /windows should return same as /instances."""
     instances = [{"id": "adb:emulator-5554", "serial": "emulator-5554",

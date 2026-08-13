@@ -2,6 +2,19 @@
 let _windows = [];
 let _activeId = null;
 
+// Switch prefetch: request a keyframe for an instance the user is about to
+// switch to (touchstart / hover), so the IDR is already in flight before the
+// select's WHEP negotiates. Throttled per serial so touchstart + mouseenter (or
+// a jittery hover) don't spam the encoder with reset requests.
+const _kfPrefetchAt = {};
+function prefetchKeyframe(serial) {
+  if (!serial) return;
+  const now = Date.now();
+  if (now - (_kfPrefetchAt[serial] || 0) < 1500) return;
+  _kfPrefetchAt[serial] = now;
+  fetch(`/instances/${serial}/keyframe`, { method: 'POST' }).catch(() => {});
+}
+
 function showScreen(id) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   document.getElementById(id).classList.add('active');
@@ -49,6 +62,13 @@ function renderWindowsGrid() {
     card.appendChild(thumb);
     card.appendChild(title);
     card.addEventListener('click', () => selectWindow(w.id, w.serial));
+    // Switch prefetch: kick a keyframe the instant the user shows intent
+    // (finger down / pointer over the tile), before the click's select() even
+    // fires. Copy-mux has no ffmpeg GOP, so this source-side IDR is what a fresh
+    // WHEP needs to paint — doing it now hides the IDR+encode time behind the
+    // tap gesture, so the switch feels instant.
+    card.addEventListener('touchstart', () => prefetchKeyframe(serial), { passive: true });
+    card.addEventListener('mouseenter', () => prefetchKeyframe(serial));
     grid.appendChild(card);
   });
 }
@@ -153,6 +173,9 @@ function renderSwitchList() {
       closeSwitchDrawer();
       if (w.id !== _activeId) selectWindow(w.id, w.serial);
     });
+    // Prefetch a keyframe on intent so the drawer switch paints instantly.
+    row.addEventListener('touchstart', () => prefetchKeyframe(w.serial), { passive: true });
+    row.addEventListener('mouseenter', () => prefetchKeyframe(w.serial));
     list.appendChild(row);
   });
 }

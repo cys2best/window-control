@@ -177,6 +177,26 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
             "stun_url": f"stun:{host}:{STUN_PORT}",
         }
 
+    @app.post("/instances/{instance_id}/keyframe")
+    async def request_keyframe(instance_id: str):
+        """Ask an instance's encoder to emit an IDR now (switch prefetch).
+
+        The list page fires this on touchstart/hover of a tile — before the user
+        even releases the tap — so by the time the switch's WHEP negotiates, a
+        fresh keyframe is already in flight and the new stream paints instantly.
+        Copy-mux has no ffmpeg GOP, so this source-side IDR is what makes a switch
+        fast. Best-effort and fire-and-forget: unknown instance or an unconnected
+        control socket is a silent no-op (the 2s heartbeat and select()'s own
+        request_idr still cover it).
+        """
+        inst = instance_manager.get(instance_id)
+        if inst is not None:
+            try:
+                inst.session.control.request_idr()
+            except Exception:
+                pass
+        return {"ok": True}
+
     @app.post("/instances/{instance_id}/quality")
     async def set_instance_quality(instance_id: str, req: QualityTierRequest):
         """Set stream quality tier for an instance."""
