@@ -33,3 +33,14 @@ def test_session_defaults_to_default_tier():
     from config import DEFAULT_TIER
     s = ScrcpySession("emulator-5554", 0, "rtsp://localhost:8554/instance0", 720, 1280)
     assert s.tier == DEFAULT_TIER
+
+
+def test_ffmpeg_args_are_copy_not_reencode():
+    from server.scrcpy_session import build_ffmpeg_args
+    args = build_ffmpeg_args("ffmpeg", "rtsp://localhost:8554/instance0")
+    assert "-c:v" in args
+    assert args[args.index("-c:v") + 1] == "copy"
+    assert "libx264" not in args
+    assert "-f" in args and "rtsp" in args
+    assert "-rtsp_transport" in args and "tcp" in args
+    assert args[-1] == "rtsp://localhost:8554/instance0"

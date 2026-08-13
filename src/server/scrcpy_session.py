@@ -114,6 +114,29 @@ def build_scrcpy_args(tier: str, scid: int) -> list[str]:
     ]
 
 
+def build_ffmpeg_args(ffmpeg_exe: str, rtsp_url: str) -> list[str]:
+    """Build ffmpeg arguments for H.264 copy-mux to RTSP (no re-encode).
+
+    Args:
+        ffmpeg_exe: Path to ffmpeg executable.
+        rtsp_url: RTSP destination URL.
+
+    Returns:
+        Full ffmpeg argv for streaming via mediamtx.
+    """
+    return [
+        ffmpeg_exe,
+        "-loglevel", "warning",
+        "-fflags", "+genpts",
+        "-f", "h264",
+        "-i", "pipe:0",
+        "-c:v", "copy",
+        "-f", "rtsp",
+        "-rtsp_transport", "tcp",
+        rtsp_url,
+    ]
+
+
 def _recvall(sock: socket.socket, n: int) -> bytes:
     buf = b""
     while len(buf) < n:
@@ -361,22 +384,7 @@ class ScrcpySession:
             video_sock.settimeout(None)
 
             ffmpeg_proc = subprocess.Popen(
-                [
-                    ffmpeg_exe,
-                    "-loglevel", "warning",
-                    "-use_wallclock_as_timestamps", "1",
-                    "-f", "h264",
-                    "-i", "pipe:0",
-                    "-c:v", "libx264",
-                    "-preset", "ultrafast",
-                    "-tune", "zerolatency",
-                    "-g", "60",
-                    "-sc_threshold", "0",
-                    "-b:v", "4M",
-                    "-f", "rtsp",
-                    "-rtsp_transport", "tcp",
-                    self.rtsp_url,
-                ],
+                build_ffmpeg_args(ffmpeg_exe, self.rtsp_url),
                 stdin=subprocess.PIPE,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
