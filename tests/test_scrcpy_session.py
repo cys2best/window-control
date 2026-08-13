@@ -24,7 +24,7 @@ def test_build_scrcpy_args_uses_tier():
     assert f"max_size={QUALITY_TIERS['1080']['max_size']}" in joined
     assert f"bit_rate={QUALITY_TIERS['1080']['bit_rate']}" in joined
     assert f"max_fps={QUALITY_TIERS['1080']['max_fps']}" in joined
-    assert "i-frame-interval=1" in joined
+    assert "i-frame-interval=2" in joined  # keyframe every ~2s for fast WebRTC first-frame
     assert "scid=1a" in joined
 
 
