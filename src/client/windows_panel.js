@@ -119,6 +119,43 @@ function startWindowsPolling() {
   }, 60000);
 }
 
+// ── Quick-switch drawer ──────────────────────────────────────────
+function openSwitchDrawer() {
+  renderSwitchList();
+  const d = document.getElementById('switch-drawer');
+  const s = document.getElementById('switch-drawer-scrim');
+  if (s) s.style.display = 'block';
+  if (d) d.classList.remove('closed');
+}
+
+function closeSwitchDrawer() {
+  const d = document.getElementById('switch-drawer');
+  const s = document.getElementById('switch-drawer-scrim');
+  if (d) d.classList.add('closed');
+  if (s) s.style.display = 'none';
+}
+
+function renderSwitchList() {
+  const list = document.getElementById('switch-drawer-list');
+  if (!list) return;
+  list.innerHTML = '';
+  _windows.forEach(w => {
+    const row = document.createElement('button');
+    row.className = 'switch-row' + (w.id === _activeId ? ' active' : '');
+    // Small Android glyph + the instance title, mirroring the reference UI.
+    row.innerHTML =
+      '<svg class="switch-row-ico" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">' +
+      '<path d="M6 18a1 1 0 0 0 1 1h1v3a1 1 0 0 0 2 0v-3h4v3a1 1 0 0 0 2 0v-3h1a1 1 0 0 0 1-1V8H6v10zM3.5 8A1.5 1.5 0 0 0 2 9.5v5a1.5 1.5 0 0 0 3 0v-5A1.5 1.5 0 0 0 3.5 8zm17 0A1.5 1.5 0 0 0 19 9.5v5a1.5 1.5 0 0 0 3 0v-5A1.5 1.5 0 0 0 20.5 8zM15.53 2.16l1.3-1.3a.5.5 0 0 0-.7-.7l-1.48 1.48A5.98 5.98 0 0 0 12 1c-.96 0-1.86.22-2.66.62L7.87.14a.5.5 0 1 0-.7.7l1.3 1.3A5.99 5.99 0 0 0 6 7h12a5.99 5.99 0 0 0-2.47-4.84zM10 5H9V4h1v1zm5 0h-1V4h1v1z"/>' +
+      '</svg><span class="switch-row-label"></span>';
+    row.querySelector('.switch-row-label').textContent = w.title;
+    row.addEventListener('click', () => {
+      closeSwitchDrawer();
+      if (w.id !== _activeId) selectWindow(w.id, w.serial);
+    });
+    list.appendChild(row);
+  });
+}
+
 function initDrawer() {
   document.getElementById('back-btn').addEventListener('click', () => {
     showScreen('screen-list');
@@ -129,4 +166,9 @@ function initDrawer() {
 
   document.getElementById('prev-btn').addEventListener('click', selectPrev);
   document.getElementById('next-btn').addEventListener('click', selectNext);
+
+  const switchBtn = document.getElementById('switch-btn');
+  if (switchBtn) switchBtn.addEventListener('click', openSwitchDrawer);
+  const scrim = document.getElementById('switch-drawer-scrim');
+  if (scrim) scrim.addEventListener('click', closeSwitchDrawer);
 }

@@ -177,7 +177,9 @@ html, body {
   flex-shrink: 0;
   transition: background 0.12s ease, transform 0.08s ease, border-color 0.12s ease;
 }
+.rt-btn svg { width: 21px; height: 21px; display: block; }
 .rt-btn:hover { background: rgba(255,255,255,0.10); }
+#list-refresh-btn svg { width: 20px; height: 20px; }
 .rt-btn:active {
   background: rgba(233,69,96,0.85);
   border-color: rgba(233,69,96,0.9);
@@ -228,6 +230,55 @@ html, body {
   border: none; border-radius: 11px;
   color: #fff; font-size: 16px; font-weight: 600;
   cursor: pointer;
+}
+
+/* ── QUICK-SWITCH DRAWER ────────────────────────────────────── */
+#switch-drawer {
+  position: fixed;
+  top: 0; left: 0; bottom: 0;
+  width: min(300px, 78vw);
+  z-index: 70;
+  background: rgba(16,18,26,0.98);
+  border-right: 1px solid rgba(255,255,255,0.12);
+  display: flex; flex-direction: column;
+  transform: translateX(0);
+  transition: transform 0.22s cubic-bezier(0.4,0,0.2,1);
+  padding-top: env(safe-area-inset-top);
+  padding-left: env(safe-area-inset-left);
+}
+#switch-drawer.closed { transform: translateX(-105%); }
+#switch-drawer-header {
+  padding: 16px 18px 10px;
+  font-size: 18px; font-weight: 700; color: #fff;
+}
+#switch-drawer-list {
+  flex: 1; overflow-y: auto;
+  padding: 4px 10px 14px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.switch-row {
+  display: flex; align-items: center; gap: 12px;
+  width: 100%;
+  padding: 13px 14px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.10);
+  border-radius: 12px;
+  color: #eef1f8; font-size: 16px; text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.switch-row.active {
+  background: rgba(233,69,96,0.85);
+  border-color: rgba(233,69,96,0.9);
+  color: #fff;
+}
+.switch-row:active { transform: scale(0.98); }
+.switch-row-ico { width: 20px; height: 20px; flex-shrink: 0; opacity: 0.85; }
+.switch-row-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#switch-drawer-scrim {
+  position: fixed; inset: 0;
+  z-index: 65;
+  background: rgba(0,0,0,0.45);
 }
 
 /* ── STATS OVERLAY ──────────────────────────────────────────── */

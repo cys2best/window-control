@@ -15,7 +15,9 @@
   <div id="screen-list" class="screen active">
     <div id="list-header">
       <span id="list-title">Windows</span>
-      <button id="list-refresh-btn" title="Refresh">&#8635;</button>
+      <button id="list-refresh-btn" title="Refresh" aria-label="Refresh">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+      </button>
     </div>
     <div id="windows-grid"></div>
   </div>
@@ -36,14 +38,29 @@
       <div class="hud-pill" id="fps-pill" style="display:none">-- fps</div>
       <div class="hud-pill" id="status-pill">…</div>
       <div class="rt-spacer"></div>
-      <button class="rt-btn" id="prev-btn" title="Previous instance">&#9650;</button>
-      <button class="rt-btn" id="next-btn" title="Next instance">&#9660;</button>
+      <button class="rt-btn" id="switch-btn" title="Switch instance" aria-label="Switch instance">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      </button>
+      <button class="rt-btn" id="prev-btn" title="Previous instance" aria-label="Previous instance">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
+      </button>
+      <button class="rt-btn" id="next-btn" title="Next instance" aria-label="Next instance">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
       <div class="rt-spacer"></div>
-      <button class="rt-btn" id="settings-btn" title="Settings">&#9881;</button>
-      <button class="rt-btn" id="keyboard-btn" title="Keyboard">&#9000;</button>
-      <button class="rt-btn" id="fullscreen-btn" title="Fullscreen">&#x26F6;</button>
+      <button class="rt-btn" id="settings-btn" title="Settings" aria-label="Settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </button>
+      <button class="rt-btn" id="keyboard-btn" title="Keyboard" aria-label="Keyboard">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><line x1="6" y1="10" x2="6" y2="10"/><line x1="10" y1="10" x2="10" y2="10"/><line x1="14" y1="10" x2="14" y2="10"/><line x1="18" y1="10" x2="18" y2="10"/><line x1="7" y1="14" x2="17" y2="14"/></svg>
+      </button>
+      <button class="rt-btn" id="fullscreen-btn" title="Fullscreen" aria-label="Fullscreen">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+      </button>
       <div class="rt-spacer"></div>
-      <button class="rt-btn" id="back-btn" title="Back to windows">&#8617;</button>
+      <button class="rt-btn" id="back-btn" title="Back to windows" aria-label="Back to windows">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 10 4 15 9 20"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/></svg>
+      </button>
     </div>
 
     <!-- Settings popup (gear) -->
@@ -69,6 +86,13 @@
         <button id="settings-close">Done</button>
       </div>
     </div>
+
+    <!-- Quick-switch drawer (slides from left) -->
+    <div id="switch-drawer" class="closed">
+      <div id="switch-drawer-header">Instances</div>
+      <div id="switch-drawer-list"></div>
+    </div>
+    <div id="switch-drawer-scrim" style="display:none"></div>
 
     <!-- hidden keyboard input -->
     <input id="keyboard-input" type="text" autocomplete="off" autocorrect="off" autocapitalize="off">
