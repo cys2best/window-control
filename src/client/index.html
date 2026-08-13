@@ -39,20 +39,35 @@
       <button class="rt-btn" id="prev-btn" title="Previous instance">&#9650;</button>
       <button class="rt-btn" id="next-btn" title="Next instance">&#9660;</button>
       <div class="rt-spacer"></div>
-      <button class="rt-btn" id="quality-btn" title="Quality">HD</button>
-      <button class="rt-btn" id="stats-btn" title="Show stats">&#128202;</button>
+      <button class="rt-btn" id="settings-btn" title="Settings">&#9881;</button>
       <button class="rt-btn" id="keyboard-btn" title="Keyboard">&#9000;</button>
       <button class="rt-btn" id="fullscreen-btn" title="Fullscreen">&#x26F6;</button>
       <div class="rt-spacer"></div>
       <button class="rt-btn" id="back-btn" title="Back to windows">&#8617;</button>
     </div>
 
-    <!-- Quality tier menu (hidden until quality-btn tapped) -->
-    <div id="quality-menu" style="display:none">
-      <button class="q-opt" data-tier="480">480p</button>
-      <button class="q-opt" data-tier="720">720p</button>
-      <button class="q-opt" data-tier="1080">1080p</button>
-      <button class="q-opt" data-tier="1440">1440p</button>
+    <!-- Settings popup (gear) -->
+    <div id="settings-overlay" style="display:none">
+      <div id="settings-panel">
+        <div class="settings-title">Settings</div>
+
+        <div class="settings-section">Quality</div>
+        <div class="settings-hint">Auto adapts to your network. A fixed tier pins the resolution.</div>
+        <div id="quality-opts">
+          <button class="q-opt" data-tier="auto">Auto</button>
+          <button class="q-opt" data-tier="480">480p</button>
+          <button class="q-opt" data-tier="720">720p</button>
+          <button class="q-opt" data-tier="1080">1080p</button>
+          <button class="q-opt" data-tier="1440">1440p</button>
+        </div>
+
+        <label class="settings-row">
+          <span>Show live stats</span>
+          <input type="checkbox" id="stats-toggle">
+        </label>
+
+        <button id="settings-close">Done</button>
+      </div>
     </div>
 
     <!-- hidden keyboard input -->

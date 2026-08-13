@@ -183,31 +183,52 @@ html, body {
   border-color: rgba(233,69,96,0.9);
   transform: scale(0.92);
 }
-#quality-btn { font-size: 13px; font-weight: 700; letter-spacing: 0.5px; }
-
-/* ── QUALITY MENU ───────────────────────────────────────────── */
-#quality-menu {
-  position: absolute;
-  top: 12px; right: 64px;
-  z-index: 40;
-  display: flex; flex-direction: column; gap: 6px;
-  padding: 8px;
-  background: rgba(18,20,28,0.92);
-  border: 1px solid rgba(255,255,255,0.14);
-  border-radius: 12px;
-  backdrop-filter: blur(8px);
+/* ── SETTINGS POPUP ─────────────────────────────────────────── */
+#settings-overlay {
+  position: fixed; inset: 0;
+  z-index: 60;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0,0,0,0.5);
+  backdrop-filter: blur(3px);
 }
+#settings-panel {
+  width: min(340px, 86vw);
+  padding: 20px;
+  background: rgba(20,22,30,0.98);
+  border: 1px solid rgba(255,255,255,0.14);
+  border-radius: 18px;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.settings-title { font-size: 19px; font-weight: 700; color: #fff; }
+.settings-section { font-size: 14px; font-weight: 600; color: #cfd4e2; margin-top: 4px; }
+.settings-hint { font-size: 12px; color: #8b90a0; line-height: 1.4; }
+#quality-opts { display: flex; flex-wrap: wrap; gap: 8px; }
 .q-opt {
-  min-width: 76px;
-  padding: 8px 12px;
+  flex: 1 1 auto; min-width: 60px;
+  padding: 10px 12px;
   background: rgba(255,255,255,0.06);
   border: 1px solid rgba(255,255,255,0.12);
-  border-radius: 9px;
+  border-radius: 10px;
   color: #eef1f8; font-size: 15px;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
 }
-.q-opt:active { background: rgba(233,69,96,0.85); border-color: rgba(233,69,96,0.9); }
+.q-opt.sel { background: rgba(233,69,96,0.85); border-color: rgba(233,69,96,0.9); color: #fff; }
+.q-opt:active { transform: scale(0.95); }
+.settings-row {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 15px; color: #eef1f8;
+  padding: 4px 0;
+}
+.settings-row input[type="checkbox"] { width: 20px; height: 20px; }
+#settings-close {
+  margin-top: 6px;
+  padding: 12px;
+  background: rgba(233,69,96,0.85);
+  border: none; border-radius: 11px;
+  color: #fff; font-size: 16px; font-weight: 600;
+  cursor: pointer;
+}
 
 /* ── STATS OVERLAY ──────────────────────────────────────────── */
 #stats-overlay {

@@ -14,26 +14,32 @@ let _currentSerial = null;     // serial of active instance (for adaptive qualit
 
 // ── Quality tiers ──────────────────────────────────────────────────────────────
 const _TIER_ORDER = ["480", "720", "1080", "1440"];
-// User's preferred tier, persisted across sessions. This is the tier applied on
-// every connect/switch — the whole point of the quality picker. Defaults to
-// 1080 so the app streams above the old hardcoded 720 out of the box.
-let _preferredTier = localStorage.getItem('wc_tier') || "1080";
-let _currentTier = _preferredTier;
-let _tierManualUntil = 0;      // ms epoch; manual override suspends auto-downgrade
+// Preferred quality, persisted. "auto" = let the server's default (720) stand
+// and only adapt DOWN on congestion — this is the safe default: it does NOT
+// POST a tier change on connect, so it can't collide with the just-started
+// scrcpy session (a tier POST during connect restarts scrcpy and races the
+// initial start → truncated handshake → black screen). A specific tier
+// (480/720/1080/1440) is a deliberate pin the user chose.
+let _preferredTier = localStorage.getItem('wc_tier') || "auto";
+let _currentTier = "720";       // server session's starting tier
+let _tierManualUntil = 0;       // ms epoch; manual pin suspends auto-downgrade
 let _adaptiveTimer = null;
-let _badStreak = 0;            // consecutive congested samples (for step-down debounce)
+let _badStreak = 0;             // consecutive congested samples (for step-down debounce)
 let _lastTierChange = 0;
 let _adaptiveSerial = null;
 
-// Apply a tier the user picked: persist it, POST it, update the button label.
+// Apply a quality the user picked. "auto" stops pinning (adaptation resumes);
+// a tier value pins it, persists, and POSTs — but NOT during the connect window
+// (the caller gates that). Never fires on the initial connect.
 async function setPreferredTier(tier) {
-  if (!_TIER_ORDER.includes(tier)) return;
+  if (tier !== "auto" && !_TIER_ORDER.includes(tier)) return;
   _preferredTier = tier;
   localStorage.setItem('wc_tier', tier);
-  _tierManualUntil = Date.now() + 60000;  // user intent wins over auto for 60s
+  _updateQualityLabel();
+  if (tier === "auto") { _tierManualUntil = 0; return; }
+  _tierManualUntil = Date.now() + 60000;  // user pin wins over auto for 60s
   _currentTier = tier;
   _lastTierChange = Date.now();
-  _updateQualityLabel();
   if (_adaptiveSerial) {
     try {
       await fetch(`/instances/${_adaptiveSerial}/quality`, {
@@ -47,7 +53,9 @@ async function setPreferredTier(tier) {
 
 function _updateQualityLabel() {
   const btn = document.getElementById('quality-btn');
-  if (btn) btn.textContent = _preferredTier === "480" ? "SD" :
+  if (!btn) return;
+  btn.textContent = _preferredTier === "auto" ? "AUTO" :
+    _preferredTier === "480" ? "SD" :
     _preferredTier === "720" ? "HD" : _preferredTier + "p";
 }
 
@@ -107,16 +115,24 @@ function startAdaptiveQuality(serial) {
   _adaptiveSerial = serial;
   _badStreak = 0;
   stopAdaptiveQuality();
-  // Push the user's preferred tier to this freshly-connected instance — the
-  // server session starts at its own default (720), so without this the picker
-  // choice wouldn't take effect until the next manual change.
-  if (_preferredTier !== "720") _applyPreferredTierToServer();
+  // If the user PINNED a tier other than the server default, apply it — but not
+  // during the connect window. A tier POST restarts scrcpy; doing that while the
+  // just-started session is still coming up races two starts onto the same port
+  // (truncated handshake → black screen). Wait 4s so the initial stream is live
+  // and its stream thread has settled before we trigger a restart.
+  if (_preferredTier !== "auto" && _preferredTier !== "720") {
+    const target = _adaptiveSerial;
+    setTimeout(() => {
+      if (_adaptiveSerial === target) _applyPreferredTierToServer();
+    }, 4000);
+  }
   _adaptiveTimer = setInterval(_sampleAndAdapt, 5000);
 }
 
 function _applyPreferredTierToServer() {
-  if (!_adaptiveSerial) return;
+  if (!_adaptiveSerial || _preferredTier === "auto") return;
   _currentTier = _preferredTier;
+  _tierManualUntil = Date.now() + 60000;
   fetch(`/instances/${_adaptiveSerial}/quality`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -132,7 +148,7 @@ function stopAdaptiveQuality() {
 function setAdaptiveSerial(serial) {
   _currentSerial = serial;
   _adaptiveSerial = serial;
-  _currentTier = _preferredTier;
+  _currentTier = "720";  // fresh server session starts here
   _badStreak = 0;
 }
 
@@ -581,29 +597,42 @@ document.addEventListener('DOMContentLoaded', () => {
   initFPS();
   initDrawer();
   startWindowsPolling();
-  _updateQualityLabel();
 
-  // Quality picker: toggle menu, pick a tier
-  const qBtn = document.getElementById('quality-btn');
-  const qMenu = document.getElementById('quality-menu');
-  if (qBtn && qMenu) {
-    qBtn.addEventListener('click', () => {
-      qMenu.style.display = qMenu.style.display === 'none' ? 'flex' : 'none';
+  // ── Settings popup (gear) ──────────────────────────────────────────────────
+  const setBtn = document.getElementById('settings-btn');
+  const setOv = document.getElementById('settings-overlay');
+  const setClose = document.getElementById('settings-close');
+  const qOpts = document.getElementById('quality-opts');
+  const statsToggle = document.getElementById('stats-toggle');
+
+  function _markSelectedTier() {
+    if (!qOpts) return;
+    qOpts.querySelectorAll('.q-opt').forEach(b =>
+      b.classList.toggle('sel', b.dataset.tier === _preferredTier));
+  }
+
+  if (setBtn && setOv) {
+    setBtn.addEventListener('click', () => {
+      _markSelectedTier();
+      if (statsToggle) statsToggle.checked =
+        document.getElementById('stats-overlay').style.display !== 'none';
+      setOv.style.display = 'flex';
     });
-    qMenu.querySelectorAll('.q-opt').forEach(b => {
+  }
+  if (setClose) setClose.addEventListener('click', () => { setOv.style.display = 'none'; });
+  if (setOv) setOv.addEventListener('click', e => { if (e.target === setOv) setOv.style.display = 'none'; });
+
+  if (qOpts) {
+    qOpts.querySelectorAll('.q-opt').forEach(b => {
       b.addEventListener('click', () => {
         setPreferredTier(b.dataset.tier);
-        qMenu.style.display = 'none';
+        _markSelectedTier();
       });
     });
   }
-
-  // Stats overlay toggle
-  const sBtn = document.getElementById('stats-btn');
-  if (sBtn) {
-    sBtn.addEventListener('click', () => {
-      const el = document.getElementById('stats-overlay');
-      if (el && el.style.display === 'none') _startStatsOverlay();
+  if (statsToggle) {
+    statsToggle.addEventListener('change', () => {
+      if (statsToggle.checked) _startStatsOverlay();
       else _stopStatsOverlay();
     });
   }
