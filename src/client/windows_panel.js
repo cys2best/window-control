@@ -164,8 +164,27 @@ function initDrawer() {
 
   document.getElementById('list-refresh-btn').addEventListener('click', fetchWindows);
 
-  document.getElementById('prev-btn').addEventListener('click', selectPrev);
-  document.getElementById('next-btn').addEventListener('click', selectNext);
+  // Swipe up/down on the right toolbar switches instances (prev/next).
+  const rt = document.getElementById('right-toolbar');
+  if (rt) {
+    let _swipeY = null;
+    let _swipeFired = false;
+    rt.addEventListener('touchstart', e => {
+      if (e.target.closest('.rt-btn')) return;   // let buttons handle their taps
+      if (e.touches.length !== 1) return;
+      _swipeY = e.touches[0].clientY;
+      _swipeFired = false;
+    }, { passive: true });
+    rt.addEventListener('touchmove', e => {
+      if (_swipeY === null || _swipeFired || e.touches.length !== 1) return;
+      const dy = e.touches[0].clientY - _swipeY;
+      if (Math.abs(dy) < 40) return;             // threshold
+      _swipeFired = true;
+      if (dy < 0) selectNext();                  // swipe up → next
+      else selectPrev();                         // swipe down → prev
+    }, { passive: true });
+    rt.addEventListener('touchend', () => { _swipeY = null; }, { passive: true });
+  }
 
   const switchBtn = document.getElementById('switch-btn');
   if (switchBtn) switchBtn.addEventListener('click', openSwitchDrawer);
