@@ -97,6 +97,24 @@ function _fallbackToMJPEG() {
   initStream();
 }
 
+// Resolve once ICE gathering completes (or after a short cap, so a stuck
+// gatherer can't hang the whole negotiation).
+function waitForIceGatheringComplete(pc, capMs = 2000) {
+  if (pc.iceGatheringState === 'complete') return Promise.resolve();
+  return new Promise(resolve => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      pc.removeEventListener('icegatheringstatechange', check);
+      resolve();
+    };
+    const check = () => { if (pc.iceGatheringState === 'complete') finish(); };
+    pc.addEventListener('icegatheringstatechange', check);
+    setTimeout(finish, capMs);
+  });
+}
+
 async function initWebRTC(windowId, whepUrl) {
   // Cancel any in-flight negotiation
   if (_pc) { try { _pc.close(); } catch(_) {} _pc = null; }
@@ -111,7 +129,11 @@ async function initWebRTC(windowId, whepUrl) {
   if (!_whepUrl) { _fallbackToMJPEG(); _webrtcInProgress = false; return; }
 
   try {
-    _pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+    // No STUN: streaming runs over Tailscale, where host candidates connect
+    // directly. mediamtx advertises the Tailscale IP via webrtcAdditionalHosts.
+    // Adding STUN only delays the (non-trickle) offer while srflx candidates
+    // gather async, which starves the media path and fills the write queue.
+    _pc = new RTCPeerConnection({ iceServers: [] });
 
     const video = document.getElementById('stream-video');
     const img   = document.getElementById('stream-img');
@@ -155,10 +177,17 @@ async function initWebRTC(windowId, whepUrl) {
     await thisPc.setLocalDescription(offer);
     if (_pc !== thisPc) return;
 
+    // WHEP here is non-trickle: the answer is a one-shot HTTP response, so the
+    // offer must carry the full candidate list. Wait for ICE gathering to
+    // finish before POSTing, otherwise the offer has no candidates and no pair
+    // is ever formed (media never flows -> "write queue is full").
+    await waitForIceGatheringComplete(thisPc);
+    if (_pc !== thisPc) return;
+
     const r = await fetch(_whepUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/sdp' },
-      body: offer.sdp,
+      body: thisPc.localDescription.sdp,
     });
     if (_pc !== thisPc) return;
     if (!r || !r.ok) { _fallbackToMJPEG(); return; }
