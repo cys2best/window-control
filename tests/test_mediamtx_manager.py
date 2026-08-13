@@ -94,3 +94,12 @@ def test_start_sets_active_source_state():
     m = MediamtxManager()
     m.start(["instance0", "instance1"], active_source="instance0")
     assert m._active_source == "instance0"
+
+
+def test_start_falls_back_to_current_active_source_when_none():
+    # A restart with active_source=None must NOT blank a live active path:
+    # start() falls back to the manager's current _active_source.
+    m = MediamtxManager()
+    m._active_source = "instance0"
+    m.start(["instance0", "instance1"], active_source=None)
+    assert m._active_source == "instance0"

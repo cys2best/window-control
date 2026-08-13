@@ -108,7 +108,9 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
     @app.post("/instances/{instance_id}/select")
     async def select_instance(instance_id: str, request: Request):
         """Switch active stream. instance_id is the ADB serial (no prefix)."""
-        ok = instance_manager.select(instance_id)
+        # select() does blocking network I/O (set_active_source retries) — offload
+        # so it never stalls the event loop / websocket input path.
+        ok = await asyncio.to_thread(instance_manager.select, instance_id)
         if not ok:
             raise HTTPException(status_code=404, detail="Instance not found")
         inst = instance_manager.active
@@ -133,7 +135,8 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
         """Set stream quality tier for an instance."""
         if req.tier not in TIER_ORDER:
             raise HTTPException(status_code=400, detail="Invalid tier")
-        ok = instance_manager.set_tier(instance_id, req.tier)
+        # set_tier does ~1.8s of blocking scrcpy restart — offload off the loop.
+        ok = await asyncio.to_thread(instance_manager.set_tier, instance_id, req.tier)
         if not ok:
             raise HTTPException(status_code=404, detail="Instance not found")
         return {"ok": True, "tier": req.tier}
@@ -169,11 +172,12 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
         if not req.id.startswith("adb:"):
             raise HTTPException(status_code=400, detail="Invalid id — must be adb:SERIAL")
         serial = req.id[4:]
-        ok = instance_manager.select(serial)
+        # select()/refresh() do blocking network + subprocess work — offload.
+        ok = await asyncio.to_thread(instance_manager.select, serial)
         if not ok:
             # Instance may not be discovered yet — try refresh
-            instance_manager.refresh()
-            ok = instance_manager.select(serial)
+            await asyncio.to_thread(instance_manager.refresh)
+            ok = await asyncio.to_thread(instance_manager.select, serial)
         if not ok:
             raise HTTPException(status_code=404, detail="Instance not found")
         inst = instance_manager.active

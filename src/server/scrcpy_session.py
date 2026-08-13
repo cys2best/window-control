@@ -318,6 +318,7 @@ class ScrcpySession:
         self._tcp_port = _SCRCPY_BASE_PORT + instance_index
         self._ffmpeg_proc: subprocess.Popen | None = None
         self._stream_thread: threading.Thread | None = None
+        self._video_sock: socket.socket | None = None
         self._running = False
         self._lock = threading.Lock()
         # Control socket connects to same port as video — server accepts both sequentially
@@ -362,6 +363,8 @@ class ScrcpySession:
             video_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             video_sock.settimeout(10)
             video_sock.connect(("127.0.0.1", self._tcp_port))
+            with self._lock:
+                self._video_sock = video_sock
 
             _recvall(video_sock, 1)   # dummy byte — sent right after video accept
 
@@ -416,6 +419,9 @@ class ScrcpySession:
         except Exception:
             _log(f"[scrcpy] stream_loop error serial={self.serial}: {traceback.format_exc()[:400]}")
         finally:
+            with self._lock:
+                if self._video_sock is video_sock:
+                    self._video_sock = None
             if video_sock:
                 try:
                     video_sock.close()
@@ -437,12 +443,15 @@ class ScrcpySession:
                              f"{stderr_bytes.decode('utf-8', errors='replace')[:600]}")
                 except Exception:
                     pass
+            # Identity-guard the _running reset: only tear down state if this
+            # thread still owns the current ffmpeg_proc. An OLD stream thread
+            # unblocked after a set_tier restart must NOT clobber the NEW
+            # session's _running=True.
             with self._lock:
                 if self._ffmpeg_proc is ffmpeg_proc:
                     self._ffmpeg_proc = None
+                    self._running = False
             _log(f"[scrcpy] stream_loop exited serial={self.serial}")
-            with self._lock:
-                self._running = False
 
     def stop(self):
         with self._lock:
@@ -450,6 +459,14 @@ class ScrcpySession:
 
     def _stop_locked(self):
         self._running = False
+        # Unblock the _stream_loop's _recvall by shutting down the video socket,
+        # so the blocked read returns immediately instead of hanging (and leaking
+        # the FD) until the next packet arrives.
+        if self._video_sock is not None:
+            try:
+                self._video_sock.shutdown(socket.SHUT_RDWR)
+            except Exception:
+                pass
         if self._ffmpeg_proc:
             try:
                 self._ffmpeg_proc.kill()
@@ -482,5 +499,7 @@ class ScrcpySession:
             was_running = self._running and self._ffmpeg_proc is not None
         if was_running:
             self.stop()
-            self.start()
+            if not self.start():
+                _log(f"[scrcpy] set_tier restart failed serial={self.serial} tier={tier}")
+                return False
         return True

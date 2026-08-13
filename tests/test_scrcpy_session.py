@@ -64,3 +64,19 @@ def test_set_tier_same_is_noop_true():
     from server.scrcpy_session import ScrcpySession
     s = ScrcpySession("emulator-5554", 0, "rtsp://localhost:8554/instance0", 720, 1280)
     assert s.set_tier("720") is True
+
+
+def test_set_tier_returns_false_when_restart_fails():
+    """If the session was running and start() fails on restart, set_tier must
+    return False (not silently report success while leaving the session dead)."""
+    class _FakeProc:
+        def kill(self):
+            pass
+
+    s = ScrcpySession("emulator-5554", 0, "rtsp://localhost:8554/instance0", 720, 1280)
+    # Simulate "was running": _running True and a live ffmpeg proc.
+    s._running = True
+    s._ffmpeg_proc = _FakeProc()
+    # Make the restart's start() fail transiently.
+    s.start = lambda: False
+    assert s.set_tier("1080") is False

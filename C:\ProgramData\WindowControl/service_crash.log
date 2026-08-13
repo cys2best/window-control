@@ -1,0 +1,56 @@
+[stun] listening on 127.0.0.1:34780
+[scrcpy] stopped serial=emulator-5554
+[scrcpy] stopped serial=emulator-5554
+[scrcpy] stopped serial=emulator-5554
+[scrcpy] stopped serial=emulator-5554
+[scrcpy] stopped serial=emulator-5554
+[scrcpy] stopped serial=emulator-5554
+[scrcpy] stopped serial=emulator-5554
+[scrcpy] stopped serial=emulator-5554
+[scrcpy] stopped serial=emulator-5554
+[scrcpy] stopped serial=emulator-5554
+[scrcpy] stopped serial=emulator-5554
+[scrcpy] stopped serial=emulator-5554
+[scrcpy] stopped serial=emulator-5554
+[scrcpy] stopped serial=emulator-5554
+[mediamtx] start failed: Traceback (most recent call last):
+  File "/Users/cys2best/Personal/window-control/tests/../src/server/mediamtx_manager.py", line 146, in start
+    self._proc = subprocess.Popen(
+                 ^^^^^^^^^^^^^^^^^
+  File "/Users/cys2best/.pyenv/versions/3.12.8/lib/python3.12/subprocess.py", line 1026, in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+  File "/Users/cys2b
+[mediamtx] start failed: Traceback (most recent call last):
+  File "/Users/cys2best/Personal/window-control/tests/../src/server/mediamtx_manager.py", line 146, in start
+    self._proc = subprocess.Popen(
+                 ^^^^^^^^^^^^^^^^^
+  File "/Users/cys2best/.pyenv/versions/3.12.8/lib/python3.12/subprocess.py", line 1026, in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+  File "/Users/cys2b
+[scrcpy] stopped serial=emulator-5554
+[scrcpy] stopped serial=emulator-5554
+[mediamtx] start failed: Traceback (most recent call last):
+  File "/Users/cys2best/Personal/window-control/tests/../src/server/mediamtx_manager.py", line 146, in start
+    self._proc = subprocess.Popen(
+                 ^^^^^^^^^^^^^^^^^
+  File "/Users/cys2best/.pyenv/versions/3.12.8/lib/python3.12/subprocess.py", line 1026, in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+  File "/Users/cys2b
+[scrcpy] stopped serial=emulator-5554
+[scrcpy] stopped serial=emulator-5554
+[scrcpy] stopped serial=emulator-5554
+[scrcpy] set_tier restart failed serial=emulator-5554 tier=1080
+[mediamtx] start failed: Traceback (most recent call last):
+  File "/Users/cys2best/Personal/window-control/tests/../src/server/mediamtx_manager.py", line 150, in start
+    self._proc = subprocess.Popen(
+                 ^^^^^^^^^^^^^^^^^
+  File "/Users/cys2best/.pyenv/versions/3.12.8/lib/python3.12/subprocess.py", line 1026, in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+  File "/Users/cys2b
+[mediamtx] start failed: Traceback (most recent call last):
+  File "/Users/cys2best/Personal/window-control/tests/../src/server/mediamtx_manager.py", line 150, in start
+    self._proc = subprocess.Popen(
+                 ^^^^^^^^^^^^^^^^^
+  File "/Users/cys2best/.pyenv/versions/3.12.8/lib/python3.12/subprocess.py", line 1026, in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+  File "/Users/cys2b

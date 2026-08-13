@@ -96,10 +96,21 @@ class InstanceManager:
         _ip = get_best_ip()
         _log(f"[mediamtx] advertising IP for ICE: {_ip}")
         self._ensure_stun(_ip)
+        # Preserve the user's current selection across a mediamtx restart instead
+        # of unconditionally re-seeding active_source=all_names[0].
+        with self._lock:
+            _sel = self._active_serial
+        _seed = None
+        if _sel is not None:
+            _sname = instance_name(_sel)
+            if _sname in all_names:
+                _seed = _sname
+        if _seed is None and all_names:
+            _seed = all_names[0]
         self._mediamtx.start(
             all_names,
             tailscale_ip=_ip,
-            active_source=(all_names[0] if all_names else None),
+            active_source=_seed,
         )
 
         # Start scrcpy sessions for new devices

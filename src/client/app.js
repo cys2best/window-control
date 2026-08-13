@@ -88,6 +88,8 @@ function stopAdaptiveQuality() {
 function setAdaptiveSerial(serial) {
   _currentSerial = serial;
   _adaptiveSerial = serial;
+  _currentTier = "720";
+  _goodStreak = 0;
 }
 
 // Drag state

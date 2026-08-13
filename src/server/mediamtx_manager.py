@@ -121,6 +121,10 @@ class MediamtxManager:
     def start(self, instance_names: list[str], tailscale_ip: str | None = None, active_source: str | None = None):
         """Start (or restart) mediamtx with paths for the given instances."""
         with self._lock:
+            # Fall back to the current active source so a restart never blanks a
+            # live active path when the caller doesn't specify one.
+            if active_source is None:
+                active_source = self._active_source
             self._active_source = active_source
             self._stop_locked()
             _reap_orphan_mediamtx()
@@ -195,32 +199,48 @@ class MediamtxManager:
         with self._lock:
             return self._proc is not None and self._proc.poll() is None
 
-    def set_active_source(self, instance_name: str) -> None:
+    def set_active_source(self, instance_name: str) -> bool:
         """Repoint the live 'active' mux path to the given instance.
 
         Patches the pre-seeded 'active' path's source via the mediamtx HTTP API
         so switching instances does not tear down the browser's WebRTC session.
         Idempotent: setting the same source again is harmless. Never raises.
+
+        Retries the PATCH up to 4 times (0.25s apart) to close the boot-window
+        race where mediamtx's process is up (running == True right after Popen)
+        but its HTTP API on 127.0.0.1:9997 isn't listening yet, so the first
+        request fails with ConnectionRefused.
+
+        Returns:
+            True if a PATCH succeeded, or if not running yet (state recorded,
+            no network attempted). False if all attempts failed while running.
         """
         self._active_source = instance_name
         if not self.running:
-            return
+            return True
+        import time
         import urllib.request
         import json
         body = json.dumps({
             "source": f"rtsp://localhost:{MEDIAMTX_PORT}/{instance_name}",
             "sourceOnDemand": False,
         }).encode()
-        req = urllib.request.Request(
-            "http://127.0.0.1:9997/v3/config/paths/patch/active",
-            data=body,
-            method="PATCH",
-            headers={"Content-Type": "application/json"},
-        )
-        try:
-            urllib.request.urlopen(req, timeout=3).read()
-        except Exception:
-            _log(f"[mediamtx] set_active_source failed for {instance_name}")
+        attempts = 4
+        for i in range(attempts):
+            req = urllib.request.Request(
+                "http://127.0.0.1:9997/v3/config/paths/patch/active",
+                data=body,
+                method="PATCH",
+                headers={"Content-Type": "application/json"},
+            )
+            try:
+                urllib.request.urlopen(req, timeout=3).read()
+                return True
+            except Exception:
+                if i < attempts - 1:
+                    time.sleep(0.25)
+        _log(f"[mediamtx] set_active_source failed for {instance_name} after {attempts} attempts")
+        return False
 
     def whep_url(self, instance_name: str, host: str) -> str:
         return f"http://{host}:{WHEP_PORT}/{instance_name}/whep"
