@@ -94,20 +94,33 @@ def _get_ldconsole_names() -> dict[int, str]:
     """
     if sys.platform != "win32":
         return {}
+    # ldconsole.exe lives at the LDPlayer install ROOT, not next to adb (adb may
+    # be the bundled scrcpy adb or resolved via PATH). Search install roots too.
+    candidates: list[str] = []
     adb = _find_adb()
-    if not adb:
-        return {}
-    # ldconsole.exe sits at the LDPlayer install root, next to the adb we found.
-    root = os.path.dirname(adb)
-    candidates = [
-        os.path.join(root, "ldconsole.exe"),
-        os.path.join(os.path.dirname(root), "ldconsole.exe"),
-        os.path.join(root, "dnconsole.exe"),
-        os.path.join(os.path.dirname(root), "dnconsole.exe"),
-    ]
+    if adb:
+        root = os.path.dirname(adb)
+        candidates += [
+            os.path.join(root, "ldconsole.exe"),
+            os.path.join(os.path.dirname(root), "ldconsole.exe"),
+            os.path.join(root, "dnconsole.exe"),
+            os.path.join(os.path.dirname(root), "dnconsole.exe"),
+        ]
+    for base in (
+        r"C:\LDPlayer\LDPlayer9",
+        r"C:\LDPlayer\LDPlayer4.0",
+        r"C:\Program Files\LDPlayer\LDPlayer9",
+        r"C:\Program Files\LDPlayer\LDPlayer4.0",
+        r"C:\LDPlayer9",
+        r"C:\LDPlayer4",
+    ):
+        candidates.append(os.path.join(base, "ldconsole.exe"))
+        candidates.append(os.path.join(base, "dnconsole.exe"))
     exe = next((p for p in candidates if os.path.exists(p)), None)
     if not exe:
+        _log(f"[ldplayer] ldconsole.exe not found — tried: {candidates}")
         return {}
+    _log(f"[ldplayer] using {exe}")
     try:
         out = subprocess.check_output(
             [exe, "list2"], timeout=5, text=True, **_no_window_flags()
