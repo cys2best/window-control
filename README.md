@@ -37,6 +37,13 @@ Grab the latest `WindowControlInstaller.exe` from the [Releases](../../releases)
 
 Works on the same Wi-Fi network. Use the LAN IP shown in the launcher.
 
+## Troubleshooting
+
+Stream won't play, or mediamtx won't start? See
+[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) — covers the recurring Safari
+mDNS / STUN WebRTC bug (`write queue is full`) and the mediamtx `:8000` port
+collision.
+
 ## Stream Quality
 
 | Preset | JPEG Quality | Use Case |
