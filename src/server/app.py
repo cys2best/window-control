@@ -77,6 +77,40 @@ def _dispatch_key_control(ctrl, key: str):
         ctrl.send_keycode(kc)
 
 
+async def _capture_preview(serial: str) -> Response:
+    """Grab a device screenshot and return a small JPEG thumbnail.
+
+    `screencap -p` is a blocking subprocess up to ~5s; run it (and the PIL
+    encode) off the event loop so a preview fetch never freezes concurrent
+    requests — including the /input WebSocket, which would otherwise stall taps
+    while a thumbnail loads.
+    """
+    import asyncio as _asyncio
+    from PIL import Image
+
+    adb = adb_manager._find_adb()
+    if not adb:
+        raise HTTPException(status_code=503, detail="adb not found")
+    nw = adb_manager._no_window_flags()
+
+    def _grab() -> bytes:
+        png = subprocess.check_output(
+            [adb, "-s", serial, "exec-out", "screencap -p"],
+            timeout=5, **nw,
+        )
+        img = Image.open(io.BytesIO(png))
+        img.thumbnail((200, 120))
+        buf = io.BytesIO()
+        img.convert("RGB").save(buf, format="JPEG", quality=60)
+        return buf.getvalue()
+
+    try:
+        data = await _asyncio.to_thread(_grab)
+    except Exception:
+        raise HTTPException(status_code=503, detail="Preview capture failed")
+    return Response(content=data, media_type="image/jpeg")
+
+
 def create_app(state: CaptureState, frame_queue: FrameQueue,
                instance_manager: InstanceManager) -> FastAPI:
     import asyncio
@@ -156,23 +190,7 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
 
     @app.get("/instances/{instance_id}/preview")
     async def instance_preview(instance_id: str):
-        from PIL import Image
-        adb = adb_manager._find_adb()
-        if not adb:
-            raise HTTPException(status_code=503, detail="adb not found")
-        nw = adb_manager._no_window_flags()
-        try:
-            png = subprocess.check_output(
-                [adb, "-s", instance_id, "exec-out", "screencap -p"],
-                timeout=5, **nw
-            )
-            img = Image.open(io.BytesIO(png))
-            img.thumbnail((200, 120))
-            buf = io.BytesIO()
-            img.convert("RGB").save(buf, format="JPEG", quality=60)
-            return Response(content=buf.getvalue(), media_type="image/jpeg")
-        except Exception:
-            raise HTTPException(status_code=503, detail="Preview capture failed")
+        return await _capture_preview(instance_id)
 
     # ── Legacy /windows + /select (kept for backward compat) ────────────────
 
@@ -234,23 +252,7 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
 
     @app.get("/window/{window_id}/preview")
     async def preview(window_id: str):
-        from PIL import Image
-        adb = adb_manager._find_adb()
-        if not adb:
-            raise HTTPException(status_code=503, detail="adb not found")
-        nw = adb_manager._no_window_flags()
-        try:
-            png = subprocess.check_output(
-                [adb, "-s", window_id, "exec-out", "screencap -p"],
-                timeout=5, **nw
-            )
-            img = Image.open(io.BytesIO(png))
-            img.thumbnail((200, 120))
-            buf = io.BytesIO()
-            img.convert("RGB").save(buf, format="JPEG", quality=60)
-            return Response(content=buf.getvalue(), media_type="image/jpeg")
-        except Exception:
-            raise HTTPException(status_code=503, detail="Preview capture failed")
+        return await _capture_preview(window_id)
 
     # ── Quality ──────────────────────────────────────────────────────────────
 

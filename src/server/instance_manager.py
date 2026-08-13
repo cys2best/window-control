@@ -153,6 +153,16 @@ class InstanceManager:
         if not inst.session.alive:
             _log(f"[instance] select {serial}: session still not alive")
             return False
+        # Copy-mux has no ffmpeg GOP — keyframes come from the ~2s IDR heartbeat.
+        # On a switch the browser WHEPs to this path and can't render until it
+        # sees an IDR, so force one now instead of making it wait for the next
+        # heartbeat tick (up to ~2s of black screen). Best-effort: control socket
+        # may not be connected yet on a just-started session; the heartbeat still
+        # covers that case.
+        try:
+            inst.session.control.request_idr()
+        except Exception:
+            pass
         with self._lock:
             self._active_serial = serial
         return True
