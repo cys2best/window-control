@@ -301,6 +301,9 @@ async function initWebRTC(windowId, whepUrl, stunUrl, serial) {
 
     _pc.ontrack = e => {
       console.log('[webrtc] ontrack fired');
+      try {
+        if (e.receiver && 'playoutDelayHint' in e.receiver) e.receiver.playoutDelayHint = 0;
+      } catch (_) {}
       video.srcObject = e.streams[0];
       video.onloadedmetadata = () => console.log('[webrtc] video loadedmetadata');
       video.oncanplay = () => console.log('[webrtc] video canplay');
@@ -332,7 +335,16 @@ async function initWebRTC(windowId, whepUrl, stunUrl, serial) {
     };
 
     const thisPc = _pc;
-    _pc.addTransceiver('video', { direction: 'recvonly' });
+    const videoTx = _pc.addTransceiver('video', { direction: 'recvonly' });
+    // Ask WebRTC to keep the receiver jitter buffer as small as possible. The
+    // default buffer adds ~100-300ms of latency (its job is smoothness, not
+    // interactivity); for remote control we want the freshest frame. Supported
+    // on Chromium; Safari ignores it harmlessly.
+    try {
+      if (videoTx.receiver && 'playoutDelayHint' in videoTx.receiver) {
+        videoTx.receiver.playoutDelayHint = 0;
+      }
+    } catch (_) {}
 
     const offer = await thisPc.createOffer();
     if (_pc !== thisPc) return;
@@ -563,7 +575,7 @@ function _stopStatsOverlay() {
 async function _sampleStats() {
   const el = document.getElementById('stats-overlay');
   if (!el || !_pc) return;
-  let w = 0, h = 0, fps = 0, kbps = 0, rtt = 0, lossPct = 0;
+  let w = 0, h = 0, fps = 0, kbps = 0, rtt = 0, lossPct = 0, jbMs = 0;
   const stats = await _pc.getStats();
   stats.forEach(r => {
     if (r.type === 'inbound-rtp' && r.kind === 'video') {
@@ -577,6 +589,12 @@ async function _sampleStats() {
         kbps = ((bytes - _statsPrev.bytes) * 8) / (ts - _statsPrev.ts);  // bytes*8/ms = kbps
       }
       _statsPrev = { bytes, ts };
+      // Average jitter-buffer delay per frame (s→ms): the receiver-side buffer
+      // that playoutDelayHint targets. This is the tunable slice of the felt
+      // control lag — watch it drop with the low-latency changes.
+      if (r.jitterBufferDelay != null && r.jitterBufferEmittedCount) {
+        jbMs = (r.jitterBufferDelay / r.jitterBufferEmittedCount) * 1000;
+      }
     }
     if (r.type === 'candidate-pair' && r.state === 'succeeded' && r.currentRoundTripTime != null) {
       rtt = r.currentRoundTripTime * 1000;
@@ -586,7 +604,7 @@ async function _sampleStats() {
     `${w}×${h} · ${Math.round(fps)}fps<br>` +
     `${(kbps / 1000).toFixed(1)} Mbps<br>` +
     `RTT ${Math.round(rtt)}ms · loss ${lossPct.toFixed(1)}%<br>` +
-    `tier ${_currentTier}`;
+    `jitter ${Math.round(jbMs)}ms · tier ${_currentTier}`;
 }
 
 document.addEventListener('DOMContentLoaded', () => {

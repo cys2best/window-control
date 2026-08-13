@@ -58,6 +58,25 @@ def test_ffmpeg_args_gop_scales_with_tier_fps():
     assert args[args.index("-g") + 1] == "120"
 
 
+def test_ffmpeg_args_low_latency_flags():
+    # Latency-reduction flags: no input buffering/probing + a tight VBV buffer.
+    from server.scrcpy_session import build_ffmpeg_args
+    args = build_ffmpeg_args("ffmpeg", "rtsp://localhost:8554/instance0", "1080")
+    assert args[args.index("-fflags") + 1] == "nobuffer"
+    assert args[args.index("-flags") + 1] == "low_delay"
+    assert "-probesize" in args and "-analyzeduration" in args
+    # bufsize is a quarter of the 8M target → 2M (not the full 8M).
+    assert args[args.index("-bufsize") + 1] == "2M"
+
+
+def test_quarter_bitrate():
+    from server.scrcpy_session import _quarter_bitrate
+    assert _quarter_bitrate("8M") == "2M"
+    assert _quarter_bitrate("4M") == "1M"
+    assert _quarter_bitrate("2M") == "1M"   # floors at 1
+    assert _quarter_bitrate("12M") == "3M"
+
+
 def test_ffmpeg_args_use_wallclock_timestamps():
     # Raw H.264 from scrcpy has no container timestamps; without wallclock
     # stamping ffmpeg guesses 25fps, the RTSP muxer stalls on non-monotonic

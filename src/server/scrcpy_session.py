@@ -119,6 +119,24 @@ def build_scrcpy_args(tier: str, scid: int) -> list[str]:
     ]
 
 
+def _quarter_bitrate(bitrate: str) -> str:
+    """Quarter of a '<n>M' / '<n>k' bitrate string, for a tight VBV buffer.
+
+    A small -bufsize (~0.25s at target rate) stops libx264 from queueing up to a
+    full second of frames before it emits, which was a large slice of the felt
+    control delay. Falls back to the input unchanged if it can't be parsed.
+    """
+    b = bitrate.strip()
+    try:
+        if b[-1] in "Mm":
+            return f"{max(1, int(round(float(b[:-1]) / 4)))}M"
+        if b[-1] in "Kk":
+            return f"{max(1, int(round(float(b[:-1]) / 4)))}k"
+        return f"{max(1, int(int(b) / 4))}"
+    except Exception:
+        return bitrate
+
+
 def build_ffmpeg_args(ffmpeg_exe: str, rtsp_url: str, tier: str = DEFAULT_TIER) -> list[str]:
     """Build ffmpeg arguments to re-encode scrcpy H.264 → RTSP with forced GOP.
 
@@ -149,6 +167,12 @@ def build_ffmpeg_args(ffmpeg_exe: str, rtsp_url: str, tier: str = DEFAULT_TIER) 
     return [
         ffmpeg_exe,
         "-loglevel", "warning",
+        # Input-side low latency: don't buffer or spend time probing the raw
+        # H.264 stream — decode/forward frames as they arrive.
+        "-fflags", "nobuffer",
+        "-flags", "low_delay",
+        "-probesize", "32",
+        "-analyzeduration", "0",
         # Raw H.264 from scrcpy carries no container timestamps; stamp by arrival
         # so DTS is monotonic (see the copy-mux history — the same fix applies to
         # the demux side here).
@@ -165,7 +189,10 @@ def build_ffmpeg_args(ffmpeg_exe: str, rtsp_url: str, tier: str = DEFAULT_TIER) 
         "-sc_threshold", "0",
         "-b:v", bitrate,
         "-maxrate", bitrate,
-        "-bufsize", bitrate,
+        # Small VBV buffer (~0.25s at target rate) keeps the encoder from
+        # holding a full second of frames before emitting — the 1s bufsize was
+        # a big chunk of the felt control delay. Small bufsize = tighter latency.
+        "-bufsize", _quarter_bitrate(bitrate),
         # Never emit negative timestamps to the RTSP muxer.
         "-avoid_negative_ts", "make_zero",
         "-f", "rtsp",
