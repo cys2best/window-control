@@ -15,3 +15,7 @@ docs/*
 # Downloaded binary assets (fetched at startup by download_assets.py)
 src/assets/mediamtx/
 src/assets/scrcpy/
+
+# Runtime crash logs (written to ProgramData at runtime, never tracked)
+service_crash.log
+*service_crash.log
