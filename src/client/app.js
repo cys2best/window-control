@@ -596,7 +596,9 @@ async function _sampleStats() {
   const el = document.getElementById('stats-overlay');
   if (!el || !_pc) return;
   let w = 0, h = 0, fps = 0, kbps = 0, rtt = 0, lossPct = 0, jbMs = 0;
+  let recvPerS = 0, dropPerS = 0;
   const stats = await _pc.getStats();
+  const now = Date.now();
   stats.forEach(r => {
     if (r.type === 'inbound-rtp' && r.kind === 'video') {
       w = r.frameWidth || w;
@@ -608,10 +610,17 @@ async function _sampleStats() {
       if (_statsPrev && ts > _statsPrev.ts) {
         kbps = ((bytes - _statsPrev.bytes) * 8) / (ts - _statsPrev.ts);  // bytes*8/ms = kbps
       }
-      _statsPrev = { bytes, ts };
-      // Average jitter-buffer delay per frame (s→ms): the receiver-side buffer
-      // that playoutDelayHint targets. This is the tunable slice of the felt
-      // control lag — watch it drop with the low-latency changes.
+      // frames received vs dropped by the DECODER, per second. If received≈30
+      // but on-screen fps≈12, the iOS decoder can't keep up (decode-bound). If
+      // received≈12 too, frames are lost before the decoder (mediamtx/network).
+      const fr = r.framesReceived || 0, fd = r.framesDropped || 0;
+      if (_statsPrev && _statsPrev.wallT && now > _statsPrev.wallT) {
+        const dt = (now - _statsPrev.wallT) / 1000;
+        recvPerS = (fr - (_statsPrev.fr || 0)) / dt;
+        dropPerS = (fd - (_statsPrev.fd || 0)) / dt;
+      }
+      _statsPrev = { bytes, ts, fr, fd, wallT: now };
+      // Average jitter-buffer delay per frame (s→ms).
       if (r.jitterBufferDelay != null && r.jitterBufferEmittedCount) {
         jbMs = (r.jitterBufferDelay / r.jitterBufferEmittedCount) * 1000;
       }
@@ -621,7 +630,7 @@ async function _sampleStats() {
     }
   });
   el.innerHTML =
-    `${w}×${h} · ${Math.round(fps)}fps<br>` +
+    `${w}×${h} · ${Math.round(fps)}fps (rx ${Math.round(recvPerS)} drop ${Math.round(dropPerS)})<br>` +
     `${(kbps / 1000).toFixed(1)} Mbps<br>` +
     `net RTT ${Math.round(rtt)}ms · loss ${lossPct.toFixed(1)}%<br>` +
     `input ${Math.round(_inputRttMs)}ms · jitter ${Math.round(jbMs)}ms<br>` +
