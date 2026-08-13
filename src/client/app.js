@@ -10,6 +10,76 @@ let _activeWindowId = null;
 let _whepUrl = null;           // mediamtx WHEP endpoint for active instance
 let _stunUrl = null;           // STUN server bound to Tailscale IP (from server)
 let _webrtcInProgress = false; // prevent concurrent initWebRTC calls
+let _currentSerial = null;     // serial of active instance (for adaptive quality)
+
+// ── Adaptive quality (WebRTC getStats hysteresis) ──────────────────────────────
+const _TIER_ORDER = ["480", "720", "1080", "1440"];
+let _currentTier = "720";
+let _tierManualUntil = 0;      // ms epoch; manual override wins until then
+let _adaptiveTimer = null;
+let _goodStreak = 0;           // consecutive good samples (for step-up debounce)
+let _lastTierChange = 0;
+let _adaptiveSerial = null;
+
+function _stepTier(dir) {
+  const i = _TIER_ORDER.indexOf(_currentTier);
+  const j = Math.max(0, Math.min(_TIER_ORDER.length - 1, i + dir));
+  return _TIER_ORDER[j];
+}
+
+async function _applyTier(tier) {
+  if (tier === _currentTier || !_adaptiveSerial) return;
+  _currentTier = tier;
+  _lastTierChange = Date.now();
+  try {
+    await fetch(`/instances/${_adaptiveSerial}/quality`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tier }),
+    });
+  } catch (_) {}
+}
+
+async function _sampleAndAdapt() {
+  if (!_pc || Date.now() < _tierManualUntil) return;
+  if (Date.now() - _lastTierChange < 10000) return;  // cooldown
+  let loss = 0, rtt = 0, seen = false;
+  const stats = await _pc.getStats();
+  stats.forEach(r => {
+    if (r.type === 'inbound-rtp' && r.kind === 'video') {
+      const recv = r.packetsReceived || 0, lost = r.packetsLost || 0;
+      if (recv + lost > 0) loss = lost / (recv + lost);
+      seen = true;
+    }
+    if (r.type === 'candidate-pair' && r.state === 'succeeded' && r.currentRoundTripTime != null) {
+      rtt = r.currentRoundTripTime * 1000;  // → ms
+    }
+  });
+  if (!seen) return;
+  if (loss > 0.03 || rtt > 250) {
+    _goodStreak = 0;
+    await _applyTier(_stepTier(-1));
+  } else if (loss < 0.01 && rtt < 120) {
+    _goodStreak += 1;
+    if (_goodStreak >= 3) {  // ~15s at 5s cadence
+      _goodStreak = 0;
+      await _applyTier(_stepTier(+1));
+    }
+  } else {
+    _goodStreak = 0;
+  }
+}
+
+function startAdaptiveQuality(serial) {
+  _adaptiveSerial = serial;
+  _goodStreak = 0;
+  stopAdaptiveQuality();
+  _adaptiveTimer = setInterval(_sampleAndAdapt, 5000);
+}
+
+function stopAdaptiveQuality() {
+  if (_adaptiveTimer) { clearInterval(_adaptiveTimer); _adaptiveTimer = null; }
+}
 
 // Drag state
 let _dragActive = false;
@@ -98,6 +168,7 @@ function _activeStreamEl() {
 
 function _fallbackToMJPEG() {
   _webrtcActive = false;
+  stopAdaptiveQuality();
   if (_pc) { try { _pc.close(); } catch(_) {} _pc = null; }
   document.getElementById('stream-video').style.display = 'none';
   document.getElementById('stream-img').style.display = 'block';
@@ -122,7 +193,7 @@ function waitForIceGatheringComplete(pc, capMs = 2000) {
   });
 }
 
-async function initWebRTC(windowId, whepUrl, stunUrl) {
+async function initWebRTC(windowId, whepUrl, stunUrl, serial) {
   // Cancel any in-flight negotiation
   if (_pc) { try { _pc.close(); } catch(_) {} _pc = null; }
   if (_webrtcInProgress) {
@@ -133,6 +204,7 @@ async function initWebRTC(windowId, whepUrl, stunUrl) {
   _activeWindowId = windowId;
   _whepUrl = whepUrl || _whepUrl;
   _stunUrl = stunUrl || _stunUrl;
+  _currentSerial = serial || _currentSerial;
 
   if (!_whepUrl) { _fallbackToMJPEG(); _webrtcInProgress = false; return; }
 
@@ -165,6 +237,7 @@ async function initWebRTC(windowId, whepUrl, stunUrl) {
       video.style.display = 'block';
       img.style.display = 'none';
       _webrtcActive = true;
+      startAdaptiveQuality(_currentSerial);
       clearUnavailable();
     };
 
@@ -181,7 +254,7 @@ async function initWebRTC(windowId, whepUrl, stunUrl) {
         const retryPc = _pc;
         setTimeout(() => {
           if (_activeWindowId === retryId && _pc === retryPc && !_webrtcInProgress) {
-            initWebRTC(retryId);
+            initWebRTC(retryId, undefined, undefined, _currentSerial);
           }
         }, 2000);
       }
@@ -420,7 +493,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
       if (document.getElementById('screen-stream').classList.contains('active')) {
         if (_webrtcActive && _activeWindowId) {
-          initWebRTC(_activeWindowId, _whepUrl);
+          initWebRTC(_activeWindowId, _whepUrl, undefined, _currentSerial);
         } else {
           initStream();
         }
