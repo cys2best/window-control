@@ -35,15 +35,27 @@ def test_session_defaults_to_default_tier():
     assert s.tier == DEFAULT_TIER
 
 
-def test_ffmpeg_args_are_copy_not_reencode():
+def test_ffmpeg_args_reencode_with_forced_gop():
+    # Re-encode (not copy) so we can FORCE keyframes: the device MediaCodec
+    # ignores i-frame-interval on some devices and emits IDR only every ~20-30s,
+    # which is exactly WebRTC's time-to-first-frame. libx264 + a fixed GOP forces
+    # a keyframe every ~2s so first-connect and instance switch are fast.
     from server.scrcpy_session import build_ffmpeg_args
-    args = build_ffmpeg_args("ffmpeg", "rtsp://localhost:8554/instance0")
-    assert "-c:v" in args
-    assert args[args.index("-c:v") + 1] == "copy"
-    assert "libx264" not in args
+    args = build_ffmpeg_args("ffmpeg", "rtsp://localhost:8554/instance0", "720")
+    assert args[args.index("-c:v") + 1] == "libx264"
+    assert "-g" in args and "-sc_threshold" in args
+    # 720 tier is 30fps → GOP 60 for a ~2s keyframe interval.
+    assert args[args.index("-g") + 1] == "60"
     assert "-f" in args and "rtsp" in args
     assert "-rtsp_transport" in args and "tcp" in args
     assert args[-1] == "rtsp://localhost:8554/instance0"
+
+
+def test_ffmpeg_args_gop_scales_with_tier_fps():
+    # 1080 tier is 60fps → GOP 120 keeps the keyframe interval at ~2s.
+    from server.scrcpy_session import build_ffmpeg_args
+    args = build_ffmpeg_args("ffmpeg", "rtsp://localhost:8554/instance0", "1080")
+    assert args[args.index("-g") + 1] == "120"
 
 
 def test_ffmpeg_args_use_wallclock_timestamps():

@@ -131,31 +131,30 @@ Non-monotonic DTS in output file
 Stream ends prematurely
 ```
 
-Or ffmpeg refuses to copy (`-c:v copy`) and exits.
+## Slow first frame / slow instance switch (~20-30s black screen)
 
-### Root cause: scrcpy H.264 profile mismatch
+**Symptom:** ICE connects immediately (browser console shows `[ice] state:
+connected` and `ontrack fired`), but the video stays black for 20-30s before
+`loadedmetadata` / `playing`. Same delay on the first select and on every
+instance switch.
 
-The server encodes at the selected quality tier (480/720/1080/1440) using scrcpy's
-H.264 encoder. ffmpeg now uses `-c:v copy` to mux the stream directly into RTSP
-without re-encoding — for lower latency and no quality loss.
+### Root cause: device encoder emits keyframes too rarely
 
-However, some device builds of scrcpy produce H.264 streams that don't meet the
-standard framing — missing SPS/PPS (sequence/picture parameter sets), or
-non-monotonic decoding timestamps. ffmpeg's copy mode rejects these.
+WebRTC cannot start decoding until it receives an IDR keyframe. scrcpy asks the
+device to emit one every ~2s via `video_encoder_options=i-frame-interval=2`, but
+**some device MediaCodec encoders ignore that hint entirely** (observed on ASUS
+AI2205) and emit an IDR only every 20-30s. Time-to-first-frame is then bounded by
+that interval.
 
-### Fix: add the h264_mp4toannexb bitstream filter
+### Fix: re-encode with a forced GOP
 
-In `src/server/scrcpy_session.py`, add `-bsf:v h264_mp4toannexb` to the ffmpeg
-command. This filter normalizes the H.264 annex B bytestream, ensuring SPS/PPS
-headers are present and DTS is monotonic:
+`build_ffmpeg_args` re-encodes with libx264 (`-preset ultrafast -tune
+zerolatency`) and a fixed GOP (`-g`, scaled to the tier's fps for a ~2s keyframe
+interval, `-sc_threshold 0` to suppress scene-cut keyframes). This forces a
+keyframe every ~2s regardless of what the device encoder does, so both first
+connect and instance switch become fast.
 
-```python
-build_ffmpeg_args(
-    input_h264_url,
-    rtsp_url,
-    bitstream_filters=['-bsf:v', 'h264_mp4toannexb']  # or via command args
-)
-```
-
-This allows `-c:v copy` to succeed. If the problem persists, check the device's
-scrcpy version and H.264 encoder settings in its build.
+Pure `-c:v copy` (passthrough) cannot do this: it has no control over keyframe
+cadence, so it inherits the device encoder's rare-IDR behavior. The re-encode
+costs a little CPU and ~1 frame of latency — an acceptable trade for usable
+switch times. Target bitrate still comes from the selected quality tier.

@@ -119,33 +119,53 @@ def build_scrcpy_args(tier: str, scid: int) -> list[str]:
     ]
 
 
-def build_ffmpeg_args(ffmpeg_exe: str, rtsp_url: str) -> list[str]:
-    """Build ffmpeg arguments for H.264 copy-mux to RTSP (no re-encode).
+def build_ffmpeg_args(ffmpeg_exe: str, rtsp_url: str, tier: str = DEFAULT_TIER) -> list[str]:
+    """Build ffmpeg arguments to re-encode scrcpy H.264 → RTSP with forced GOP.
+
+    Why re-encode instead of -c:v copy: the device's on-board MediaCodec encoder
+    ignores scrcpy's i-frame-interval on some devices (observed on ASUS AI2205),
+    so it emits IDR keyframes only every ~20-30s. WebRTC cannot start decoding
+    until it sees a keyframe, so time-to-first-frame — first connect AND every
+    instance switch — was ~20-30s. Copy-mux has no keyframe control; a light
+    re-encode does. libx264 ultrafast + zerolatency + a fixed GOP forces a
+    keyframe every ~2s regardless of what the device encoder does, which is what
+    made switching fast historically (commits f61cbb4 / 2217811).
+
+    -g is in FRAMES, so scale it to the tier's fps to keep a ~2s keyframe
+    interval across tiers (30fps → 60, 60fps → 120).
 
     Args:
         ffmpeg_exe: Path to ffmpeg executable.
         rtsp_url: RTSP destination URL.
+        tier: Quality tier — drives target bitrate and GOP length.
 
     Returns:
         Full ffmpeg argv for streaming via mediamtx.
     """
+    t = QUALITY_TIERS.get(tier, QUALITY_TIERS[DEFAULT_TIER])
+    fps = int(t["max_fps"])
+    gop = max(1, fps * 2)  # keyframe every ~2 seconds
+    bitrate = t["bit_rate"]
     return [
         ffmpeg_exe,
         "-loglevel", "warning",
-        # The raw H.264 (Annex-B) elementary stream from scrcpy carries NO
-        # container timestamps. ffmpeg's h264 demuxer then guesses PTS/DTS from
-        # a fixed 25fps assumption, which drifts against the device's real
-        # (often 60fps, variable) cadence — the RTSP muxer sees non-monotonic /
-        # stalled DTS and stops sending, so mediamtx times out the publish
-        # after ~10s ('i/o timeout') and tears the path down.
-        #
-        # Stamp each NAL with its wall-clock arrival time instead: monotonic by
-        # construction, no re-encode. This is the documented way to mux a raw
-        # H.264 pipe into RTSP with -c:v copy.
+        # Raw H.264 from scrcpy carries no container timestamps; stamp by arrival
+        # so DTS is monotonic (see the copy-mux history — the same fix applies to
+        # the demux side here).
         "-use_wallclock_as_timestamps", "1",
         "-f", "h264",
         "-i", "pipe:0",
-        "-c:v", "copy",
+        "-c:v", "libx264",
+        "-preset", "ultrafast",
+        "-tune", "zerolatency",
+        # Force a keyframe every `gop` frames; -sc_threshold 0 stops libx264
+        # inserting extra scene-cut keyframes that would jitter the bitrate.
+        "-g", str(gop),
+        "-keyint_min", str(gop),
+        "-sc_threshold", "0",
+        "-b:v", bitrate,
+        "-maxrate", bitrate,
+        "-bufsize", bitrate,
         # Never emit negative timestamps to the RTSP muxer.
         "-avoid_negative_ts", "make_zero",
         "-f", "rtsp",
@@ -435,7 +455,7 @@ class ScrcpySession:
             video_sock.settimeout(None)
 
             ffmpeg_proc = subprocess.Popen(
-                build_ffmpeg_args(ffmpeg_exe, self.rtsp_url),
+                build_ffmpeg_args(ffmpeg_exe, self.rtsp_url, self.tier),
                 stdin=subprocess.PIPE,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
