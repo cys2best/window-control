@@ -109,7 +109,12 @@ def build_scrcpy_args(tier: str, scid: int) -> list[str]:
         "send_frame_meta=true",
         "control=true",
         "audio=false",
-        "video_encoder_options=i-frame-interval=1",
+        # Keyframe cadence. With copy-mux there is no ffmpeg GOP to force
+        # keyframes, so WebRTC's time-to-first-frame is bounded by how often the
+        # device encoder emits an IDR. i-frame-interval=2 (seconds) is the value
+        # that historically got honored by MediaCodec (commit 7adff44); =1 was
+        # observed ignored on some devices, leaving ~20s first-frame waits.
+        "video_encoder_options=i-frame-interval=2",
         f"scid={scid:x}",
     ]
 
