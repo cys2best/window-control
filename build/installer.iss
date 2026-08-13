@@ -87,7 +87,9 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
-Name: "startupicon"; Description: "Start WindowControl with Windows"; GroupDescription: "Startup:"; Flags: unchecked
+; Checked by default so the app comes back after a reboot without the user
+; having to relaunch it (remote streaming host is expected to always be up).
+Name: "startupicon"; Description: "Start WindowControl with Windows"; GroupDescription: "Startup:"
 
 [Files]
 ; One-dir build: copy entire dist\WindowControl\ folder contents

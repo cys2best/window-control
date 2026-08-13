@@ -115,10 +115,19 @@ class MediamtxManager:
         self._proc: subprocess.Popen | None = None
         self._config_file: str | None = None
         self._lock = threading.Lock()
+        # Last start() args, so the watchdog can relaunch with the same paths if
+        # mediamtx.exe dies on its own.
+        self._last_args: tuple | None = None
+        self._stopping = False  # set during an intentional stop() so the watchdog
+                                # doesn't fight it
+        self._watchdog_thread = threading.Thread(target=self._watchdog, daemon=True)
+        self._watchdog_thread.start()
 
     def start(self, instance_names: list[str], tailscale_ip: str | None = None):
         """Start (or restart) mediamtx with one path per instance."""
         with self._lock:
+            self._last_args = (list(instance_names), tailscale_ip)
+            self._stopping = False
             self._stop_locked()
             _reap_orphan_mediamtx()
             cfg = _generate_config(instance_names, tailscale_ip)
@@ -169,7 +178,33 @@ class MediamtxManager:
 
     def stop(self):
         with self._lock:
+            self._stopping = True
             self._stop_locked()
+
+    def _watchdog(self):
+        """Relaunch mediamtx.exe if it dies on its own.
+
+        The scrcpy sessions and the HTTP server each have their own watchdog;
+        mediamtx did not. If it crashed, every stream went black with no
+        recovery. This polls every 5s and restarts with the last start() args
+        (unless an intentional stop() is in progress).
+        """
+        import time
+        while True:
+            time.sleep(5)
+            try:
+                with self._lock:
+                    if self._stopping or self._last_args is None:
+                        continue
+                    dead = self._proc is not None and self._proc.poll() is not None
+                    never_started = self._proc is None
+                    args = self._last_args
+                if dead or never_started:
+                    if dead:
+                        _log("[mediamtx] watchdog: process dead — restarting")
+                    self.start(args[0], args[1])
+            except Exception:
+                _log(f"[mediamtx] watchdog error: {traceback.format_exc()[:200]}")
 
     def _stop_locked(self):
         if self._proc:
