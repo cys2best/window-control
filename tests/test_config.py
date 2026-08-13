@@ -21,3 +21,18 @@ def test_base_path_returns_string():
 
 def test_client_dir_is_string():
     assert isinstance(CLIENT_DIR, str)
+
+def test_quality_tiers_shape():
+    from config import QUALITY_TIERS, TIER_ORDER, DEFAULT_TIER
+    assert TIER_ORDER == ["480", "720", "1080", "1440"]
+    assert DEFAULT_TIER == "720"
+    for t in TIER_ORDER:
+        tier = QUALITY_TIERS[t]
+        assert isinstance(tier["max_size"], int)
+        assert tier["bit_rate"].endswith("M")
+        assert tier["max_fps"] in (30, 60)
+
+def test_quality_tiers_monotonic():
+    from config import QUALITY_TIERS, TIER_ORDER
+    sizes = [QUALITY_TIERS[t]["max_size"] for t in TIER_ORDER]
+    assert sizes == sorted(sizes)

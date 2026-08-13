@@ -14,6 +14,17 @@ QUALITY_MAP = {
 DEFAULT_QUALITY = "high"
 assert DEFAULT_QUALITY in QUALITY_MAP, f"DEFAULT_QUALITY '{DEFAULT_QUALITY}' not in QUALITY_MAP"
 
+TIER_ORDER = ["480", "720", "1080", "1440"]
+DEFAULT_TIER = "720"
+QUALITY_TIERS = {
+    "480":  {"max_size": 480,  "bit_rate": "2M",  "max_fps": 30},
+    "720":  {"max_size": 720,  "bit_rate": "4M",  "max_fps": 30},
+    "1080": {"max_size": 1080, "bit_rate": "8M",  "max_fps": 60},
+    "1440": {"max_size": 1440, "bit_rate": "12M", "max_fps": 60},
+}
+assert DEFAULT_TIER in QUALITY_TIERS
+assert set(TIER_ORDER) == set(QUALITY_TIERS)
+
 SYSTEM_WINDOW_TITLES = {
     "Program Manager", "Desktop", "Taskbar",
     "Task Manager", "Start", "",
