@@ -34,3 +34,21 @@ def test_rtsp_url():
 def test_not_running_initially():
     m = MediamtxManager()
     assert not m.running
+
+
+def test_generate_config_active_path():
+    from config import MEDIAMTX_PORT
+    cfg = _generate_config(["instance0", "instance1"], active_source="instance1")
+    assert "active:" in cfg
+    assert f"rtsp://localhost:{MEDIAMTX_PORT}/instance1" in cfg
+
+
+def test_generate_config_no_active_when_none():
+    cfg = _generate_config(["instance0"])
+    assert "\n  active:" not in cfg
+
+
+def test_generate_config_api_enabled():
+    cfg = _generate_config(["instance0"])
+    assert "api: yes" in cfg
+    assert "apiAddress: 127.0.0.1:9997" in cfg

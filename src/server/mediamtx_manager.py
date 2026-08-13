@@ -66,7 +66,7 @@ def _mediamtx_exe() -> str:
     return bundled  # will fail at Popen time with a clear error
 
 
-def _generate_config(instance_names: list[str], tailscale_ip: str | None = None) -> str:
+def _generate_config(instance_names: list[str], tailscale_ip: str | None = None, active_source: str | None = None) -> str:
     """Generate mediamtx.yml content for the given instance path names."""
     paths = "\n".join(f"  {name}:" for name in instance_names)
     # Advertise Tailscale IP as the ICE host so the browser connects directly
@@ -81,6 +81,13 @@ def _generate_config(instance_names: list[str], tailscale_ip: str | None = None)
     paths_config = "\n".join(
         f"  {name}:" for name in instance_names
     )
+    active_block = ""
+    if active_source:
+        active_block = (
+            "  active:\n"
+            f"    source: rtsp://localhost:{MEDIAMTX_PORT}/{active_source}\n"
+            "    sourceOnDemand: no\n"
+        )
     return f"""\
 logLevel: info
 logDestinations: [stdout]
@@ -90,7 +97,8 @@ rtmpAddress: :{RTMP_PORT}
 hlsAddress: :8890
 webrtcAddress: :{WHEP_PORT}
 webrtcLocalUDPAddress: :{WEBRTC_UDP_PORT}
-api: no
+api: yes
+apiAddress: 127.0.0.1:9997
 webrtcHandshakeTimeout: 30s
 webrtcICEServers2:
   - url: stun:stun.l.google.com:19302
@@ -98,7 +106,7 @@ webrtcICEServers2:
 
 paths:
 {paths_config}
-"""
+{active_block}"""
 
 
 class MediamtxManager:
