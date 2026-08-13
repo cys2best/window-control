@@ -12,14 +12,44 @@ let _stunUrl = null;           // STUN server bound to Tailscale IP (from server
 let _webrtcInProgress = false; // prevent concurrent initWebRTC calls
 let _currentSerial = null;     // serial of active instance (for adaptive quality)
 
-// ── Adaptive quality (WebRTC getStats hysteresis) ──────────────────────────────
+// ── Quality tiers ──────────────────────────────────────────────────────────────
 const _TIER_ORDER = ["480", "720", "1080", "1440"];
-let _currentTier = "720";
-let _tierManualUntil = 0;      // ms epoch; manual override wins until then
+// User's preferred tier, persisted across sessions. This is the tier applied on
+// every connect/switch — the whole point of the quality picker. Defaults to
+// 1080 so the app streams above the old hardcoded 720 out of the box.
+let _preferredTier = localStorage.getItem('wc_tier') || "1080";
+let _currentTier = _preferredTier;
+let _tierManualUntil = 0;      // ms epoch; manual override suspends auto-downgrade
 let _adaptiveTimer = null;
 let _badStreak = 0;            // consecutive congested samples (for step-down debounce)
 let _lastTierChange = 0;
 let _adaptiveSerial = null;
+
+// Apply a tier the user picked: persist it, POST it, update the button label.
+async function setPreferredTier(tier) {
+  if (!_TIER_ORDER.includes(tier)) return;
+  _preferredTier = tier;
+  localStorage.setItem('wc_tier', tier);
+  _tierManualUntil = Date.now() + 60000;  // user intent wins over auto for 60s
+  _currentTier = tier;
+  _lastTierChange = Date.now();
+  _updateQualityLabel();
+  if (_adaptiveSerial) {
+    try {
+      await fetch(`/instances/${_adaptiveSerial}/quality`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tier }),
+      });
+    } catch (_) {}
+  }
+}
+
+function _updateQualityLabel() {
+  const btn = document.getElementById('quality-btn');
+  if (btn) btn.textContent = _preferredTier === "480" ? "SD" :
+    _preferredTier === "720" ? "HD" : _preferredTier + "p";
+}
 
 function _stepTier(dir) {
   const i = _TIER_ORDER.indexOf(_currentTier);
@@ -77,21 +107,32 @@ function startAdaptiveQuality(serial) {
   _adaptiveSerial = serial;
   _badStreak = 0;
   stopAdaptiveQuality();
+  // Push the user's preferred tier to this freshly-connected instance — the
+  // server session starts at its own default (720), so without this the picker
+  // choice wouldn't take effect until the next manual change.
+  if (_preferredTier !== "720") _applyPreferredTierToServer();
   _adaptiveTimer = setInterval(_sampleAndAdapt, 5000);
+}
+
+function _applyPreferredTierToServer() {
+  if (!_adaptiveSerial) return;
+  _currentTier = _preferredTier;
+  fetch(`/instances/${_adaptiveSerial}/quality`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tier: _preferredTier }),
+  }).catch(() => {});
 }
 
 function stopAdaptiveQuality() {
   if (_adaptiveTimer) { clearInterval(_adaptiveTimer); _adaptiveTimer = null; }
 }
 
-// Retarget the live PC's serial without re-negotiating WebRTC. Used when
-// switching instances while a PC is already connected to the `active` mux:
-// the server has already repointed the mux, so we only need to update which
-// instance the reconnect path and adaptive-quality POSTs target.
+// Retarget adaptive-quality + reconnect to a new instance serial on switch.
 function setAdaptiveSerial(serial) {
   _currentSerial = serial;
   _adaptiveSerial = serial;
-  _currentTier = "720";
+  _currentTier = _preferredTier;
   _badStreak = 0;
 }
 
@@ -484,6 +525,54 @@ function initKeyboard() {
 
 function initFPS() {}
 
+// ── Live WebRTC stats overlay ───────────────────────────────────────────────────
+let _statsTimer = null;
+let _statsPrev = null;   // {bytes, ts} for bitrate delta
+
+function _startStatsOverlay() {
+  const el = document.getElementById('stats-overlay');
+  if (el) el.style.display = 'block';
+  _statsPrev = null;
+  if (_statsTimer) clearInterval(_statsTimer);
+  _statsTimer = setInterval(_sampleStats, 1000);
+  _sampleStats();
+}
+
+function _stopStatsOverlay() {
+  const el = document.getElementById('stats-overlay');
+  if (el) el.style.display = 'none';
+  if (_statsTimer) { clearInterval(_statsTimer); _statsTimer = null; }
+}
+
+async function _sampleStats() {
+  const el = document.getElementById('stats-overlay');
+  if (!el || !_pc) return;
+  let w = 0, h = 0, fps = 0, kbps = 0, rtt = 0, lossPct = 0;
+  const stats = await _pc.getStats();
+  stats.forEach(r => {
+    if (r.type === 'inbound-rtp' && r.kind === 'video') {
+      w = r.frameWidth || w;
+      h = r.frameHeight || h;
+      fps = r.framesPerSecond || fps;
+      const recv = r.packetsReceived || 0, lost = r.packetsLost || 0;
+      if (recv + lost > 0) lossPct = (lost / (recv + lost)) * 100;
+      const bytes = r.bytesReceived || 0, ts = r.timestamp || 0;
+      if (_statsPrev && ts > _statsPrev.ts) {
+        kbps = ((bytes - _statsPrev.bytes) * 8) / (ts - _statsPrev.ts);  // bytes*8/ms = kbps
+      }
+      _statsPrev = { bytes, ts };
+    }
+    if (r.type === 'candidate-pair' && r.state === 'succeeded' && r.currentRoundTripTime != null) {
+      rtt = r.currentRoundTripTime * 1000;
+    }
+  });
+  el.innerHTML =
+    `${w}×${h} · ${Math.round(fps)}fps<br>` +
+    `${(kbps / 1000).toFixed(1)} Mbps<br>` +
+    `RTT ${Math.round(rtt)}ms · loss ${lossPct.toFixed(1)}%<br>` +
+    `tier ${_currentTier}`;
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   connectWS();
   initTouch();
@@ -492,6 +581,32 @@ document.addEventListener('DOMContentLoaded', () => {
   initFPS();
   initDrawer();
   startWindowsPolling();
+  _updateQualityLabel();
+
+  // Quality picker: toggle menu, pick a tier
+  const qBtn = document.getElementById('quality-btn');
+  const qMenu = document.getElementById('quality-menu');
+  if (qBtn && qMenu) {
+    qBtn.addEventListener('click', () => {
+      qMenu.style.display = qMenu.style.display === 'none' ? 'flex' : 'none';
+    });
+    qMenu.querySelectorAll('.q-opt').forEach(b => {
+      b.addEventListener('click', () => {
+        setPreferredTier(b.dataset.tier);
+        qMenu.style.display = 'none';
+      });
+    });
+  }
+
+  // Stats overlay toggle
+  const sBtn = document.getElementById('stats-btn');
+  if (sBtn) {
+    sBtn.addEventListener('click', () => {
+      const el = document.getElementById('stats-overlay');
+      if (el && el.style.display === 'none') _startStatsOverlay();
+      else _stopStatsOverlay();
+    });
+  }
 
   document.getElementById('reconnect-btn').addEventListener('click', () => {
     clearUnavailable();

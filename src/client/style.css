@@ -183,6 +183,45 @@ html, body {
   border-color: rgba(233,69,96,0.9);
   transform: scale(0.92);
 }
+#quality-btn { font-size: 13px; font-weight: 700; letter-spacing: 0.5px; }
+
+/* ── QUALITY MENU ───────────────────────────────────────────── */
+#quality-menu {
+  position: absolute;
+  top: 12px; right: 64px;
+  z-index: 40;
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 8px;
+  background: rgba(18,20,28,0.92);
+  border: 1px solid rgba(255,255,255,0.14);
+  border-radius: 12px;
+  backdrop-filter: blur(8px);
+}
+.q-opt {
+  min-width: 76px;
+  padding: 8px 12px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 9px;
+  color: #eef1f8; font-size: 15px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.q-opt:active { background: rgba(233,69,96,0.85); border-color: rgba(233,69,96,0.9); }
+
+/* ── STATS OVERLAY ──────────────────────────────────────────── */
+#stats-overlay {
+  position: absolute;
+  top: 10px; left: 10px;
+  z-index: 35;
+  padding: 7px 10px;
+  background: rgba(0,0,0,0.62);
+  color: #7fffa0;
+  font: 600 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+  border-radius: 9px;
+  pointer-events: none;
+  white-space: nowrap;
+}
 
 /* ── KEYBOARD INPUT ─────────────────────────────────────────── */
 #keyboard-input {
