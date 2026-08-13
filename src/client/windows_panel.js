@@ -72,15 +72,15 @@ async function selectWindow(id, serial) {
   try {
     const r = await fetch(`/instances/${_serial}/select`, { method: 'POST' });
     const data = await r.json();
-    if (_webrtcActive) {
-      // A live PC is already connected to the `active` mux. The select POST
-      // above repointed the mux server-side, so the existing PC's video swaps
-      // automatically — no re-negotiation needed. Just retarget adaptive quality.
-      setAdaptiveSerial(_serial);
-    } else {
-      // First connect (no live PC) — negotiate WebRTC to the active mux path.
-      initWebRTC(id, data.whep_url, data.stun_url, _serial);
-    }
+    // Repointing the mediamtx 'active' path's source (server-side) tears down
+    // every reader of that path — the live WebRTC PC included (mediamtx logs
+    // 'torn down by … / path is closing'). The old assumption that the video
+    // "swaps automatically" was wrong: the PC dies, and waiting for its ICE to
+    // reach 'failed' takes ~15s, which is the slow-switch delay. So re-negotiate
+    // WebRTC immediately against the (already repointed, already ready) 'active'
+    // path instead of waiting for the dead PC to time out.
+    setAdaptiveSerial(_serial);
+    initWebRTC(id, data.whep_url, data.stun_url, _serial);
   } catch (_) {}
 }
 
