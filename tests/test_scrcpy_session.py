@@ -35,47 +35,24 @@ def test_session_defaults_to_default_tier():
     assert s.tier == DEFAULT_TIER
 
 
-def test_ffmpeg_args_reencode_with_forced_gop():
-    # Re-encode (not copy) so we can FORCE keyframes: the device MediaCodec
-    # ignores i-frame-interval on some devices and emits IDR only every ~20-30s,
-    # which is exactly WebRTC's time-to-first-frame. libx264 + a fixed GOP forces
-    # a keyframe every ~2s so first-connect and instance switch are fast.
+def test_ffmpeg_args_copy_mux_no_reencode():
+    # Copy-mux (no libx264). Keyframes are forced at the SOURCE via
+    # ScrcpyControl.request_idr() (TYPE_RESET_VIDEO), which the reverted copy-mux
+    # attempt never had — that is what makes copy-mux viable now without the
+    # 20-30s rare-IDR black screen. No libx264 = no decode/encode CPU, ~1 frame
+    # less latency.
     from server.scrcpy_session import build_ffmpeg_args
     args = build_ffmpeg_args("ffmpeg", "rtsp://localhost:8554/instance0", "720")
-    assert args[args.index("-c:v") + 1] == "libx264"
-    assert "-g" in args and "-sc_threshold" in args
-    # 720 tier is 30fps → GOP 60 for a ~2s keyframe interval.
-    assert args[args.index("-g") + 1] == "60"
+    assert args[args.index("-c:v") + 1] == "copy"
+    assert "libx264" not in args
+    # Encoder-side flags make no sense for copy and must be gone.
+    assert "-g" not in args
+    assert "-sc_threshold" not in args
+    assert "-preset" not in args
+    assert "-bufsize" not in args
     assert "-f" in args and "rtsp" in args
     assert "-rtsp_transport" in args and "tcp" in args
     assert args[-1] == "rtsp://localhost:8554/instance0"
-
-
-def test_ffmpeg_args_gop_scales_with_tier_fps():
-    # 1080 tier is 60fps → GOP 120 keeps the keyframe interval at ~2s.
-    from server.scrcpy_session import build_ffmpeg_args
-    args = build_ffmpeg_args("ffmpeg", "rtsp://localhost:8554/instance0", "1080")
-    assert args[args.index("-g") + 1] == "120"
-
-
-def test_ffmpeg_args_tight_vbv_bufsize():
-    # Latency win: a small VBV buffer (quarter of target) so libx264 doesn't
-    # queue a full second of frames. NOTE: input-probe flags (-probesize/
-    # -analyzeduration/-fflags nobuffer) are intentionally absent — they broke
-    # SPS/PPS parsing and stalled every publish (i/o timeout).
-    from server.scrcpy_session import build_ffmpeg_args
-    args = build_ffmpeg_args("ffmpeg", "rtsp://localhost:8554/instance0", "1080")
-    assert args[args.index("-bufsize") + 1] == "2M"  # quarter of 8M
-    assert "-probesize" not in args
-    assert "nobuffer" not in args
-
-
-def test_quarter_bitrate():
-    from server.scrcpy_session import _quarter_bitrate
-    assert _quarter_bitrate("8M") == "2M"
-    assert _quarter_bitrate("4M") == "1M"
-    assert _quarter_bitrate("2M") == "1M"   # floors at 1
-    assert _quarter_bitrate("12M") == "3M"
 
 
 def test_ffmpeg_args_use_wallclock_timestamps():
@@ -89,6 +66,18 @@ def test_ffmpeg_args_use_wallclock_timestamps():
     assert args[i + 1] == "1"
     # Must come before -i so it applies to the input demuxer.
     assert i < args.index("-i")
+
+
+def test_request_idr_sends_reset_video_byte():
+    # TYPE_RESET_VIDEO = 0x11, a bodyless 1-byte control message. Sending it asks
+    # scrcpy-server to make the device encoder emit an IDR keyframe on demand —
+    # the mechanism that lets copy-mux start fast without a forced ffmpeg GOP.
+    from server.scrcpy_session import ScrcpyControl
+    c = ScrcpyControl(27183, "emulator-5554")
+    sent = []
+    c._send = lambda data: sent.append(data)
+    c.request_idr()
+    assert sent == [b"\x11"]
 
 
 def test_set_tier_updates_tier_when_not_running():

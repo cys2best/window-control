@@ -119,51 +119,37 @@ def build_scrcpy_args(tier: str, scid: int) -> list[str]:
     ]
 
 
-def _quarter_bitrate(bitrate: str) -> str:
-    """Quarter of a '<n>M' / '<n>k' bitrate string, for a tight VBV buffer.
-
-    A small -bufsize (~0.25s at target rate) stops libx264 from queueing up to a
-    full second of frames before it emits, which was a large slice of the felt
-    control delay. Falls back to the input unchanged if it can't be parsed.
-    """
-    b = bitrate.strip()
-    try:
-        if b[-1] in "Mm":
-            return f"{max(1, int(round(float(b[:-1]) / 4)))}M"
-        if b[-1] in "Kk":
-            return f"{max(1, int(round(float(b[:-1]) / 4)))}k"
-        return f"{max(1, int(int(b) / 4))}"
-    except Exception:
-        return bitrate
-
-
 def build_ffmpeg_args(ffmpeg_exe: str, rtsp_url: str, tier: str = DEFAULT_TIER) -> list[str]:
-    """Build ffmpeg arguments to re-encode scrcpy H.264 → RTSP with forced GOP.
+    """Build ffmpeg arguments to mux scrcpy H.264 → RTSP with NO re-encode.
 
-    Why re-encode instead of -c:v copy: the device's on-board MediaCodec encoder
-    ignores scrcpy's i-frame-interval on some devices (observed on ASUS AI2205),
-    so it emits IDR keyframes only every ~20-30s. WebRTC cannot start decoding
-    until it sees a keyframe, so time-to-first-frame — first connect AND every
-    instance switch — was ~20-30s. Copy-mux has no keyframe control; a light
-    re-encode does. libx264 ultrafast + zerolatency + a fixed GOP forces a
-    keyframe every ~2s regardless of what the device encoder does, which is what
-    made switching fast historically (commits f61cbb4 / 2217811).
+    Copy-mux (`-c:v copy`): the device already emits H.264 at the tier's
+    bitrate/fps, so re-encoding with libx264 only burned CPU (full decode+encode
+    per frame, per active instance) and added ~1 frame of latency. Dropping it is
+    the streaming-perf win.
 
-    -g is in FRAMES, so scale it to the tier's fps to keep a ~2s keyframe
-    interval across tiers (30fps → 60, 60fps → 120).
+    The historical reason re-encode existed — copy-mux inherited the device
+    encoder's rare-IDR behavior (~20-30s to first keyframe → 20-30s WebRTC black
+    screen on first connect and every switch) — is now handled at the SOURCE:
+    ScrcpyControl.request_idr() sends TYPE_RESET_VIDEO to force an IDR on demand.
+    The stream loop requests one on connect and on a ~2s heartbeat, so copy-mux
+    gets the same fast keyframe cadence the forced ffmpeg GOP used to provide,
+    without the transcode.
+
+    `-use_wallclock_as_timestamps 1` is mandatory and must stay: raw H.264 from
+    scrcpy carries no container timestamps, so without it ffmpeg guesses 25fps,
+    the RTSP muxer stalls on non-monotonic DTS, and mediamtx times out the
+    publish (~10s 'i/o timeout'), dropping every instance. This was the FIRST
+    copy-mux failure (commit 15a2d4e); do not remove it.
 
     Args:
         ffmpeg_exe: Path to ffmpeg executable.
         rtsp_url: RTSP destination URL.
-        tier: Quality tier — drives target bitrate and GOP length.
+        tier: Quality tier — accepted for signature compatibility; copy-mux
+            carries whatever bitrate/fps the device already encoded.
 
     Returns:
         Full ffmpeg argv for streaming via mediamtx.
     """
-    t = QUALITY_TIERS.get(tier, QUALITY_TIERS[DEFAULT_TIER])
-    fps = int(t["max_fps"])
-    gop = max(1, fps * 2)  # keyframe every ~2 seconds
-    bitrate = t["bit_rate"]
     return [
         ffmpeg_exe,
         "-loglevel", "warning",
@@ -171,28 +157,13 @@ def build_ffmpeg_args(ffmpeg_exe: str, rtsp_url: str, tier: str = DEFAULT_TIER) 
         # here. They starve ffmpeg's h264 demuxer of the bytes it needs to parse
         # SPS/PPS, so it never emits a valid stream — mediamtx sees the publish
         # stall and times it out after ~10s ('i/o timeout'), dropping every
-        # instance. Input-side buffering here is negligible latency anyway; the
-        # real win is the tight output -bufsize below.
+        # instance. Input-side buffering is negligible latency anyway.
         # Raw H.264 from scrcpy carries no container timestamps; stamp by arrival
-        # so DTS is monotonic (see the copy-mux history — the same fix applies to
-        # the demux side here).
+        # so DTS is monotonic. Mandatory for copy-mux (see docstring).
         "-use_wallclock_as_timestamps", "1",
         "-f", "h264",
         "-i", "pipe:0",
-        "-c:v", "libx264",
-        "-preset", "ultrafast",
-        "-tune", "zerolatency",
-        # Force a keyframe every `gop` frames; -sc_threshold 0 stops libx264
-        # inserting extra scene-cut keyframes that would jitter the bitrate.
-        "-g", str(gop),
-        "-keyint_min", str(gop),
-        "-sc_threshold", "0",
-        "-b:v", bitrate,
-        "-maxrate", bitrate,
-        # Small VBV buffer (~0.25s at target rate) keeps the encoder from
-        # holding a full second of frames before emitting — the 1s bufsize was
-        # a big chunk of the felt control delay. Small bufsize = tighter latency.
-        "-bufsize", _quarter_bitrate(bitrate),
+        "-c:v", "copy",
         # Never emit negative timestamps to the RTSP muxer.
         "-avoid_negative_ts", "make_zero",
         "-f", "rtsp",
@@ -338,6 +309,17 @@ class ScrcpyControl:
                 0,          # metaState
             )
             self._send(msg)
+
+    def request_idr(self):
+        """Ask scrcpy-server to emit an IDR keyframe now (TYPE_RESET_VIDEO=0x11).
+
+        Bodyless 1-byte control message. With copy-mux there is no ffmpeg GOP to
+        force keyframes, and some device MediaCodec encoders ignore
+        i-frame-interval (emit IDR only every 20-30s → 20-30s WebRTC black
+        screen). This drives an IDR on demand from the source, so first-frame and
+        instance switch stay fast without re-encoding.
+        """
+        self._send(b"\x11")
 
     def _send(self, data: bytes):
         with self._lock:
@@ -493,6 +475,16 @@ class ScrcpySession:
 
             _log(f"[scrcpy] streaming serial={self.serial} → {self.rtsp_url}")
 
+            # Copy-mux has no ffmpeg GOP, so force keyframes at the source. One
+            # now (fast first-frame), then a ~2s heartbeat (fast switch — a WHEP
+            # subscriber that joins between requests waits at most ~2s for an
+            # IDR, matching the old forced-GOP cadence but without the transcode).
+            self.control.request_idr()
+            idr_thread = threading.Thread(
+                target=self._idr_heartbeat, args=(ffmpeg_proc,), daemon=True
+            )
+            idr_thread.start()
+
             _FLAG_CONFIG = (1 << 63)
             while self._running:
                 header = _recvall(video_sock, 12)
@@ -547,6 +539,21 @@ class ScrcpySession:
                     self._ffmpeg_proc = None
                     self._running = False
             _log(f"[scrcpy] stream_loop exited serial={self.serial}")
+
+    def _idr_heartbeat(self, ffmpeg_proc):
+        """Request an IDR every ~2s while THIS stream is the live one.
+
+        Identity-guarded on ffmpeg_proc: an old heartbeat thread from a session
+        that was replaced by a tier-change/restart must not keep poking the new
+        session's control socket. It exits as soon as _running drops or a
+        different ffmpeg_proc has taken over.
+        """
+        while self._running:
+            time.sleep(2.0)
+            with self._lock:
+                if not self._running or self._ffmpeg_proc is not ffmpeg_proc:
+                    return
+            self.control.request_idr()
 
     def stop(self):
         with self._lock:

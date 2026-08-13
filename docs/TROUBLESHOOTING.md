@@ -146,15 +146,28 @@ device to emit one every ~2s via `video_encoder_options=i-frame-interval=2`, but
 AI2205) and emit an IDR only every 20-30s. Time-to-first-frame is then bounded by
 that interval.
 
-### Fix: re-encode with a forced GOP
+### Fix: copy-mux + source-side IDR request (TYPE_RESET_VIDEO)
 
-`build_ffmpeg_args` re-encodes with libx264 (`-preset ultrafast -tune
-zerolatency`) and a fixed GOP (`-g`, scaled to the tier's fps for a ~2s keyframe
-interval, `-sc_threshold 0` to suppress scene-cut keyframes). This forces a
-keyframe every ~2s regardless of what the device encoder does, so both first
-connect and instance switch become fast.
+`build_ffmpeg_args` now uses `-c:v copy` (no re-encode). The device already emits
+H.264 at the tier's bitrate/fps, so libx264 only burned CPU (full decode+encode
+per frame, per active instance) and added ~1 frame of latency.
 
-Pure `-c:v copy` (passthrough) cannot do this: it has no control over keyframe
-cadence, so it inherits the device encoder's rare-IDR behavior. The re-encode
-costs a little CPU and ~1 frame of latency — an acceptable trade for usable
-switch times. Target bitrate still comes from the selected quality tier.
+Keyframes are forced at the **source** instead of by an ffmpeg GOP:
+`ScrcpyControl.request_idr()` sends `TYPE_RESET_VIDEO` (control message type
+`0x11`, a bodyless 1-byte message), which makes scrcpy-server drive the device
+encoder to emit an IDR on demand. `ScrcpySession._stream_loop` requests one right
+after the control socket connects (fast first-frame) and then every ~2s on a
+heartbeat thread. A WHEP subscriber that joins between requests waits at most ~2s
+for a keyframe — the same cadence the forced ffmpeg GOP used to provide, without
+the transcode.
+
+This is why the earlier `-c:v copy` attempt (reverted in commit `7083f8e`)
+failed and this one does not: that attempt had **no way to force an IDR** and
+inherited the device encoder's ~20-30s rare-IDR behavior. `TYPE_RESET_VIDEO` is
+the missing piece.
+
+> **Do not remove `-use_wallclock_as_timestamps 1`.** Raw H.264 from scrcpy
+> carries no container timestamps; without it ffmpeg guesses 25fps, the RTSP
+> muxer stalls on non-monotonic DTS, and mediamtx times out the publish (~10s
+> `i/o timeout`), dropping every instance. This was the FIRST copy-mux failure
+> (commit `15a2d4e`) — see the section above.
