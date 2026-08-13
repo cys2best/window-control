@@ -115,6 +115,7 @@ def _get_ldconsole_names() -> dict[int, str]:
     except Exception:
         _log(f"[ldplayer] list2 failed: {traceback.format_exc()[:200]}")
         return {}
+    _log(f"[ldplayer] list2 raw: {out.strip()!r}")
     names: dict[int, str] = {}
     for line in out.splitlines():
         parts = line.split(",")
@@ -127,6 +128,7 @@ def _get_ldconsole_names() -> dict[int, str]:
         title = parts[1].strip()
         if title:
             names[idx] = title
+    _log(f"[ldplayer] list2 idx→title: {names!r}")
     return names
 
 
@@ -188,6 +190,8 @@ def list_vms() -> list[dict]:
                     name = window_titles[idx]
                 else:
                     name = f"LDPlayer #{idx}"
+                    _log(f"[adb] no title for serial={serial} idx={idx} "
+                         f"(ldconsole keys={sorted(ldconsole_names)})")
             else:
                 idx = 0
                 if 0 in ldconsole_names:

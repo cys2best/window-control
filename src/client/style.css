@@ -147,6 +147,7 @@ html, body {
   padding: max(12px, env(safe-area-inset-top)) 0 max(24px, env(safe-area-inset-bottom));
   gap: 10px;
   z-index: 40;
+  touch-action: none;   /* allow vertical swipe → instance switch */
 }
 
 .hud-pill {
