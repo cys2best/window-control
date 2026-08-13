@@ -24,8 +24,13 @@ def test_select_known_serial_marks_active():
     im = InstanceManager(MediamtxManager())
     serial = "emulator-5554"
 
+    class FakeControl:
+        def request_idr(self):
+            pass
+
     class FakeSession:
         alive = True
+        control = FakeControl()
 
     inst = Instance(
         {"id": f"adb:{serial}", "title": "t", "ldplayer_index": 0},
@@ -35,6 +40,35 @@ def test_select_known_serial_marks_active():
 
     assert im.select(serial) is True
     assert im.active is inst
+
+
+def test_select_requests_idr_for_instant_switch():
+    # Copy-mux has no ffmpeg GOP; keyframes come from the ~2s IDR heartbeat. On a
+    # switch the browser WHEPs to the target path and can't render until it sees
+    # an IDR, so without this it waits up to ~2s (black screen). select() forces
+    # one immediately so the switch is near-instant.
+    from server.instance_manager import Instance
+
+    im = InstanceManager(MediamtxManager())
+    serial = "emulator-5554"
+    idr_calls = {"n": 0}
+
+    class FakeControl:
+        def request_idr(self):
+            idr_calls["n"] += 1
+
+    class FakeSession:
+        alive = True
+        control = FakeControl()
+
+    inst = Instance(
+        {"id": f"adb:{serial}", "title": "t", "ldplayer_index": 0},
+        FakeSession(), 100, 200,
+    )
+    im._instances[serial] = inst
+
+    assert im.select(serial) is True
+    assert idr_calls["n"] == 1
 
 
 def test_select_dead_session_refused():
