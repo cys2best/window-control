@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Literal
 
-from config import CLIENT_DIR, QUALITY_MAP, WHEP_PORT, STUN_PORT
+from config import CLIENT_DIR, QUALITY_MAP, WHEP_PORT, STUN_PORT, TIER_ORDER
 from server.stream import CaptureState, FrameQueue, mjpeg_generator
 from server import adb_manager
 from server.instance_manager import InstanceManager
@@ -33,6 +33,10 @@ class SelectRequest(BaseModel):
 
 class QualityRequest(BaseModel):
     quality: Literal["low", "medium", "high"]
+
+
+class QualityTierRequest(BaseModel):
+    tier: str
 
 
 def _make_exception_handler(default_handler):
@@ -123,6 +127,16 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
             "whep_url": whep_url,
             "stun_url": f"stun:{host}:{STUN_PORT}",
         }
+
+    @app.post("/instances/{instance_id}/quality")
+    async def set_instance_quality(instance_id: str, req: QualityTierRequest):
+        """Set stream quality tier for an instance."""
+        if req.tier not in TIER_ORDER:
+            raise HTTPException(status_code=400, detail="Invalid tier")
+        ok = instance_manager.set_tier(instance_id, req.tier)
+        if not ok:
+            raise HTTPException(status_code=404, detail="Instance not found")
+        return {"ok": True, "tier": req.tier}
 
     @app.get("/instances/{instance_id}/preview")
     async def instance_preview(instance_id: str):

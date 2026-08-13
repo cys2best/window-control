@@ -91,3 +91,10 @@ def test_post_quality_invalid():
     client, _ = _make_client()
     r = client.post("/quality", json={"quality": "ultra"})
     assert r.status_code == 422
+
+
+def test_quality_endpoint_rejects_bad_tier(client=None):
+    if client is None:
+        client, _ = _make_client()
+    r = client.post("/instances/emulator-5554/quality", json={"tier": "9000"})
+    assert r.status_code == 400
