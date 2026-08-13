@@ -96,7 +96,11 @@ class InstanceManager:
         _ip = get_best_ip()
         _log(f"[mediamtx] advertising IP for ICE: {_ip}")
         self._ensure_stun(_ip)
-        self._mediamtx.start(all_names, tailscale_ip=_ip)
+        self._mediamtx.start(
+            all_names,
+            tailscale_ip=_ip,
+            active_source=(all_names[0] if all_names else None),
+        )
 
         # Start scrcpy sessions for new devices
         for vm in new_vms:
@@ -137,7 +141,9 @@ class InstanceManager:
             if serial not in self._instances:
                 return False
             self._active_serial = serial
-            return True
+        # Repoint the live 'active' mux path outside the lock (network I/O).
+        self._mediamtx.set_active_source(instance_name(serial))
+        return True
 
     @property
     def active(self) -> Instance | None:

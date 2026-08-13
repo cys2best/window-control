@@ -116,13 +116,15 @@ class MediamtxManager:
         self._proc: subprocess.Popen | None = None
         self._config_file: str | None = None
         self._lock = threading.Lock()
+        self._active_source: str | None = None
 
-    def start(self, instance_names: list[str], tailscale_ip: str | None = None):
+    def start(self, instance_names: list[str], tailscale_ip: str | None = None, active_source: str | None = None):
         """Start (or restart) mediamtx with paths for the given instances."""
         with self._lock:
+            self._active_source = active_source
             self._stop_locked()
             _reap_orphan_mediamtx()
-            cfg = _generate_config(instance_names, tailscale_ip)
+            cfg = _generate_config(instance_names, tailscale_ip, active_source=active_source)
             fd, path = tempfile.mkstemp(suffix=".yml", prefix="mediamtx_")
             try:
                 os.write(fd, cfg.encode())
@@ -192,6 +194,33 @@ class MediamtxManager:
     def running(self) -> bool:
         with self._lock:
             return self._proc is not None and self._proc.poll() is None
+
+    def set_active_source(self, instance_name: str) -> None:
+        """Repoint the live 'active' mux path to the given instance.
+
+        Patches the pre-seeded 'active' path's source via the mediamtx HTTP API
+        so switching instances does not tear down the browser's WebRTC session.
+        Idempotent: setting the same source again is harmless. Never raises.
+        """
+        self._active_source = instance_name
+        if not self.running:
+            return
+        import urllib.request
+        import json
+        body = json.dumps({
+            "source": f"rtsp://localhost:{MEDIAMTX_PORT}/{instance_name}",
+            "sourceOnDemand": False,
+        }).encode()
+        req = urllib.request.Request(
+            "http://127.0.0.1:9997/v3/config/paths/patch/active",
+            data=body,
+            method="PATCH",
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            urllib.request.urlopen(req, timeout=3).read()
+        except Exception:
+            _log(f"[mediamtx] set_active_source failed for {instance_name}")
 
     def whep_url(self, instance_name: str, host: str) -> str:
         return f"http://{host}:{WHEP_PORT}/{instance_name}/whep"
