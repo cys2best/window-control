@@ -194,8 +194,16 @@ function connectWS() {
 function scheduleWSReconnect() {
   setTimeout(() => connectWS(), wsRetryDelay);
   wsRetryDelay = Math.min(wsRetryDelay * 2, 30000);
-  const pill = document.getElementById('status-pill');
-  if (pill) pill.textContent = 'Reconnecting…';
+  setNetStatus('bad', 'Reconnecting…');
+}
+
+// Network status dot: 'good' (green), 'warn' (yellow), 'bad' (red).
+function setNetStatus(state, label) {
+  const el = document.getElementById('net-status');
+  if (!el) return;
+  el.classList.remove('net-good', 'net-warn', 'net-bad');
+  el.classList.add('net-' + state);
+  if (label) el.title = label;
 }
 
 function sendInput(obj) {
@@ -292,6 +300,7 @@ async function initWebRTC(windowId, whepUrl, stunUrl, serial) {
     await new Promise(r => setTimeout(r, 50));
   }
   _webrtcInProgress = true;
+  setNetStatus('warn', 'Connecting…');
   _activeWindowId = windowId;
   _whepUrl = whepUrl || _whepUrl;
   _stunUrl = stunUrl || _stunUrl;
@@ -331,6 +340,7 @@ async function initWebRTC(windowId, whepUrl, stunUrl, serial) {
       video.style.display = 'block';
       img.style.display = 'none';
       _webrtcActive = true;
+      setNetStatus('good', 'Connected');
       startAdaptiveQuality(_currentSerial);
       clearUnavailable();
     };
@@ -343,6 +353,10 @@ async function initWebRTC(windowId, whepUrl, stunUrl, serial) {
     _pc.oniceconnectionstatechange = () => {
       const s = _pc ? _pc.iceConnectionState : '';
       console.log('[ice] state:', s);
+      if (s === 'connected' || s === 'completed') setNetStatus('good', 'Connected');
+      else if (s === 'checking' || s === 'new') setNetStatus('warn', 'Connecting…');
+      else if (s === 'disconnected') setNetStatus('warn', 'Unstable');
+      else if (s === 'failed' || s === 'closed') setNetStatus('bad', 'Disconnected');
       if (s === 'failed' || s === 'closed') {
         const retryId = _activeWindowId;
         const retryPc = _pc;
@@ -704,19 +718,6 @@ document.addEventListener('DOMContentLoaded', () => {
           initStream();
         }
       }
-    }
-  });
-
-  // Fullscreen toggle button
-  document.getElementById('fullscreen-btn').addEventListener('click', () => {
-    const el = document.getElementById('screen-stream');
-    const isFs = document.fullscreenElement || document.webkitFullscreenElement;
-    if (isFs) {
-      if (document.exitFullscreen) document.exitFullscreen();
-      else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
-    } else {
-      if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
-      else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
     }
   });
 });
