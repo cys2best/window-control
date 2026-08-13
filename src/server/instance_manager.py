@@ -13,6 +13,7 @@ import traceback
 from server import adb_manager
 from server.scrcpy_session import ScrcpySession
 from server.mediamtx_manager import MediamtxManager
+from server.stun_server import StunServer
 
 
 def _log(msg: str):
@@ -55,6 +56,8 @@ class InstanceManager:
         self._mediamtx = mediamtx
         self._instances: dict[str, Instance] = {}  # serial → Instance
         self._active_serial: str | None = None
+        self._stun: StunServer | None = None
+        self._stun_ip: str | None = None          # IP the STUN server is bound to
         self._lock = threading.Lock()
         self._watchdog_thread = threading.Thread(
             target=self._watchdog, daemon=True
@@ -90,6 +93,7 @@ class InstanceManager:
         from server.tailscale import get_best_ip
         _ip = get_best_ip()
         _log(f"[mediamtx] advertising IP for ICE: {_ip}")
+        self._ensure_stun(_ip)
         self._mediamtx.start(all_names, tailscale_ip=_ip)
 
         # Start scrcpy sessions for new devices
@@ -105,6 +109,24 @@ class InstanceManager:
             inst = Instance(vm, session, w, h)
             with self._lock:
                 self._instances[serial] = inst
+
+    def _ensure_stun(self, ip: str | None):
+        """Start (or rebind) the STUN server on the current Tailscale IP.
+
+        The STUN server must be bound to the Tailscale interface so the srflx
+        candidate it reports to the browser is the browser's *Tailscale* IP —
+        the only address mediamtx can reach. Rebind if the IP changed.
+        """
+        if not ip:
+            return
+        if self._stun is not None and self._stun_ip == ip:
+            return
+        if self._stun is not None:
+            self._stun.stop()
+        from config import STUN_PORT
+        self._stun = StunServer(ip, STUN_PORT)
+        self._stun.start()
+        self._stun_ip = ip
 
     # ── Active session ───────────────────────────────────────────────────────
 

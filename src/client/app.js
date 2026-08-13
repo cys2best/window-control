@@ -8,6 +8,7 @@ let _pc = null;
 let _webrtcActive = false;
 let _activeWindowId = null;
 let _whepUrl = null;           // mediamtx WHEP endpoint for active instance
+let _stunUrl = null;           // STUN server bound to Tailscale IP (from server)
 let _webrtcInProgress = false; // prevent concurrent initWebRTC calls
 
 // Drag state
@@ -115,7 +116,7 @@ function waitForIceGatheringComplete(pc, capMs = 2000) {
   });
 }
 
-async function initWebRTC(windowId, whepUrl) {
+async function initWebRTC(windowId, whepUrl, stunUrl) {
   // Cancel any in-flight negotiation
   if (_pc) { try { _pc.close(); } catch(_) {} _pc = null; }
   if (_webrtcInProgress) {
@@ -125,6 +126,7 @@ async function initWebRTC(windowId, whepUrl) {
   _webrtcInProgress = true;
   _activeWindowId = windowId;
   _whepUrl = whepUrl || _whepUrl;
+  _stunUrl = stunUrl || _stunUrl;
 
   if (!_whepUrl) { _fallbackToMJPEG(); _webrtcInProgress = false; return; }
 
@@ -132,12 +134,17 @@ async function initWebRTC(windowId, whepUrl) {
     // STUN is required: Safari only emits an mDNS (.local) host candidate for
     // privacy and offers no flag to disable it. mediamtx can't resolve .local
     // over Tailscale, so the pair never forms and media never flows
-    // ("write queue is full" -> "deadline exceeded"). STUN makes the browser
-    // also gather a server-reflexive (srflx) candidate with a real IP, which
-    // mediamtx can pair against. We wait for ICE gathering to complete before
-    // POSTing the (non-trickle) offer, so the srflx candidate is included.
+    // ("write queue is full" -> "deadline exceeded").
+    //
+    // A *public* STUN (Google) doesn't help either: the query exits via the
+    // public internet, so the srflx candidate reflects the ISP/WARP public IP
+    // (104.x), which mediamtx at 100.x can't reach. We instead use our own STUN
+    // bound to the Tailscale IP (server sends stun_url) — the query routes over
+    // Tailscale, so the srflx candidate carries the browser's Tailscale IP,
+    // which mediamtx can reach directly. We wait for ICE gathering to complete
+    // before POSTing the (non-trickle) offer so that candidate is included.
     _pc = new RTCPeerConnection({
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+      iceServers: _stunUrl ? [{ urls: _stunUrl }] : [],
     });
 
     const video = document.getElementById('stream-video');

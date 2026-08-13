@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Literal
 
-from config import CLIENT_DIR, QUALITY_MAP, WHEP_PORT
+from config import CLIENT_DIR, QUALITY_MAP, WHEP_PORT, STUN_PORT
 from server.stream import CaptureState, FrameQueue, mjpeg_generator
 from server import adb_manager
 from server.instance_manager import InstanceManager
@@ -121,6 +121,7 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
             "w": inst.w,
             "h": inst.h,
             "whep_url": whep_url,
+            "stun_url": f"stun:{host}:{STUN_PORT}",
         }
 
     @app.get("/instances/{instance_id}/preview")
@@ -168,7 +169,8 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
         host = get_best_ip() or request.client.host
         whep_url = f"http://{host}:{WHEP_PORT}/{inst.name}/whep"
         return {"ok": True, "id": req.id, "w": inst.w, "h": inst.h,
-                "whep_url": whep_url}
+                "whep_url": whep_url,
+                "stun_url": f"stun:{host}:{STUN_PORT}"}
 
     # ── MJPEG fallback stream ────────────────────────────────────────────────
 

@@ -72,7 +72,7 @@ async function selectWindow(id, serial) {
   try {
     const r = await fetch(`/instances/${_serial}/select`, { method: 'POST' });
     const data = await r.json();
-    initWebRTC(id, data.whep_url);
+    initWebRTC(id, data.whep_url, data.stun_url);
   } catch (_) {}
 }
 
