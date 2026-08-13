@@ -66,6 +66,25 @@ def test_set_tier_updates_tier_when_not_running():
     assert s.tier == "1080"
 
 
+def test_restart_if_dead_skips_when_alive():
+    # Watchdog must not restart a session that is alive — that would double-start
+    # a session mid tier-change and corrupt the scrcpy handshake.
+    from server.scrcpy_session import ScrcpySession
+    s = ScrcpySession("emulator-5554", 0, "rtsp://localhost:8554/instance0", 720, 1280)
+    calls = {"start": 0, "stop": 0}
+    s.start = lambda: calls.__setitem__("start", calls["start"] + 1) or True
+    s.stop = lambda: calls.__setitem__("stop", calls["stop"] + 1)
+    # Force alive True via the real attributes the property reads.
+    s._running = True
+
+    class _P:  # stand-in ffmpeg proc
+        pass
+    s._ffmpeg_proc = _P()
+
+    assert s.restart_if_dead() is True
+    assert calls == {"start": 0, "stop": 0}  # no restart fired
+
+
 def test_set_tier_rejects_unknown():
     from server.scrcpy_session import ScrcpySession
     s = ScrcpySession("emulator-5554", 0, "rtsp://localhost:8554/instance0", 720, 1280)

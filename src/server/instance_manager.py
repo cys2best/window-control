@@ -244,9 +244,10 @@ class InstanceManager:
                 _log(f"[instance] watchdog error: {traceback.format_exc()[:300]}")
 
     def _restart_session(self, inst: Instance):
-        _log(f"[instance] watchdog: restarting dead session serial={inst.serial}")
-        inst.session.stop()
-        ok = inst.session.start()
+        # restart_if_dead re-checks aliveness under the session's restart lock,
+        # so a tier-change restart already in flight is not double-started (the
+        # race that corrupted the scrcpy handshake with a truncated read).
+        ok = inst.session.restart_if_dead()
         _log(f"[instance] watchdog restart serial={inst.serial} ok={ok}")
         # If device disconnected while we were restarting, stop the orphaned session
         with self._lock:

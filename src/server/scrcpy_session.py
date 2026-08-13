@@ -333,6 +333,12 @@ class ScrcpySession:
         self._video_sock: socket.socket | None = None
         self._running = False
         self._lock = threading.Lock()
+        # Serializes a full stop→start cycle so a tier-change restart and the
+        # watchdog's dead-session restart can't interleave. Without it, two
+        # start() calls race two _stream_loop threads onto the same scrcpy TCP
+        # port; scrcpy-server accepts one and the other reads a truncated
+        # handshake ('struct.error: unpack requires a buffer of 4 bytes').
+        self._restart_lock = threading.RLock()
         # Control socket connects to same port as video — server accepts both sequentially
         self.control = ScrcpyControl(self._tcp_port, serial)
 
@@ -345,22 +351,27 @@ class ScrcpySession:
             _log(f"[scrcpy] ffmpeg not found serial={self.serial}")
             return False
 
-        with self._lock:
-            self._stop_locked()
-            self._running = True
-
-        if not _start_server(adb, self.serial, self._tcp_port, self.instance_index, self.tier):
+        # Hold the restart lock across the WHOLE cycle: stop old, launch server,
+        # spawn the new stream thread. A concurrent start() (watchdog vs. tier
+        # change) blocks here instead of racing a second _stream_loop onto the
+        # same TCP port and corrupting the handshake.
+        with self._restart_lock:
             with self._lock:
-                self._running = False
-            return False
+                self._stop_locked()
+                self._running = True
 
-        # Give server time to start listening
-        time.sleep(1.0)
+            if not _start_server(adb, self.serial, self._tcp_port, self.instance_index, self.tier):
+                with self._lock:
+                    self._running = False
+                return False
 
-        self._stream_thread = threading.Thread(target=self._stream_loop, daemon=True)
-        self._stream_thread.start()
-        _log(f"[scrcpy] started serial={self.serial} port={self._tcp_port}")
-        return True
+            # Give server time to start listening
+            time.sleep(1.0)
+
+            self._stream_thread = threading.Thread(target=self._stream_loop, daemon=True)
+            self._stream_thread.start()
+            _log(f"[scrcpy] started serial={self.serial} port={self._tcp_port}")
+            return True
 
     def _stream_loop(self):
         ffmpeg_exe = _get_ffmpeg()
@@ -385,9 +396,18 @@ class ScrcpySession:
             self.control.connect()
 
             device_name = _recvall(video_sock, 64).rstrip(b"\x00").decode("utf-8", errors="replace")
-            codec_id = struct.unpack(">I", _recvall(video_sock, 4))[0]
-            init_w = struct.unpack(">I", _recvall(video_sock, 4))[0]
-            init_h = struct.unpack(">I", _recvall(video_sock, 4))[0]
+            # A short read here means the video socket was closed mid-handshake —
+            # usually because another start() grabbed this scrcpy port first.
+            # Fail with a clear message instead of a raw struct.error.
+            meta = _recvall(video_sock, 12)
+            if len(meta) < 12:
+                raise ConnectionError(
+                    f"scrcpy handshake truncated ({len(meta)}/12 bytes) — "
+                    f"port {self._tcp_port} likely taken by a concurrent start"
+                )
+            codec_id = struct.unpack(">I", meta[0:4])[0]
+            init_w = struct.unpack(">I", meta[4:8])[0]
+            init_h = struct.unpack(">I", meta[8:12])[0]
             _log(f"[scrcpy] handshake device={device_name!r} codec=0x{codec_id:08x} {init_w}x{init_h}")
 
             # Use actual frame dimensions from scrcpy handshake — may differ from wm size
@@ -493,6 +513,23 @@ class ScrcpySession:
         with self._lock:
             return self._running and self._ffmpeg_proc is not None
 
+    def restart_if_dead(self) -> bool:
+        """Restart the session only if it is still dead under the restart lock.
+
+        The watchdog calls this. Acquiring _restart_lock first means a tier-change
+        restart already in flight completes before we look; the re-check of
+        `alive` inside the lock then sees the freshly-started session and skips,
+        so the watchdog never fires a second, racing start().
+
+        Returns True if the session is alive (either already, or after restart).
+        """
+        with self._restart_lock:
+            if self.alive:
+                return True
+            _log(f"[scrcpy] watchdog restart (dead) serial={self.serial}")
+            self.stop()
+            return self.start()
+
     def set_tier(self, tier: str) -> bool:
         """Update quality tier. Restarts capture if running.
 
@@ -506,12 +543,17 @@ class ScrcpySession:
             return False
         if tier == self.tier:
             return True
-        self.tier = tier
-        with self._lock:
-            was_running = self._running and self._ffmpeg_proc is not None
-        if was_running:
-            self.stop()
-            if not self.start():
-                _log(f"[scrcpy] set_tier restart failed serial={self.serial} tier={tier}")
-                return False
+        # Hold the restart lock across stop→start so the watchdog can't observe
+        # the brief dead window mid-tier-change and fire its own restart — two
+        # concurrent starts corrupt the scrcpy handshake. start() re-acquires
+        # the same RLock (reentrant), so nesting is fine.
+        with self._restart_lock:
+            self.tier = tier
+            with self._lock:
+                was_running = self._running and self._ffmpeg_proc is not None
+            if was_running:
+                self.stop()
+                if not self.start():
+                    _log(f"[scrcpy] set_tier restart failed serial={self.serial} tier={tier}")
+                    return False
         return True
