@@ -491,30 +491,9 @@ class ScrcpySession:
             with self._lock:
                 self._ffmpeg_proc = ffmpeg_proc
 
-            # Drain ffmpeg stderr live so its warnings (frame drops, rate issues,
-            # muxer complaints) show up in the log DURING streaming, not only at
-            # teardown — previously they were invisible until the stream died.
-            def _drain_stderr(proc, serial):
-                try:
-                    for line in proc.stderr:
-                        s = line.decode("utf-8", errors="replace").rstrip()
-                        if s:
-                            _log(f"[ffmpeg] {serial}: {s}")
-                except Exception:
-                    pass
-            threading.Thread(target=_drain_stderr, args=(ffmpeg_proc, self.serial),
-                             daemon=True).start()
-
             _log(f"[scrcpy] streaming serial={self.serial} → {self.rtsp_url}")
 
             _FLAG_CONFIG = (1 << 63)
-            # Diagnostic: count frames/sec actually read from scrcpy and bytes
-            # pushed to ffmpeg, logged once a second. This tells us whether a low
-            # on-screen fps is the DEVICE not delivering frames (scrcpy rate low)
-            # or the pipeline dropping them (scrcpy high but WebRTC low).
-            _fps_t0 = time.time()
-            _fps_n = 0
-            _fps_bytes = 0
             while self._running:
                 header = _recvall(video_sock, 12)
                 if len(header) < 12:
@@ -531,15 +510,6 @@ class ScrcpySession:
                     ffmpeg_proc.stdin.flush()
                 except Exception:
                     break
-                _fps_n += 1
-                _fps_bytes += size
-                _now = time.time()
-                if _now - _fps_t0 >= 1.0:
-                    _log(f"[scrcpy] fps serial={self.serial} "
-                         f"in={_fps_n}/s {(_fps_bytes*8/1e6):.1f}Mbps tier={self.tier}")
-                    _fps_t0 = _now
-                    _fps_n = 0
-                    _fps_bytes = 0
 
         except Exception:
             _log(f"[scrcpy] stream_loop error serial={self.serial}: {traceback.format_exc()[:400]}")
@@ -561,7 +531,13 @@ class ScrcpySession:
                     ffmpeg_proc.kill()
                 except Exception:
                     pass
-                # stderr is drained live by _drain_stderr; nothing to read here.
+                try:
+                    stderr_bytes = ffmpeg_proc.stderr.read()
+                    if stderr_bytes:
+                        _log(f"[scrcpy] ffmpeg stderr serial={self.serial}: "
+                             f"{stderr_bytes.decode('utf-8', errors='replace')[:600]}")
+                except Exception:
+                    pass
             # Identity-guard the _running reset: only tear down state if this
             # thread still owns the current ffmpeg_proc. An OLD stream thread
             # unblocked after a set_tier restart must NOT clobber the NEW
