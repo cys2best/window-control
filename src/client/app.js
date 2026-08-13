@@ -62,7 +62,7 @@ function initStream() {
   newImg.src = '/stream?' + Date.now();
 
   // MJPEG img onload fires once on first frame only — not per-frame
-  newImg.onload = () => { if (gen === _streamGeneration) { clearUnavailable(); } };
+  newImg.onload = () => { if (gen === _streamGeneration) { clearUnavailable(); updateRotation(); } };
 
   newImg.onerror = () => {
     if (gen !== _streamGeneration) return;
@@ -86,6 +86,46 @@ function getStreamRect() {
     return video.getBoundingClientRect();
   }
   return document.getElementById('stream-img').getBoundingClientRect();
+}
+
+// ── Landscape rotate ──────────────────────────────────────────────────────────
+// When the device is portrait but the stream is landscape, rotate the container
+// 90° CW (body.rotated) so it fills the tall screen. We track _rotated so
+// normalizeCoords can remap touch coordinates into the stream's frame.
+let _rotated = false;
+
+function _activeStreamEl() {
+  const video = document.getElementById('stream-video');
+  if (_webrtcActive && video.style.display !== 'none') return video;
+  return document.getElementById('stream-img');
+}
+
+function _streamNaturalSize() {
+  const el = _activeStreamEl();
+  if (!el) return null;
+  const w = el.videoWidth || el.naturalWidth || 0;
+  const h = el.videoHeight || el.naturalHeight || 0;
+  return (w && h) ? { w, h } : null;
+}
+
+// Decide whether to rotate: only when the viewport is portrait AND the stream
+// is landscape. Re-evaluated on select, on metadata load, and on orientation
+// change. No-op if the phone is already landscape.
+function updateRotation() {
+  const onStream = document.getElementById('screen-stream').classList.contains('active');
+  const nat = _streamNaturalSize();
+  const portrait = window.innerHeight >= window.innerWidth;
+  const landscapeStream = nat ? nat.w > nat.h : true; // assume landscape until known
+  const shouldRotate = onStream && portrait && landscapeStream;
+  if (shouldRotate !== _rotated) {
+    _rotated = shouldRotate;
+    document.body.classList.toggle('rotated', _rotated);
+  }
+}
+
+function clearRotation() {
+  _rotated = false;
+  document.body.classList.remove('rotated');
 }
 
 // ── WebRTC via WHEP (mediamtx) ────────────────────────────────────────────────
@@ -153,13 +193,14 @@ async function initWebRTC(windowId, whepUrl, stunUrl) {
     _pc.ontrack = e => {
       console.log('[webrtc] ontrack fired');
       video.srcObject = e.streams[0];
-      video.onloadedmetadata = () => console.log('[webrtc] video loadedmetadata');
+      video.onloadedmetadata = () => { console.log('[webrtc] video loadedmetadata'); updateRotation(); };
       video.oncanplay = () => console.log('[webrtc] video canplay');
       video.onplaying = () => console.log('[webrtc] video playing');
       video.style.display = 'block';
       img.style.display = 'none';
       _webrtcActive = true;
       clearUnavailable();
+      updateRotation();
     };
 
     _pc.onicecandidate = e => {
@@ -216,10 +257,10 @@ async function initWebRTC(windowId, whepUrl, stunUrl) {
 }
 
 function normalizeCoords(clientX, clientY) {
+  if (_rotated) return _normalizeCoordsRotated(clientX, clientY);
+
   const r = getStreamRect();
-  const el = _webrtcActive
-    ? document.getElementById('stream-video')
-    : document.getElementById('stream-img');
+  const el = _activeStreamEl();
 
   // Account for object-fit:contain letterboxing.
   // The element box may be larger than the actual rendered content.
@@ -243,6 +284,37 @@ function normalizeCoords(clientX, clientY) {
   return {
     x: Math.max(0, Math.min(1, (clientX - r.left - offsetX) / contentW)),
     y: Math.max(0, Math.min(1, (clientY - r.top - offsetY) / contentH)),
+  };
+}
+
+// Rotated (body.rotated) touch mapping. The container is rotated 90° CW, so we
+// can't trust its getBoundingClientRect. Instead map screen coords into the
+// container's local (pre-rotation) frame, then apply object-fit:contain letter-
+// boxing against the swapped viewport dimensions.
+//
+// Screen (sx, sy) in viewport W×H maps to local (u, v) = (sy, W - sx), where the
+// local box is H wide (stream horizontal) × W tall (stream vertical).
+function _normalizeCoordsRotated(sx, sy) {
+  const W = window.innerWidth;
+  const H = window.innerHeight;
+  const nat = _streamNaturalSize();
+
+  // Local frame: horizontal axis length H, vertical axis length W.
+  const u = sy;          // along stream width  (0..H)
+  const v = W - sx;      // along stream height (0..W)
+
+  let contentW = H, contentH = W, offsetX = 0, offsetY = 0;
+  if (nat) {
+    const scale = Math.min(H / nat.w, W / nat.h);
+    contentW = nat.w * scale;
+    contentH = nat.h * scale;
+    offsetX = (H - contentW) / 2;
+    offsetY = (W - contentH) / 2;
+  }
+
+  return {
+    x: Math.max(0, Math.min(1, (u - offsetX) / contentW)),
+    y: Math.max(0, Math.min(1, (v - offsetY) / contentH)),
   };
 }
 
@@ -406,6 +478,10 @@ document.addEventListener('DOMContentLoaded', () => {
     clearUnavailable();
     initStream();
   });
+
+  // Re-evaluate landscape rotate when the device turns or the viewport resizes.
+  window.addEventListener('orientationchange', () => setTimeout(updateRotation, 200));
+  window.addEventListener('resize', updateRotation);
 
   // Reconnect stream + WS when app returns from background (iOS Safari suspends both)
   document.addEventListener('visibilitychange', () => {

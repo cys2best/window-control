@@ -115,6 +115,7 @@ function startWindowsPolling() {
 
 function initDrawer() {
   document.getElementById('back-btn').addEventListener('click', () => {
+    clearRotation();
     showScreen('screen-list');
     fetchWindows();
   });
