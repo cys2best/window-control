@@ -276,7 +276,16 @@ function _fallbackToMJPEG() {
 
 // Resolve once ICE gathering completes (or after a short cap, so a stuck
 // gatherer can't hang the whole negotiation).
-function waitForIceGatheringComplete(pc, capMs = 2000) {
+// Wait for ICE gathering before POSTing the non-trickle WHEP offer. The offer
+// MUST carry a srflx (server-reflexive) candidate — that's the one our embedded
+// STUN reflects with the browser's Tailscale IP, the only candidate mediamtx
+// can reach. Safari's mDNS .local host candidate is useless over Tailscale.
+//
+// Old behavior blind-capped at 2s: if the srflx arrived late, the offer went
+// out with only the .local candidate → mediamtx "write queue is full" →
+// never connects. Now: resolve as soon as we have a srflx (fast path), else
+// on 'complete', else a longer hard cap so a slow gather still gets its srflx.
+function waitForIceGatheringComplete(pc, capMs = 4000) {
   if (pc.iceGatheringState === 'complete') return Promise.resolve();
   return new Promise(resolve => {
     let done = false;
@@ -284,10 +293,19 @@ function waitForIceGatheringComplete(pc, capMs = 2000) {
       if (done) return;
       done = true;
       pc.removeEventListener('icegatheringstatechange', check);
+      pc.removeEventListener('icecandidate', onCand);
       resolve();
     };
     const check = () => { if (pc.iceGatheringState === 'complete') finish(); };
+    // Fast path: as soon as the reflexive candidate is in, we can POST.
+    const onCand = e => {
+      if (e.candidate && e.candidate.candidate &&
+          e.candidate.candidate.includes('typ srflx')) {
+        finish();
+      }
+    };
     pc.addEventListener('icegatheringstatechange', check);
+    pc.addEventListener('icecandidate', onCand);
     setTimeout(finish, capMs);
   });
 }
@@ -321,6 +339,7 @@ async function initWebRTC(windowId, whepUrl, stunUrl, serial) {
     // Tailscale, so the srflx candidate carries the browser's Tailscale IP,
     // which mediamtx can reach directly. We wait for ICE gathering to complete
     // before POSTing the (non-trickle) offer so that candidate is included.
+    console.log('[webrtc] stun_url =', _stunUrl || '(none!)');
     _pc = new RTCPeerConnection({
       iceServers: _stunUrl ? [{ urls: _stunUrl }] : [],
     });
