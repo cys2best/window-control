@@ -163,11 +163,31 @@ let _lastScrollSendTime = 0; // suppress drag_end after scroll
 // Two-finger scroll state
 let _twoFingerLastY = null;
 
+let _inputRttMs = 0;      // measured input-WS round-trip (client→server→client)
+let _echoTimer = null;
+
 function connectWS() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   ws = new WebSocket(`${proto}://${location.host}/input`);
-  ws.onopen = () => { wsRetryDelay = 1000; };
-  ws.onclose = () => scheduleWSReconnect();
+  ws.onopen = () => {
+    wsRetryDelay = 1000;
+    // Probe input-WS round-trip every 2s. This isolates input transport
+    // latency from video-feedback latency: if this stays low (~RTT) while taps
+    // still feel late, the delay is video, not input.
+    if (_echoTimer) clearInterval(_echoTimer);
+    _echoTimer = setInterval(() => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'echo', t: Date.now() }));
+      }
+    }, 2000);
+  };
+  ws.onmessage = ev => {
+    try {
+      const m = JSON.parse(ev.data);
+      if (m.type === 'echo' && m.t) _inputRttMs = Date.now() - m.t;
+    } catch (_) {}
+  };
+  ws.onclose = () => { if (_echoTimer) { clearInterval(_echoTimer); _echoTimer = null; } scheduleWSReconnect(); };
   ws.onerror = () => ws.close();
 }
 
@@ -603,8 +623,9 @@ async function _sampleStats() {
   el.innerHTML =
     `${w}×${h} · ${Math.round(fps)}fps<br>` +
     `${(kbps / 1000).toFixed(1)} Mbps<br>` +
-    `RTT ${Math.round(rtt)}ms · loss ${lossPct.toFixed(1)}%<br>` +
-    `jitter ${Math.round(jbMs)}ms · tier ${_currentTier}`;
+    `net RTT ${Math.round(rtt)}ms · loss ${lossPct.toFixed(1)}%<br>` +
+    `input ${Math.round(_inputRttMs)}ms · jitter ${Math.round(jbMs)}ms<br>` +
+    `tier ${_currentTier}`;
 }
 
 document.addEventListener('DOMContentLoaded', () => {

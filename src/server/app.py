@@ -282,6 +282,17 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
         try:
             while True:
                 data = await websocket.receive_json()
+                # Latency probe: echo the client's timestamp straight back so the
+                # client can measure input-WS round-trip (client→server→client),
+                # isolating input transport latency from video-feedback latency.
+                if data.get("type") == "echo":
+                    try:
+                        await websocket.send_text(
+                            '{"type":"echo","t":' + str(data.get("t", 0)) + '}'
+                        )
+                    except Exception:
+                        pass
+                    continue
                 inst = instance_manager.active
                 if inst is None:
                     finger_down = False
