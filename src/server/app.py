@@ -96,7 +96,19 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
     async def index():
         html_path = os.path.join(CLIENT_DIR, "index.html")
         if os.path.exists(html_path):
-            return HTMLResponse(Path(html_path).read_text())
+            html = Path(html_path).read_text()
+            # Cache-bust the static asset URLs with the app version. The installed
+            # iOS PWA caches /static/*.js hard and has no service worker to purge,
+            # so after a client change it kept running the old app.js (which hit
+            # the removed /active/whep) → white screen. Appending ?v=<version>
+            # makes the URL change whenever we ship, forcing a fresh fetch.
+            from config import VERSION
+            html = html.replace('.js"', f'.js?v={VERSION}"')
+            html = html.replace('.css"', f'.css?v={VERSION}"')
+            return HTMLResponse(
+                html,
+                headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+            )
         return HTMLResponse("<h1>Client not found</h1>", status_code=500)
 
     # ── Instance management ──────────────────────────────────────────────────
