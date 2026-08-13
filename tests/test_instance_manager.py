@@ -35,7 +35,7 @@ def test_select_known_serial_repoints():
     serial = "emulator-5554"
 
     class FakeSession:
-        pass
+        alive = True  # select() only repoints a live/publishing session
 
     inst = Instance(
         {"id": f"adb:{serial}", "title": "t", "ldplayer_index": 0},
@@ -45,3 +45,33 @@ def test_select_known_serial_repoints():
 
     assert im.select(serial) is True
     assert calls == [instance_name(serial)]
+
+
+def test_select_dead_session_refuses_repoint():
+    # A session that never came up (alive False even after start) must not
+    # repoint 'active' at a path with no publisher — that 404-storms mediamtx.
+    from server.instance_manager import Instance
+
+    calls = []
+
+    class FakeMediamtx(MediamtxManager):
+        def set_active_source(self, name):
+            calls.append(name)
+
+    im = InstanceManager(FakeMediamtx())
+    serial = "emulator-5554"
+
+    class DeadSession:
+        alive = False
+
+        def start(self):
+            return False
+
+    inst = Instance(
+        {"id": f"adb:{serial}", "title": "t", "ldplayer_index": 0},
+        DeadSession(), 100, 200,
+    )
+    im._instances[serial] = inst
+
+    assert im.select(serial) is False
+    assert calls == []

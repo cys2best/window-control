@@ -152,8 +152,21 @@ class InstanceManager:
 
     def select(self, serial: str) -> bool:
         with self._lock:
-            if serial not in self._instances:
+            inst = self._instances.get(serial)
+            if inst is None:
                 return False
+        # Only repoint 'active' at an instance whose scrcpy session is actually
+        # publishing. Pointing the mux source at a serial whose session never
+        # came up (or died) makes mediamtx pull a path with no publisher and log
+        # a 404 storm ('no one is publishing to path <name>' / 'active: 404').
+        # Try to bring a dead session up before giving up.
+        if not inst.session.alive:
+            _log(f"[instance] select {serial}: session not alive — starting")
+            inst.session.start()
+        if not inst.session.alive:
+            _log(f"[instance] select {serial}: session still not alive — refusing repoint")
+            return False
+        with self._lock:
             self._active_serial = serial
         # Repoint the live 'active' mux path outside the lock (network I/O).
         self._mediamtx.set_active_source(instance_name(serial))
