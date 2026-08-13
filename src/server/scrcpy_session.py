@@ -463,3 +463,24 @@ class ScrcpySession:
     def alive(self) -> bool:
         with self._lock:
             return self._running and self._ffmpeg_proc is not None
+
+    def set_tier(self, tier: str) -> bool:
+        """Update quality tier. Restarts capture if running.
+
+        Args:
+            tier: Quality tier name (must be in QUALITY_TIERS).
+
+        Returns:
+            True if tier was accepted/set, False if unknown tier.
+        """
+        if tier not in QUALITY_TIERS:
+            return False
+        if tier == self.tier:
+            return True
+        self.tier = tier
+        with self._lock:
+            was_running = self._running and self._ffmpeg_proc is not None
+        if was_running:
+            self.stop()
+            self.start()
+        return True

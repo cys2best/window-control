@@ -44,3 +44,23 @@ def test_ffmpeg_args_are_copy_not_reencode():
     assert "-f" in args and "rtsp" in args
     assert "-rtsp_transport" in args and "tcp" in args
     assert args[-1] == "rtsp://localhost:8554/instance0"
+
+
+def test_set_tier_updates_tier_when_not_running():
+    from server.scrcpy_session import ScrcpySession
+    s = ScrcpySession("emulator-5554", 0, "rtsp://localhost:8554/instance0", 720, 1280)
+    assert s.set_tier("1080") is True
+    assert s.tier == "1080"
+
+
+def test_set_tier_rejects_unknown():
+    from server.scrcpy_session import ScrcpySession
+    s = ScrcpySession("emulator-5554", 0, "rtsp://localhost:8554/instance0", 720, 1280)
+    assert s.set_tier("9000") is False
+    assert s.tier == "720"
+
+
+def test_set_tier_same_is_noop_true():
+    from server.scrcpy_session import ScrcpySession
+    s = ScrcpySession("emulator-5554", 0, "rtsp://localhost:8554/instance0", 720, 1280)
+    assert s.set_tier("720") is True
