@@ -44,15 +44,20 @@ Stream won't play, or mediamtx won't start? See
 mDNS / STUN WebRTC bug (`write queue is full`) and the mediamtx `:8000` port
 collision.
 
-## Stream Quality
+## Streaming Quality
 
-| Preset | JPEG Quality | Use Case |
-|--------|-------------|----------|
-| Low    | 40          | Slow / remote connection |
-| Medium | 65          | Balanced |
-| High   | 85          | Fast LAN / Tailscale |
+The server encodes video at one of four adaptive quality tiers:
 
-Configurable in both the launcher and the iPhone UI.
+| Tier | Resolution | Max Bitrate | Max FPS |
+|------|-----------|-------------|--------|
+| 480  | up to 480p | ~2 Mbps | 30 |
+| 720  | up to 720p | ~4 Mbps | 30 |
+| 1080 | up to 1080p | ~8 Mbps | 60 |
+| 1440 | up to 1440p | ~12 Mbps | 60 |
+
+**Adaptive:** The client monitors network conditions (packet loss, RTT) every 5 seconds and automatically steps the tier up or down to maintain playback quality without buffering.
+
+**Manual control:** Override the active tier anytime via the UI or HTTP API (`POST /instances/{serial}/quality {tier: 480|720|1080|1440}`).
 
 ## Building from Source
 

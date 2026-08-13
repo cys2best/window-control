@@ -119,3 +119,43 @@ WebRTC then never works because the ICE UDP mux never binds.
 
 Note: changing the port does not help if the collision is another *mediamtx*
 orphan — it would grab the new port too. Keep the reaper.
+
+---
+
+## ffmpeg fails to copy video codec — `Non-monotonic DTS` or codec errors
+
+**Symptom.** ffmpeg logs show errors like:
+
+```
+Non-monotonic DTS in output file
+Stream ends prematurely
+```
+
+Or ffmpeg refuses to copy (`-c:v copy`) and exits.
+
+### Root cause: scrcpy H.264 profile mismatch
+
+The server encodes at the selected quality tier (480/720/1080/1440) using scrcpy's
+H.264 encoder. ffmpeg now uses `-c:v copy` to mux the stream directly into RTSP
+without re-encoding — for lower latency and no quality loss.
+
+However, some device builds of scrcpy produce H.264 streams that don't meet the
+standard framing — missing SPS/PPS (sequence/picture parameter sets), or
+non-monotonic decoding timestamps. ffmpeg's copy mode rejects these.
+
+### Fix: add the h264_mp4toannexb bitstream filter
+
+In `src/server/scrcpy_session.py`, add `-bsf:v h264_mp4toannexb` to the ffmpeg
+command. This filter normalizes the H.264 annex B bytestream, ensuring SPS/PPS
+headers are present and DTS is monotonic:
+
+```python
+build_ffmpeg_args(
+    input_h264_url,
+    rtsp_url,
+    bitstream_filters=['-bsf:v', 'h264_mp4toannexb']  # or via command args
+)
+```
+
+This allows `-c:v copy` to succeed. If the problem persists, check the device's
+scrcpy version and H.264 encoder settings in its build.
