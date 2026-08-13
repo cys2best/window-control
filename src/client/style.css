@@ -100,20 +100,6 @@ html, body {
   -webkit-user-select: none;
 }
 
-/* Landscape rotate: device is portrait, stream is landscape. Rotate the
-   container 90° CW so the stream is upright when the user turns the phone LEFT
-   (phone's right side up). Pre-rotation box is (viewport-height) x (viewport-
-   width); rotate(90) then translate(0,-100vw) maps it onto the full viewport.
-   The toolbar floats on top (z-40). Touch coords are remapped in JS
-   (normalizeCoords handles the _rotated case). */
-body.rotated #stream-container {
-  top: 0; left: 0; right: auto; bottom: auto;
-  width: 100vh;
-  height: 100vw;
-  transform-origin: 0 0;
-  transform: rotate(90deg) translate(0, -100vw);
-}
-
 #stream-img,
 #stream-video {
   width: 100%; height: 100%;
@@ -125,6 +111,41 @@ body.rotated #stream-container {
   touch-action: none;
   background: #000;
   pointer-events: none;
+}
+
+/* ── LEFT INSTANCE-SWITCH BUBBLE (OSLink-style) ─────────────── */
+#switch-bubble {
+  position: absolute;
+  left: max(8px, env(safe-area-inset-left));
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex; flex-direction: column;
+  gap: 4px;
+  padding: 5px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(16,24,46,0.66), rgba(10,14,30,0.78));
+  backdrop-filter: blur(14px) saturate(1.2);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  border: 1px solid rgba(255,255,255,0.10);
+  box-shadow: 0 6px 20px rgba(0,0,0,0.32);
+  z-index: 40;
+}
+.sb-btn {
+  width: 46px; height: 46px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.12);
+  color: #eef1f8; font-size: 16px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.12s ease, transform 0.08s ease, border-color 0.12s ease;
+}
+.sb-btn:hover { background: rgba(255,255,255,0.10); }
+.sb-btn:active {
+  background: rgba(233,69,96,0.85);
+  border-color: rgba(233,69,96,0.9);
+  transform: scale(0.92);
 }
 
 /* Fullscreen: fill entire screen */
