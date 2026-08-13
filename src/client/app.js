@@ -129,11 +129,16 @@ async function initWebRTC(windowId, whepUrl) {
   if (!_whepUrl) { _fallbackToMJPEG(); _webrtcInProgress = false; return; }
 
   try {
-    // No STUN: streaming runs over Tailscale, where host candidates connect
-    // directly. mediamtx advertises the Tailscale IP via webrtcAdditionalHosts.
-    // Adding STUN only delays the (non-trickle) offer while srflx candidates
-    // gather async, which starves the media path and fills the write queue.
-    _pc = new RTCPeerConnection({ iceServers: [] });
+    // STUN is required: Safari only emits an mDNS (.local) host candidate for
+    // privacy and offers no flag to disable it. mediamtx can't resolve .local
+    // over Tailscale, so the pair never forms and media never flows
+    // ("write queue is full" -> "deadline exceeded"). STUN makes the browser
+    // also gather a server-reflexive (srflx) candidate with a real IP, which
+    // mediamtx can pair against. We wait for ICE gathering to complete before
+    // POSTing the (non-trickle) offer, so the srflx candidate is included.
+    _pc = new RTCPeerConnection({
+      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+    });
 
     const video = document.getElementById('stream-video');
     const img   = document.getElementById('stream-img');
