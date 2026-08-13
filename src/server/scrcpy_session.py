@@ -167,12 +167,12 @@ def build_ffmpeg_args(ffmpeg_exe: str, rtsp_url: str, tier: str = DEFAULT_TIER) 
     return [
         ffmpeg_exe,
         "-loglevel", "warning",
-        # Input-side low latency: don't buffer or spend time probing the raw
-        # H.264 stream — decode/forward frames as they arrive.
-        "-fflags", "nobuffer",
-        "-flags", "low_delay",
-        "-probesize", "32",
-        "-analyzeduration", "0",
+        # NOTE: do NOT add -probesize 32 / -analyzeduration 0 / -fflags nobuffer
+        # here. They starve ffmpeg's h264 demuxer of the bytes it needs to parse
+        # SPS/PPS, so it never emits a valid stream — mediamtx sees the publish
+        # stall and times it out after ~10s ('i/o timeout'), dropping every
+        # instance. Input-side buffering here is negligible latency anyway; the
+        # real win is the tight output -bufsize below.
         # Raw H.264 from scrcpy carries no container timestamps; stamp by arrival
         # so DTS is monotonic (see the copy-mux history — the same fix applies to
         # the demux side here).

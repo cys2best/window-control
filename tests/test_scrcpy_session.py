@@ -58,15 +58,16 @@ def test_ffmpeg_args_gop_scales_with_tier_fps():
     assert args[args.index("-g") + 1] == "120"
 
 
-def test_ffmpeg_args_low_latency_flags():
-    # Latency-reduction flags: no input buffering/probing + a tight VBV buffer.
+def test_ffmpeg_args_tight_vbv_bufsize():
+    # Latency win: a small VBV buffer (quarter of target) so libx264 doesn't
+    # queue a full second of frames. NOTE: input-probe flags (-probesize/
+    # -analyzeduration/-fflags nobuffer) are intentionally absent — they broke
+    # SPS/PPS parsing and stalled every publish (i/o timeout).
     from server.scrcpy_session import build_ffmpeg_args
     args = build_ffmpeg_args("ffmpeg", "rtsp://localhost:8554/instance0", "1080")
-    assert args[args.index("-fflags") + 1] == "nobuffer"
-    assert args[args.index("-flags") + 1] == "low_delay"
-    assert "-probesize" in args and "-analyzeduration" in args
-    # bufsize is a quarter of the 8M target → 2M (not the full 8M).
-    assert args[args.index("-bufsize") + 1] == "2M"
+    assert args[args.index("-bufsize") + 1] == "2M"  # quarter of 8M
+    assert "-probesize" not in args
+    assert "nobuffer" not in args
 
 
 def test_quarter_bitrate():
