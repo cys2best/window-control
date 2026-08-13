@@ -72,7 +72,15 @@ async function selectWindow(id, serial) {
   try {
     const r = await fetch(`/instances/${_serial}/select`, { method: 'POST' });
     const data = await r.json();
-    initWebRTC(id, data.whep_url, data.stun_url, _serial);
+    if (_webrtcActive) {
+      // A live PC is already connected to the `active` mux. The select POST
+      // above repointed the mux server-side, so the existing PC's video swaps
+      // automatically — no re-negotiation needed. Just retarget adaptive quality.
+      setAdaptiveSerial(_serial);
+    } else {
+      // First connect (no live PC) — negotiate WebRTC to the active mux path.
+      initWebRTC(id, data.whep_url, data.stun_url, _serial);
+    }
   } catch (_) {}
 }
 

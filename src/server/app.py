@@ -116,7 +116,7 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
             raise HTTPException(status_code=404, detail="Instance disappeared")
 
         host = get_best_ip() or request.client.host
-        whep_url = f"http://{host}:{WHEP_PORT}/{inst.name}/whep"
+        whep_url = f"http://{host}:{WHEP_PORT}/active/whep"
         return {
             "ok": True,
             "id": inst.id,
@@ -181,7 +181,7 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
             raise HTTPException(status_code=404, detail="Instance disappeared")
 
         host = get_best_ip() or request.client.host
-        whep_url = f"http://{host}:{WHEP_PORT}/{inst.name}/whep"
+        whep_url = f"http://{host}:{WHEP_PORT}/active/whep"
         return {"ok": True, "id": req.id, "w": inst.w, "h": inst.h,
                 "whep_url": whep_url,
                 "stun_url": f"stun:{host}:{STUN_PORT}"}

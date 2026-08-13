@@ -81,6 +81,15 @@ function stopAdaptiveQuality() {
   if (_adaptiveTimer) { clearInterval(_adaptiveTimer); _adaptiveTimer = null; }
 }
 
+// Retarget the live PC's serial without re-negotiating WebRTC. Used when
+// switching instances while a PC is already connected to the `active` mux:
+// the server has already repointed the mux, so we only need to update which
+// instance the reconnect path and adaptive-quality POSTs target.
+function setAdaptiveSerial(serial) {
+  _currentSerial = serial;
+  _adaptiveSerial = serial;
+}
+
 // Drag state
 let _dragActive = false;
 let _dragStartX = 0;

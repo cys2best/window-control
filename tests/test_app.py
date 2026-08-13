@@ -69,6 +69,26 @@ def test_select_instance_ok():
     assert "whep_url" in data
 
 
+def test_select_returns_active_whep():
+    inst = MagicMock()
+    inst.serial = "emulator-5554"
+    inst.id = "adb:emulator-5554"
+    inst.name = "instance0"
+    inst.w = 720
+    inst.h = 1280
+    inst.ldplayer_index = 0
+    client, im = _make_client()
+    im.select.return_value = True
+    im.active = inst
+    with patch("server.app.adb_manager") as mock_adb:
+        mock_session = MagicMock()
+        mock_session.start.return_value = True
+        mock_adb.AdbSession.return_value = mock_session
+        r = client.post("/instances/emulator-5554/select")
+    if r.status_code == 200:
+        assert r.json()["whep_url"].endswith("/active/whep")
+
+
 def test_get_windows_alias():
     """GET /windows should return same as /instances."""
     instances = [{"id": "adb:emulator-5554", "serial": "emulator-5554",
