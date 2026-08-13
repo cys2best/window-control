@@ -13,7 +13,7 @@ import tempfile
 import threading
 import traceback
 
-from config import ASSETS_DIR, MEDIAMTX_PORT, WHEP_PORT, RTMP_PORT
+from config import ASSETS_DIR, MEDIAMTX_PORT, WHEP_PORT, RTMP_PORT, WEBRTC_UDP_PORT
 
 
 def _log(msg: str):
@@ -31,6 +31,28 @@ def _no_window_flags():
     if sys.platform == "win32":
         return {"creationflags": 0x08000000}
     return {}
+
+
+def _reap_orphan_mediamtx():
+    """Kill leftover mediamtx processes from a crashed/force-closed prior run.
+
+    _stop_locked only kills the process this object spawned. An orphan from a
+    previous GUI session still holds the WebRTC UDP mux port (:8000), so the new
+    mediamtx logs 'listen udp :8000: bind: Only one usage of each socket
+    address' and WebRTC never comes up. Reap by image name before starting.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        subprocess.run(
+            ["taskkill", "/F", "/IM", "mediamtx.exe"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+            **_no_window_flags(),
+        )
+    except Exception:
+        _log(f"[mediamtx] reap orphan failed: {traceback.format_exc()[:200]}")
 
 
 def _mediamtx_exe() -> str:
@@ -67,6 +89,7 @@ rtspAddress: :{MEDIAMTX_PORT}
 rtmpAddress: :{RTMP_PORT}
 hlsAddress: :8890
 webrtcAddress: :{WHEP_PORT}
+webrtcLocalUDPAddress: :{WEBRTC_UDP_PORT}
 api: no
 webrtcHandshakeTimeout: 30s
 {nat_lines}
@@ -88,6 +111,7 @@ class MediamtxManager:
         """Start (or restart) mediamtx with paths for the given instances."""
         with self._lock:
             self._stop_locked()
+            _reap_orphan_mediamtx()
             cfg = _generate_config(instance_names, tailscale_ip)
             fd, path = tempfile.mkstemp(suffix=".yml", prefix="mediamtx_")
             try:

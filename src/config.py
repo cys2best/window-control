@@ -23,6 +23,7 @@ SYSTEM_WINDOW_TITLES = {
 MEDIAMTX_PORT = 8554   # RTSP
 WHEP_PORT = 8889       # WebRTC/WHEP (mediamtx default)
 RTMP_PORT = 1935       # mediamtx RTMP (unused by us, kept for mediamtx default config)
+WEBRTC_UDP_PORT = 8288 # WebRTC ICE UDP mux (mediamtx default 8000 collided)
 
 ADB_PATH = "adb"       # overridden at runtime by _find_adb()
 SCRCPY_PATH = os.path.join("assets", "scrcpy", "scrcpy.exe")
