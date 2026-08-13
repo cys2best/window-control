@@ -152,7 +152,27 @@ def main():
         config = uvicorn.Config(fastapi_app, host="0.0.0.0", port=PORT,
                                 log_level="warning", log_config=None)
         server = uvicorn.Server(config)
-        _server_thread = threading.Thread(target=server.run, daemon=True)
+
+        def _serve():
+            # On Windows the default Proactor event loop crashes its accept loop
+            # with WinError 64 ("The specified network name is no longer
+            # available") when a client socket drops mid-accept — common when a
+            # PWA reconnects. The Selector loop does not have this bug. Set the
+            # policy on this thread before uvicorn creates its loop.
+            if sys.platform == "win32":
+                import asyncio
+                try:
+                    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+                except Exception:
+                    pass
+            try:
+                server.run()
+            except Exception:
+                import traceback as _tb
+                _log(f"[GUI] server thread crashed: {_tb.format_exc()[:400]}")
+                # Let the thread die so the watchdog restarts it.
+
+        _server_thread = threading.Thread(target=_serve, daemon=True)
         _server_thread.start()
         _log("[GUI] server started")
 
