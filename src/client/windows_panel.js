@@ -61,14 +61,31 @@ async function fetchWindows() {
   } catch (_) {}
 }
 
-async function selectWindow(id, serial) {
+// Play a short slide+fade on the stream when switching instances.
+// dir: 'up' (next), 'down' (prev), or null (no directional hint → plain fade).
+function playSwitchAnim(dir) {
+  const c = document.getElementById('stream-container');
+  if (!c) return;
+  c.classList.remove('switch-up', 'switch-down', 'switch-fade');
+  // Force reflow so re-adding the class restarts the animation.
+  void c.offsetWidth;
+  c.classList.add(dir === 'up' ? 'switch-up' : dir === 'down' ? 'switch-down' : 'switch-fade');
+  clearTimeout(playSwitchAnim._t);
+  playSwitchAnim._t = setTimeout(() => {
+    c.classList.remove('switch-up', 'switch-down', 'switch-fade');
+  }, 320);
+}
+
+async function selectWindow(id, serial, dir) {
   const _serial = serial || (id.startsWith('adb:') ? id.slice(4) : id);
+  if (id === _activeId) return;                 // no-op switch
   // Navigate immediately — don't block on server round-trip
   _activeId = id;
   const w = _windows.find(w => w.id === id);
   const titleEl = document.getElementById('stream-title');
   if (titleEl && w) titleEl.textContent = w.title;
   showScreen('screen-stream');
+  playSwitchAnim(dir);
   try {
     const r = await fetch(`/instances/${_serial}/select`, { method: 'POST' });
     const data = await r.json();
@@ -87,14 +104,14 @@ function selectPrev() {
   if (!_windows.length) return;
   const idx = _windows.findIndex(w => w.id === _activeId);
   const w = _windows[(idx - 1 + _windows.length) % _windows.length];
-  selectWindow(w.id, w.serial);
+  selectWindow(w.id, w.serial, 'down');
 }
 
 function selectNext() {
   if (!_windows.length) return;
   const idx = _windows.findIndex(w => w.id === _activeId);
   const w = _windows[(idx + 1) % _windows.length];
-  selectWindow(w.id, w.serial);
+  selectWindow(w.id, w.serial, 'up');
 }
 
 function refreshThumbnails() {
@@ -164,26 +181,55 @@ function initDrawer() {
 
   document.getElementById('list-refresh-btn').addEventListener('click', fetchWindows);
 
-  // Swipe up/down on the right toolbar switches instances (prev/next).
+  // Swipe up/down anywhere on the right toolbar switches instances.
+  // Tracks over buttons too — once the finger moves past the threshold we
+  // treat it as a swipe (not a tap): mark .rt-swiping so button :active
+  // styling is suppressed, fire prev/next, and swallow the ensuing click.
   const rt = document.getElementById('right-toolbar');
   if (rt) {
-    let _swipeY = null;
-    let _swipeFired = false;
+    let _sy = null, _sx = null, _fired = false, _isSwipe = false;
+    const THRESH = 30;
+
     rt.addEventListener('touchstart', e => {
-      if (e.target.closest('.rt-btn')) return;   // let buttons handle their taps
-      if (e.touches.length !== 1) return;
-      _swipeY = e.touches[0].clientY;
-      _swipeFired = false;
+      if (e.touches.length !== 1) { _sy = null; return; }
+      _sy = e.touches[0].clientY;
+      _sx = e.touches[0].clientX;
+      _fired = false;
+      _isSwipe = false;
     }, { passive: true });
+
     rt.addEventListener('touchmove', e => {
-      if (_swipeY === null || _swipeFired || e.touches.length !== 1) return;
-      const dy = e.touches[0].clientY - _swipeY;
-      if (Math.abs(dy) < 40) return;             // threshold
-      _swipeFired = true;
-      if (dy < 0) selectNext();                  // swipe up → next
-      else selectPrev();                         // swipe down → prev
-    }, { passive: true });
-    rt.addEventListener('touchend', () => { _swipeY = null; }, { passive: true });
+      if (_sy === null || e.touches.length !== 1) return;
+      const dy = e.touches[0].clientY - _sy;
+      const dx = e.touches[0].clientX - _sx;
+      // Vertical intent: mark swiping early so the button doesn't light up.
+      if (!_isSwipe && Math.abs(dy) > 8 && Math.abs(dy) > Math.abs(dx)) {
+        _isSwipe = true;
+        rt.classList.add('rt-swiping');
+        e.preventDefault();                      // kill scroll + tap highlight
+      }
+      if (_isSwipe && !_fired && Math.abs(dy) >= THRESH) {
+        _fired = true;
+        if (dy < 0) selectNext();                // swipe up → next
+        else selectPrev();                       // swipe down → prev
+      }
+    }, { passive: false });
+
+    const endSwipe = e => {
+      if (_isSwipe && e) {
+        // Prevent the tap that would otherwise land on a button.
+        e.preventDefault();
+      }
+      _sy = null;
+      rt.classList.remove('rt-swiping');
+      setTimeout(() => { _isSwipe = false; }, 0);
+    };
+    rt.addEventListener('touchend', endSwipe, { passive: false });
+    rt.addEventListener('touchcancel', endSwipe, { passive: false });
+    // Belt-and-suspenders: swallow a click that follows a swipe.
+    rt.addEventListener('click', e => {
+      if (_isSwipe) { e.preventDefault(); e.stopPropagation(); }
+    }, true);
   }
 
   const switchBtn = document.getElementById('switch-btn');

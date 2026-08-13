@@ -113,6 +113,24 @@ html, body {
   pointer-events: none;
 }
 
+/* ── INSTANCE SWITCH ANIMATION ──────────────────────────────── */
+/* Applied briefly to #stream-container on switch; direction hints the slide. */
+#stream-container.switch-up   { animation: switch-up   0.30s cubic-bezier(0.22,0.61,0.36,1); }
+#stream-container.switch-down { animation: switch-down 0.30s cubic-bezier(0.22,0.61,0.36,1); }
+#stream-container.switch-fade { animation: switch-fade 0.24s ease; }
+@keyframes switch-up {
+  0%   { opacity: 0; transform: translateY(6%)  scale(0.985); }
+  100% { opacity: 1; transform: translateY(0)   scale(1); }
+}
+@keyframes switch-down {
+  0%   { opacity: 0; transform: translateY(-6%) scale(0.985); }
+  100% { opacity: 1; transform: translateY(0)   scale(1); }
+}
+@keyframes switch-fade {
+  0%   { opacity: 0; transform: scale(0.99); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
 
 /* Fullscreen: fill entire screen */
 #screen-stream:fullscreen,
@@ -162,7 +180,37 @@ html, body {
   width: 42px;
   pointer-events: none;
 }
-#status-pill { color: #8ad0ff; }
+/* Network status dot (green good / yellow connecting / red down) */
+.net-status {
+  width: 42px; height: 24px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  pointer-events: none;
+}
+.net-dot {
+  width: 11px; height: 11px;
+  border-radius: 50%;
+  background: #6b7280;              /* neutral until first state */
+  box-shadow: 0 0 0 0 rgba(0,0,0,0);
+  transition: background 0.2s ease, box-shadow 0.2s ease;
+}
+.net-good .net-dot {
+  background: #22c55e;
+  box-shadow: 0 0 8px 1px rgba(34,197,94,0.6);
+}
+.net-warn .net-dot {
+  background: #eab308;
+  box-shadow: 0 0 8px 1px rgba(234,179,8,0.55);
+  animation: net-pulse 1.1s ease-in-out infinite;
+}
+.net-bad .net-dot {
+  background: #ef4444;
+  box-shadow: 0 0 8px 1px rgba(239,68,68,0.6);
+}
+@keyframes net-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.35; }
+}
 
 .rt-spacer { flex: 1; }
 
@@ -185,6 +233,13 @@ html, body {
   background: rgba(233,69,96,0.85);
   border-color: rgba(233,69,96,0.9);
   transform: scale(0.92);
+}
+/* While swiping the toolbar, don't flash button press states. */
+#right-toolbar.rt-swiping .rt-btn,
+#right-toolbar.rt-swiping .rt-btn:active {
+  background: rgba(255,255,255,0.06);
+  border-color: rgba(255,255,255,0.12);
+  transform: none;
 }
 /* ── SETTINGS POPUP ─────────────────────────────────────────── */
 #settings-overlay {
