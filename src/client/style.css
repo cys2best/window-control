@@ -93,7 +93,6 @@ html, body {
 
 #stream-container {
   position: absolute; inset: 0;
-  overflow: hidden;               /* clip slide-in animation */
   display: flex; align-items: center; justify-content: center;
   touch-action: none;
   -webkit-tap-highlight-color: transparent;
@@ -113,23 +112,6 @@ html, body {
   background: #000;
   pointer-events: none;
 }
-
-/* ── INSTANCE SWITCH ANIMATION ──────────────────────────────── */
-/* Applied briefly to #stream-container on switch; direction hints the slide.
-   swipe up → next → slideInUp (enters from bottom);
-   swipe down → prev → slideInDown (enters from top). */
-#stream-container.switch-up   { animation: slideInUp   0.30s cubic-bezier(0.22,0.61,0.36,1); }
-#stream-container.switch-down { animation: slideInDown 0.30s cubic-bezier(0.22,0.61,0.36,1); }
-#stream-container.switch-fade { animation: slideInUp   0.30s cubic-bezier(0.22,0.61,0.36,1); }
-@keyframes slideInUp {
-  0%   { opacity: 0; transform: translateY(100%); }
-  100% { opacity: 1; transform: translateY(0); }
-}
-@keyframes slideInDown {
-  0%   { opacity: 0; transform: translateY(-100%); }
-  100% { opacity: 1; transform: translateY(0); }
-}
-
 
 /* Fullscreen: fill entire screen */
 #screen-stream:fullscreen,
