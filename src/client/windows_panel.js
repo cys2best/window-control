@@ -61,22 +61,7 @@ async function fetchWindows() {
   } catch (_) {}
 }
 
-// Play a short slide+fade on the stream when switching instances.
-// dir: 'up' (next), 'down' (prev), or null (no directional hint → plain fade).
-function playSwitchAnim(dir) {
-  const c = document.getElementById('stream-container');
-  if (!c) return;
-  c.classList.remove('switch-up', 'switch-down', 'switch-fade');
-  // Force reflow so re-adding the class restarts the animation.
-  void c.offsetWidth;
-  c.classList.add(dir === 'up' ? 'switch-up' : dir === 'down' ? 'switch-down' : 'switch-fade');
-  clearTimeout(playSwitchAnim._t);
-  playSwitchAnim._t = setTimeout(() => {
-    c.classList.remove('switch-up', 'switch-down', 'switch-fade');
-  }, 320);
-}
-
-async function selectWindow(id, serial, dir) {
+async function selectWindow(id, serial) {
   const _serial = serial || (id.startsWith('adb:') ? id.slice(4) : id);
   if (id === _activeId) return;                 // no-op switch
   // Navigate immediately — don't block on server round-trip
@@ -85,7 +70,6 @@ async function selectWindow(id, serial, dir) {
   const titleEl = document.getElementById('stream-title');
   if (titleEl && w) titleEl.textContent = w.title;
   showScreen('screen-stream');
-  playSwitchAnim(dir);
   try {
     const r = await fetch(`/instances/${_serial}/select`, { method: 'POST' });
     const data = await r.json();
@@ -104,14 +88,14 @@ function selectPrev() {
   if (!_windows.length) return;
   const idx = _windows.findIndex(w => w.id === _activeId);
   const w = _windows[(idx - 1 + _windows.length) % _windows.length];
-  selectWindow(w.id, w.serial, 'down');
+  selectWindow(w.id, w.serial);
 }
 
 function selectNext() {
   if (!_windows.length) return;
   const idx = _windows.findIndex(w => w.id === _activeId);
   const w = _windows[(idx + 1) % _windows.length];
-  selectWindow(w.id, w.serial, 'up');
+  selectWindow(w.id, w.serial);
 }
 
 function refreshThumbnails() {
