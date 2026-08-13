@@ -86,6 +86,10 @@ def _generate_config(instance_names: list[str], tailscale_ip: str | None = None,
         active_block = (
             "  active:\n"
             f"    source: rtsp://localhost:{MEDIAMTX_PORT}/{active_source}\n"
+            # Pull the source over TCP — our scrcpy publishers use
+            # -rtsp_transport tcp, and the default UDP pull times out
+            # ('UDP timeout') against a TCP-only publisher.
+            "    rtspTransport: tcp\n"
             "    sourceOnDemand: no\n"
         )
     return f"""\
@@ -223,14 +227,22 @@ class MediamtxManager:
         import json
         body = json.dumps({
             "source": f"rtsp://localhost:{MEDIAMTX_PORT}/{instance_name}",
+            # Match the config-gen source: pull over TCP, else UDP timeout
+            # against our TCP-only scrcpy publisher.
+            "rtspTransport": "tcp",
             "sourceOnDemand": False,
         }).encode()
         attempts = 4
         for i in range(attempts):
+            # 'replace' (not 'patch') so this creates the 'active' path when it
+            # was never seeded in config, and overwrites it otherwise. PatchPath
+            # returns ErrPathNotFound when 'active' is absent; ReplacePath does
+            # not. This lets us start with NO 'active' block (no dead-source 404
+            # storm) and materialize it on the first select().
             req = urllib.request.Request(
-                "http://127.0.0.1:9997/v3/config/paths/patch/active",
+                "http://127.0.0.1:9997/v3/config/paths/replace/active",
                 data=body,
-                method="PATCH",
+                method="POST",
                 headers={"Content-Type": "application/json"},
             )
             try:

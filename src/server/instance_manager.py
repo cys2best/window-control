@@ -96,8 +96,13 @@ class InstanceManager:
         _ip = get_best_ip()
         _log(f"[mediamtx] advertising IP for ICE: {_ip}")
         self._ensure_stun(_ip)
-        # Preserve the user's current selection across a mediamtx restart instead
-        # of unconditionally re-seeding active_source=all_names[0].
+        # Seed the 'active' mux source ONLY from a live user selection. Do NOT
+        # fall back to all_names[0]: at this point no scrcpy session has started
+        # publishing yet, so pointing 'active' at an unpublished path makes
+        # mediamtx eagerly pull it and log a 404 storm ('no one is publishing').
+        # With no selection we pass active_source=None → no 'active' block is
+        # emitted; the first select() materializes it via replace/active once a
+        # publisher exists.
         with self._lock:
             _sel = self._active_serial
         _seed = None
@@ -105,8 +110,6 @@ class InstanceManager:
             _sname = instance_name(_sel)
             if _sname in all_names:
                 _seed = _sname
-        if _seed is None and all_names:
-            _seed = all_names[0]
         self._mediamtx.start(
             all_names,
             tailscale_ip=_ip,

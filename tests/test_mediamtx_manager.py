@@ -48,6 +48,13 @@ def test_generate_config_no_active_when_none():
     assert "\n  active:" not in cfg
 
 
+def test_generate_config_active_source_uses_tcp_transport():
+    # The 'active' mux source must pull over TCP; the default UDP pull times out
+    # ('UDP timeout') against our TCP-only scrcpy publisher.
+    cfg = _generate_config(["instance0"], active_source="instance0")
+    assert "rtspTransport: tcp" in cfg
+
+
 def test_generate_config_api_enabled():
     cfg = _generate_config(["instance0"])
     assert "api: yes" in cfg
