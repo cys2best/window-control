@@ -79,6 +79,57 @@ def _get_ffmpeg() -> str | None:
         return None
 
 
+def _get_ldconsole_names() -> dict[int, str]:
+    """Map LDPlayer instance index → title via `ldconsole.exe list2`.
+
+    This is the AUTHORITATIVE index→name source. The old approach — dnplayer
+    window titles sorted by PID, indexed by (adb_port-5554)/2 — is wrong twice:
+    PID order is unrelated to instance index, and the title list is dense while
+    device indices are sparse (a stopped instance leaves a gap), so every name
+    after the first gap shifts. ldconsole's list2 keys the title by the real
+    instance index, and each instance's ADB port is 5554 + index*2.
+
+    list2 columns: index,title,topHwnd,bindHwnd,androidStarted,pid,vboxPid.
+    Windows only; returns {} on any failure (caller falls back to a generic name).
+    """
+    if sys.platform != "win32":
+        return {}
+    adb = _find_adb()
+    if not adb:
+        return {}
+    # ldconsole.exe sits at the LDPlayer install root, next to the adb we found.
+    root = os.path.dirname(adb)
+    candidates = [
+        os.path.join(root, "ldconsole.exe"),
+        os.path.join(os.path.dirname(root), "ldconsole.exe"),
+        os.path.join(root, "dnconsole.exe"),
+        os.path.join(os.path.dirname(root), "dnconsole.exe"),
+    ]
+    exe = next((p for p in candidates if os.path.exists(p)), None)
+    if not exe:
+        return {}
+    try:
+        out = subprocess.check_output(
+            [exe, "list2"], timeout=5, text=True, **_no_window_flags()
+        )
+    except Exception:
+        _log(f"[ldplayer] list2 failed: {traceback.format_exc()[:200]}")
+        return {}
+    names: dict[int, str] = {}
+    for line in out.splitlines():
+        parts = line.split(",")
+        if len(parts) < 2:
+            continue
+        try:
+            idx = int(parts[0])
+        except ValueError:
+            continue
+        title = parts[1].strip()
+        if title:
+            names[idx] = title
+    return names
+
+
 def maximize_ldplayer_window(index: int, title: str | None = None):
     """No-op: instances run as VirtualBox Headless — no host GUI window to fullscreen."""
     _log(f"[ldplayer] headless mode — fullscreen skipped index={index}")
@@ -115,7 +166,10 @@ def list_vms() -> list[dict]:
         out = subprocess.check_output([adb, "devices"], timeout=5, text=True,
                                       **_no_window_flags())
         _log(f"[adb] devices output: {out.strip()!r}")
-        window_titles = _get_dnplayer_titles()
+        # Authoritative index→name map (keyed by real LDPlayer instance index).
+        ldconsole_names = _get_ldconsole_names()
+        # Legacy fallback only if ldconsole is unavailable.
+        window_titles = _get_dnplayer_titles() if not ldconsole_names else []
         result = []
         for line in out.splitlines()[1:]:
             line = line.strip()
@@ -128,10 +182,20 @@ def list_vms() -> list[dict]:
             if m:
                 port = int(m.group(1))
                 idx = (port - 5554) // 2
-                name = window_titles[idx] if idx < len(window_titles) else f"LDPlayer #{idx}"
+                if idx in ldconsole_names:
+                    name = ldconsole_names[idx]
+                elif idx < len(window_titles):
+                    name = window_titles[idx]
+                else:
+                    name = f"LDPlayer #{idx}"
             else:
                 idx = 0
-                name = window_titles[0] if window_titles else serial
+                if 0 in ldconsole_names:
+                    name = ldconsole_names[0]
+                elif window_titles:
+                    name = window_titles[0]
+                else:
+                    name = serial
             result.append({
                 "id": f"adb:{serial}",
                 "title": name,
