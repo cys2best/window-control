@@ -46,6 +46,19 @@ def test_ffmpeg_args_are_copy_not_reencode():
     assert args[-1] == "rtsp://localhost:8554/instance0"
 
 
+def test_ffmpeg_args_use_wallclock_timestamps():
+    # Raw H.264 from scrcpy has no container timestamps; without wallclock
+    # stamping ffmpeg guesses 25fps, the RTSP muxer stalls on non-monotonic
+    # DTS, and mediamtx times out the publish (~10s 'i/o timeout'). Regression
+    # guard: this flag was dropped when copy-mux landed and broke all publishers.
+    from server.scrcpy_session import build_ffmpeg_args
+    args = build_ffmpeg_args("ffmpeg", "rtsp://localhost:8554/instance0")
+    i = args.index("-use_wallclock_as_timestamps")
+    assert args[i + 1] == "1"
+    # Must come before -i so it applies to the input demuxer.
+    assert i < args.index("-i")
+
+
 def test_set_tier_updates_tier_when_not_running():
     from server.scrcpy_session import ScrcpySession
     s = ScrcpySession("emulator-5554", 0, "rtsp://localhost:8554/instance0", 720, 1280)

@@ -127,10 +127,22 @@ def build_ffmpeg_args(ffmpeg_exe: str, rtsp_url: str) -> list[str]:
     return [
         ffmpeg_exe,
         "-loglevel", "warning",
-        "-fflags", "+genpts",
+        # The raw H.264 (Annex-B) elementary stream from scrcpy carries NO
+        # container timestamps. ffmpeg's h264 demuxer then guesses PTS/DTS from
+        # a fixed 25fps assumption, which drifts against the device's real
+        # (often 60fps, variable) cadence — the RTSP muxer sees non-monotonic /
+        # stalled DTS and stops sending, so mediamtx times out the publish
+        # after ~10s ('i/o timeout') and tears the path down.
+        #
+        # Stamp each NAL with its wall-clock arrival time instead: monotonic by
+        # construction, no re-encode. This is the documented way to mux a raw
+        # H.264 pipe into RTSP with -c:v copy.
+        "-use_wallclock_as_timestamps", "1",
         "-f", "h264",
         "-i", "pipe:0",
         "-c:v", "copy",
+        # Never emit negative timestamps to the RTSP muxer.
+        "-avoid_negative_ts", "make_zero",
         "-f", "rtsp",
         "-rtsp_transport", "tcp",
         rtsp_url,
