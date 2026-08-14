@@ -1,20 +1,25 @@
-import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, Text, View } from 'react-native';
+import "react-native-gesture-handler";
+import React from "react";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
+import { NavigationContainer } from "@react-navigation/native";
+import { useFonts, Archivo_400Regular, Archivo_500Medium, Archivo_600SemiBold, Archivo_700Bold } from "@expo-google-fonts/archivo";
+import { View } from "react-native";
+import { ServerProvider, useServer } from "./src/api/ServerContext";
+import { RootNavigator } from "./src/navigation/Root";
+import { theme } from "./src/theme/tokens";
 
-export default function App() {
-  return (
-    <View style={styles.container}>
-      <Text>Open up App.tsx to start working on your app!</Text>
-      <StatusBar style="auto" />
-    </View>
-  );
+function Gate() {
+  const { ready } = useServer();
+  if (!ready) return <View style={{ flex: 1, backgroundColor: theme.color.bg }} />;
+  return <NavigationContainer><RootNavigator /></NavigationContainer>;
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-});
+export default function App() {
+  const [fontsLoaded] = useFonts({ Archivo_400Regular, Archivo_500Medium, Archivo_600SemiBold, Archivo_700Bold });
+  if (!fontsLoaded) return <View style={{ flex: 1, backgroundColor: theme.color.bg }} />;
+  return (
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <ServerProvider><Gate /></ServerProvider>
+    </GestureHandlerRootView>
+  );
+}
