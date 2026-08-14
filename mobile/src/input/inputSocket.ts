@@ -19,6 +19,7 @@ export function makeInputSocket(url: string, opts: Opts = {}) {
   const connect = () => {
     ws = new Ws(url);
     ws.onopen = () => {
+      if (closed) return;
       retry = 1000;
       netCb?.("good");
       clearInterval(echoTimer);
