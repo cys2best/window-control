@@ -42,7 +42,10 @@ export function makeInputSocket(url: string, opts: Opts = {}) {
   connect();
 
   return {
-    send(msg: object) { if (ws && ws.readyState === (Ws.OPEN ?? 1)) ws.send(JSON.stringify(msg)); },
+    send(msg: object) {
+      if (ws && ws.readyState === (Ws.OPEN ?? 1)) { ws.send(JSON.stringify(msg)); return; }
+      console.log("[inputSocket] dropped, readyState=", ws?.readyState, msg);
+    },
     close() { closed = true; clearInterval(echoTimer); try { ws?.close(); } catch {} },
     onNet(cb: (s: "good" | "bad") => void) { netCb = cb; },
   };

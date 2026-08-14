@@ -12,7 +12,8 @@ const PILLS: { label: string; tier: string }[] = [
 export function SettingsModal({ tier, onPick, statsOn, onToggleStats, onClose }:
   { tier: string; onPick: (t: string) => void; statsOn: boolean; onToggleStats: () => void; onClose: () => void }) {
   return (
-    <Modal transparent animationType="fade" onRequestClose={onClose}>
+    <Modal transparent animationType="fade" onRequestClose={onClose}
+      supportedOrientations={["portrait", "landscape-left", "landscape-right"]}>
       <Pressable onPress={onClose} style={{ flex: 1, backgroundColor: "rgba(20,17,16,0.55)", alignItems: "center", justifyContent: "center" }}>
         <Pressable onPress={() => {}} style={{ width: 440, maxWidth: "92%", backgroundColor: "#faf8f6", borderRadius: 26, padding: 22 }}>
           <Text style={{ fontFamily: theme.font.bold, fontSize: 19, color: theme.color.text, marginBottom: 18 }}>Settings</Text>

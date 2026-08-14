@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { View, Text, FlatList, ScrollView, RefreshControl } from "react-native";
+import Svg, { Rect, Path, Circle } from "react-native-svg";
 import { useServer } from "../api/ServerContext";
 import { theme } from "../theme/tokens";
 import { InstanceRow } from "../components/InstanceRow";
@@ -54,8 +55,15 @@ export function InstanceList({ navigation }: { navigation: any }) {
   return (
     <View style={{ flex: 1, backgroundColor: theme.color.screen }}>
       <View style={{ flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 24, paddingTop: 52, paddingBottom: 8 }}>
-        {/* Logo placeholder; swap for the v3 react-native-svg mark. */}
-        <View style={{ width: 30, height: 30, borderRadius: 9, backgroundColor: theme.color.accent }} />
+        <Svg width={30} height={30} viewBox="0 0 40 40" aria-label="EmuCtrl">
+          <Rect width={40} height={40} rx={12} fill={theme.color.accent} />
+          <Path d="M13.2 10.4 15.4 14M26.8 10.4 24.6 14" stroke={theme.color.text} strokeWidth={2} strokeLinecap="round" />
+          <Path d="M11 22.6a9 9 0 0 1 18 0z" fill={theme.color.text} />
+          <Circle cx={16.4} cy={18.6} r={1.25} fill={theme.color.accent} />
+          <Circle cx={23.6} cy={18.6} r={1.25} fill={theme.color.accent} />
+          <Rect x={11} y={24.6} width={18} height={5.6} rx={2.6} fill={theme.color.text} />
+          <Path d="M22.6 21.8 32.8 27l-4.2 1.1-1.1 4.2z" fill={theme.color.text} stroke={theme.color.accent} strokeWidth={1.6} strokeLinejoin="round" />
+        </Svg>
         <Text style={{ flex: 1, fontFamily: theme.font.bold, fontSize: 26, color: theme.color.text }}>Windows</Text>
       </View>
       {items.length === 0 ? (
