@@ -26,6 +26,15 @@ let _tierManualUntil = 0;       // ms epoch; manual pin suspends auto-downgrade
 let _adaptiveTimer = null;
 let _badStreak = 0;             // consecutive congested samples (for step-down debounce)
 let _lastTierChange = 0;
+// ms epoch until which a tier change is "expected". A tier change restarts
+// scrcpy server-side (resolution is baked into the encoder args), so the RTSP
+// publish drops and republishes on the SAME mediamtx path. That transient can
+// bounce ICE to 'disconnected'/'failed'. Inside this window we must NOT tear
+// down the PeerConnection and re-negotiate WHEP: the same PC recovers on the
+// republish while the browser holds the last decoded frame (a frozen frame, not
+// a black screen), and a full renegotiation would blank the video and cost the
+// whole ICE round-trip again — the exact 5s freeze we're removing.
+let _tierSwitchUntil = 0;
 let _adaptiveSerial = null;
 
 // Apply a quality the user picked. "auto" stops pinning (adaptation resumes);
@@ -40,6 +49,7 @@ async function setPreferredTier(tier) {
   _tierManualUntil = Date.now() + 60000;  // user pin wins over auto for 60s
   _currentTier = tier;
   _lastTierChange = Date.now();
+  _tierSwitchUntil = Date.now() + 8000;   // expect a restart bounce; don't re-negotiate
   if (_adaptiveSerial) {
     try {
       await fetch(`/instances/${_adaptiveSerial}/quality`, {
@@ -69,6 +79,7 @@ async function _applyTier(tier) {
   if (tier === _currentTier || !_adaptiveSerial) return;
   _currentTier = tier;
   _lastTierChange = Date.now();
+  _tierSwitchUntil = Date.now() + 8000;   // expect a restart bounce; don't re-negotiate
   try {
     await fetch(`/instances/${_adaptiveSerial}/quality`, {
       method: 'POST',
@@ -379,11 +390,23 @@ async function initWebRTC(windowId, whepUrl, stunUrl, serial) {
       if (s === 'failed' || s === 'closed') {
         const retryId = _activeWindowId;
         const retryPc = _pc;
+        // During a tier switch the scrcpy restart drops and republishes the RTSP
+        // source on the same mediamtx path, which can bounce ICE to 'failed'
+        // transiently. Wait out the switch window before tearing down: the PC
+        // usually recovers on the republish with the last frame held, and a
+        // reconnect only fires if it's still broken after the restart settles.
+        const inSwitch = Date.now() < _tierSwitchUntil;
+        const delay = inSwitch ? (_tierSwitchUntil - Date.now()) + 1500 : 2000;
         setTimeout(() => {
+          // Recovered on its own during the wait — no renegotiation needed.
+          if (_pc === retryPc && (_pc.iceConnectionState === 'connected' ||
+                                  _pc.iceConnectionState === 'completed')) {
+            return;
+          }
           if (_activeWindowId === retryId && _pc === retryPc && !_webrtcInProgress) {
             initWebRTC(retryId, undefined, undefined, _currentSerial);
           }
-        }, 2000);
+        }, delay);
       }
     };
 

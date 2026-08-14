@@ -227,7 +227,11 @@ def _start_server(adb: str, serial: str, port: int, scid: int, tier: str) -> boo
             stderr=subprocess.DEVNULL,
             **nw,
         )
-        time.sleep(0.5)
+        # adb forward just creates the local tunnel; it does not require the
+        # server to be accepting yet (the video-connect retry in _stream_loop
+        # handles listen-readiness). A short settle is enough for app_process to
+        # have spawned; the old 0.5s was padding.
+        time.sleep(0.15)
         result = subprocess.run(
             [adb, "-s", serial, "forward", f"tcp:{port}", f"localabstract:{socket_name}"],
             capture_output=True, timeout=5, **nw,
@@ -422,9 +426,10 @@ class ScrcpySession:
                     self._running = False
                 return False
 
-            # Give server time to start listening
-            time.sleep(1.0)
-
+            # No blind wait here: the stream thread's FIRST video connect retries
+            # on ECONNREFUSED until the server is actually accepting (see
+            # _stream_loop). A fixed sleep(1.0) both wasted time on fast devices
+            # and was too short on slow ones; connect-retry is right either way.
             self._stream_thread = threading.Thread(target=self._stream_loop, daemon=True)
             self._stream_thread.start()
             _log(f"[scrcpy] started serial={self.serial} port={self._tcp_port}")
@@ -440,9 +445,24 @@ class ScrcpySession:
             #   2. accept control (blocks here)
             #   3. sends device_meta + codec header on video socket
             # So: connect video, read dummy byte, connect control, then read the rest.
-            video_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            video_sock.settimeout(10)
-            video_sock.connect(("127.0.0.1", self._tcp_port))
+            # Retry the video connect until the server is accepting. This is the
+            # readiness signal that replaces the old blind sleep(1.0) in start():
+            # the FIRST connection scrcpy-server accepts IS the video socket, so
+            # this keeps the accept-order semantics intact while only paying for
+            # as much wait as the device actually needs. ECONNREFUSED = server not
+            # listening yet; anything else propagates.
+            _connect_deadline = time.monotonic() + 8.0
+            while True:
+                video_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                video_sock.settimeout(10)
+                try:
+                    video_sock.connect(("127.0.0.1", self._tcp_port))
+                    break
+                except (ConnectionRefusedError, OSError):
+                    video_sock.close()
+                    if not self._running or time.monotonic() >= _connect_deadline:
+                        raise
+                    time.sleep(0.05)
             with self._lock:
                 self._video_sock = video_sock
 
@@ -562,15 +582,26 @@ class ScrcpySession:
             _log(f"[scrcpy] stream_loop exited serial={self.serial}")
 
     def _idr_heartbeat(self, ffmpeg_proc):
-        """Request an IDR every ~2s while THIS stream is the live one.
+        """Request an IDR on a fast burst early, then settle to every ~2s.
+
+        The early burst matters on a quality-change/switch: the client tears down
+        and renegotiates WHEP, and whichever moment its new subscriber joins, it
+        can only paint once a keyframe arrives. A 2s-only cadence leaves a join
+        that lands just after the initial IDR waiting up to ~2s (visible freeze).
+        For the first few seconds we poke every ~0.4s so a fresh WHEP join gets a
+        keyframe almost immediately, then relax to 2s for steady state.
 
         Identity-guarded on ffmpeg_proc: an old heartbeat thread from a session
         that was replaced by a tier-change/restart must not keep poking the new
         session's control socket. It exits as soon as _running drops or a
         different ffmpeg_proc has taken over.
         """
+        started = time.monotonic()
         while self._running:
-            time.sleep(2.0)
+            # Dense early (switch window), sparse after — keeps steady-state
+            # control traffic low without penalizing the reconnect.
+            interval = 0.4 if (time.monotonic() - started) < 4.0 else 2.0
+            time.sleep(interval)
             with self._lock:
                 if not self._running or self._ffmpeg_proc is not ffmpeg_proc:
                     return
