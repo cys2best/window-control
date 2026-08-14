@@ -7,13 +7,28 @@ can connect directly to http://tailscale-ip:8889/instanceN.
 """
 
 import os
+import re
 import subprocess
 import sys
 import tempfile
 import threading
 import traceback
 
+import httpx
+
 from config import ASSETS_DIR, MEDIAMTX_PORT, WHEP_PORT, RTMP_PORT, WEBRTC_UDP_PORT
+
+# mediamtx API base — apiAddress in the generated config below.
+_API_BASE = "http://127.0.0.1:9997"
+
+# A session stuck with a full write queue (client vanished mid-negotiation —
+# see the rapid-instance-switch race in the mobile client) never drains on
+# its own and blocks that path's video pipeline indefinitely. After this many
+# *consecutive* "write queue is full" lines for the same session, kick it via
+# the mediamtx API instead of waiting for a timeout that may never come.
+_STUCK_QUEUE_KICK_THRESHOLD = 5
+
+_SESSION_LINE_RE = re.compile(r"\[session ([0-9a-f]+)\]\s+(.*)")
 
 
 def _log(msg: str):
@@ -120,6 +135,7 @@ class MediamtxManager:
         self._last_args: tuple | None = None
         self._stopping = False  # set during an intentional stop() so the watchdog
                                 # doesn't fight it
+        self._stuck_counts: dict[str, int] = {}  # session id -> consecutive "write queue is full" count
         self._watchdog_thread = threading.Thread(target=self._watchdog, daemon=True)
         self._watchdog_thread.start()
 
@@ -172,9 +188,43 @@ class MediamtxManager:
             return
         try:
             for line in proc.stdout:
-                _log(f"[mediamtx] {line.decode('utf-8', errors='replace').rstrip()}")
+                text = line.decode("utf-8", errors="replace").rstrip()
+                _log(f"[mediamtx] {text}")
+                self._track_stuck_session(text)
         except Exception:
             pass
+
+    def _track_stuck_session(self, line: str):
+        """Auto-kick a WebRTC session whose write queue never drains.
+
+        A session that never finishes ICE/DTLS establishment (the client
+        superseded it mid-negotiation during a rapid instance switch, or the
+        network path just died) can sit there logging "write queue is full"
+        forever — nothing on the client side is left to close it, and
+        mediamtx doesn't appear to give up on its own. Once the same session
+        logs that _STUCK_QUEUE_KICK_THRESHOLD times in a row, kick it via the
+        API so its video pipeline frees up instead of staying wedged.
+        """
+        m = _SESSION_LINE_RE.search(line)
+        if not m:
+            return
+        session_id, rest = m.group(1), m.group(2)
+        if "write queue is full" in rest:
+            count = self._stuck_counts.get(session_id, 0) + 1
+            self._stuck_counts[session_id] = count
+            if count == _STUCK_QUEUE_KICK_THRESHOLD:
+                threading.Thread(target=self._kick_session, args=(session_id,), daemon=True).start()
+        elif "closed" in rest or "created" in rest:
+            # Session ended (any reason) or a fresh session reused mediamtx's
+            # short hex id — either way the old count no longer applies.
+            self._stuck_counts.pop(session_id, None)
+
+    def _kick_session(self, session_id: str):
+        try:
+            r = httpx.post(f"{_API_BASE}/v3/webrtcsessions/kick/{session_id}", timeout=5)
+            _log(f"[mediamtx] auto-kicked stuck session {session_id}: status={r.status_code}")
+        except Exception:
+            _log(f"[mediamtx] auto-kick failed for {session_id}: {traceback.format_exc()[:200]}")
 
     def stop(self):
         with self._lock:
