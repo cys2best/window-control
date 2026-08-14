@@ -2,7 +2,6 @@ import React, { useEffect, useRef, useState, useCallback } from "react";
 import { View, TextInput } from "react-native";
 import { RTCView } from "react-native-webrtc";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
-import { runOnJS } from "react-native-reanimated";
 import { useServer } from "../api/ServerContext";
 import { theme } from "../theme/tokens";
 import { connectWhep } from "../webrtc/whep";
@@ -29,11 +28,14 @@ export function Stream({ route, navigation }: { route: any; navigation: any }) {
   const [statsOn, setStatsOn] = useState(false);
   const [tier, setTier] = useState("auto");
   const [instances, setInstances] = useState<any[]>([]);
+  const [rtt, setRtt] = useState<number | null>(null);
   const rect = useRef({ width: 1, height: 1 });
   const content = useRef({ w: 1, h: 1 });
   const session = useRef<any>(null);
   const sock = useRef<any>(null);
   const adaptive = useRef<any>(null);
+  const lastMove = useRef(0);
+  const scrollLast = useRef(0);
 
   const start = useCallback(async () => {
     if (!client) return;
@@ -56,22 +58,60 @@ export function Stream({ route, navigation }: { route: any; navigation: any }) {
     } catch { setFailed(true); setNet("disconnected"); }
   }, [client, serial]);
 
+  // Input socket + instance list are owned by the client identity, not by
+  // `start`. Keying this to [client] keeps the socket alive across serial
+  // changes so in-flight input is not dropped.
   useEffect(() => {
-    sock.current = makeInputSocket(client!.inputWsUrl(), { onNet: (s) => { if (s === "bad") setNet("disconnected"); } });
-    client!.instances().then(setInstances).catch(() => {});
+    if (!client) return;
+    sock.current = makeInputSocket(client.inputWsUrl(), {
+      onNet: (s) => { if (s === "bad") setNet("disconnected"); },
+      onRtt: (ms) => setRtt(ms),
+    });
+    client.instances().then(setInstances).catch(() => {});
+    return () => { sock.current?.close(); };
+  }, [client]);
+
+  // WHEP session + adaptive quality follow `start` (serial/client changes).
+  useEffect(() => {
     start();
-    return () => { session.current?.close(); sock.current?.close(); adaptive.current?.stop(); };
+    return () => { session.current?.close(); adaptive.current?.stop(); };
   }, [start]);
 
   const send = (m: object) => sock.current?.send(m);
   const norm = (px: number, py: number) => normalizeCoords({ x: px, y: py }, rect.current, content.current);
 
-  const tap = Gesture.Tap().onEnd((e) => { const c = norm(e.x, e.y); runOnJS(send)(clickMsg(c.x, c.y)); });
+  // `.runOnJS(true)` forces these callbacks onto the JS thread so `norm`
+  // reads the live `rect`/`content` refs (the reanimated babel plugin would
+  // otherwise auto-workletize them onto the UI thread with stale 1x1 refs).
+  const tap = Gesture.Tap()
+    .runOnJS(true)
+    .onEnd((e) => { const c = norm(e.x, e.y); send(clickMsg(c.x, c.y)); });
   const pan = Gesture.Pan()
-    .onStart((e) => { const c = norm(e.x, e.y); runOnJS(send)(dragStartMsg(c.x, c.y)); })
-    .onUpdate((e) => { const c = norm(e.x, e.y); runOnJS(send)(dragMoveMsg(c.x, c.y, Math.abs(e.velocityY) > Math.abs(e.velocityX) * 1.5)); })
-    .onEnd((e) => { const c = norm(e.x, e.y); runOnJS(send)(dragEndMsg(c.x, c.y)); });
-  const gesture = Gesture.Exclusive(pan, tap);
+    .runOnJS(true)
+    .maxPointers(1)
+    .onStart((e) => { const c = norm(e.x, e.y); send(dragStartMsg(c.x, c.y)); })
+    .onUpdate((e) => {
+      const now = Date.now();
+      if (now - lastMove.current < 16) return; // ~60fps cap, web-client parity
+      lastMove.current = now;
+      const c = norm(e.x, e.y);
+      send(dragMoveMsg(c.x, c.y, Math.abs(e.velocityY) > Math.abs(e.velocityX) * 1.5));
+    })
+    .onEnd((e) => { const c = norm(e.x, e.y); send(dragEndMsg(c.x, c.y)); });
+  // Two-finger vertical pan -> scroll. `dy` sign follows the vertical delta.
+  const scroll = Gesture.Pan()
+    .runOnJS(true)
+    .minPointers(2)
+    .maxPointers(2)
+    .onStart((e) => { scrollLast.current = e.translationY; })
+    .onUpdate((e) => {
+      const delta = e.translationY - scrollLast.current;
+      if (Math.abs(delta) < 1) return;
+      scrollLast.current = e.translationY;
+      const c = norm(e.x, e.y);
+      send(scrollMsg(c.x, c.y, delta > 0 ? -1 : 1));
+    });
+  const gesture = Gesture.Exclusive(scroll, pan, tap);
 
   const pickTier = (t: string) => {
     setTier(t);
@@ -85,7 +125,12 @@ export function Stream({ route, navigation }: { route: any; navigation: any }) {
   };
   const reconnect = async () => { setReconnecting(true); await start(); setReconnecting(false); };
 
-  const statsLines = `TIER   ${tier}`; // full stats sampling wired in device pass; tier always shown
+  // RN key names -> server X11 key names (`_JS_KEY_TO_KEYCODE`). Only map the
+  // reliably-wrong ones; everything else passes through unchanged.
+  const KEYMAP: Record<string, string> = { Enter: "Return", Backspace: "BackSpace" };
+  const sendKey = (k: string) => send(keyMsg(KEYMAP[k] ?? k));
+
+  const statsLines = `TIER   ${tier}\ninput  ${rtt == null ? "—" : `${rtt}ms`}`; // full stats sampling wired in device pass
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.color.streamBg }}>
@@ -106,7 +151,7 @@ export function Stream({ route, navigation }: { route: any; navigation: any }) {
         onBack={() => navigation.navigate("InstanceList")} />
 
       {keyboardOn ? (
-        <TextInput autoFocus onKeyPress={(e) => send(keyMsg(e.nativeEvent.key))}
+        <TextInput autoFocus onKeyPress={(e) => sendKey(e.nativeEvent.key)}
           onBlur={() => setKeyboardOn(false)}
           style={{ position: "absolute", opacity: 0, height: 1, width: 1 }} />
       ) : null}

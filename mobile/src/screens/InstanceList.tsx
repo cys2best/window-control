@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { View, Text, FlatList } from "react-native";
+import { View, Text, FlatList, ScrollView, RefreshControl } from "react-native";
 import { useServer } from "../api/ServerContext";
 import { theme } from "../theme/tokens";
 import { InstanceRow } from "../components/InstanceRow";
@@ -59,13 +59,21 @@ export function InstanceList({ navigation }: { navigation: any }) {
         <Text style={{ flex: 1, fontFamily: theme.font.bold, fontSize: 26, color: theme.color.text }}>Windows</Text>
       </View>
       {items.length === 0 ? (
-        <View style={{ flex: 1, padding: 24 }}>
+        <ScrollView
+          contentContainerStyle={{ flexGrow: 1, padding: 24 }}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
           {header}
           <View style={{ padding: 34, backgroundColor: theme.color.card, borderRadius: theme.radius.card, alignItems: "center" }}>
-            <Text style={{ fontFamily: theme.font.semibold, fontSize: 17, color: theme.color.text, marginBottom: 8 }}>No windows found</Text>
-            <Text style={{ fontFamily: theme.font.regular, fontSize: 13, textAlign: "center", color: theme.color.textMuted }}>The server answered, but nothing is running. Start an instance in LDPlayer, then refresh.</Text>
+            <Text style={{ fontFamily: theme.font.semibold, fontSize: 17, color: theme.color.text, marginBottom: 8 }}>
+              {reachable ? "No windows found" : "Can't reach the server"}
+            </Text>
+            <Text style={{ fontFamily: theme.font.regular, fontSize: 13, textAlign: "center", color: theme.color.textMuted }}>
+              {reachable
+                ? "The server answered, but nothing is running. Start an instance in LDPlayer, then pull to refresh."
+                : "We couldn't reach the server on its last check. Confirm it's running and reachable, then pull to refresh."}
+            </Text>
           </View>
-        </View>
+        </ScrollView>
       ) : (
         <FlatList data={items} keyExtractor={(i) => i.id}
           ListHeaderComponent={header}
