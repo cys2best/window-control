@@ -60,6 +60,8 @@ window-control/
 - **`@react-native-async-storage/async-storage`** — persist server base URL and preferred tier.
 - **`react-native-gesture-handler`** + **`react-native-reanimated`** — touch, drag,
   swipe-to-switch, drawer.
+- **`expo-font`** + **`@expo-google-fonts/archivo`** — bundle the Archivo family
+  (400/600/800) so the Modernist type renders without a runtime web-font fetch.
 - **EAS Build** — iOS + Android binaries.
 
 **Workflow change (the biggest one):** dev-client, not Expo Go. Every native
@@ -138,6 +140,65 @@ Direct port of the web adaptive logic:
 `ServerSetup` saves base URL → `InstanceList` polls `/instances` → tap card
 (prefetch keyframe) → `POST /select` → `Stream` mounts PeerConnection →
 `RTCView` + gesture layer + `/input` WS.
+
+## Visual design (from Claude Design — "Modernist")
+
+Source: Claude Design project `WindowControl Remote Client`
+(`WindowControl.dc.html`). The dark ground (variant 1a) is the ship target; the
+light ground (1b) is explicitly rejected — bright chrome next to a video pane
+costs contrast in a dark room. All screens use the dark theme.
+
+### Design tokens
+
+| Token | Value |
+|-------|-------|
+| Font | **Archivo** (weights 400 / 600 / 800); mono = ui-monospace/Menlo for stats |
+| Accent | `#9dbf95` (sage green) — active/selected/primary only |
+| Bg (app) | `#141312` |
+| Bg (video/deep) | `#0c0b0b` |
+| Surface (cards/inputs) | `#201e1d` |
+| Text | `#f3f2f2`; muted = `rgba(243,242,242,.4–.6)` |
+| Error | `#ff563c` |
+| Border radius | **0px everywhere** (zero radius) |
+| Rules/dividers | **2px** solid, `rgba(243,242,242,.25–.35)` |
+| Net dot | connected `#4ade80` · connecting `#facc15` (pulse) · disconnected `#ff563c` |
+
+Bundle `Archivo` with the app (`expo-font` / `@expo-google-fonts/archivo`) — no
+runtime web-font fetch. Modernist idiom: flush-left labels, uppercase kickers
+with letter-spacing, primary buttons with a flush-left label (not centered).
+
+### Per-screen layout (from the prototype)
+
+- **ServerSetup:** `EMUCTRL` kicker → "Connect to your server" (h2, ~34px) →
+  hint → 2px rule → uppercase "Server base URL" label → input (54px, surface bg,
+  2px border, sage caret) → error card (left 2px accent border, tinted bg, icon +
+  title + hint) when unreachable → Connect button (sage, flush-left label, inline
+  spinner while connecting) → "Last used ·" line.
+- **InstanceList ("Windows"):** header with title + server label
+  (`host:port · N online`) + refresh icon button (2px border, spins while
+  refreshing); "PULL TO REFRESH · SYNCING" strip; card grid — each card is a
+  16:9 preview (`image-slot` → real `Image`), a LIVE/IDLE corner badge, title +
+  meta (`WxH · fps`); active card = sage border + sage title + LIVE badge. Empty
+  state: framed monitor icon, "No windows found", Refresh button.
+- **Stream (landscape):** full-bleed letterboxed video (`contain`). Right-edge
+  vertical toolbar in a translucent panel: net dot + short label, then icon
+  buttons — settings, switch, keyboard, stats-toggle, back; active button = sage
+  fill. Overlays:
+  - **Stats:** top-left mono block, 2px left accent border: RES/FPS/RATE/RTT/
+    LOSS/INPUT/JITTER/TIER.
+  - **Keyboard bar:** bottom, "INPUT" kicker + hint + blinking sage caret.
+  - **Quick-switch drawer:** slides from left, "Instances" header + close, rows
+    (Android glyph + title + LIVE tag); active row = sage left-mark + tint.
+  - **Settings modal:** centered, "Quality" label + 5 tier pills (Auto/480p/720p/
+    1080p/1440p, selected = sage fill), 2px rule, "Show live stats" toggle row
+    (sage track when on), Done button (sage).
+  - **Error overlay:** full-cover, broken-signal icon, "Stream unavailable" +
+    explanation, Reconnect (error-red, spinner) + "Back to windows" buttons.
+
+The `.dc.html` prototype is a design artifact (Claude Design `sc-if`/`sc-for`/
+`DCLogic` runtime), not shippable RN — it is the visual source of truth the RN
+components must match. `image-slot.js`/`support.js` are the design-tool runtime,
+not app code.
 
 ## Screens
 
