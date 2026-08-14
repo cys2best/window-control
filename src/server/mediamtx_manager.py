@@ -219,12 +219,31 @@ class MediamtxManager:
             # short hex id — either way the old count no longer applies.
             self._stuck_counts.pop(session_id, None)
 
-    def _kick_session(self, session_id: str):
+    def _kick_session(self, short_id: str):
+        """Resolve mediamtx's log-line short id to its full UUID, then kick.
+
+        The kick endpoint requires the full session UUID; the log only ever
+        prints an 8-char prefix ("invalid UUID length: 8" if you pass that
+        prefix straight through — confirmed the hard way).
+        """
         try:
-            r = httpx.post(f"{_API_BASE}/v3/webrtcsessions/kick/{session_id}", timeout=5)
-            _log(f"[mediamtx] auto-kicked stuck session {session_id}: status={r.status_code}")
+            full_id = self._resolve_full_session_id(short_id)
+            if not full_id:
+                _log(f"[mediamtx] auto-kick: session {short_id} not found in session list (already gone?)")
+                return
+            r = httpx.post(f"{_API_BASE}/v3/webrtcsessions/kick/{full_id}", timeout=5)
+            _log(f"[mediamtx] auto-kicked stuck session {short_id} ({full_id}): status={r.status_code}")
         except Exception:
-            _log(f"[mediamtx] auto-kick failed for {session_id}: {traceback.format_exc()[:200]}")
+            _log(f"[mediamtx] auto-kick failed for {short_id}: {traceback.format_exc()[:200]}")
+
+    def _resolve_full_session_id(self, short_id: str) -> str | None:
+        r = httpx.get(f"{_API_BASE}/v3/webrtcsessions/list", timeout=5)
+        r.raise_for_status()
+        for item in r.json().get("items", []):
+            full_id = item.get("id", "")
+            if full_id.replace("-", "").startswith(short_id):
+                return full_id
+        return None
 
     def stop(self):
         with self._lock:

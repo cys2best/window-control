@@ -39,8 +39,6 @@ export function Stream({ route, navigation }: { route: any; navigation: any }) {
   const lastMove = useRef(0);
   const scrollLast = useRef(0);
   const keyInput = useRef<TextInput>(null);
-  const swipeTimer = useRef<any>(null);
-  const pendingSerial = useRef<string | null>(null);
 
   const startGen = useRef(0);
   const start = useCallback(async () => {
@@ -103,7 +101,7 @@ export function Stream({ route, navigation }: { route: any; navigation: any }) {
   // WHEP session + adaptive quality follow `start` (serial/client changes).
   useEffect(() => {
     start();
-    return () => { session.current?.close(); adaptive.current?.stop(); clearTimeout(swipeTimer.current); };
+    return () => { session.current?.close(); adaptive.current?.stop(); };
   }, [start]);
 
   // Open the stream in landscape by default, but still allow the user to
@@ -185,23 +183,11 @@ export function Stream({ route, navigation }: { route: any; navigation: any }) {
     // lock in the orientation effect below doesn't flash back to portrait.
     navigation.setParams({ serial: inst.serial, title: inst.title });
   };
-  // Debounced: a fast swipe burst updates the pending target on every swipe
-  // but only actually fires client.select()+WHEP once, ~250ms after the last
-  // swipe. Without this, each swipe hit the server's select() (which forces
-  // an IDR) even for switches abandoned a moment later, and — since those
-  // requests race with no ordering guarantee — the server's active-instance
-  // pointer could end up on a stale target after a fast burst.
   const cycleInstance = (dir: 1 | -1) => {
     if (instances.length < 2) return;
-    const base = pendingSerial.current ?? serial;
-    const i = instances.findIndex((x) => x.serial === base);
+    const i = instances.findIndex((x) => x.serial === serial);
     const next = instances[(i + dir + instances.length) % instances.length];
-    pendingSerial.current = next.serial;
-    clearTimeout(swipeTimer.current);
-    swipeTimer.current = setTimeout(() => {
-      pendingSerial.current = null;
-      switchTo(next);
-    }, 250);
+    switchTo(next);
   };
   // Vertical swipe on the toolbar strip (not the video) cycles instances,
   // so it never competes with the drag gesture used for remote mouse input.
