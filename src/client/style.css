@@ -74,8 +74,8 @@ html, body {
 .window-card.active { border-color: #e94560; background: rgba(233,69,96,0.12); }
 
 .window-card-thumb {
-  width: 100%; aspect-ratio: 8/9;   /* double height vs old 16/9 */
-  object-fit: cover;
+  width: 100%; aspect-ratio: 16/9;
+  object-fit: contain;
   background: #111;
   display: block;
 }
