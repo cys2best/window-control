@@ -56,6 +56,15 @@ import traceback
 from config import ASSETS_DIR, QUALITY_TIERS, DEFAULT_TIER
 
 _SCRCPY_BASE_PORT = 27183   # instance 0 → 27183, instance 1 → 27184, …
+
+# A session is considered stalled (and therefore not `alive`) if no video frame
+# has been written to ffmpeg for this many seconds. Overnight, the RTSP publish
+# can silently stall — mediamtx times out the RTSP session ('i/o timeout … not
+# in use') while the scrcpy video read still blocks forever — leaving a zombie
+# session that reported alive and was never restarted. This heartbeat catches
+# that. scrcpy pushes frames continuously (even a static screen re-sends), so a
+# multi-second gap means the pipeline is dead, not idle.
+_STALL_TIMEOUT = 15.0
 _SERVER_JAR = "scrcpy-server"  # filename in assets/scrcpy/
 
 def _log(msg: str):
@@ -366,6 +375,9 @@ class ScrcpySession:
         self._stream_thread: threading.Thread | None = None
         self._video_sock: socket.socket | None = None
         self._running = False
+        # Monotonic timestamp of the last frame written to ffmpeg. Drives the
+        # stall detection in `alive` (see _STALL_TIMEOUT). 0.0 until first frame.
+        self._last_frame_ts = 0.0
         self._lock = threading.Lock()
         # Serializes a full stop→start cycle so a tier-change restart and the
         # watchdog's dead-session restart can't interleave. Without it, two
@@ -461,7 +473,11 @@ class ScrcpySession:
             self.w = init_w
             self.h = init_h
 
-            video_sock.settimeout(None)
+            # Cap the frame read so a silently-stalled scrcpy stream (device
+            # frozen, RTSP publish wedged) breaks the loop and lets the session
+            # go dead instead of blocking forever on _recvall. Longer than the
+            # normal inter-frame gap; a real timeout here means the pipeline died.
+            video_sock.settimeout(_STALL_TIMEOUT)
 
             ffmpeg_proc = subprocess.Popen(
                 build_ffmpeg_args(ffmpeg_exe, self.rtsp_url, self.tier),
@@ -472,6 +488,10 @@ class ScrcpySession:
             )
             with self._lock:
                 self._ffmpeg_proc = ffmpeg_proc
+
+            # Seed the heartbeat so `alive` doesn't report a stall in the window
+            # between stream start and the first frame write.
+            self._last_frame_ts = time.monotonic()
 
             _log(f"[scrcpy] streaming serial={self.serial} → {self.rtsp_url}")
 
@@ -500,6 +520,7 @@ class ScrcpySession:
                 try:
                     ffmpeg_proc.stdin.write(payload)
                     ffmpeg_proc.stdin.flush()
+                    self._last_frame_ts = time.monotonic()
                 except Exception:
                     break
 
@@ -581,7 +602,21 @@ class ScrcpySession:
     @property
     def alive(self) -> bool:
         with self._lock:
-            return self._running and self._ffmpeg_proc is not None
+            if not self._running or self._ffmpeg_proc is None:
+                return False
+            # ffmpeg crashed but the stream loop's finally hasn't cleared the
+            # handle yet (it may still be blocked on a socket read): treat as
+            # dead so the watchdog restarts the publisher.
+            poll = getattr(self._ffmpeg_proc, "poll", None)
+            if poll is not None and poll() is not None:
+                return False
+            # No frames written for too long → publisher stalled (RTSP wedged,
+            # device frozen). The process may still be up, but nothing is
+            # reaching mediamtx, so the session is effectively dead.
+            if self._last_frame_ts and \
+                    time.monotonic() - self._last_frame_ts > _STALL_TIMEOUT:
+                return False
+            return True
 
     def restart_if_dead(self) -> bool:
         """Restart the session only if it is still dead under the restart lock.

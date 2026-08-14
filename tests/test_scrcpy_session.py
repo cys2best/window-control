@@ -87,6 +87,23 @@ def test_set_tier_updates_tier_when_not_running():
     assert s.tier == "1080"
 
 
+class _LiveProc:
+    """Stand-in ffmpeg proc that reports as running (poll() -> None)."""
+    def poll(self):
+        return None
+    def kill(self):
+        pass
+
+
+def _force_alive(s):
+    """Put a session into the real 'alive' state the property reads: running,
+    a live ffmpeg proc, and a fresh frame heartbeat."""
+    import time as _t
+    s._running = True
+    s._ffmpeg_proc = _LiveProc()
+    s._last_frame_ts = _t.monotonic()
+
+
 def test_restart_if_dead_skips_when_alive():
     # Watchdog must not restart a session that is alive — that would double-start
     # a session mid tier-change and corrupt the scrcpy handshake.
@@ -95,15 +112,49 @@ def test_restart_if_dead_skips_when_alive():
     calls = {"start": 0, "stop": 0}
     s.start = lambda: calls.__setitem__("start", calls["start"] + 1) or True
     s.stop = lambda: calls.__setitem__("stop", calls["stop"] + 1)
-    # Force alive True via the real attributes the property reads.
-    s._running = True
-
-    class _P:  # stand-in ffmpeg proc
-        pass
-    s._ffmpeg_proc = _P()
+    _force_alive(s)
 
     assert s.restart_if_dead() is True
     assert calls == {"start": 0, "stop": 0}  # no restart fired
+
+
+def test_alive_false_when_ffmpeg_exited():
+    # A crashed ffmpeg (poll() returns an exit code) means the RTSP publisher is
+    # gone even though the finally-block cleanup has not run yet (the stream loop
+    # may still be blocked on a socket read). alive must report dead so the
+    # watchdog restarts it, instead of trusting the stale _ffmpeg_proc handle.
+    from server.scrcpy_session import ScrcpySession
+    s = ScrcpySession("emulator-5554", 0, "rtsp://localhost:8554/instance0", 720, 1280)
+
+    class _DeadProc:
+        def poll(self):
+            return 1  # exited with code 1
+    s._running = True
+    s._ffmpeg_proc = _DeadProc()
+    import time as _t
+    s._last_frame_ts = _t.monotonic()
+    assert not s.alive
+
+
+def test_alive_false_when_frames_stalled():
+    # ffmpeg process still alive but no frames written for longer than the stall
+    # timeout: the scrcpy video read blocked (settimeout(None)) after the RTSP
+    # publish silently stalled overnight. alive must go False so the watchdog
+    # restarts the publisher instead of reporting a zombie session as healthy.
+    from server.scrcpy_session import ScrcpySession, _STALL_TIMEOUT
+    s = ScrcpySession("emulator-5554", 0, "rtsp://localhost:8554/instance0", 720, 1280)
+    s._running = True
+    s._ffmpeg_proc = _LiveProc()
+    import time as _t
+    s._last_frame_ts = _t.monotonic() - (_STALL_TIMEOUT + 1)
+    assert not s.alive
+
+
+def test_alive_true_when_frames_fresh():
+    from server.scrcpy_session import ScrcpySession
+    s = ScrcpySession("emulator-5554", 0, "rtsp://localhost:8554/instance0", 720, 1280)
+    _force_alive(s)
+    assert s.alive
 
 
 def test_set_tier_rejects_unknown():
