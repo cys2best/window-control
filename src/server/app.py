@@ -99,9 +99,9 @@ async def _capture_preview(serial: str) -> Response:
             timeout=5, **nw,
         )
         img = Image.open(io.BytesIO(png))
-        img.thumbnail((200, 120))
+        img.thumbnail((640, 384))
         buf = io.BytesIO()
-        img.convert("RGB").save(buf, format="JPEG", quality=60)
+        img.convert("RGB").save(buf, format="JPEG", quality=85)
         return buf.getvalue()
 
     try:
