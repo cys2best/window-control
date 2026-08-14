@@ -61,7 +61,9 @@ window-control/
 - **`react-native-gesture-handler`** + **`react-native-reanimated`** — touch, drag,
   swipe-to-switch, drawer.
 - **`expo-font`** + **`@expo-google-fonts/archivo`** — bundle the Archivo family
-  (400/600/800) so the Modernist type renders without a runtime web-font fetch.
+  (400/500/600/700) so the type renders without a runtime web-font fetch.
+- **`react-native-svg`** — the v3 UI uses SVG glyphs (logo, chevrons, tab icons,
+  toolbar icons, net/error marks) shipped as real vector icons, not unicode.
 - **EAS Build** — iOS + Android binaries.
 
 **Workflow change (the biggest one):** dev-client, not Expo Go. Every native
@@ -141,59 +143,88 @@ Direct port of the web adaptive logic:
 (prefetch keyframe) → `POST /select` → `Stream` mounts PeerConnection →
 `RTCView` + gesture layer + `/input` WS.
 
-## Visual design (from Claude Design — "Modernist")
+## Visual design (from Claude Design — "EmuCtrl v3")
 
-Source: Claude Design project `WindowControl Remote Client`
-(`WindowControl.dc.html`). The dark ground (variant 1a) is the ship target; the
-light ground (1b) is explicitly rejected — bright chrome next to a video pane
-costs contrast in a dark room. All screens use the dark theme.
+Source: Claude Design project `WindowControl Remote Client`, file
+`EmuCtrl v3.dc.html`. This **supersedes** the earlier Modernist-dark prototype.
+Design language: **light warm ground** with white cards, **soft radii**, a
+**coral accent**, pill buttons, and a floating bottom nav — the instance list is
+a **scannable vertical list** of full-width previews, not a grid.
+
+**One deliberate split:** the **stream screen stays dark** (`#141110`). Light
+chrome behind video costs contrast and glows in a dark room, so on the stream
+screen the overlays are **translucent white "glass"** (`rgba(250,248,246,.9)`)
+over the dark video.
 
 ### Design tokens
 
 | Token | Value |
 |-------|-------|
-| Font | **Archivo** (weights 400 / 600 / 800); mono = ui-monospace/Menlo for stats |
-| Accent | `#9dbf95` (sage green) — active/selected/primary only |
-| Bg (app) | `#141312` |
-| Bg (video/deep) | `#0c0b0b` |
-| Surface (cards/inputs) | `#201e1d` |
-| Text | `#f3f2f2`; muted = `rgba(243,242,242,.4–.6)` |
-| Error | `#ff563c` |
-| Border radius | **0px everywhere** (zero radius) |
-| Rules/dividers | **2px** solid, `rgba(243,242,242,.25–.35)` |
-| Net dot | connected `#4ade80` · connecting `#facc15` (pulse) · disconnected `#ff563c` |
+| Font | **Archivo** (weights 400 / 500 / 600 / 700); mono = ui-monospace/Menlo for stats |
+| Accent (coral) | `#f2916f` — primary buttons, active states, LIVE pill, stream key |
+| Accent hover/ink-coral | `#c96a48` (links) |
+| Error | `#c2452a`; error bg `#fbe5de` |
+| Bg (app, warm) | `#eae7e3` / screen `#f2f0ed` |
+| Surface (cards) | `#ffffff` |
+| Card surface (active) | `#fdeee7` |
+| Text (ink) | `#1c1a19`; muted `rgba(28,26,25,.45–.6)` |
+| Stream bg (dark) | `#141110` |
+| Stream glass | `rgba(250,248,246,.9)`; stream text on glass `#1c1a19` |
+| Radius | **soft** — inputs/cards 16–26px, phone frame 34px, buttons **pill (999px)** |
+| Net dot | connected `#3f9d6d` (chip bg `#e6f2ea`) · connecting `#e0a52c` (chip `#fbf0dc`, blink) · disconnected `#c2452a` (chip `#fbe5de`) |
+| Shadows | soft ink-tint, e.g. `0 1px 6px rgba(28,26,25,.06)`, nav `0 6px 22px rgba(28,26,25,.14)` |
 
-Bundle `Archivo` with the app (`expo-font` / `@expo-google-fonts/archivo`) — no
-runtime web-font fetch. Modernist idiom: flush-left labels, uppercase kickers
-with letter-spacing, primary buttons with a flush-left label (not centered).
+Bundle `Archivo` (400/500/600/700) with the app (`expo-font` /
+`@expo-google-fonts/archivo`) — no runtime web-font fetch. Idiom: rounded
+everything, centered pill primary buttons, generous type hierarchy.
 
-### Per-screen layout (from the prototype)
+### Per-screen layout (from the v3 prototype)
 
-- **ServerSetup:** `EMUCTRL` kicker → "Connect to your server" (h2, ~34px) →
-  hint → 2px rule → uppercase "Server base URL" label → input (54px, surface bg,
-  2px border, sage caret) → error card (left 2px accent border, tinted bg, icon +
-  title + hint) when unreachable → Connect button (sage, flush-left label, inline
-  spinner while connecting) → "Last used ·" line.
-- **InstanceList ("Windows"):** header with title + server label
-  (`host:port · N online`) + refresh icon button (2px border, spins while
-  refreshing); "PULL TO REFRESH · SYNCING" strip; card grid — each card is a
-  16:9 preview (`image-slot` → real `Image`), a LIVE/IDLE corner badge, title +
-  meta (`WxH · fps`); active card = sage border + sage title + LIVE badge. Empty
-  state: framed monitor icon, "No windows found", Refresh button.
-- **Stream (landscape):** full-bleed letterboxed video (`contain`). Right-edge
-  vertical toolbar in a translucent panel: net dot + short label, then icon
-  buttons — settings, switch, keyboard, stats-toggle, back; active button = sage
-  fill. Overlays:
-  - **Stats:** top-left mono block, 2px left accent border: RES/FPS/RATE/RTT/
-    LOSS/INPUT/JITTER/TIER.
-  - **Keyboard bar:** bottom, "INPUT" kicker + hint + blinking sage caret.
-  - **Quick-switch drawer:** slides from left, "Instances" header + close, rows
-    (Android glyph + title + LIVE tag); active row = sage left-mark + tint.
-  - **Settings modal:** centered, "Quality" label + 5 tier pills (Auto/480p/720p/
-    1080p/1440p, selected = sage fill), 2px rule, "Show live stats" toggle row
-    (sage track when on), Done button (sage).
-  - **Error overlay:** full-cover, broken-signal icon, "Stream unavailable" +
-    explanation, Reconnect (error-red, spinner) + "Back to windows" buttons.
+- **ServerSetup (portrait, light):** large rounded **hero image** filling the
+  top → EmuCtrl logo + wordmark → "Control every window, from anywhere" (h3,
+  ~27px, 700) → subhead → "Server base URL" label → rounded input (56px, white,
+  1.5px border, coral caret; border turns error-red on error) → error card
+  (rounded `#fbe5de`, icon + title + hint) when unreachable → **"Start streaming"**
+  pill button (coral, centered, inline spinner while connecting).
+- **InstanceList ("Windows", portrait, light):** header = logo + "Windows" (h3,
+  700) + round white refresh button (spins while refreshing). Body:
+  - **Server card** (white rounded): "Server" label + host + a **net chip**
+    (dot + Online/Connecting/Offline in the mapped chip colors).
+  - "Instances" subhead + `N online` / "Syncing…" on the right.
+  - **Instance rows** (vertical list, not grid): each a white rounded card with a
+    16:9 rounded preview, then a row of title + optional **LIVE pill** (coral) +
+    chevron. Active row = `#fdeee7` bg + coral border. (Per-instance meta
+    `WxH · fps · ms` and load% appear in the drawer; the list row shows title +
+    LIVE + chevron.)
+  - Empty state: white rounded card, framed monitor icon, "No windows found",
+    coral Refresh pill.
+  - **Floating bottom nav** (white pill bar, 5 tabs): Windows · Stats · **Stream**
+    (center coral hero circle) · Server · Setup. See "Bottom nav scope" below.
+- **Stream (landscape, dark):** full-bleed letterboxed video (`contain`) on
+  `#141110`. Right-edge vertical toolbar on a **white-glass** panel: net dot +
+  short label, then icon buttons — settings, switch, keyboard, stats-toggle,
+  back; active button = coral fill. Overlays (all white-glass, rounded):
+  - **Stats:** top-left rounded glass block, mono text: res/fps/rate/rtt/loss/
+    input/jitter/tier.
+  - **Keyboard:** bottom, a row of **key pills** (Esc/Back/Home/Tab/Enter) above
+    an "INPUT" glass bar with a blinking coral caret.
+  - **Quick-switch drawer:** floating rounded white card (left), "Instances"
+    header + round close, rows (rounded chip icon + title + meta + optional LIVE
+    pill); active row = `#fdeee7` + coral chip.
+  - **Settings modal:** centered white rounded card, "Quality" label + 5 **pill**
+    tiers (Auto/480p/720p/1080p/1440p, selected = coral fill), a "Show live stats"
+    toggle row (rounded, coral track when on), coral "Done" pill.
+  - **Error overlay:** dark cover with a centered white rounded card, coral-circle
+    broken-signal icon, "Stream unavailable" + explanation, coral Reconnect pill
+    (spinner) + neutral "Windows" pill.
+
+### Bottom nav scope (decision)
+
+The v3 bottom nav shows 5 tabs, but v1 scope has only 3 real screens. **Decision:**
+render the nav visually; wire **Windows → InstanceList**, **Stream → active
+stream**, **Setup → ServerSetup**. **Stats** and **Server** tabs render but are
+**no-ops / visibly disabled** in v1 (no new screens — avoids scope creep). They
+are placeholders for a later release.
 
 The `.dc.html` prototype is a design artifact (Claude Design `sc-if`/`sc-for`/
 `DCLogic` runtime), not shippable RN — it is the visual source of truth the RN

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a React Native (Expo) remote-control client in `mobile/` that reaches feature parity with the current web PWA (`src/client/`), streaming scrcpy/mediamtx WebRTC over Tailscale via WHEP and forwarding touch/keyboard input over a WebSocket, styled to the Claude Design "Modernist" dark theme.
+**Goal:** Build a React Native (Expo) remote-control client in `mobile/` that reaches feature parity with the current web PWA (`src/client/`), streaming scrcpy/mediamtx WebRTC over Tailscale via WHEP and forwarding touch/keyboard input over a WebSocket, styled to the Claude Design "EmuCtrl v3" theme (light warm ground + coral accent + soft radii; the stream screen stays dark with white-glass overlays).
 
 **Architecture:** Expo dev-client app (Expo Go cannot load `react-native-webrtc`). Three screens (ServerSetup → InstanceList → Stream) over React Navigation. A `ServerContext` holds the persisted base URL and prefixes all HTTP/WS calls. WHEP negotiation, gesture→normalized-coords input, and downgrade-only adaptive quality are direct ports of the web client's proven logic. Pure logic (coord math, tier stepping, URL building) is TDD'd with Jest; WebRTC/gesture integration is device-verified against a manual checklist. The Python server is unchanged.
 
@@ -19,7 +19,8 @@
 - **Package manager:** use `npm` (repo has no JS workspace; `npx` for expo/eas — no global installs; node is v22).
 - **Server message shapes (must match exactly — server parses these):** input WS messages are JSON with `type` ∈ `{echo, click, drag_start, drag_move, drag_end, scroll, key}`; coordinates `x`,`y` are floats in `[0,1]`; `drag_move`/`drag_end` carry optional `scroll` bool; `scroll` carries `dy` (±1); `key` carries `key` (JS key name, e.g. `"Return"`, `"BackSpace"`, `"ArrowLeft"`). `echo` carries `t` (ms epoch) and is echoed back.
 - **Quality tiers:** `["480","720","1080","1440"]`; default `"720"`; `"auto"` = no pin. Preferred tier persisted.
-- **Design tokens (Modernist, dark):** font Archivo (400/600/800); accent `#9dbf95`; bg `#141312`; deep `#0c0b0b`; surface `#201e1d`; text `#f3f2f2`; error `#ff563c`; **border-radius 0 everywhere**; rules **2px**; net dot connected `#4ade80` / connecting `#facc15` / disconnected `#ff563c`.
+- **Design tokens (EmuCtrl v3):** font Archivo (400/500/600/700); accent coral `#f2916f`; error `#c2452a` (error bg `#fbe5de`); app bg warm `#eae7e3` / screen `#f2f0ed`; card surface `#ffffff`; active card `#fdeee7`; ink text `#1c1a19` (muted `rgba(28,26,25,.5)`); **stream screen dark** `#141110` with **white-glass overlays** `rgba(250,248,246,.9)`; **soft radii** (cards 16–26, buttons **pill 999**); net dot connected `#3f9d6d` / connecting `#e0a52c` (blink) / disconnected `#c2452a` with chip bgs `#e6f2ea` / `#fbf0dc` / `#fbe5de`.
+- **Icons:** ship as `react-native-svg` vector glyphs matching the prototype (logo, chevron, tab icons, toolbar icons, net/error marks) — not unicode placeholders.
 - **Commit style (repo CLAUDE.md):** do NOT add `Co-Authored-By` lines to commits.
 - **All work happens on a feature branch, never `main`.**
 
@@ -35,10 +36,15 @@
 
 **Interfaces:**
 - Produces: `theme` object from `mobile/src/theme/tokens.ts` with exact fields:
-  `theme.color.accent`, `.bg`, `.deep`, `.surface`, `.text`, `.textMuted`, `.error`,
-  `.netConnected`, `.netConnecting`, `.netDisconnected`;
-  `theme.radius` (= 0); `theme.rule` (= 2);
-  `theme.font.regular` (= `"Archivo_400Regular"`), `.semibold` (= `"Archivo_600SemiBold"`), `.bold` (= `"Archivo_800ExtraBold"`), `.mono` (platform mono).
+  - `theme.color.accent` (`#f2916f`), `.bg` (`#eae7e3`), `.screen` (`#f2f0ed`),
+    `.card` (`#ffffff`), `.cardActive` (`#fdeee7`), `.streamBg` (`#141110`),
+    `.glass` (`rgba(250,248,246,0.9)`), `.text` (`#1c1a19`), `.textMuted`
+    (`rgba(28,26,25,0.5)`), `.error` (`#c2452a`), `.errorBg` (`#fbe5de`);
+  - `theme.net.connected/.connecting/.disconnected` each `{ dot, chipBg, chipFg }`;
+  - `theme.radius` `{ card: 22, input: 18, pill: 999, sm: 16 }`;
+  - `theme.font.regular` (`"Archivo_400Regular"`), `.medium` (`"Archivo_500Medium"`),
+    `.semibold` (`"Archivo_600SemiBold"`), `.bold` (`"Archivo_700Bold"`),
+    `.mono` (platform mono).
 
 - [ ] **Step 1: Create the Expo app scaffold**
 
@@ -57,6 +63,7 @@ npx expo install react-native-webrtc @config-plugins/react-native-webrtc \
   react-native-screens react-native-safe-area-context \
   @react-native-async-storage/async-storage \
   react-native-gesture-handler react-native-reanimated \
+  react-native-svg \
   expo-font @expo-google-fonts/archivo expo-dev-client
 npm i -D jest jest-expo @testing-library/react-native @types/jest @types/react
 ```
@@ -101,14 +108,17 @@ Add:
 ```ts
 import { theme } from "./tokens";
 
-test("Modernist tokens carry the spec values", () => {
-  expect(theme.color.accent).toBe("#9dbf95");
-  expect(theme.color.bg).toBe("#141312");
-  expect(theme.color.surface).toBe("#201e1d");
-  expect(theme.color.error).toBe("#ff563c");
-  expect(theme.radius).toBe(0);
-  expect(theme.rule).toBe(2);
-  expect(theme.font.bold).toBe("Archivo_800ExtraBold");
+test("EmuCtrl v3 tokens carry the spec values", () => {
+  expect(theme.color.accent).toBe("#f2916f");
+  expect(theme.color.bg).toBe("#eae7e3");
+  expect(theme.color.card).toBe("#ffffff");
+  expect(theme.color.streamBg).toBe("#141110");
+  expect(theme.color.error).toBe("#c2452a");
+  expect(theme.radius.pill).toBe(999);
+  expect(theme.radius.card).toBe(22);
+  expect(theme.font.bold).toBe("Archivo_700Bold");
+  expect(theme.net.connected.dot).toBe("#3f9d6d");
+  expect(theme.net.disconnected.chipBg).toBe("#fbe5de");
 });
 ```
 
@@ -124,23 +134,30 @@ import { Platform } from "react-native";
 
 export const theme = {
   color: {
-    accent: "#9dbf95",
-    bg: "#141312",
-    deep: "#0c0b0b",
-    surface: "#201e1d",
-    text: "#f3f2f2",
-    textMuted: "rgba(243,242,242,0.5)",
-    error: "#ff563c",
-    netConnected: "#4ade80",
-    netConnecting: "#facc15",
-    netDisconnected: "#ff563c",
+    accent: "#f2916f",       // coral
+    accentInk: "#c96a48",    // link/hover
+    bg: "#eae7e3",           // warm app ground
+    screen: "#f2f0ed",       // phone-frame screen
+    card: "#ffffff",
+    cardActive: "#fdeee7",
+    streamBg: "#141110",     // stream screen only
+    glass: "rgba(250,248,246,0.9)",  // overlays on the stream screen
+    text: "#1c1a19",         // ink
+    textMuted: "rgba(28,26,25,0.5)",
+    error: "#c2452a",
+    errorBg: "#fbe5de",
   },
-  radius: 0,
-  rule: 2,
+  net: {
+    connected:    { dot: "#3f9d6d", chipBg: "#e6f2ea", chipFg: "#2f7a54" },
+    connecting:   { dot: "#e0a52c", chipBg: "#fbf0dc", chipFg: "#8a6410" },
+    disconnected: { dot: "#c2452a", chipBg: "#fbe5de", chipFg: "#a8391f" },
+  },
+  radius: { card: 22, input: 18, pill: 999, sm: 16 },
   font: {
     regular: "Archivo_400Regular",
+    medium: "Archivo_500Medium",
     semibold: "Archivo_600SemiBold",
-    bold: "Archivo_800ExtraBold",
+    bold: "Archivo_700Bold",
     mono: Platform.select({ ios: "Menlo", android: "monospace", default: "monospace" })!,
   },
 } as const;
@@ -155,7 +172,7 @@ Expected: PASS.
 
 ```bash
 git add mobile
-git commit -m "feat(mobile): scaffold Expo app with Modernist design tokens"
+git commit -m "feat(mobile): scaffold Expo app with EmuCtrl v3 design tokens"
 ```
 
 ---
@@ -552,20 +569,22 @@ git commit -m "feat(mobile): ServerContext with persisted base URL"
 
 ---
 
-### Task 6: Shared UI primitives (Modernist)
+### Task 6: Shared UI primitives (EmuCtrl v3)
 
 **Files:**
 - Create: `mobile/src/components/Button.tsx`
 - Create: `mobile/src/components/NetDot.tsx`
+- Create: `mobile/src/components/NetChip.tsx`
 - Create: `mobile/src/components/IconButton.tsx`
 - Test: `mobile/src/components/NetDot.test.tsx`
 
 **Interfaces:**
 - Consumes: `theme` (Task 1).
 - Produces:
-  - `Button({ label, onPress, variant?: "primary" | "secondary", loading?, disabled? })` — flush-left label, zero radius, primary = sage bg / `#141312` text.
-  - `IconButton({ children, onPress, active?, label })` — 48×48, zero radius, active = sage fill.
-  - `NetDot({ state })` where `state ∈ "connected"|"connecting"|"disconnected"`; renders a 9px square in the mapped color; `testID="net-dot"` and `accessibilityValue.text = state`.
+  - `Button({ label, onPress, variant?: "primary" | "neutral", loading?, disabled? })` — **pill** (radius 999), **centered** label; primary = coral bg / ink text; neutral = `#f2f0ed` bg / ink text.
+  - `IconButton({ children, onPress, active?, label, glass? })` — 48×48; active = coral fill; `glass` variant sits on the stream-screen glass panel (ink glyph). Uses `theme.radius.sm` corners.
+  - `NetDot({ state })` where `state ∈ "connected"|"connecting"|"disconnected"`; renders a **round** 9px dot in `theme.net[state].dot`; `testID="net-dot"`, `accessibilityValue.text = state`.
+  - `NetChip({ state })` — rounded pill: dot + label (Online/Connecting/Offline) using `theme.net[state]` chip colors.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -578,9 +597,9 @@ import { theme } from "../theme/tokens";
 
 test("NetDot colors by state", () => {
   const { getByTestId, rerender } = render(<NetDot state="connected" />);
-  expect(getByTestId("net-dot").props.style.backgroundColor).toBe(theme.color.netConnected);
+  expect(getByTestId("net-dot").props.style.backgroundColor).toBe(theme.net.connected.dot);
   rerender(<NetDot state="disconnected" />);
-  expect(getByTestId("net-dot").props.style.backgroundColor).toBe(theme.color.netDisconnected);
+  expect(getByTestId("net-dot").props.style.backgroundColor).toBe(theme.net.disconnected.dot);
 });
 ```
 
@@ -589,7 +608,7 @@ test("NetDot colors by state", () => {
 Run: `cd mobile && npm test -- NetDot`
 Expected: FAIL — module not found.
 
-- [ ] **Step 3: Implement the three components**
+- [ ] **Step 3: Implement the four components**
 
 `NetDot.tsx`:
 ```tsx
@@ -597,39 +616,53 @@ import React from "react";
 import { View } from "react-native";
 import { theme } from "../theme/tokens";
 
-const MAP = {
-  connected: theme.color.netConnected,
-  connecting: theme.color.netConnecting,
-  disconnected: theme.color.netDisconnected,
-} as const;
+export type NetState = "connected" | "connecting" | "disconnected";
 
-export function NetDot({ state }: { state: keyof typeof MAP }) {
+export function NetDot({ state }: { state: NetState }) {
   return <View testID="net-dot"
     accessibilityValue={{ text: state }}
-    style={{ width: 9, height: 9, backgroundColor: MAP[state] }} />;
+    style={{ width: 9, height: 9, borderRadius: 999, backgroundColor: theme.net[state].dot }} />;
+}
+```
+`NetChip.tsx`:
+```tsx
+import React from "react";
+import { View, Text } from "react-native";
+import { theme } from "../theme/tokens";
+import { NetDot, NetState } from "./NetDot";
+
+const LABEL: Record<NetState, string> = { connected: "Online", connecting: "Connecting", disconnected: "Offline" };
+
+export function NetChip({ state }: { state: NetState }) {
+  const c = theme.net[state];
+  return (
+    <View style={{ flexDirection: "row", alignItems: "center", gap: 7, paddingHorizontal: 13, paddingVertical: 8,
+      backgroundColor: c.chipBg, borderRadius: theme.radius.pill }}>
+      <NetDot state={state} />
+      <Text style={{ fontFamily: theme.font.semibold, fontSize: 12, color: c.chipFg }}>{LABEL[state]}</Text>
+    </View>
+  );
 }
 ```
 `Button.tsx`:
 ```tsx
 import React from "react";
-import { Pressable, Text, ActivityIndicator, View } from "react-native";
+import { Pressable, Text, ActivityIndicator } from "react-native";
 import { theme } from "../theme/tokens";
 
 export function Button({ label, onPress, variant = "primary", loading, disabled }:
-  { label: string; onPress: () => void; variant?: "primary" | "secondary"; loading?: boolean; disabled?: boolean }) {
+  { label: string; onPress: () => void; variant?: "primary" | "neutral"; loading?: boolean; disabled?: boolean }) {
   const primary = variant === "primary";
   return (
     <Pressable onPress={onPress} disabled={disabled || loading}
       style={{
-        height: 54, flexDirection: "row", alignItems: "center", gap: 10,
-        paddingHorizontal: 16, borderRadius: theme.radius,
-        backgroundColor: primary ? theme.color.accent : "transparent",
-        borderWidth: primary ? 0 : theme.rule, borderColor: "rgba(243,242,242,0.3)",
+        height: 54, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10,
+        paddingHorizontal: 22, borderRadius: theme.radius.pill,
+        backgroundColor: primary ? theme.color.accent : "#f2f0ed",
         opacity: disabled ? 0.45 : 1,
       }}>
-      {loading ? <ActivityIndicator color={primary ? "#141312" : theme.color.text} /> : null}
-      <Text style={{ fontFamily: theme.font.bold, fontSize: 15,
-        color: primary ? "#141312" : theme.color.text }}>{label}</Text>
+      {loading ? <ActivityIndicator color={theme.color.text} /> : null}
+      <Text style={{ fontFamily: theme.font.semibold, fontSize: 15, color: theme.color.text }}>{label}</Text>
     </Pressable>
   );
 }
@@ -645,7 +678,7 @@ export function IconButton({ children, onPress, active, label }:
   return (
     <Pressable onPress={onPress} accessibilityLabel={label}
       style={{ width: 48, height: 48, alignItems: "center", justifyContent: "center",
-        backgroundColor: active ? theme.color.accent : "transparent", borderRadius: theme.radius }}>
+        backgroundColor: active ? theme.color.accent : "transparent", borderRadius: theme.radius.sm }}>
       {children}
     </Pressable>
   );
@@ -661,7 +694,7 @@ Expected: PASS.
 
 ```bash
 git add mobile/src/components
-git commit -m "feat(mobile): Modernist Button, IconButton, NetDot primitives"
+git commit -m "feat(mobile): v3 Button (pill), IconButton, NetDot, NetChip primitives"
 ```
 
 ---
@@ -696,7 +729,7 @@ test("rejects a malformed URL with an inline error", async () => {
   const { getByPlaceholderText, getByText } = render(
     <ServerProvider><ServerSetup navigation={nav} /></ServerProvider>);
   fireEvent.changeText(getByPlaceholderText(/http:\/\//), "not a url");
-  fireEvent.press(getByText("Connect"));
+  fireEvent.press(getByText("Start streaming"));
   await waitFor(() => getByText(/Enter a full URL/i));
   expect(nav.replace).not.toHaveBeenCalled();
 });
@@ -711,11 +744,13 @@ Expected: FAIL — module not found.
 
 ```tsx
 import React, { useState } from "react";
-import { View, Text, TextInput } from "react-native";
+import { View, Text, TextInput, ScrollView } from "react-native";
 import { theme } from "../theme/tokens";
 import { Button } from "../components/Button";
 import { useServer } from "../api/ServerContext";
 
+// v3: light warm ground, rounded hero, logo + wordmark, rounded input (coral
+// caret, red border on error), rounded coral error card, "Start streaming" pill.
 export function ServerSetup({ navigation }: { navigation: any }) {
   const { setBase } = useServer();
   const [url, setUrl] = useState("http://100.86.14.2:8080");
@@ -746,31 +781,41 @@ export function ServerSetup({ navigation }: { navigation: any }) {
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: theme.color.bg, justifyContent: "center", padding: 24 }}>
-      <Text style={{ fontFamily: theme.font.bold, fontSize: 11, letterSpacing: 1.5, color: theme.color.accent, marginBottom: 14 }}>EMUCTRL</Text>
-      <Text style={{ fontFamily: theme.font.bold, fontSize: 34, color: theme.color.text, marginBottom: 10 }}>Connect to{"\n"}your server</Text>
-      <Text style={{ fontFamily: theme.font.regular, fontSize: 13, color: theme.color.textMuted, marginBottom: 26 }}>Enter the base URL of the host on your private network.</Text>
-      <View style={{ height: theme.rule, backgroundColor: "rgba(243,242,242,0.35)", marginBottom: 22 }} />
-      <Text style={{ fontFamily: theme.font.regular, fontSize: 11, letterSpacing: 1, color: theme.color.textMuted, marginBottom: 8 }}>SERVER BASE URL</Text>
+    <ScrollView style={{ flex: 1, backgroundColor: theme.color.screen }}
+      contentContainerStyle={{ padding: 24, paddingTop: 60, flexGrow: 1 }}>
+      {/* Hero: a rounded warm placeholder. Swap for a real asset (assets/hero.png). */}
+      <View style={{ flex: 1, minHeight: 180, borderRadius: 26, backgroundColor: "#e7e3de", marginBottom: 24 }} />
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 11, marginBottom: 18 }}>
+        {/* Logo: a coral rounded square placeholder; replace with the v3 SVG mark (react-native-svg). */}
+        <View style={{ width: 40, height: 40, borderRadius: 12, backgroundColor: theme.color.accent }} />
+        <Text style={{ fontFamily: theme.font.bold, fontSize: 19, letterSpacing: -0.4, color: theme.color.text }}>EmuCtrl</Text>
+      </View>
+      <Text style={{ fontFamily: theme.font.bold, fontSize: 27, color: theme.color.text, marginBottom: 8 }}>Control every window, from anywhere</Text>
+      <Text style={{ fontFamily: theme.font.regular, fontSize: 14, lineHeight: 22, color: theme.color.textMuted, marginBottom: 20 }}>Stream and control your LDPlayer instances from anywhere on your private network.</Text>
+      <Text style={{ fontFamily: theme.font.semibold, fontSize: 12, color: theme.color.textMuted, marginBottom: 8 }}>Server base URL</Text>
       <TextInput value={url} onChangeText={(t) => { setUrl(t); setError(""); }}
-        placeholder="http://100.86.14.2:8080" placeholderTextColor="rgba(243,242,242,0.35)"
+        placeholder="http://100.86.14.2:8080" placeholderTextColor="rgba(28,26,25,0.35)"
         autoCapitalize="none" autoCorrect={false} spellCheck={false}
-        style={{ height: 54, paddingHorizontal: 14, fontFamily: theme.font.regular, fontSize: 16,
-          color: theme.color.text, backgroundColor: theme.color.surface, borderWidth: theme.rule,
-          borderColor: "rgba(243,242,242,0.3)", borderRadius: theme.radius }} />
+        style={{ height: 56, paddingHorizontal: 18, fontFamily: theme.font.medium, fontSize: 15,
+          color: theme.color.text, backgroundColor: theme.color.card,
+          borderWidth: 1.5, borderColor: error ? theme.color.error : "rgba(28,26,25,0.12)",
+          borderRadius: theme.radius.input }} />
       {error ? (
-        <View style={{ marginTop: 12, padding: 12, backgroundColor: "rgba(255,86,60,0.12)", borderLeftWidth: theme.rule, borderLeftColor: theme.color.error }}>
-          <Text style={{ fontFamily: theme.font.bold, fontSize: 13, color: theme.color.error }}>{error}</Text>
-          <Text style={{ fontFamily: theme.font.regular, fontSize: 11.5, color: theme.color.textMuted, marginTop: 3 }}>{hint}</Text>
+        <View style={{ flexDirection: "row", gap: 10, marginTop: 10, padding: 12, backgroundColor: theme.color.errorBg, borderRadius: theme.radius.sm }}>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontFamily: theme.font.semibold, fontSize: 13, color: theme.color.error }}>{error}</Text>
+            <Text style={{ fontFamily: theme.font.regular, fontSize: 12, color: theme.color.textMuted, marginTop: 3 }}>{hint}</Text>
+          </View>
         </View>
       ) : null}
-      <View style={{ marginTop: 18 }}>
-        <Button label={connecting ? "Connecting…" : "Connect"} onPress={connect} loading={connecting} />
+      <View style={{ marginTop: 16 }}>
+        <Button label={connecting ? "Connecting…" : "Start streaming"} onPress={connect} loading={connecting} />
       </View>
-    </View>
+    </ScrollView>
   );
 }
 ```
+Note: the hero and logo are rounded placeholders here so the task is dependency-free; the device pass (Task 13) swaps them for the real hero asset and the v3 `react-native-svg` logo mark.
 
 - [ ] **Step 4: Implement `Root.tsx` and wire `App.tsx`**
 
@@ -803,7 +848,7 @@ import "react-native-gesture-handler";
 import React from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { NavigationContainer } from "@react-navigation/native";
-import { useFonts, Archivo_400Regular, Archivo_600SemiBold, Archivo_800ExtraBold } from "@expo-google-fonts/archivo";
+import { useFonts, Archivo_400Regular, Archivo_500Medium, Archivo_600SemiBold, Archivo_700Bold } from "@expo-google-fonts/archivo";
 import { View } from "react-native";
 import { ServerProvider, useServer } from "./src/api/ServerContext";
 import { RootNavigator } from "./src/navigation/Root";
@@ -816,7 +861,7 @@ function Gate() {
 }
 
 export default function App() {
-  const [fontsLoaded] = useFonts({ Archivo_400Regular, Archivo_600SemiBold, Archivo_800ExtraBold });
+  const [fontsLoaded] = useFonts({ Archivo_400Regular, Archivo_500Medium, Archivo_600SemiBold, Archivo_700Bold });
   if (!fontsLoaded) return <View style={{ flex: 1, backgroundColor: theme.color.bg }} />;
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
@@ -841,17 +886,64 @@ git commit -m "feat(mobile): navigation shell, font gate, ServerSetup screen"
 
 ---
 
-### Task 8: InstanceList screen
+### Task 8: InstanceList screen (v3: rows + server card + bottom nav)
 
 **Files:**
 - Modify: `mobile/src/screens/InstanceList.tsx` (replace stub)
-- Create: `mobile/src/components/InstanceCard.tsx`
+- Create: `mobile/src/components/InstanceRow.tsx`
+- Create: `mobile/src/components/BottomNav.tsx`
 - Test: `mobile/src/screens/InstanceList.test.tsx`
 
 **Interfaces:**
-- Consumes: `useServer` (Task 5), `client.instances/previewUrl/keyframe` (Task 4), `theme`, `Button`.
-- Produces: `InstanceList({ navigation })`. On focus, fetches `/instances`, renders a `FlatList` of `InstanceCard`. Poll every 60s while focused; pull-to-refresh. Tap card → `client.keyframe(serial)` then `navigation.navigate("Stream", { serial, title })`. Header shows `host:port · N online` + refresh button. Empty state when list is empty.
-- `InstanceCard({ instance, active, previewUri, onPress })` — 16:9 preview `Image`, LIVE/IDLE badge, title + meta; active = sage border + title.
+- Consumes: `useServer` (Task 5), `client.instances/previewUrl/keyframe` (Task 4), `theme`, `NetChip` (Task 6).
+- Produces: `InstanceList({ navigation })`. On mount, fetches `/instances`; polls every 60s; pull-to-refresh. A **server card** (host + `NetChip`) sits above the list; the list is a vertical `FlatList` of `InstanceRow`. Tap row → `client.keyframe(serial)` then `navigation.navigate("Stream", { serial, title })`. Empty state when empty. A floating **BottomNav** overlays the bottom.
+- `InstanceRow({ instance, active, previewUri, onPress })` — white rounded card, 16:9 rounded preview, then title + optional coral **LIVE** pill + chevron; active = `cardActive` bg + coral border.
+- `BottomNav({ active, onWindows, onStream, onSetup })` — floating white pill bar, 5 tabs: **Windows / Stats / Stream(center coral hero) / Server / Setup**. `active` ∈ `"windows"|"stats"|"server"|"setup"`. **Stats** and **Server** are rendered but disabled (no-op) in v1; Windows/Stream/Setup call their handlers.
+
+- [ ] **Step 0: (add earlier) Implement `BottomNav.tsx`**
+
+```tsx
+import React from "react";
+import { View, Text, Pressable } from "react-native";
+import { theme } from "../theme/tokens";
+
+type Tab = { key: string; label: string; hero?: boolean; disabled?: boolean; onPress?: () => void };
+
+export function BottomNav({ active, onWindows, onStream, onSetup }:
+  { active: "windows" | "stats" | "server" | "setup";
+    onWindows: () => void; onStream: () => void; onSetup: () => void }) {
+  const tabs: Tab[] = [
+    { key: "windows", label: "Windows", onPress: onWindows },
+    { key: "stats", label: "Stats", disabled: true },
+    { key: "stream", label: "Stream", hero: true, onPress: onStream },
+    { key: "server", label: "Server", disabled: true },
+    { key: "setup", label: "Setup", onPress: onSetup },
+  ];
+  return (
+    <View style={{ position: "absolute", left: 20, right: 20, bottom: 20, height: 74, flexDirection: "row",
+      alignItems: "center", paddingHorizontal: 12, backgroundColor: theme.color.card, borderRadius: theme.radius.pill,
+      shadowColor: "#1c1a19", shadowOpacity: 0.14, shadowRadius: 22, shadowOffset: { width: 0, height: 6 }, elevation: 8 }}>
+      {tabs.map((t) => {
+        const cur = t.key === active;
+        const color = t.disabled ? "rgba(28,26,25,0.28)" : cur ? theme.color.text : "rgba(28,26,25,0.45)";
+        return (
+          <Pressable key={t.key} disabled={t.disabled} onPress={t.onPress}
+            accessibilityLabel={t.label}
+            style={{ flex: 1, height: 74, alignItems: "center", justifyContent: "center", gap: 6 }}>
+            <View style={{ width: t.hero ? 50 : 26, height: t.hero ? 50 : 26, borderRadius: 999,
+              backgroundColor: t.hero ? theme.color.accent : "transparent", alignItems: "center", justifyContent: "center" }}>
+              {/* Icon placeholder dot; swap for the v3 react-native-svg tab glyph. */}
+              <View style={{ width: 6, height: 6, borderRadius: 999, backgroundColor: t.hero ? theme.color.text : color }} />
+            </View>
+            {!t.hero ? <Text style={{ fontFamily: theme.font.semibold, fontSize: 10.5, color }}>{t.label}</Text> : null}
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+```
+Note: tab glyphs are placeholder dots to stay dependency-free; the device pass swaps them for the v3 `react-native-svg` icons. Stats/Server are intentionally `disabled` (v1 scope).
 
 - [ ] **Step 1: Write the failing test (mock client via ServerContext)**
 
@@ -886,7 +978,7 @@ test("renders instances and navigates on tap", async () => {
 Run: `cd mobile && npm test -- InstanceList`
 Expected: FAIL — stub renders nothing / no such text.
 
-- [ ] **Step 3: Implement `InstanceCard.tsx`**
+- [ ] **Step 3: Implement `InstanceRow.tsx`**
 
 ```tsx
 import React from "react";
@@ -894,25 +986,25 @@ import { Pressable, View, Text, Image } from "react-native";
 import { theme } from "../theme/tokens";
 import type { Instance } from "../api/client";
 
-export function InstanceCard({ instance, active, previewUri, onPress }:
+export function InstanceRow({ instance, active, previewUri, onPress }:
   { instance: Instance; active: boolean; previewUri: string; onPress: () => void }) {
   return (
     <Pressable onPress={onPress}
-      style={{ backgroundColor: theme.color.surface, borderWidth: theme.rule,
-        borderColor: active ? theme.color.accent : "rgba(243,242,242,0.22)", marginBottom: 14 }}>
-      <View style={{ aspectRatio: 16 / 9, backgroundColor: theme.color.deep }}>
+      style={{ padding: 8, marginBottom: 10, backgroundColor: active ? theme.color.cardActive : theme.color.card,
+        borderRadius: theme.radius.card, borderWidth: 1.5, borderColor: active ? theme.color.accent : "transparent",
+        shadowColor: "#1c1a19", shadowOpacity: 0.05, shadowRadius: 5, shadowOffset: { width: 0, height: 1 }, elevation: 1 }}>
+      <View style={{ aspectRatio: 16 / 9, borderRadius: theme.radius.sm, overflow: "hidden", backgroundColor: "#e7e3de" }}>
         <Image source={{ uri: previewUri }} resizeMode="cover" style={{ width: "100%", height: "100%" }} />
-        <View style={{ position: "absolute", top: 0, left: 0, paddingHorizontal: 7, paddingVertical: 4,
-          backgroundColor: active ? theme.color.accent : "rgba(12,11,11,0.7)" }}>
-          <Text style={{ fontFamily: theme.font.bold, fontSize: 9, letterSpacing: 1.2,
-            color: active ? "#141312" : "rgba(243,242,242,0.7)" }}>{active ? "LIVE" : "IDLE"}</Text>
-        </View>
       </View>
-      <View style={{ padding: 10 }}>
-        <Text style={{ fontFamily: theme.font.bold, fontSize: 13, color: active ? theme.color.accent : theme.color.text }}>{instance.title}</Text>
-        {instance.w && instance.h ? (
-          <Text style={{ fontFamily: theme.font.regular, fontSize: 10.5, color: theme.color.textMuted, marginTop: 5 }}>{instance.w}×{instance.h}</Text>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 8, paddingTop: 12, paddingBottom: 6 }}>
+        <Text style={{ flex: 1, fontFamily: theme.font.semibold, fontSize: 15, color: theme.color.text }}>{instance.title}</Text>
+        {active ? (
+          <View style={{ paddingHorizontal: 9, paddingVertical: 4, backgroundColor: theme.color.accent, borderRadius: theme.radius.pill }}>
+            <Text style={{ fontFamily: theme.font.semibold, fontSize: 10, color: theme.color.text }}>LIVE</Text>
+          </View>
         ) : null}
+        {/* Chevron placeholder; swap for the v3 react-native-svg chevron. */}
+        <Text style={{ fontFamily: theme.font.regular, fontSize: 16, color: "rgba(28,26,25,0.35)" }}>›</Text>
       </View>
     </Pressable>
   );
@@ -923,20 +1015,24 @@ export function InstanceCard({ instance, active, previewUri, onPress }:
 
 ```tsx
 import React, { useCallback, useEffect, useState } from "react";
-import { View, Text, FlatList, Pressable } from "react-native";
+import { View, Text, FlatList } from "react-native";
 import { useServer } from "../api/ServerContext";
 import { theme } from "../theme/tokens";
-import { InstanceCard } from "../components/InstanceCard";
+import { InstanceRow } from "../components/InstanceRow";
+import { NetChip } from "../components/NetChip";
+import { BottomNav } from "../components/BottomNav";
 import type { Instance } from "../api/client";
 
 export function InstanceList({ navigation }: { navigation: any }) {
   const { client, base } = useServer();
   const [items, setItems] = useState<Instance[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+  const [reachable, setReachable] = useState(true);
 
   const load = useCallback(async () => {
     if (!client) return;
-    try { setItems(await client.instances()); } catch {}
+    try { setItems(await client.instances()); setReachable(true); }
+    catch { setReachable(false); }
   }, [client]);
 
   useEffect(() => {
@@ -950,41 +1046,61 @@ export function InstanceList({ navigation }: { navigation: any }) {
     client?.keyframe(inst.serial);
     navigation.navigate("Stream", { serial: inst.serial, title: inst.title });
   };
-
   const host = (base ?? "").replace(/^https?:\/\//, "");
-  return (
-    <View style={{ flex: 1, backgroundColor: theme.color.bg }}>
-      <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: 18, paddingTop: 48, paddingBottom: 14,
-        borderBottomWidth: theme.rule, borderBottomColor: "rgba(243,242,242,0.35)" }}>
-        <View style={{ flex: 1 }}>
-          <Text style={{ fontFamily: theme.font.bold, fontSize: 24, color: theme.color.text }}>Windows</Text>
-          <Text style={{ fontFamily: theme.font.regular, fontSize: 11, color: theme.color.textMuted, marginTop: 4 }}>{host} · {items.length} online</Text>
+  const net = reachable ? "connected" : "disconnected";
+
+  const header = (
+    <View>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 14, padding: 16, marginBottom: 22,
+        backgroundColor: theme.color.card, borderRadius: theme.radius.card,
+        shadowColor: "#1c1a19", shadowOpacity: 0.06, shadowRadius: 6, shadowOffset: { width: 0, height: 1 }, elevation: 1 }}>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={{ fontFamily: theme.font.regular, fontSize: 12.5, color: theme.color.textMuted, marginBottom: 5 }}>Server</Text>
+          <Text numberOfLines={1} style={{ fontFamily: theme.font.semibold, fontSize: 15, color: theme.color.text }}>{host}</Text>
         </View>
-        <Pressable onPress={onRefresh} accessibilityLabel="Refresh"
-          style={{ width: 44, height: 44, alignItems: "center", justifyContent: "center",
-            borderWidth: theme.rule, borderColor: "rgba(243,242,242,0.3)" }}>
-          <Text style={{ color: theme.color.text, fontFamily: theme.font.bold }}>⟳</Text>
-        </Pressable>
+        <NetChip state={net as any} />
+      </View>
+      <View style={{ flexDirection: "row", alignItems: "baseline", gap: 10, marginBottom: 12 }}>
+        <Text style={{ flex: 1, fontFamily: theme.font.semibold, fontSize: 16, color: theme.color.text }}>Instances</Text>
+        <Text style={{ fontFamily: theme.font.regular, fontSize: 12.5, color: theme.color.textMuted }}>{refreshing ? "Syncing…" : `${items.length} online`}</Text>
+      </View>
+    </View>
+  );
+
+  return (
+    <View style={{ flex: 1, backgroundColor: theme.color.screen }}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 24, paddingTop: 52, paddingBottom: 8 }}>
+        {/* Logo placeholder; swap for the v3 react-native-svg mark. */}
+        <View style={{ width: 30, height: 30, borderRadius: 9, backgroundColor: theme.color.accent }} />
+        <Text style={{ flex: 1, fontFamily: theme.font.bold, fontSize: 26, color: theme.color.text }}>Windows</Text>
       </View>
       {items.length === 0 ? (
-        <View style={{ flex: 1, justifyContent: "center", padding: 24 }}>
-          <Text style={{ fontFamily: theme.font.bold, fontSize: 20, color: theme.color.text, marginBottom: 8 }}>No windows found</Text>
-          <Text style={{ fontFamily: theme.font.regular, fontSize: 13, color: theme.color.textMuted }}>Start an emulator instance, then refresh.</Text>
+        <View style={{ flex: 1, padding: 24 }}>
+          {header}
+          <View style={{ padding: 34, backgroundColor: theme.color.card, borderRadius: theme.radius.card, alignItems: "center" }}>
+            <Text style={{ fontFamily: theme.font.semibold, fontSize: 17, color: theme.color.text, marginBottom: 8 }}>No windows found</Text>
+            <Text style={{ fontFamily: theme.font.regular, fontSize: 13, textAlign: "center", color: theme.color.textMuted }}>The server answered, but nothing is running. Start an instance in LDPlayer, then refresh.</Text>
+          </View>
         </View>
       ) : (
         <FlatList data={items} keyExtractor={(i) => i.id}
+          ListHeaderComponent={header}
           refreshing={refreshing} onRefresh={onRefresh}
-          contentContainerStyle={{ padding: 18 }}
+          contentContainerStyle={{ paddingHorizontal: 24, paddingTop: 8, paddingBottom: 120 }}
           renderItem={({ item }) => (
-            <InstanceCard instance={item} active={false}
+            <InstanceRow instance={item} active={false}
               previewUri={client!.previewUrl(item.serial)} onPress={() => open(item)} />
           )} />
       )}
+      <BottomNav active="windows"
+        onWindows={() => {}}
+        onStream={() => { if (items[0]) open(items[0]); }}
+        onSetup={() => navigation.navigate("ServerSetup")} />
     </View>
   );
 }
 ```
-Note: the refresh glyph is a text `⟳` placeholder — acceptable; swap for an SVG icon later if desired. This keeps the task dependency-free.
+Note: logo/chevron are placeholders to stay dependency-free; the device pass swaps them for the v3 `react-native-svg` glyphs. The server card's net state is derived from whether `/instances` last succeeded.
 
 - [ ] **Step 5: Run to verify pass**
 
@@ -994,8 +1110,8 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add mobile/src/screens/InstanceList.tsx mobile/src/screens/InstanceList.test.tsx mobile/src/components/InstanceCard.tsx
-git commit -m "feat(mobile): InstanceList screen with preview cards"
+git add mobile/src/screens/InstanceList.tsx mobile/src/screens/InstanceList.test.tsx mobile/src/components/InstanceRow.tsx mobile/src/components/BottomNav.tsx
+git commit -m "feat(mobile): InstanceList — server card, instance rows, bottom nav"
 ```
 
 ---
@@ -1428,34 +1544,37 @@ const PILLS: { label: string; tier: string }[] = [
   { label: "1080p", tier: "1080" }, { label: "1440p", tier: "1440" },
 ];
 
+// v3: white rounded card, coral pill tiers, rounded stats-toggle row, coral Done.
 export function SettingsModal({ tier, onPick, statsOn, onToggleStats, onClose }:
   { tier: string; onPick: (t: string) => void; statsOn: boolean; onToggleStats: () => void; onClose: () => void }) {
   return (
     <Modal transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable onPress={onClose} style={{ flex: 1, backgroundColor: "rgba(12,11,11,0.55)", alignItems: "center", justifyContent: "center" }}>
-        <Pressable onPress={() => {}} style={{ width: 420, backgroundColor: "rgba(20,19,18,0.97)", borderWidth: theme.rule, borderColor: "rgba(243,242,242,0.35)", padding: 20 }}>
-          <Text style={{ fontFamily: theme.font.bold, fontSize: 16, color: theme.color.text, marginBottom: 16 }}>Settings</Text>
-          <Text style={{ fontFamily: theme.font.regular, fontSize: 10, letterSpacing: 1.4, color: theme.color.textMuted, marginBottom: 9 }}>QUALITY</Text>
-          <View style={{ flexDirection: "row", gap: 6, marginBottom: 20 }}>
+      <Pressable onPress={onClose} style={{ flex: 1, backgroundColor: "rgba(20,17,16,0.55)", alignItems: "center", justifyContent: "center" }}>
+        <Pressable onPress={() => {}} style={{ width: 440, maxWidth: "92%", backgroundColor: "#faf8f6", borderRadius: 26, padding: 22 }}>
+          <Text style={{ fontFamily: theme.font.bold, fontSize: 19, color: theme.color.text, marginBottom: 18 }}>Settings</Text>
+          <Text style={{ fontFamily: theme.font.semibold, fontSize: 12.5, color: theme.color.textMuted, marginBottom: 10 }}>Quality</Text>
+          <View style={{ flexDirection: "row", gap: 7, marginBottom: 20 }}>
             {PILLS.map((p) => {
               const sel = p.tier === tier;
               return (
                 <Pressable key={p.tier} onPress={() => onPick(p.tier)}
-                  style={{ flex: 1, height: 42, alignItems: "center", justifyContent: "center",
+                  style={{ flex: 1, height: 42, alignItems: "center", justifyContent: "center", borderRadius: theme.radius.pill,
                     backgroundColor: sel ? theme.color.accent : "transparent",
-                    borderWidth: theme.rule, borderColor: sel ? theme.color.accent : "rgba(243,242,242,0.3)" }}>
-                  <Text style={{ fontFamily: theme.font.bold, fontSize: 12, color: sel ? "#141312" : "rgba(243,242,242,0.8)" }}>{p.label}</Text>
+                    borderWidth: 1.5, borderColor: sel ? theme.color.accent : "rgba(28,26,25,0.15)" }}>
+                  <Text style={{ fontFamily: theme.font.semibold, fontSize: 13, color: theme.color.text }}>{p.label}</Text>
                 </Pressable>
               );
             })}
           </View>
-          <Pressable onPress={onToggleStats} style={{ flexDirection: "row", alignItems: "center", marginBottom: 22 }}>
-            <Text style={{ flex: 1, fontFamily: theme.font.bold, fontSize: 13.5, color: theme.color.text }}>Show live stats</Text>
-            <View style={{ width: 52, height: 28, borderWidth: theme.rule,
-              borderColor: statsOn ? theme.color.accent : "rgba(243,242,242,0.3)",
-              backgroundColor: statsOn ? theme.color.accent : "transparent",
-              justifyContent: "center", alignItems: statsOn ? "flex-end" : "flex-start", padding: 2 }}>
-              <View style={{ width: 20, height: 20, backgroundColor: statsOn ? "#141312" : "rgba(243,242,242,0.6)" }} />
+          <Pressable onPress={onToggleStats} style={{ flexDirection: "row", alignItems: "center", gap: 14, padding: 16, marginBottom: 20, backgroundColor: "#f2f0ed", borderRadius: 20 }}>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontFamily: theme.font.semibold, fontSize: 14.5, color: theme.color.text }}>Show live stats</Text>
+              <Text style={{ fontFamily: theme.font.regular, fontSize: 12, color: theme.color.textMuted, marginTop: 4 }}>Bitrate, RTT and input latency over the stream.</Text>
+            </View>
+            <View style={{ width: 52, height: 30, borderRadius: theme.radius.pill, padding: 3,
+              backgroundColor: statsOn ? theme.color.accent : "rgba(28,26,25,0.18)",
+              justifyContent: "center", alignItems: statsOn ? "flex-end" : "flex-start" }}>
+              <View style={{ width: 24, height: 24, borderRadius: theme.radius.pill, backgroundColor: "#fff" }} />
             </View>
           </Pressable>
           <Button label="Done" onPress={onClose} />
@@ -1473,6 +1592,9 @@ Expected: PASS.
 
 - [ ] **Step 5: Implement the remaining overlay components**
 
+All stream overlays are **white-glass over the dark video** (v3): rounded, ink
+text on `theme.color.glass`; the error card is a solid white rounded card.
+
 `StatsOverlay.tsx`:
 ```tsx
 import React from "react";
@@ -1480,9 +1602,9 @@ import { View, Text } from "react-native";
 import { theme } from "../theme/tokens";
 export function StatsOverlay({ lines }: { lines: string }) {
   return (
-    <View style={{ position: "absolute", top: 14, left: 16, padding: 12,
-      backgroundColor: "rgba(12,11,11,0.62)", borderLeftWidth: theme.rule, borderLeftColor: theme.color.accent }}>
-      <Text style={{ fontFamily: theme.font.mono, fontSize: 10.5, lineHeight: 18, color: "rgba(243,242,242,0.82)" }}>{lines}</Text>
+    <View style={{ position: "absolute", top: 16, left: 18, padding: 13, borderRadius: theme.radius.input,
+      backgroundColor: theme.color.glass }}>
+      <Text style={{ fontFamily: theme.font.mono, fontSize: 10.5, lineHeight: 19, color: theme.color.text }}>{lines}</Text>
     </View>
   );
 }
@@ -1496,47 +1618,67 @@ import { Button } from "./Button";
 export function ErrorOverlay({ onReconnect, onBack, reconnecting }:
   { onReconnect: () => void; onBack: () => void; reconnecting: boolean }) {
   return (
-    <View style={{ position: "absolute", inset: 0 as any, backgroundColor: theme.color.deep, alignItems: "center", justifyContent: "center", padding: 40 }}>
-      <Text style={{ fontFamily: theme.font.bold, fontSize: 22, color: theme.color.text, marginBottom: 8 }}>Stream unavailable</Text>
-      <Text style={{ fontFamily: theme.font.regular, fontSize: 13, color: theme.color.textMuted, textAlign: "center", marginBottom: 20 }}>
-        The WebRTC session dropped. Check that the host is awake and on the tailnet.</Text>
-      <View style={{ flexDirection: "row", gap: 8 }}>
-        <Button label={reconnecting ? "Reconnecting…" : "Reconnect"} onPress={onReconnect} loading={reconnecting} />
-        <Button label="Back to windows" variant="secondary" onPress={onBack} />
+    <View style={{ position: "absolute", inset: 0 as any, backgroundColor: theme.color.streamBg, alignItems: "center", justifyContent: "center", padding: 24 }}>
+      <View style={{ width: 400, maxWidth: "94%", backgroundColor: "#faf8f6", borderRadius: 26, padding: 26, alignItems: "center" }}>
+        <View style={{ width: 52, height: 52, borderRadius: theme.radius.pill, backgroundColor: theme.color.errorBg, marginBottom: 16 }} />
+        <Text style={{ fontFamily: theme.font.bold, fontSize: 20, color: theme.color.text, marginBottom: 8 }}>Stream unavailable</Text>
+        <Text style={{ fontFamily: theme.font.regular, fontSize: 13, lineHeight: 21, color: theme.color.textMuted, textAlign: "center", marginBottom: 20 }}>
+          The WebRTC session dropped. Check that the host is awake and still on the tailnet.</Text>
+        <View style={{ flexDirection: "row", gap: 8, alignSelf: "stretch" }}>
+          <View style={{ flex: 1 }}>
+            <Button label={reconnecting ? "Reconnecting…" : "Reconnect"} onPress={onReconnect} loading={reconnecting} />
+          </View>
+          <Button label="Windows" variant="neutral" onPress={onBack} />
+        </View>
       </View>
     </View>
   );
 }
 ```
+Note: the error mark is a coral-tinted rounded placeholder; the device pass swaps it for the v3 `react-native-svg` broken-signal glyph.
+
 `SwitchDrawer.tsx`:
 ```tsx
 import React from "react";
 import { View, Text, Pressable, ScrollView } from "react-native";
 import { theme } from "../theme/tokens";
 import type { Instance } from "../api/client";
+// v3: floating rounded white card (not a full-height ink drawer).
 export function SwitchDrawer({ instances, activeSerial, onPick, onClose }:
   { instances: Instance[]; activeSerial: string; onPick: (i: Instance) => void; onClose: () => void }) {
   return (
-    <View style={{ position: "absolute", inset: 0 as any, flexDirection: "row" }}>
-      <View style={{ width: 290, backgroundColor: "rgba(20,19,18,0.95)", borderRightWidth: theme.rule, borderRightColor: "rgba(243,242,242,0.35)" }}>
-        <Text style={{ fontFamily: theme.font.bold, fontSize: 15, color: theme.color.text, padding: 16, borderBottomWidth: theme.rule, borderBottomColor: "rgba(243,242,242,0.25)" }}>Instances</Text>
-        <ScrollView>
+    <View style={{ position: "absolute", inset: 0 as any }}>
+      <Pressable onPress={onClose} style={{ position: "absolute", inset: 0 as any, backgroundColor: "rgba(20,17,16,0.55)" }} />
+      <View style={{ position: "absolute", top: 14, left: 14, bottom: 14, width: 300, backgroundColor: "#faf8f6", borderRadius: 24, overflow: "hidden" }}>
+        <View style={{ flexDirection: "row", alignItems: "center", padding: 16 }}>
+          <Text style={{ flex: 1, fontFamily: theme.font.bold, fontSize: 17, color: theme.color.text }}>Instances</Text>
+          <Pressable onPress={onClose} accessibilityLabel="Close"
+            style={{ width: 34, height: 34, borderRadius: theme.radius.pill, backgroundColor: "#f2f0ed", alignItems: "center", justifyContent: "center" }}>
+            <Text style={{ fontFamily: theme.font.semibold, color: "rgba(28,26,25,0.6)" }}>✕</Text>
+          </Pressable>
+        </View>
+        <ScrollView contentContainerStyle={{ padding: 12, paddingTop: 0, gap: 4 }}>
           {instances.map((i) => {
             const act = i.serial === activeSerial;
             return (
               <Pressable key={i.id} onPress={() => onPick(i)}
-                style={{ height: 56, flexDirection: "row", alignItems: "center", paddingHorizontal: 16,
-                  borderBottomWidth: 1, borderBottomColor: "rgba(243,242,242,0.12)",
-                  borderLeftWidth: theme.rule, borderLeftColor: act ? theme.color.accent : "transparent",
-                  backgroundColor: act ? "rgba(157,191,149,0.16)" : "transparent" }}>
-                <Text style={{ flex: 1, fontFamily: theme.font.bold, fontSize: 13.5, color: act ? theme.color.accent : theme.color.text }}>{i.title}</Text>
-                {act ? <Text style={{ fontFamily: theme.font.regular, fontSize: 10, letterSpacing: 1, color: theme.color.accent }}>LIVE</Text> : null}
+                style={{ flexDirection: "row", alignItems: "center", gap: 12, padding: 12, borderRadius: theme.radius.sm,
+                  backgroundColor: act ? theme.color.cardActive : "transparent" }}>
+                <View style={{ width: 34, height: 34, borderRadius: 12, backgroundColor: act ? theme.color.accent : "#f2f0ed" }} />
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={{ fontFamily: theme.font.semibold, fontSize: 14, color: theme.color.text }}>{i.title}</Text>
+                  {i.w && i.h ? <Text style={{ fontFamily: theme.font.regular, fontSize: 11.5, color: theme.color.textMuted, marginTop: 3 }}>{i.w}×{i.h}</Text> : null}
+                </View>
+                {act ? (
+                  <View style={{ paddingHorizontal: 8, paddingVertical: 3, backgroundColor: theme.color.accent, borderRadius: theme.radius.pill }}>
+                    <Text style={{ fontFamily: theme.font.semibold, fontSize: 10, color: theme.color.text }}>LIVE</Text>
+                  </View>
+                ) : null}
               </Pressable>
             );
           })}
         </ScrollView>
       </View>
-      <Pressable onPress={onClose} style={{ flex: 1, backgroundColor: "rgba(12,11,11,0.5)" }} />
     </View>
   );
 }
@@ -1550,28 +1692,30 @@ import { NetDot } from "./NetDot";
 import { IconButton } from "./IconButton";
 
 type Net = "connected" | "connecting" | "disconnected";
+// v3: white-glass panel on the right edge; active button = coral fill, ink glyphs.
 export function StreamToolbar({ net, active, onSettings, onSwitch, onKeyboard, onStats, onBack }:
   { net: Net; active: { settings: boolean; drawer: boolean; keyboard: boolean; stats: boolean };
     onSettings: () => void; onSwitch: () => void; onKeyboard: () => void; onStats: () => void; onBack: () => void }) {
+  const glyph = (on: boolean) => ({ fontFamily: theme.font.semibold, fontSize: 18, color: theme.color.text, opacity: on ? 1 : 0.85 });
   return (
-    <View style={{ position: "absolute", top: 0, right: 0, bottom: 0, padding: 12, justifyContent: "center" }}>
-      <View style={{ backgroundColor: "rgba(12,11,11,0.55)", borderWidth: 1, borderColor: "rgba(243,242,242,0.14)", padding: 6, alignItems: "center", gap: 2 }}>
-        <View style={{ height: 48, alignItems: "center", justifyContent: "center", gap: 5, borderBottomWidth: 1, borderBottomColor: "rgba(243,242,242,0.14)", marginBottom: 4, width: 48 }}>
+    <View style={{ position: "absolute", top: 0, right: 0, bottom: 0, justifyContent: "center" }}>
+      <View style={{ backgroundColor: theme.color.glass, padding: 6, alignItems: "center", gap: 2 }}>
+        <View style={{ width: 48, height: 48, alignItems: "center", justifyContent: "center", gap: 4 }}>
           <NetDot state={net} />
-          <Text style={{ fontFamily: theme.font.bold, fontSize: 7.5, letterSpacing: 0.8, color: "rgba(243,242,242,0.55)" }}>
+          <Text style={{ fontFamily: theme.font.semibold, fontSize: 7.5, letterSpacing: 0.4, color: theme.color.textMuted }}>
             {net === "connected" ? "LIVE" : net === "connecting" ? "SYNC" : "DOWN"}</Text>
         </View>
-        <IconButton label="Settings" active={active.settings} onPress={onSettings}><Text style={{ color: active.settings ? "#141312" : theme.color.text }}>⚙</Text></IconButton>
-        <IconButton label="Switch instance" active={active.drawer} onPress={onSwitch}><Text style={{ color: active.drawer ? "#141312" : theme.color.text }}>≡</Text></IconButton>
-        <IconButton label="Keyboard" active={active.keyboard} onPress={onKeyboard}><Text style={{ color: active.keyboard ? "#141312" : theme.color.text }}>⌨</Text></IconButton>
-        <IconButton label="Live stats" active={active.stats} onPress={onStats}><Text style={{ color: active.stats ? "#141312" : theme.color.text }}>◔</Text></IconButton>
-        <IconButton label="Back" onPress={onBack}><Text style={{ color: "rgba(243,242,242,0.75)" }}>←</Text></IconButton>
+        <IconButton label="Settings" active={active.settings} onPress={onSettings}><Text style={glyph(active.settings)}>⚙</Text></IconButton>
+        <IconButton label="Switch instance" active={active.drawer} onPress={onSwitch}><Text style={glyph(active.drawer)}>≡</Text></IconButton>
+        <IconButton label="Keyboard" active={active.keyboard} onPress={onKeyboard}><Text style={glyph(active.keyboard)}>⌨</Text></IconButton>
+        <IconButton label="Live stats" active={active.stats} onPress={onStats}><Text style={glyph(active.stats)}>◔</Text></IconButton>
+        <IconButton label="Back" onPress={onBack}><Text style={glyph(false)}>←</Text></IconButton>
       </View>
     </View>
   );
 }
 ```
-Note: toolbar/button glyphs use unicode placeholders to stay dependency-free; swapping for `react-native-svg` icons matching the prototype's SVGs is a later polish step, not required for parity of function.
+Note: toolbar/close/mark glyphs use unicode placeholders to stay dependency-free; the device pass swaps them for the v3 `react-native-svg` icons matching the prototype.
 
 - [ ] **Step 6: Implement `Stream.tsx` (integration; no unit test — device-verified)**
 
@@ -1666,7 +1810,7 @@ export function Stream({ route, navigation }: { route: any; navigation: any }) {
   const statsLines = `TIER   ${tier}`; // full stats sampling wired in device pass; tier always shown
 
   return (
-    <View style={{ flex: 1, backgroundColor: theme.color.deep }}>
+    <View style={{ flex: 1, backgroundColor: theme.color.streamBg }}>
       <GestureDetector gesture={gesture}>
         <View style={{ flex: 1 }} onLayout={(e) => { rect.current = { width: e.nativeEvent.layout.width, height: e.nativeEvent.layout.height }; }}>
           {streamUrl ? <RTCView streamURL={streamUrl} objectFit="contain" style={{ flex: 1 }} /> : null}
@@ -1789,7 +1933,10 @@ git commit -m "docs(mobile): dev-build instructions and device smoke-test checkl
 - Gesture→coords→WS with exact message shapes → Tasks 2, 10, 12. ✓
 - Downgrade-only adaptive quality + manual pin → Tasks 3, 11, 12. ✓
 - 3 screens + all overlays (settings, drawer, stats, keyboard, error) → Tasks 7, 8, 12. ✓
-- Modernist design tokens + Archivo font → Tasks 1, 6, and applied per-screen. ✓
+- EmuCtrl v3 design tokens + Archivo font (400/500/600/700) → Tasks 1, 6, and applied per-screen. ✓
+- v3 list layout (server card + instance rows) + floating bottom nav (Windows/Stream/Setup wired; Stats/Server disabled per decision) → Task 8 (InstanceRow, BottomNav, InstanceList). ✓
+- v3 stream screen stays dark with white-glass overlays; coral pills → Task 12 (StatsOverlay/SettingsModal/SwitchDrawer/StreamToolbar/ErrorOverlay). ✓
+- `react-native-svg` glyphs (logo, chevron, tab/toolbar icons, marks) → placeholders in Tasks 6–12 with explicit device-pass swap notes; installed in Task 1. ✓
 - MJPEG dropped; error overlay instead → Task 12 (ErrorOverlay), no MJPEG anywhere. ✓
 - Foreground re-negotiation, WS backoff, 404 handling → Task 10 (backoff), Task 12 (device pass covers AppState; note included). ✓
 - Dev-client build reality → Task 1 (plugin/config) + Task 13 (build + README). ✓
