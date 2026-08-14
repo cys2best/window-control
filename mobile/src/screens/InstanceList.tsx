@@ -1,7 +1,85 @@
-import React from "react";
-import { View } from "react-native";
+import React, { useCallback, useEffect, useState } from "react";
+import { View, Text, FlatList } from "react-native";
+import { useServer } from "../api/ServerContext";
+import { theme } from "../theme/tokens";
+import { InstanceRow } from "../components/InstanceRow";
+import { NetChip } from "../components/NetChip";
+import { BottomNav } from "../components/BottomNav";
+import type { Instance } from "../api/client";
 
-// TEMPORARY STUB — fully implemented in Task 8.
-export function InstanceList() {
-  return <View />;
+export function InstanceList({ navigation }: { navigation: any }) {
+  const { client, base } = useServer();
+  const [items, setItems] = useState<Instance[]>([]);
+  const [refreshing, setRefreshing] = useState(false);
+  const [reachable, setReachable] = useState(true);
+
+  const load = useCallback(async () => {
+    if (!client) return;
+    try { setItems(await client.instances()); setReachable(true); }
+    catch { setReachable(false); }
+  }, [client]);
+
+  useEffect(() => {
+    load();
+    const id = setInterval(load, 60000);
+    return () => clearInterval(id);
+  }, [load]);
+
+  const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
+  const open = (inst: Instance) => {
+    client?.keyframe(inst.serial);
+    navigation.navigate("Stream", { serial: inst.serial, title: inst.title });
+  };
+  const host = (base ?? "").replace(/^https?:\/\//, "");
+  const net = reachable ? "connected" : "disconnected";
+
+  const header = (
+    <View>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 14, padding: 16, marginBottom: 22,
+        backgroundColor: theme.color.card, borderRadius: theme.radius.card,
+        shadowColor: "#1c1a19", shadowOpacity: 0.06, shadowRadius: 6, shadowOffset: { width: 0, height: 1 }, elevation: 1 }}>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={{ fontFamily: theme.font.regular, fontSize: 12.5, color: theme.color.textMuted, marginBottom: 5 }}>Server</Text>
+          <Text numberOfLines={1} style={{ fontFamily: theme.font.semibold, fontSize: 15, color: theme.color.text }}>{host}</Text>
+        </View>
+        <NetChip state={net as any} />
+      </View>
+      <View style={{ flexDirection: "row", alignItems: "baseline", gap: 10, marginBottom: 12 }}>
+        <Text style={{ flex: 1, fontFamily: theme.font.semibold, fontSize: 16, color: theme.color.text }}>Instances</Text>
+        <Text style={{ fontFamily: theme.font.regular, fontSize: 12.5, color: theme.color.textMuted }}>{refreshing ? "Syncing…" : `${items.length} online`}</Text>
+      </View>
+    </View>
+  );
+
+  return (
+    <View style={{ flex: 1, backgroundColor: theme.color.screen }}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 24, paddingTop: 52, paddingBottom: 8 }}>
+        {/* Logo placeholder; swap for the v3 react-native-svg mark. */}
+        <View style={{ width: 30, height: 30, borderRadius: 9, backgroundColor: theme.color.accent }} />
+        <Text style={{ flex: 1, fontFamily: theme.font.bold, fontSize: 26, color: theme.color.text }}>Windows</Text>
+      </View>
+      {items.length === 0 ? (
+        <View style={{ flex: 1, padding: 24 }}>
+          {header}
+          <View style={{ padding: 34, backgroundColor: theme.color.card, borderRadius: theme.radius.card, alignItems: "center" }}>
+            <Text style={{ fontFamily: theme.font.semibold, fontSize: 17, color: theme.color.text, marginBottom: 8 }}>No windows found</Text>
+            <Text style={{ fontFamily: theme.font.regular, fontSize: 13, textAlign: "center", color: theme.color.textMuted }}>The server answered, but nothing is running. Start an instance in LDPlayer, then refresh.</Text>
+          </View>
+        </View>
+      ) : (
+        <FlatList data={items} keyExtractor={(i) => i.id}
+          ListHeaderComponent={header}
+          refreshing={refreshing} onRefresh={onRefresh}
+          contentContainerStyle={{ paddingHorizontal: 24, paddingTop: 8, paddingBottom: 120 }}
+          renderItem={({ item }) => (
+            <InstanceRow instance={item} active={false}
+              previewUri={client!.previewUrl(item.serial)} onPress={() => open(item)} />
+          )} />
+      )}
+      <BottomNav active="windows"
+        onWindows={() => {}}
+        onStream={() => { if (items[0]) open(items[0]); }}
+        onSetup={() => navigation.navigate("ServerSetup")} />
+    </View>
+  );
 }
