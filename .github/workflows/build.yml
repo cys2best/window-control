@@ -7,63 +7,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
-    runs-on: windows-latest
-    permissions:
-      contents: write
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: astral-sh/setup-uv@v4
-        with:
-          version: "latest"
-
-      - name: Install dependencies
-        run: uv sync
-
-      - name: Sync version from config.py
-        run: uv run python scripts/bump_version.py
-
-      - name: Install Inno Setup 6
-        run: choco install innosetup -y --no-progress
-        shell: cmd
-
-      - name: Download scrcpy/mediamtx binaries
-        run: uv run python scripts/download_assets.py
-        shell: cmd
-
-      - name: Build EXE with PyInstaller
-        run: uv run pyinstaller build/window_control.spec --distpath dist --workpath build/work --noconfirm
-        shell: cmd
-
-      - name: Download VC++ Redistributable
-        run: |
-          curl -L -o build\vc_redist.x64.exe "https://aka.ms/vs/17/release/vc_redist.x64.exe"
-        shell: cmd
-
-      - name: Build installer with Inno Setup
-        run: |
-          mkdir release
-          ISCC build\installer.iss
-        shell: cmd
-
-      - name: Upload installer artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: WindowControlInstaller
-          path: release/WindowControlInstaller.exe
-          retention-days: 30
-
-      - name: Upload to release (on tag)
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: release/WindowControlInstaller.exe
-
   build-engine:
     runs-on: windows-latest
-    if: github.event_name == 'workflow_dispatch'
 
     steps:
       - uses: actions/checkout@v4
@@ -101,3 +46,64 @@ jobs:
           name: engine-windows
           path: engine\build\Release\engine.exe
           retention-days: 30
+
+  build:
+    needs: build-engine
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Sync version from config.py
+        run: uv run python scripts/bump_version.py
+
+      - name: Install Inno Setup 6
+        run: choco install innosetup -y --no-progress
+        shell: cmd
+
+      - name: Download scrcpy/mediamtx binaries
+        run: uv run python scripts/download_assets.py
+        shell: cmd
+
+      - name: Download engine.exe artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: engine-windows
+          path: src\assets\engine
+
+      - name: Build EXE with PyInstaller
+        run: uv run pyinstaller build/window_control.spec --distpath dist --workpath build/work --noconfirm
+        shell: cmd
+
+      - name: Download VC++ Redistributable
+        run: |
+          curl -L -o build\vc_redist.x64.exe "https://aka.ms/vs/17/release/vc_redist.x64.exe"
+        shell: cmd
+
+      - name: Build installer with Inno Setup
+        run: |
+          mkdir release
+          ISCC build\installer.iss
+        shell: cmd
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WindowControlInstaller
+          path: release/WindowControlInstaller.exe
+          retention-days: 30
+
+      - name: Upload to release (on tag)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/WindowControlInstaller.exe
