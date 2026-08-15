@@ -5,6 +5,7 @@
     "libdatachannel",
     "gtest",
     "websocketpp",
-    { "name": "asio", "features": [] }
+    { "name": "asio", "features": [] },
+    "nlohmann-json"
   ]
 }
