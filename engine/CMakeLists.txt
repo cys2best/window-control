@@ -10,19 +10,26 @@ if(NOT WIN32)
 endif()
 
 find_package(libdatachannel CONFIG REQUIRED)
+find_package(websocketpp CONFIG REQUIRED)
+find_package(asio CONFIG REQUIRED)
 
 enable_testing()
 find_package(GTest CONFIG REQUIRED)
 
 add_library(engine_core
   src/scrcpy_video.cpp
+  src/scrcpy_control.cpp
+  src/signaling_client.cpp
 )
 target_include_directories(engine_core PUBLIC src)
+target_compile_definitions(engine_core PUBLIC ASIO_STANDALONE)
 target_link_libraries(engine_core PUBLIC
   LibDataChannel::LibDataChannel
+  websocketpp::websocketpp
+  asio::asio
   ws2_32.lib
 )
 
-add_executable(engine_tests test/test_scrcpy_video.cpp)
+add_executable(engine_tests test/test_scrcpy_video.cpp test/test_scrcpy_control.cpp test/test_signaling_client.cpp)
 target_link_libraries(engine_tests PRIVATE engine_core GTest::gtest GTest::gtest_main)
 add_test(NAME engine_tests COMMAND engine_tests)
