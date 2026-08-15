@@ -12,6 +12,7 @@ endif()
 find_package(libdatachannel CONFIG REQUIRED)
 find_package(websocketpp CONFIG REQUIRED)
 find_package(asio CONFIG REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
 
 enable_testing()
 find_package(GTest CONFIG REQUIRED)
@@ -28,6 +29,7 @@ target_link_libraries(engine_core PUBLIC
   LibDataChannel::LibDataChannel
   websocketpp::websocketpp
   asio::asio
+  nlohmann_json::nlohmann_json
   ws2_32.lib
 )
 
