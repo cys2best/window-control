@@ -130,7 +130,7 @@ void WebRtcPeer::SendVideoNalu(const uint8_t* data, size_t size) {
     auto elapsed = std::chrono::steady_clock::now() - impl_->streamStart;
     double elapsedSeconds = std::chrono::duration<double>(elapsed).count();
     impl_->rtpConfig->timestamp = impl_->rtpConfig->startTimestamp +
-        rtc::RtpPacketizationConfig::secondsToTimestamp(elapsedSeconds, impl_->rtpConfig->clockRate);
+        impl_->rtpConfig->secondsToTimestamp(elapsedSeconds);
 
     impl_->videoTrack->send(reinterpret_cast<const std::byte*>(data), size);
 }
