@@ -16,6 +16,7 @@ find_package(GTest CONFIG REQUIRED)
 
 add_library(engine_core
   src/capture.cpp
+  src/encoder.cpp
 )
 target_include_directories(engine_core PUBLIC src)
 target_link_libraries(engine_core PUBLIC
@@ -25,6 +26,15 @@ target_link_libraries(engine_core PUBLIC
   dxgi.lib
 )
 
-add_executable(engine_tests test/test_capture.cpp)
+# Set NVENC_SDK_ROOT to the extracted Video Codec SDK directory, e.g.
+#   cmake -B build -S . -DNVENC_SDK_ROOT=C:/sdks/Video_Codec_SDK_12.2
+if(NOT DEFINED NVENC_SDK_ROOT)
+  message(FATAL_ERROR "Set -DNVENC_SDK_ROOT=<path to extracted NVIDIA Video Codec SDK>")
+endif()
+
+target_include_directories(engine_core PUBLIC "${NVENC_SDK_ROOT}/Interface")
+target_link_libraries(engine_core PUBLIC "${NVENC_SDK_ROOT}/Lib/x64/nvencodeapi.lib")
+
+add_executable(engine_tests test/test_capture.cpp test/test_encoder.cpp)
 target_link_libraries(engine_tests PRIVATE engine_core GTest::gtest GTest::gtest_main)
 add_test(NAME engine_tests COMMAND engine_tests)
