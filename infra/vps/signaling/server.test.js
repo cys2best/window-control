@@ -2,11 +2,20 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
 import { WebSocketServer, WebSocket } from 'ws';
+import jwt from 'jsonwebtoken';
 import { createSignalingServer } from './server.js';
 
 function openClient(port, session, role) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(`ws://localhost:${port}/?session=${session}&role=${role}`);
+    ws.once('open', () => resolve(ws));
+    ws.once('error', reject);
+  });
+}
+
+function openClientWithToken(port, session, role, token) {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(`ws://localhost:${port}/?session=${session}&role=${role}&token=${token}`);
     ws.once('open', () => resolve(ws));
     ws.once('error', reject);
   });
@@ -54,4 +63,35 @@ test('does not leak messages across different sessions', async () => {
 
   engineA.close(); viewerA.close(); engineB.close(); viewerB.close();
   server.close();
+});
+
+test('rejects connection with missing token', async () => {
+  const { server, port } = await createSignalingServer({ port: 0, jwtSecret: 'test-secret' });
+  const ws = new WebSocket(`ws://localhost:${port}/?session=sess-1&role=engine`);
+  const closeCode = await new Promise((resolve) => {
+    ws.once('close', (code) => resolve(code));
+  });
+  assert.strictEqual(closeCode, 1008);
+  server.close();
+});
+
+test('rejects connection with token for a different session', async () => {
+  const { server, port } = await createSignalingServer({ port: 0, jwtSecret: 'test-secret' });
+  const token = jwt.sign({ session: 'sess-OTHER' }, 'test-secret');
+  const ws = new WebSocket(`ws://localhost:${port}/?session=sess-1&role=engine&token=${token}`);
+  const closeCode = await new Promise((resolve) => {
+    ws.once('close', (code) => resolve(code));
+  });
+  assert.strictEqual(closeCode, 1008);
+  server.close();
+});
+
+test('accepts connection with valid token matching session', async () => {
+  const { server, port } = await createSignalingServer({ port: 0, jwtSecret: 'test-secret' });
+  const token = jwt.sign({ session: 'sess-1' }, 'test-secret');
+  const ws = await openClientWithToken(port, 'sess-1', 'engine', token);
+  ws.close();
+  server.close();
+  // openClientWithToken resolves only on 'open' — if we got here, connection was accepted.
+  assert.ok(true);
 });

@@ -1,7 +1,8 @@
 import { WebSocketServer } from 'ws';
 import { createServer } from 'node:http';
+import jwt from 'jsonwebtoken';
 
-export async function createSignalingServer({ port = 8443 } = {}) {
+export async function createSignalingServer({ port = 8443, jwtSecret = null } = {}) {
   const httpServer = createServer();
   const wss = new WebSocketServer({ server: httpServer });
 
@@ -23,10 +24,24 @@ export async function createSignalingServer({ port = 8443 } = {}) {
     const url = new URL(req.url, 'http://localhost');
     const sessionId = url.searchParams.get('session');
     const role = url.searchParams.get('role');
+    const token = url.searchParams.get('token');
 
     if (!sessionId || (role !== 'engine' && role !== 'viewer')) {
       ws.close(1008, 'session and role (engine|viewer) query params required');
       return;
+    }
+
+    if (jwtSecret) {
+      try {
+        const payload = jwt.verify(token, jwtSecret);
+        if (payload.session !== sessionId) {
+          ws.close(1008, 'token session claim does not match session param');
+          return;
+        }
+      } catch {
+        ws.close(1008, 'invalid or missing token');
+        return;
+      }
     }
 
     const session = getSession(sessionId);
@@ -76,7 +91,9 @@ export async function createSignalingServer({ port = 8443 } = {}) {
 // Run standalone when executed directly (not imported by tests).
 if (import.meta.url === `file://${process.argv[1]}`) {
   const port = process.env.PORT ? Number(process.env.PORT) : 8443;
-  createSignalingServer({ port }).then(({ port: actualPort }) => {
+  const jwtSecret = process.env.JWT_SECRET || null;
+  createSignalingServer({ port, jwtSecret }).then(({ port: actualPort }) => {
     console.log(`Signaling server listening on port ${actualPort}`);
+    if (!jwtSecret) console.warn('WARNING: JWT_SECRET not set, auth disabled');
   });
 }
