@@ -5,6 +5,14 @@ project(window_control_engine CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+if(MSVC)
+  # MSVC's __cplusplus macro is stuck at 199711L unless this is set, no
+  # matter what /std: flag is active — websocketpp's C++11 feature
+  # detection (random.hpp's std::random vs. Boost fallback) reads
+  # __cplusplus directly and silently picks the Boost path without it.
+  add_compile_options(/Zc:__cplusplus)
+endif()
+
 if(NOT WIN32)
   message(FATAL_ERROR "engine/ only builds on Windows (matches the Host PC's existing Python app)")
 endif()

@@ -6,6 +6,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <stdexcept>
+#include <string>
 #include <vector>
 #include <mutex>
 
