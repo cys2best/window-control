@@ -62,20 +62,29 @@ cmake --build engine\build --target engine --config Release
 
 ## Known friction points (read before debugging blind)
 
-1. **`websocketpp` is unmaintained (last release 0.8.2, 2019)** and has
-   known incompatibilities with newer standalone-asio versions and with
-   MSVC under `/std:c++20`. `CMakeLists.txt` already defines
-   `ASIO_STANDALONE` (required — without it websocketpp/asio assume Boost).
-   If you hit compile errors inside `websocketpp/` or `asio/` headers
-   (not in this project's own `.cpp` files), this library pairing is the
-   likely cause, not a bug in this codebase's own code. Two escape hatches
-   if this blocks you:
-   - Pin an older `asio` version in `vcpkg.json`'s manifest overrides.
-   - Fall back to `/std:c++17` for just the files that touch
-     `signaling_client.h`/`.cpp` if C++20 features aren't actually needed
-     there (check first — `peer.cpp`/`main.cpp` may use C++20 features
-     elsewhere in `engine_core` that would still need `/std:c++20`
-     project-wide).
+1. **`websocketpp` was removed from vcpkg's default registry entirely**
+   (unmaintained since 2019; the port directory was dropped from vcpkg's
+   repo around 2025-03-03). `engine/vcpkg-configuration.json` pins
+   `builtin-baseline` to commit `ec12d917a85839741f8345905f71b3e7f56d9ddc`
+   — the last vcpkg commit where `websocketpp` still resolves — so a
+   fresh `vcpkg install` keeps working. If you ever see
+   `C:\vcpkg\ports\websocketpp: error: websocketpp does not exist` again,
+   check that this file is present and its baseline hasn't been
+   accidentally reverted/removed; don't try to "fix" it by bumping the
+   baseline forward, that's what breaks it.
+
+   Separately, even pinned, `websocketpp` 0.8.2 has known incompatibilities
+   with newer standalone-asio versions and with MSVC under `/std:c++20`.
+   `CMakeLists.txt` already defines `ASIO_STANDALONE` (required — without
+   it websocketpp/asio assume Boost). If you hit compile errors inside
+   `websocketpp/` or `asio/` headers (not in this project's own `.cpp`
+   files) once configure succeeds, this library pairing is the likely
+   cause, not a bug in this codebase's own code. Escape hatch if this
+   blocks you: fall back to `/std:c++17` for just the files that touch
+   `signaling_client.h`/`.cpp` if C++20 features aren't actually needed
+   there (check first — `peer.cpp`/`main.cpp` may use C++20 features
+   elsewhere in `engine_core` that would still need `/std:c++20`
+   project-wide).
 
 2. **`ScrcpyControlClient::RequestIdr()` and the RTP-timestamp fix in
    `peer.cpp` were added in the final review's fix wave (commit
