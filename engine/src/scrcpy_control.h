@@ -18,6 +18,7 @@ public:
     void Connect();
     void SendTouch(uint8_t action, double nx, double ny, int screenWidth, int screenHeight, uint64_t pointerId = 0);
     void SendKeycode(int32_t keycode);
+    void RequestIdr();
     bool IsConnected() const;
 
 private:

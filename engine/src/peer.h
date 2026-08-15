@@ -20,6 +20,7 @@ public:
     void StartAsOfferer();
     void SendVideoNalu(const uint8_t* data, size_t size);
     void SetInputCallback(InputCallback onInput);
+    void SetOnConnected(std::function<void()> onConnected);
 
 private:
     struct Impl;

@@ -74,6 +74,13 @@ int main(int argc, char** argv) {
         }
     });
 
+    // Request a fresh IDR once the connection is actually up (not blindly at
+    // startup) so a viewer joining mid-stream doesn't wait for the next
+    // scheduled keyframe.
+    peer.SetOnConnected([&control]() {
+        control.RequestIdr();
+    });
+
     peer.StartAsOfferer();
 
     video.StartReading([&peer](const uint8_t* data, size_t size) {
@@ -85,6 +92,11 @@ int main(int argc, char** argv) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
+    // Shutdown order is load-bearing: stop things in the reverse order they
+    // were started. video.Stop() must run before peer/signaling teardown so
+    // the read thread (which calls peer.SendVideoNalu) is joined first and
+    // can't race the peer's destruction; the peer/signaling then close out
+    // as WebRtcPeer's destructor runs at scope exit.
     video.Stop();
     std::cout << "Stopped.\n";
     return 0;

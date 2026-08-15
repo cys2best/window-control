@@ -45,6 +45,10 @@ export async function createSignalingServer({ port = 8443, jwtSecret = null } = 
     }
 
     const session = getSession(sessionId);
+    if (session[role]) {
+      ws.close(1008, 'role already taken');
+      return;
+    }
     session[role] = ws;
 
     // Flush any queued messages meant for this role.
@@ -68,7 +72,9 @@ export async function createSignalingServer({ port = 8443, jwtSecret = null } = 
     });
 
     ws.on('close', () => {
-      session[role] = null;
+      if (session[role] === ws) {
+        session[role] = null;
+      }
       if (!session.engine && !session.viewer) {
         sessions.delete(sessionId);
       }

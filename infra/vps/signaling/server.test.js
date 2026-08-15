@@ -95,3 +95,27 @@ test('accepts connection with valid token matching session', async () => {
   // openClientWithToken resolves only on 'open' — if we got here, connection was accepted.
   assert.ok(true);
 });
+
+test('rejects a second connection claiming an already-taken role and keeps the first alive', async () => {
+  const { server, port } = await createSignalingServer({ port: 0 });
+  const engine1 = await openClient(port, 'sess-1', 'engine');
+  const engine2 = new WebSocket(`ws://localhost:${port}/?session=sess-1&role=engine`);
+
+  const closeCode = await new Promise((resolve) => {
+    engine2.once('close', (code) => resolve(code));
+  });
+  assert.strictEqual(closeCode, 1008);
+
+  // The first engine connection must still be alive and able to relay to viewer.
+  const viewer = await openClient(port, 'sess-1', 'viewer');
+  const received = new Promise((resolve) => {
+    viewer.once('message', (data) => resolve(JSON.parse(data.toString())));
+  });
+  engine1.send(JSON.stringify({ type: 'offer', sdp: 'still-alive' }));
+  const msg = await received;
+  assert.strictEqual(msg.sdp, 'still-alive');
+
+  engine1.close();
+  viewer.close();
+  server.close();
+});

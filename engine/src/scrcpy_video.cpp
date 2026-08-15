@@ -14,10 +14,17 @@
 #include <ws2tcpip.h>
 #include <cstring>
 #include <vector>
+#include <iostream>
+#include <exception>
 
 #pragma comment(lib, "ws2_32.lib")
 
 namespace {
+
+// Sanity bound on the wire `size` field — it comes from an untrusted/
+// unvalidated socket read, so a corrupt stream must not trigger an
+// unbounded allocation.
+constexpr uint32_t kMaxFrameBytes = 8 * 1024 * 1024;
 
 bool RecvAll(SOCKET sock, uint8_t* buf, size_t n) {
     size_t received = 0;
@@ -121,12 +128,17 @@ void ScrcpyVideoClient::StartReading(NaluCallback onNalu) {
             uint64_t ptsFlags = ReadU64BE(header); // unused for RTP repacketization in this PoC
             (void)ptsFlags;
             uint32_t size = ReadU32BE(header + 8);
+            if (size > kMaxFrameBytes) break; // stream desync — treat as fatal, same as any other read error
 
             std::vector<uint8_t> payload(size);
             if (size > 0 && !RecvAll(impl_->sock, payload.data(), size)) break;
 
             if (impl_->onNalu) {
-                impl_->onNalu(payload.data(), payload.size());
+                try {
+                    impl_->onNalu(payload.data(), payload.size());
+                } catch (const std::exception& e) {
+                    std::cerr << "ScrcpyVideoClient: onNalu callback threw: " << e.what() << std::endl;
+                }
             }
         }
     });

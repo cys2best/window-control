@@ -110,6 +110,13 @@ void ScrcpyControlClient::SendKeycode(int32_t keycode) {
     }
 }
 
+void ScrcpyControlClient::RequestIdr() {
+    std::vector<uint8_t> msg;
+    msg.reserve(1);
+    PushU8(msg, 0x11); // type: TYPE_RESET_VIDEO — bodyless, requests a fresh IDR
+    impl_->Send(msg);
+}
+
 bool ScrcpyControlClient::IsConnected() const {
     return impl_->sock != INVALID_SOCKET;
 }
