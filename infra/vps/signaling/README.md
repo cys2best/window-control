@@ -28,6 +28,15 @@ mint a matching test token.
     sudo systemctl start webrtc-signaling
     sudo systemctl status webrtc-signaling
 
+**Important:** Before starting the service, verify the node binary location. Run:
+
+    which node
+
+If the output is `/usr/bin/node`, the systemd unit's `ExecStart` path is correct.
+If node is installed elsewhere (e.g., via nvm or a custom PATH), edit
+`/etc/systemd/system/webrtc-signaling.service` and update the `ExecStart` line
+to point to the correct node binary path, then run `sudo systemctl daemon-reload`.
+
 ## Firewall
 
     sudo ufw allow 8443/tcp
