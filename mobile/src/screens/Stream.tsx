@@ -59,10 +59,12 @@ export function Stream({ route, navigation }: { route: any; navigation: any }) {
       if (gen !== startGen.current) return; // superseded before WHEP even started
       content.current = { w: sel.w, h: sel.h };
       session.current?.close();
+      let firstFrameSeen = false;
       const s = connectWhep({
         whepUrl: sel.whep_url, stunUrl: sel.stun_url,
         onStream: (stream) => {
           if (gen !== startGen.current) return;
+          firstFrameSeen = true;
           console.log(`[stream] first track/frame +${Date.now() - t0}ms`);
           setStreamUrl(stream.toURL());
         },
@@ -72,6 +74,20 @@ export function Stream({ route, navigation }: { route: any; navigation: any }) {
           if (st === "failed") setFailed(true);
         },
       });
+      // A session that never sends any video (the mediamtx write-queue-stuck
+      // case: created server-side but peerConnectionEstablished never true,
+      // bytesSent stays 0) never fires onStream/onTrack at all, so it never
+      // produces an inbound-rtp stats report either — the adaptive
+      // controller's frame-stall check above has nothing to read and never
+      // fires. Cover that gap here: if the very first frame hasn't arrived
+      // within a few seconds, the screen is just showing the previous
+      // session's last frame frozen — retry instead of waiting forever.
+      setTimeout(() => {
+        if (gen === startGen.current && !firstFrameSeen) {
+          console.log(`[stream] no frame after 10s, retrying`);
+          start();
+        }
+      }, 10000);
       // The WHEP POST inside connectWhep() is already in flight and will
       // create a session server-side regardless of whether we win the race.
       // If a newer switch supersedes us before that POST resolves (or even
@@ -80,7 +96,15 @@ export function Stream({ route, navigation }: { route: any; navigation: any }) {
       if (gen !== startGen.current) { s.close(); return; }
       session.current = s;
       adaptive.current?.stop();
-      adaptive.current = makeAdaptive({ serial, onApply: (t) => client.setQuality(serial, t) });
+      adaptive.current = makeAdaptive({
+        serial,
+        onApply: (t) => client.setQuality(serial, t),
+        // Decoder stopped producing new frames while the connection still
+        // claims to be "connected" (the mediamtx write-queue-stuck class of
+        // bug) — silently reopen the session rather than surface the manual
+        // ErrorOverlay for something the app can recover from on its own.
+        onStall: () => { if (gen === startGen.current) start(); },
+      });
       adaptive.current.start(session.current.pc);
     } catch { if (gen === startGen.current) { setFailed(true); setNet("disconnected"); } }
   }, [client, serial]);
@@ -186,8 +210,9 @@ export function Stream({ route, navigation }: { route: any; navigation: any }) {
   const cycleInstance = (dir: 1 | -1) => {
     if (instances.length < 2) return;
     const i = instances.findIndex((x) => x.serial === serial);
-    const next = instances[(i + dir + instances.length) % instances.length];
-    switchTo(next);
+    const j = i + dir;
+    if (j < 0 || j >= instances.length) return; // at the first/last instance — no wrap
+    switchTo(instances[j]);
   };
   // Vertical swipe on the toolbar strip (not the video) cycles instances,
   // so it never competes with the drag gesture used for remote mouse input.
