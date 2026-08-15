@@ -1,0 +1,85 @@
+<!-- engine/test/test_page.html -->
+<!DOCTYPE html>
+<html>
+<head><title>WebRTC PoC Viewer</title></head>
+<body>
+  <h1>WebRTC PoC Viewer</h1>
+  <p>Status: <span id="status">disconnected</span></p>
+  <p>Click the video to send a tap through the DataChannel.</p>
+  <video id="video" autoplay playsinline muted style="width: 720px; background: #000;"></video>
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const signalingUrl = params.get('signaling') || 'ws://localhost:8443';
+    const sessionId = params.get('session') || 'poc-session-1';
+    const token = params.get('token') || '';
+    const stunTurnUrl = params.get('ice') || 'stun:stun.l.google.com:19302';
+
+    const statusEl = document.getElementById('status');
+    const videoEl = document.getElementById('video');
+
+    const pc = new RTCPeerConnection({ iceServers: [{ urls: stunTurnUrl }] });
+    let inputChannel = null;
+
+    pc.ontrack = (event) => {
+      videoEl.srcObject = event.streams[0];
+      statusEl.textContent = 'receiving video';
+    };
+    pc.oniceconnectionstatechange = () => {
+      statusEl.textContent = 'ICE: ' + pc.iceConnectionState;
+      console.log('ICE state:', pc.iceConnectionState);
+    };
+    // Engine is the offerer and creates the DataChannel — this side
+    // receives it via ondatachannel rather than calling createDataChannel.
+    pc.ondatachannel = (event) => {
+      inputChannel = event.channel;
+      inputChannel.onopen = () => console.log('input channel open');
+    };
+
+    videoEl.addEventListener('click', (event) => {
+      if (!inputChannel || inputChannel.readyState !== 'open') {
+        console.warn('input channel not open yet');
+        return;
+      }
+      const rect = videoEl.getBoundingClientRect();
+      const nx = (event.clientX - rect.left) / rect.width;
+      const ny = (event.clientY - rect.top) / rect.height;
+      // Send a down+up pair to simulate a tap, matching the
+      // ScrcpyControlClient::SendTouch action semantics in Task 6/8.
+      inputChannel.send(JSON.stringify({ type: 'tap', action: 'down', nx, ny }));
+      inputChannel.send(JSON.stringify({ type: 'tap', action: 'up', nx, ny }));
+    });
+
+    let wsUrl = `${signalingUrl}/?session=${sessionId}&role=viewer`;
+    if (token) wsUrl += `&token=${token}`;
+    const ws = new WebSocket(wsUrl);
+
+    ws.onopen = () => { statusEl.textContent = 'signaling connected, waiting for offer'; };
+
+    ws.onmessage = async (event) => {
+      const msg = JSON.parse(event.data);
+      if (msg.type === 'offer') {
+        await pc.setRemoteDescription({ type: 'offer', sdp: msg.sdp });
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        ws.send(JSON.stringify({ type: 'answer', sdp: pc.localDescription.sdp }));
+      } else if (msg.type === 'candidate') {
+        try {
+          await pc.addIceCandidate({ candidate: msg.candidate, sdpMid: msg.mid });
+        } catch (e) {
+          console.warn('addIceCandidate failed', e);
+        }
+      }
+    };
+
+    pc.onicecandidate = (event) => {
+      if (event.candidate) {
+        ws.send(JSON.stringify({
+          type: 'candidate',
+          candidate: event.candidate.candidate,
+          mid: event.candidate.sdpMid,
+        }));
+      }
+    };
+  </script>
+</body>
+</html>
