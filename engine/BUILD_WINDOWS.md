@@ -7,6 +7,19 @@ checking against the code, not by a successful build. Expect to debug real
 compile errors on the first attempt; this doc gets you to that point with
 the least wasted time.
 
+## Option A: GitHub Actions (no local Windows box needed)
+
+`.github/workflows/build.yml` has a `build-engine` job (Windows runner,
+`workflow_dispatch`-only — run it from the Actions tab, "Run workflow").
+It configures with vcpkg, builds `Release`, runs `engine_tests` (excluding
+`SignalingClient.*`, which needs a live signaling server not available in
+CI), and uploads `engine.exe` as a workflow artifact. This is the fastest
+way to get a real compiler's verdict on this code without owning Windows
+hardware — start here, then use Option B below only if you need to debug
+locally or run the full test suite including signaling.
+
+## Option B: Local Windows machine
+
 ## Prerequisites
 
 - **Visual Studio 2022** (Community is fine) with the "Desktop development

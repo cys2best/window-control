@@ -60,3 +60,44 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: release/WindowControlInstaller.exe
+
+  build-engine:
+    runs-on: windows-latest
+    if: github.event_name == 'workflow_dispatch'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore vcpkg cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            C:\vcpkg\installed
+            C:\vcpkg\buildtrees
+            C:\vcpkg\downloads
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('engine/vcpkg.json') }}
+          restore-keys: |
+            vcpkg-${{ runner.os }}-
+
+      - name: Configure (CMake + vcpkg manifest install)
+        run: |
+          cmake -S engine -B engine\build `
+            -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake `
+            -DVCPKG_TARGET_TRIPLET=x64-windows
+        shell: pwsh
+
+      - name: Build
+        run: cmake --build engine\build --config Release
+        shell: pwsh
+
+      - name: Run engine_tests (excludes SignalingClient — no server available in CI)
+        run: |
+          engine\build\Release\engine_tests.exe --gtest_filter=-SignalingClient.*
+        shell: pwsh
+
+      - name: Upload engine.exe artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: engine-windows
+          path: engine\build\Release\engine.exe
+          retention-days: 30
