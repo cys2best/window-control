@@ -40,11 +40,18 @@ jobs:
           engine\build\Release\engine_tests.exe --gtest_filter=-SignalingClient.*
         shell: pwsh
 
-      - name: Upload engine.exe artifact
+      - name: Stage engine.exe + runtime DLLs (flat)
+        run: |
+          New-Item -ItemType Directory -Force -Path engine\dist | Out-Null
+          Copy-Item engine\build\Release\engine.exe engine\dist\
+          Copy-Item engine\build\Release\*.dll engine\dist\
+        shell: pwsh
+
+      - name: Upload engine.exe artifact (with runtime DLLs)
         uses: actions/upload-artifact@v4
         with:
           name: engine-windows
-          path: engine\build\Release\engine.exe
+          path: engine\dist\*
           retention-days: 30
 
   build:
