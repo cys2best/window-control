@@ -51,3 +51,16 @@ add_test(NAME engine_tests COMMAND engine_tests)
 
 add_executable(engine src/main.cpp)
 target_link_libraries(engine PRIVATE engine_core)
+
+# engine_core links libdatachannel etc. as shared (.dll) libraries under
+# vcpkg's default x64-windows triplet — copy their runtime DLLs next to
+# each executable, or Windows fails to launch them with "code execution
+# cannot proceed because X.dll was not found".
+foreach(exe_target engine engine_tests)
+  add_custom_command(TARGET ${exe_target} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "$<TARGET_RUNTIME_DLLS:${exe_target}>"
+      "$<TARGET_FILE_DIR:${exe_target}>"
+    COMMAND_EXPAND_LISTS
+  )
+endforeach()
