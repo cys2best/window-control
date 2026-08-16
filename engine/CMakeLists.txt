@@ -21,6 +21,7 @@ find_package(libdatachannel CONFIG REQUIRED)
 find_package(websocketpp CONFIG REQUIRED)
 find_package(asio CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
+find_package(OpenSSL REQUIRED)
 
 enable_testing()
 find_package(GTest CONFIG REQUIRED)
@@ -38,7 +39,10 @@ target_link_libraries(engine_core PUBLIC
   websocketpp::websocketpp
   asio::asio
   nlohmann_json::nlohmann_json
+  OpenSSL::SSL
+  OpenSSL::Crypto
   ws2_32.lib
+  crypt32.lib
 )
 
 add_executable(engine_tests test/test_scrcpy_video.cpp test/test_scrcpy_control.cpp test/test_signaling_client.cpp)
