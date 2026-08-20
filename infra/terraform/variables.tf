@@ -14,6 +14,7 @@ variable "instance_type" {
 variable "key_pair_name" {
   description = "Name of an existing EC2 key pair for SSH access"
   type        = string
+  default     = "emuctrl"
 }
 
 variable "ssh_allowed_cidr" {
