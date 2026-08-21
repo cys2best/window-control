@@ -550,6 +550,31 @@ async def run_engine(scrcpy_port: int, signaling_url: str, session_id: str, ice_
                     if cand is not None:
                         await pc.addIceCandidate(cand)
 
+    def _scan_nal_types(payload: bytes) -> list[int]:
+        # Find every Annex-B start code (3-byte 00 00 01 or 4-byte 00 00 00 01)
+        # within this single wire-frame payload and report each embedded
+        # NALU's type -- a scrcpy "frame" (12-byte-header wire unit) may
+        # concatenate multiple NALUs (e.g. SPS+PPS, or PPS+IDR slice), not
+        # necessarily one NALU per frame.
+        types = []
+        i = 0
+        n = len(payload)
+        while i < n - 3:
+            if payload[i] == 0 and payload[i + 1] == 0:
+                if payload[i + 2] == 1:
+                    start = i + 3
+                elif i < n - 4 and payload[i + 2] == 0 and payload[i + 3] == 1:
+                    start = i + 4
+                else:
+                    i += 1
+                    continue
+                if start < n:
+                    types.append(payload[start] & 0x1F)
+                i = start
+            else:
+                i += 1
+        return types
+
     async def video_pump_loop():
         # Push the SPS NALU already consumed above (to derive
         # profile_level_id) first -- it's still needed by the decoder --
@@ -560,14 +585,17 @@ async def run_engine(scrcpy_port: int, signaling_url: str, session_id: str, ice_
         scan_count = 1  # first_frame already counted
         async for nalu in frames:
             if scan_count < 30:
-                nt = nalu[4] & 0x1F if len(nalu) > 4 else -1
-                if nt == 8 and not seen_pps:
+                types = _scan_nal_types(nalu)
+                if 8 in types and not seen_pps:
                     seen_pps = True
                     print(f"[debug] PPS (nal_type=8) found at frame #{scan_count}, "
-                          f"size={len(nalu)} bytes={nalu[:16].hex()}", flush=True)
+                          f"all_nal_types_in_frame={types}", flush=True)
+                elif scan_count < 5:
+                    print(f"[debug] frame #{scan_count} nal_types={types}", flush=True)
                 scan_count += 1
                 if scan_count == 30 and not seen_pps:
-                    print("[debug] NO PPS (nal_type=8) seen in first 30 frames", flush=True)
+                    print("[debug] NO PPS (nal_type=8) seen in first 30 frames "
+                          "(full multi-NALU scan)", flush=True)
             track.push_nalu(nalu)
 
     async def idr_heartbeat_loop():
