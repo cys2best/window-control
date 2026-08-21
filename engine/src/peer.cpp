@@ -125,7 +125,15 @@ void WebRtcPeer::StartAsOfferer() {
 }
 
 void WebRtcPeer::SendVideoNalu(const uint8_t* data, size_t size) {
-    if (!impl_->videoTrack || !impl_->videoTrack->isOpen()) return;
+    static int callCount = 0;
+    static int droppedCount = 0;
+    bool trackOpen = impl_->videoTrack && impl_->videoTrack->isOpen();
+    if (callCount < 5 || callCount % 60 == 0) {
+        std::cout << "[debug] SendVideoNalu call #" << callCount << " size=" << size
+                  << " trackOpen=" << trackOpen << " dropped=" << droppedCount << std::endl;
+    }
+    ++callCount;
+    if (!trackOpen) { ++droppedCount; return; }
 
     // Advance the RTP timestamp based on elapsed wallclock time since
     // StartAsOfferer(), matching libdatachannel's streamer example — the
@@ -135,7 +143,12 @@ void WebRtcPeer::SendVideoNalu(const uint8_t* data, size_t size) {
     impl_->rtpConfig->timestamp = impl_->rtpConfig->startTimestamp +
         impl_->rtpConfig->secondsToTimestamp(elapsedSeconds);
 
-    impl_->videoTrack->send(reinterpret_cast<const std::byte*>(data), size);
+    try {
+        impl_->videoTrack->send(reinterpret_cast<const std::byte*>(data), size);
+    } catch (const std::exception& e) {
+        std::cerr << "[debug] videoTrack->send threw: " << e.what() << std::endl;
+        throw;
+    }
 }
 
 void WebRtcPeer::SetInputCallback(InputCallback onInput) {
