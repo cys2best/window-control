@@ -458,11 +458,15 @@ async def run_engine(scrcpy_port: int, signaling_url: str, session_id: str, ice_
     frames = video.read_frames()
     first_frame = await frames.__anext__()
     profile_level_id = extract_profile_level_id(first_frame)
+    print(f"[debug] first_frame size={len(first_frame)} "
+          f"first8={first_frame[:8].hex()} "
+          f"extracted_profile_level_id={profile_level_id}", flush=True)
     if profile_level_id is None:
         # Should not happen in practice (frame #0 is always SPS per H264
         # stream structure), but fall back to a known-good value rather than
         # crashing if some device/encoder ever violates that assumption.
         profile_level_id = "42e01f"
+        print("[debug] extraction returned None, using fallback 42e01f", flush=True)
 
     config = RTCConfiguration(iceServers=[_parse_ice_url(ice_url)])
     pc = RTCPeerConnection(configuration=config)
