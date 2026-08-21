@@ -432,7 +432,13 @@ async def run_engine(scrcpy_port: int, signaling_url: str, session_id: str, ice_
                         await pc.addIceCandidate(cand)
 
     async def video_pump_loop():
+        frame_count = 0
         async for nalu in video.read_frames():
+            if frame_count < 5:
+                nal_type = nalu[4] & 0x1F if len(nalu) > 4 else -1
+                print(f"[debug] frame #{frame_count} size={len(nalu)} nal_type={nal_type} "
+                      f"first16={nalu[:16].hex()}", flush=True)
+            frame_count += 1
             track.push_nalu(nalu)
 
     async def idr_heartbeat_loop():
