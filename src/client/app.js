@@ -551,10 +551,33 @@ async function initWebRTCPublic(windowId, signalingUrl, instanceName, serial, ic
             finish(false);
           } else if (_pc === thisPc && _activeWindowId === windowId) {
             // Was connected and then dropped after we'd already resolved
-            // success: actively fall back to local WHEP (using the
-            // last-known local whep/stun params) instead of leaving a
-            // dead stream up with just a "Disconnected" status.
-            initWebRTC(windowId, _whepUrl, _stunUrl, _currentSerial);
+            // success. A quality-tier switch restarts scrcpy, which bounces
+            // ICE transiently on the underlying media source regardless of
+            // which path negotiated it -- mirrors initWebRTC()'s handling
+            // above: wait out the switch window and retry the SAME public
+            // path, instead of immediately jumping to local WHEP (which is
+            // very likely unreachable for a user who is on the public path
+            // in the first place, i.e. off Tailscale/LAN -- that jump left
+            // the stream stuck on a failed local attempt with no way back).
+            const inSwitch = Date.now() < _tierSwitchUntil;
+            if (inSwitch) {
+              const retryPc = _pc;
+              const delay = (_tierSwitchUntil - Date.now()) + 1500;
+              setTimeout(() => {
+                if (_pc === retryPc && (_pc.iceConnectionState === 'connected' ||
+                                        _pc.iceConnectionState === 'completed')) {
+                  return; // recovered on its own during the wait
+                }
+                if (_activeWindowId === windowId && _pc === retryPc && !_webrtcInProgress) {
+                  initWebRTCPublic(windowId, signalingUrl, instanceName, _currentSerial, iceServers);
+                }
+              }, delay);
+            } else {
+              // Dropped outside any tier-switch window: actively fall back
+              // to local WHEP (using the last-known local whep/stun params)
+              // instead of leaving a dead stream up with just "Disconnected".
+              initWebRTC(windowId, _whepUrl, _stunUrl, _currentSerial);
+            }
           }
         }
       };
