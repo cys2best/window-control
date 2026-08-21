@@ -556,7 +556,18 @@ async def run_engine(scrcpy_port: int, signaling_url: str, session_id: str, ice_
         # then resume iterating the SAME async generator, which correctly
         # continues from the second frame onward.
         track.push_nalu(first_frame)
+        seen_pps = False
+        scan_count = 1  # first_frame already counted
         async for nalu in frames:
+            if scan_count < 30:
+                nt = nalu[4] & 0x1F if len(nalu) > 4 else -1
+                if nt == 8 and not seen_pps:
+                    seen_pps = True
+                    print(f"[debug] PPS (nal_type=8) found at frame #{scan_count}, "
+                          f"size={len(nalu)} bytes={nalu[:16].hex()}", flush=True)
+                scan_count += 1
+                if scan_count == 30 and not seen_pps:
+                    print("[debug] NO PPS (nal_type=8) seen in first 30 frames", flush=True)
             track.push_nalu(nalu)
 
     async def idr_heartbeat_loop():
