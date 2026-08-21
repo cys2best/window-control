@@ -241,3 +241,152 @@ def handle_input_message(
         keycode = msg.get("keycode", 0)
         if keycode != 0:
             control.send_keycode(keycode)
+
+
+import sys
+
+from aiortc import RTCConfiguration, RTCIceCandidate, RTCIceServer, RTCPeerConnection, RTCSessionDescription
+
+
+def _parse_ice_candidate(candidate_str: str, mid: str) -> RTCIceCandidate | None:
+    """Parse a candidate line of the form emitted by both this engine's
+    peer and the C++ engine's rtc::Candidate stringification, e.g.:
+    'candidate:1 1 UDP 2130706431 192.168.1.5 54400 typ host'
+
+    NOTE: aiortc 1.15.0's `aiortc.sdp` module exposes `candidate_from_sdp`
+    (parse) and `candidate_to_sdp` (serialize) as separate module-level
+    functions -- verified via `help(candidate_from_sdp)` against the
+    installed version. There is no `RTCIceCandidate.to_sdp()` instance
+    method in this version (confirmed absent via introspection), so any
+    serialization of a *local* candidate back to SDP text must use
+    `candidate_to_sdp(candidate)`, not `candidate.to_sdp()`.
+    """
+    from aiortc.sdp import candidate_from_sdp
+
+    try:
+        cand = candidate_from_sdp(candidate_str.removeprefix("candidate:"))
+        cand.sdpMid = mid
+        return cand
+    except (ValueError, AssertionError, IndexError):
+        return None
+
+
+async def run_engine(scrcpy_port: int, signaling_url: str, session_id: str, ice_url: str) -> None:
+    video = ScrcpyVideoClient(scrcpy_port)
+    await video.connect()
+    await video.connect_control()
+    device_name, width, height = await video.read_handshake()
+    print(f"scrcpy handshake: device={device_name} {width}x{height}", flush=True)
+
+    control = ScrcpyControl(scrcpy_port, device_name)
+    control._sock = video.control_sock  # already connected by connect_control()
+
+    config = RTCConfiguration(iceServers=[RTCIceServer(urls=ice_url)])
+    pc = RTCPeerConnection(configuration=config)
+
+    track = PassthroughH264Track()
+    pc.addTrack(track)
+
+    input_channel = pc.createDataChannel("input")
+
+    @input_channel.on("message")
+    def on_input_message(message):
+        if isinstance(message, str):
+            handle_input_message(control, message, width, height)
+
+    signaling = SignalingClient(signaling_url, session_id, "engine", token="")
+    await signaling.connect()
+
+    # NOTE: aiortc 1.15.0's RTCPeerConnection does not emit an "icecandidate"
+    # event (verified by inspecting its emit(...) call sites -- it only
+    # emits track/datachannel/signalingstatechange/connectionstatechange/
+    # iceconnectionstatechange/icegatheringstatechange). This is not an
+    # oversight to work around: aiortc's setLocalDescription() internally
+    # awaits full ICE gathering (self.__gather()) before returning, so by
+    # the time we call pc.setLocalDescription(offer) below, ICE gathering
+    # is already complete and every local candidate is embedded directly
+    # in pc.localDescription.sdp. There is therefore nothing to trickle
+    # out locally -- the offer's SDP already carries the full candidate
+    # set. Only remote (browser-side) trickled candidates arriving via
+    # signaling need handling, which signaling_loop()'s "candidate" branch
+    # below does via _parse_ice_candidate()/pc.addIceCandidate().
+
+    offer = await pc.createOffer()
+    await pc.setLocalDescription(offer)
+    await signaling.send({"type": pc.localDescription.type, "sdp": pc.localDescription.sdp})
+    print(f"[debug] sent {pc.localDescription.type}", flush=True)
+
+    peer_connected = asyncio.Event()
+
+    @pc.on("connectionstatechange")
+    async def on_connectionstatechange():
+        print(f"[peer] state: {pc.connectionState}", flush=True)
+        if pc.connectionState == "connected":
+            peer_connected.set()
+
+    async def signaling_loop():
+        while True:
+            msg = await signaling.recv()
+            if msg is None:
+                continue
+            msg_type = msg.get("type", "")
+            if msg_type == "answer":
+                sdp = msg.get("sdp", "")
+                if sdp:
+                    await pc.setRemoteDescription(RTCSessionDescription(sdp=sdp, type="answer"))
+            elif msg_type == "candidate":
+                candidate_str = msg.get("candidate", "")
+                mid = msg.get("mid", "")
+                if candidate_str:
+                    cand = _parse_ice_candidate(candidate_str, mid)
+                    if cand is not None:
+                        await pc.addIceCandidate(cand)
+
+    async def video_pump_loop():
+        async for nalu in video.read_frames():
+            track.push_nalu(nalu)
+
+    async def idr_heartbeat_loop():
+        await peer_connected.wait()
+        print("[debug] peer connected, requesting IDR", flush=True)
+        control.request_idr()
+        while True:
+            await asyncio.sleep(2.0)
+            control.request_idr()
+
+    print("Streaming started. Press Ctrl+C to stop.", flush=True)
+    try:
+        await asyncio.gather(signaling_loop(), video_pump_loop(), idr_heartbeat_loop())
+    except asyncio.CancelledError:
+        pass
+    finally:
+        video.stop()
+        await pc.close()
+        await signaling.close()
+        print("Stopped.")
+
+
+def main() -> None:
+    if len(sys.argv) < 5:
+        print(
+            "Usage: python -m server.rtc_engine <scrcpy_port> <signaling_ws_url> "
+            "<session_id> <stun_turn_url>\n"
+            "Example: python -m server.rtc_engine 27183 ws://VPS_IP:8443 "
+            "poc-session-1 stun:VPS_IP:3478",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    scrcpy_port = int(sys.argv[1])
+    signaling_url = sys.argv[2]
+    session_id = sys.argv[3]
+    ice_url = sys.argv[4]
+
+    try:
+        asyncio.run(run_engine(scrcpy_port, signaling_url, session_id, ice_url))
+    except KeyboardInterrupt:
+        pass
+
+
+if __name__ == "__main__":
+    main()
