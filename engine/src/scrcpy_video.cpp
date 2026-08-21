@@ -78,6 +78,7 @@ ScrcpyVideoClient::~ScrcpyVideoClient() {
 }
 
 void ScrcpyVideoClient::Connect() {
+    std::cerr << "[debug] video: socket()..." << std::endl;
     impl_->sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (impl_->sock == INVALID_SOCKET) {
         throw std::runtime_error("ScrcpyVideoClient: socket() failed");
@@ -88,17 +89,21 @@ void ScrcpyVideoClient::Connect() {
     addr.sin_port = htons(static_cast<uint16_t>(impl_->port));
     inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
 
+    std::cerr << "[debug] video: connect() on port " << impl_->port << "..." << std::endl;
     if (connect(impl_->sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
         throw std::runtime_error("ScrcpyVideoClient: connect() failed on port " + std::to_string(impl_->port));
     }
+    std::cerr << "[debug] video: connected, reading dummy byte..." << std::endl;
 
     uint8_t dummy;
     if (!RecvAll(impl_->sock, &dummy, 1)) {
         throw std::runtime_error("ScrcpyVideoClient: failed to read dummy byte after connect");
     }
+    std::cerr << "[debug] video: dummy byte received" << std::endl;
 }
 
 void ScrcpyVideoClient::ReadHandshake() {
+    std::cerr << "[debug] video: reading 64-byte device name..." << std::endl;
     uint8_t nameBuf[64];
     if (!RecvAll(impl_->sock, nameBuf, 64)) {
         throw std::runtime_error("ScrcpyVideoClient: handshake truncated reading device name");
@@ -107,6 +112,7 @@ void ScrcpyVideoClient::ReadHandshake() {
     size_t len = 0;
     while (len < 64 && nameBuf[len] != 0) ++len;
     impl_->deviceName.assign(reinterpret_cast<char*>(nameBuf), len);
+    std::cerr << "[debug] video: device name = " << impl_->deviceName << ", reading 12-byte meta..." << std::endl;
 
     uint8_t meta[12];
     if (!RecvAll(impl_->sock, meta, 12)) {

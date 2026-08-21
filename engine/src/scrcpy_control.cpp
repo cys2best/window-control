@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 #include <mutex>
+#include <iostream>
 
 #pragma comment(lib, "ws2_32.lib")
 
@@ -59,6 +60,7 @@ ScrcpyControlClient::ScrcpyControlClient(int port) : impl_(std::make_unique<Impl
 ScrcpyControlClient::~ScrcpyControlClient() = default;
 
 void ScrcpyControlClient::Connect() {
+    std::cerr << "[debug] control: socket()..." << std::endl;
     impl_->sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (impl_->sock == INVALID_SOCKET) {
         throw std::runtime_error("ScrcpyControlClient: socket() failed");
@@ -69,9 +71,11 @@ void ScrcpyControlClient::Connect() {
     addr.sin_port = htons(static_cast<uint16_t>(impl_->port));
     inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
 
+    std::cerr << "[debug] control: connect() on port " << impl_->port << "..." << std::endl;
     if (connect(impl_->sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
         throw std::runtime_error("ScrcpyControlClient: connect() failed on port " + std::to_string(impl_->port));
     }
+    std::cerr << "[debug] control: connected" << std::endl;
 
     int flag = 1;
     setsockopt(impl_->sock, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&flag), sizeof(flag));
