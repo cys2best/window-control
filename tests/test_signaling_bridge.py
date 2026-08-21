@@ -58,3 +58,74 @@ async def test_relay_forwards_offer_to_whep_and_answer_back():
         headers={"Content-Type": "application/sdp"},
     )
     assert fake_ws.sent == ["v=0 FAKE ANSWER SDP"]
+
+
+@pytest.mark.asyncio
+async def test_run_bridge_with_reconnect_retries_after_disconnect():
+    from server.signaling_bridge import run_bridge_with_reconnect
+
+    call_count = 0
+
+    async def fake_relay(instance_name, signaling_url, whep_port, ws_connect=None, http_client=None):
+        nonlocal call_count
+        call_count += 1
+        if call_count < 3:
+            raise ConnectionError("fake disconnect")
+        raise ConnectionError("stop the test after 3 attempts")
+
+    sleeps = []
+
+    async def fake_sleep(seconds):
+        sleeps.append(seconds)
+
+    import server.signaling_bridge as bridge_module
+    original = bridge_module.relay_one_instance
+    bridge_module.relay_one_instance = fake_relay
+    try:
+        # The loop never exits on its own (ConnectionError is always caught
+        # and retried) -- cap iterations by cancelling once we've observed
+        # enough retries, matching how a real caller (Task 2) will stop it.
+        task = asyncio.ensure_future(
+            run_bridge_with_reconnect(
+                "instance0", "ws://vps.example.test:8443", 8889,
+                backoff_seconds=0.01, sleep=fake_sleep,
+            )
+        )
+        for _ in range(50):
+            if call_count >= 3:
+                break
+            await asyncio.sleep(0.01)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    finally:
+        bridge_module.relay_one_instance = original
+
+    assert call_count >= 3
+    assert all(s == 0.01 for s in sleeps)
+
+
+@pytest.mark.asyncio
+async def test_run_bridge_with_reconnect_stops_on_cancel():
+    from server.signaling_bridge import run_bridge_with_reconnect
+
+    async def fake_relay(instance_name, signaling_url, whep_port, ws_connect=None, http_client=None):
+        # Never raises -- simulates a healthy, long-running relay session
+        # that the caller cancels from outside (e.g. instance deselected).
+        await asyncio.sleep(10)
+
+    import server.signaling_bridge as bridge_module
+    original = bridge_module.relay_one_instance
+    bridge_module.relay_one_instance = fake_relay
+    try:
+        task = asyncio.ensure_future(
+            run_bridge_with_reconnect(
+                "instance0", "ws://vps.example.test:8443", 8889, backoff_seconds=0.01,
+            )
+        )
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    finally:
+        bridge_module.relay_one_instance = original

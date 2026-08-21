@@ -15,6 +15,7 @@ ICE candidate handling here. Media flows browser<->mediamtx directly once
 negotiated; this bridge is out of the media path entirely after the answer
 is sent.
 """
+import asyncio
 import httpx
 import websockets
 
@@ -50,3 +51,34 @@ async def relay_one_instance(
             )
             response.raise_for_status()
             await ws.send(response.text)
+
+
+async def run_bridge_with_reconnect(
+    instance_name: str,
+    signaling_url: str,
+    whep_port: int,
+    backoff_seconds: float = 2.0,
+    ws_connect=websockets.connect,
+    http_client: httpx.AsyncClient | None = None,
+    sleep=asyncio.sleep,
+) -> None:
+    """Run relay_one_instance() forever, reconnecting after each disconnect.
+
+    relay_one_instance() raises ConnectionError when its WS connection ends
+    (by design -- reconnect is documented as the caller's responsibility,
+    not that function's). This wrapper is that caller: catch the
+    ConnectionError, wait backoff_seconds, try again. An
+    asyncio.CancelledError (the task being cancelled by whoever started it,
+    e.g. on instance switch) propagates normally and ends the loop -- that
+    is the intended way to stop this function, not a return value.
+    """
+    while True:
+        try:
+            await relay_one_instance(
+                instance_name, signaling_url, whep_port,
+                ws_connect=ws_connect, http_client=http_client,
+            )
+        except ConnectionError:
+            pass
+        await sleep(backoff_seconds)
+        await asyncio.sleep(0)  # Ensure cancellation can be delivered
