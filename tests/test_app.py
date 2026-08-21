@@ -103,6 +103,56 @@ def test_select_returns_instance_whep():
         assert r.json()["whep_url"].endswith("/instance0/whep")
 
 
+def test_select_instance_includes_signaling_url_when_configured():
+    import config
+    inst = MagicMock()
+    inst.serial = "emulator-5554"
+    inst.id = "adb:emulator-5554"
+    inst.name = "instance0"
+    inst.w = 720
+    inst.h = 1280
+    inst.ldplayer_index = 0
+    client, im = _make_client()
+    im.select.return_value = True
+    im.active = inst
+
+    async def fake_bridge(*args, **kwargs):
+        pass
+
+    with patch("config.VPS_SIGNALING_URL", "ws://vps.example.test:8443"), \
+         patch("server.app.VPS_SIGNALING_URL", "ws://vps.example.test:8443"), \
+         patch("server.app.run_bridge_with_reconnect", fake_bridge), \
+         patch("server.app.adb_manager") as mock_adb:
+        mock_session = MagicMock()
+        mock_session.start.return_value = True
+        mock_adb.AdbSession.return_value = mock_session
+        r = client.post("/instances/emulator-5554/select")
+    assert r.status_code == 200
+    assert r.json()["signaling_url"] == "ws://vps.example.test:8443"
+
+
+def test_select_instance_omits_signaling_url_when_not_configured():
+    inst = MagicMock()
+    inst.serial = "emulator-5554"
+    inst.id = "adb:emulator-5554"
+    inst.name = "instance0"
+    inst.w = 720
+    inst.h = 1280
+    inst.ldplayer_index = 0
+    client, im = _make_client()
+    im.select.return_value = True
+    im.active = inst
+
+    with patch("server.app.VPS_SIGNALING_URL", None), \
+         patch("server.app.adb_manager") as mock_adb:
+        mock_session = MagicMock()
+        mock_session.start.return_value = True
+        mock_adb.AdbSession.return_value = mock_session
+        r = client.post("/instances/emulator-5554/select")
+    assert r.status_code == 200
+    assert r.json()["signaling_url"] is None
+
+
 def test_keyframe_requests_idr_on_instance():
     # Switch prefetch: POST /keyframe forces a source-side IDR so a fresh WHEP
     # paints instantly under copy-mux (no ffmpeg GOP).

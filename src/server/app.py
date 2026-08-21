@@ -1,3 +1,4 @@
+import asyncio
 import io
 import os
 import subprocess
@@ -9,11 +10,14 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Literal
 
-from config import CLIENT_DIR, QUALITY_MAP, WHEP_PORT, STUN_PORT, TIER_ORDER
+from config import CLIENT_DIR, QUALITY_MAP, WHEP_PORT, STUN_PORT, TIER_ORDER, VPS_SIGNALING_URL
 from server.stream import CaptureState, FrameQueue, mjpeg_generator
 from server import adb_manager
 from server.instance_manager import InstanceManager
+from server.signaling_bridge import run_bridge_with_reconnect
 from server.tailscale import get_best_ip
+
+_bridge_task: "asyncio.Task | None" = None
 
 
 def _log(msg: str):
@@ -111,6 +115,25 @@ async def _capture_preview(serial: str) -> Response:
     return Response(content=data, media_type="image/jpeg")
 
 
+def _restart_bridge_task(instance_name: str) -> None:
+    """(Re)start the public signaling bridge for the newly-selected instance.
+
+    Cancels any bridge task already running for a previously-selected
+    instance, then starts a fresh one for `instance_name` if a public
+    signaling VPS is configured. No-ops (leaving `_bridge_task` as None)
+    when VPS_SIGNALING_URL is unset.
+    """
+    global _bridge_task
+    if _bridge_task is not None and not _bridge_task.done():
+        _bridge_task.cancel()
+    if VPS_SIGNALING_URL:
+        _bridge_task = asyncio.create_task(
+            run_bridge_with_reconnect(instance_name, VPS_SIGNALING_URL, WHEP_PORT)
+        )
+    else:
+        _bridge_task = None
+
+
 def create_app(state: CaptureState, frame_queue: FrameQueue,
                instance_manager: InstanceManager) -> FastAPI:
     import asyncio
@@ -163,6 +186,8 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
         if inst is None:
             raise HTTPException(status_code=404, detail="Instance disappeared")
 
+        _restart_bridge_task(inst.name)
+
         host = get_best_ip() or request.client.host
         # WHEP straight to this instance's own always-live path (no 'active' mux).
         whep_url = f"http://{host}:{WHEP_PORT}/{inst.name}/whep"
@@ -175,6 +200,7 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
             "h": inst.h,
             "whep_url": whep_url,
             "stun_url": f"stun:{host}:{STUN_PORT}",
+            "signaling_url": VPS_SIGNALING_URL,
         }
 
     @app.post("/instances/{instance_id}/keyframe")
@@ -235,11 +261,14 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
         if inst is None:
             raise HTTPException(status_code=404, detail="Instance disappeared")
 
+        _restart_bridge_task(inst.name)
+
         host = get_best_ip() or request.client.host
         whep_url = f"http://{host}:{WHEP_PORT}/{inst.name}/whep"
         return {"ok": True, "id": req.id, "w": inst.w, "h": inst.h,
                 "whep_url": whep_url,
-                "stun_url": f"stun:{host}:{STUN_PORT}"}
+                "stun_url": f"stun:{host}:{STUN_PORT}",
+                "signaling_url": VPS_SIGNALING_URL}
 
     # ── MJPEG fallback stream ────────────────────────────────────────────────
 
