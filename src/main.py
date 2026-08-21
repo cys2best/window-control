@@ -2,6 +2,11 @@
 import sys
 import os
 
+# Load .env (repo root, gitignored) before anything reads os.environ —
+# config.py's os.environ.get() calls run at import time below.
+from dotenv import load_dotenv
+load_dotenv()
+
 
 def _log_early(msg: str):
     for _p in [r"C:\ProgramData\WindowControl", r"C:\Windows\Temp", r"C:\Temp"]:

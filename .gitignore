@@ -22,3 +22,6 @@ service_crash.log
 
 # Git worktrees (superpowers subagent-driven-development scratch)
 .worktrees/
+
+# Local secrets (PUBLIC_UI_URL/TUNNEL_SECRET/AUTH_TOKEN/VPS_SIGNALING_URL etc.)
+.env
