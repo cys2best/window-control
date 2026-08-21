@@ -38,6 +38,7 @@ WebRtcPeer::WebRtcPeer(SignalingClient& signaling, const std::vector<std::string
         };
         std::cout << "[debug] onLocalDescription fired, type=" << desc.typeString()
                   << " signaling.IsConnected=" << impl_->signaling.IsConnected() << std::endl;
+        std::cout << "[debug] SDP:\n" << std::string(desc) << std::endl;
         impl_->signaling.Send(msg.dump());
     });
 

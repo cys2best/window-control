@@ -72,7 +72,13 @@
     ws.onmessage = async (event) => {
       const msg = JSON.parse(event.data);
       if (msg.type === 'offer') {
-        await pc.setRemoteDescription({ type: 'offer', sdp: msg.sdp });
+        console.log('received offer SDP:\n' + msg.sdp);
+        try {
+          await pc.setRemoteDescription({ type: 'offer', sdp: msg.sdp });
+        } catch (e) {
+          console.error('setRemoteDescription(offer) failed', e);
+          return;
+        }
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
         ws.send(JSON.stringify({ type: 'answer', sdp: pc.localDescription.sdp }));
