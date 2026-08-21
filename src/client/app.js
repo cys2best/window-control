@@ -822,7 +822,7 @@ async function _sampleStats() {
     `tier ${_currentTier}`;
 }
 
-document.addEventListener('DOMContentLoaded', () => {
+async function _startApp() {
   connectWS();
   initTouch();
   initMouse();
@@ -896,4 +896,13 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
   });
+}
+
+document.addEventListener('DOMContentLoaded', async () => {
+  const ok = await (window.wcAuthReady || Promise.resolve(true));
+  if (!ok) {
+    window.addEventListener('wc-authenticated', _startApp, { once: true });
+    return;
+  }
+  _startApp();
 });
