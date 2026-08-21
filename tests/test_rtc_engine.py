@@ -379,3 +379,54 @@ async def test_recv_returns_none_for_non_dict_valid_json(echo_ws_server):
     assert result == {"type": "test"}
 
     await client.close()
+
+
+from unittest.mock import MagicMock
+
+from server.rtc_engine import handle_input_message
+from server.scrcpy_session import ScrcpyControl
+
+
+def test_handle_tap_down_calls_send_touch():
+    control = MagicMock(spec=ScrcpyControl)
+    control.ACTION_DOWN = ScrcpyControl.ACTION_DOWN
+
+    handle_input_message(
+        control,
+        '{"type": "tap", "action": "down", "nx": 0.5, "ny": 0.25}',
+        screen_width=720,
+        screen_height=480,
+    )
+
+    control.send_touch.assert_called_once_with(
+        ScrcpyControl.ACTION_DOWN, 0.5, 0.25, 720, 480
+    )
+
+
+def test_handle_key_calls_send_keycode():
+    control = MagicMock(spec=ScrcpyControl)
+
+    handle_input_message(
+        control, '{"type": "key", "keycode": 4}', screen_width=720, screen_height=480
+    )
+
+    control.send_keycode.assert_called_once_with(4)
+
+
+def test_handle_malformed_json_is_swallowed():
+    control = MagicMock(spec=ScrcpyControl)
+
+    handle_input_message(control, "not json", screen_width=720, screen_height=480)
+
+    control.send_touch.assert_not_called()
+    control.send_keycode.assert_not_called()
+
+
+def test_handle_key_zero_is_ignored():
+    control = MagicMock(spec=ScrcpyControl)
+
+    handle_input_message(
+        control, '{"type": "key", "keycode": 0}', screen_width=720, screen_height=480
+    )
+
+    control.send_keycode.assert_not_called()

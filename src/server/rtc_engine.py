@@ -211,3 +211,31 @@ class SignalingClient:
     async def close(self) -> None:
         if self._ws is not None:
             await self._ws.close()
+
+
+from server.scrcpy_session import ScrcpyControl
+
+
+def handle_input_message(
+    control: ScrcpyControl, raw_json: str, screen_width: int, screen_height: int
+) -> None:
+    try:
+        msg = json_module.loads(raw_json)
+    except json_module.JSONDecodeError:
+        return
+
+    msg_type = msg.get("type", "")
+    if msg_type in ("tap", "swipe"):
+        action_name = msg.get("action", "down")
+        action_code = {
+            "down": ScrcpyControl.ACTION_DOWN,
+            "up": ScrcpyControl.ACTION_UP,
+            "move": ScrcpyControl.ACTION_MOVE,
+        }.get(action_name, ScrcpyControl.ACTION_DOWN)
+        nx = msg.get("nx", 0.0)
+        ny = msg.get("ny", 0.0)
+        control.send_touch(action_code, nx, ny, screen_width, screen_height)
+    elif msg_type == "key":
+        keycode = msg.get("keycode", 0)
+        if keycode != 0:
+            control.send_keycode(keycode)
