@@ -1,5 +1,6 @@
 import asyncio
 import io
+import logging
 import os
 import subprocess
 from pathlib import Path
@@ -16,6 +17,8 @@ from server import adb_manager
 from server.instance_manager import InstanceManager
 from server.signaling_bridge import run_bridge_with_reconnect
 from server.tailscale import get_best_ip
+
+log = logging.getLogger(__name__)
 
 _bridge_task: "asyncio.Task | None" = None
 
@@ -125,8 +128,10 @@ def _restart_bridge_task(instance_name: str) -> None:
     """
     global _bridge_task
     if _bridge_task is not None and not _bridge_task.done():
+        log.info("bridge: cancelling existing task for switch to %s", instance_name)
         _bridge_task.cancel()
     if VPS_SIGNALING_URL:
+        log.info("bridge: starting task for %s", instance_name)
         _bridge_task = asyncio.create_task(
             run_bridge_with_reconnect(instance_name, VPS_SIGNALING_URL, WHEP_PORT)
         )
@@ -146,6 +151,20 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
         # Discover LDPlayer instances on startup
         import threading
         threading.Thread(target=instance_manager.refresh, daemon=True).start()
+
+    @app.on_event("shutdown")
+    async def _shutdown():
+        # The public signaling bridge task (if any) is otherwise left
+        # dangling on app shutdown -- only the switch case (cancel-then-
+        # restart in _restart_bridge_task) tore it down before.
+        global _bridge_task
+        if _bridge_task is not None and not _bridge_task.done():
+            log.info("bridge: cancelling task on shutdown")
+            _bridge_task.cancel()
+            try:
+                await _bridge_task
+            except asyncio.CancelledError:
+                pass
 
     # ── Static / index ───────────────────────────────────────────────────────
 
@@ -265,7 +284,7 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
 
         host = get_best_ip() or request.client.host
         whep_url = f"http://{host}:{WHEP_PORT}/{inst.name}/whep"
-        return {"ok": True, "id": req.id, "w": inst.w, "h": inst.h,
+        return {"ok": True, "id": req.id, "name": inst.name, "w": inst.w, "h": inst.h,
                 "whep_url": whep_url,
                 "stun_url": f"stun:{host}:{STUN_PORT}",
                 "signaling_url": VPS_SIGNALING_URL}

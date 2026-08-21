@@ -11,6 +11,9 @@ let _whepUrl = null;           // mediamtx WHEP endpoint for active instance
 let _stunUrl = null;           // STUN server bound to Tailscale IP (from server)
 let _webrtcInProgress = false; // prevent concurrent initWebRTC calls
 let _currentSerial = null;     // serial of active instance (for adaptive quality)
+let _signalingUrl = null;      // VPS signaling relay URL for the active public session
+let _instanceName = null;      // instance name (rendezvous key) for the active public session
+let _publicModeActive = false; // true when the active stream was negotiated via initWebRTCPublic
 
 // ── Quality tiers ──────────────────────────────────────────────────────────────
 const _TIER_ORDER = ["480", "720", "1080", "1440"];
@@ -278,6 +281,7 @@ function _activeStreamEl() {
 
 function _fallbackToMJPEG() {
   _webrtcActive = false;
+  _publicModeActive = false;
   stopAdaptiveQuality();
   if (_pc) { try { _pc.close(); } catch(_) {} _pc = null; }
   document.getElementById('stream-video').style.display = 'none';
@@ -334,6 +338,7 @@ async function initWebRTC(windowId, whepUrl, stunUrl, serial) {
   _whepUrl = whepUrl || _whepUrl;
   _stunUrl = stunUrl || _stunUrl;
   _currentSerial = serial || _currentSerial;
+  _publicModeActive = false; // entering (or staying in) local WHEP mode
 
   if (!_whepUrl) { _fallbackToMJPEG(); _webrtcInProgress = false; return; }
 
@@ -474,10 +479,12 @@ async function initWebRTCPublic(windowId, signalingUrl, instanceName, serial) {
 
   return new Promise((resolve) => {
     let settled = false;
+    let ws = null; // hoisted so finish() can close it on every terminal path
     const finish = (ok) => {
       if (settled) return;
       settled = true;
       _webrtcInProgress = false;
+      try { ws.close(); } catch(_) {}
       resolve(ok);
     };
 
@@ -489,25 +496,48 @@ async function initWebRTCPublic(windowId, signalingUrl, instanceName, serial) {
       const img = document.getElementById('stream-img');
 
       _pc.ontrack = e => {
+        // Attach the media stream only -- do NOT signal success here.
+        // ontrack fires at SDP-processing time, before ICE has actually
+        // connected; resolving finish(true) here means a viewer whose ICE
+        // never connects gets a permanent black screen with no fallback
+        // (see finding 3). Success is signalled from
+        // oniceconnectionstatechange below, once ICE actually reports
+        // connected/completed.
         video.srcObject = e.streams[0];
         video.style.display = 'block';
         img.style.display = 'none';
-        _webrtcActive = true;
-        setNetStatus('good', 'Connected (public)');
-        startAdaptiveQuality(_currentSerial);
-        clearUnavailable();
-        finish(true);
       };
 
       _pc.oniceconnectionstatechange = () => {
         const s = _pc ? _pc.iceConnectionState : '';
-        if (s === 'failed' || s === 'closed') {
+        if (s === 'connected' || s === 'completed') {
+          _webrtcActive = true;
+          setNetStatus('good', 'Connected (public)');
+          startAdaptiveQuality(_currentSerial);
+          clearUnavailable();
+          // Record which mode negotiated this session so the
+          // visibility-resume path can route back through the public
+          // path instead of a stale/local WHEP renegotiation.
+          _signalingUrl = signalingUrl;
+          _instanceName = instanceName;
+          _publicModeActive = true;
+          finish(true);
+        } else if (s === 'failed' || s === 'closed') {
           setNetStatus('bad', 'Disconnected');
-          finish(false);
+          if (!settled) {
+            // Never connected -- let the caller fall back to local WHEP.
+            finish(false);
+          } else if (_pc === thisPc && _activeWindowId === windowId) {
+            // Was connected and then dropped after we'd already resolved
+            // success: actively fall back to local WHEP (using the
+            // last-known local whep/stun params) instead of leaving a
+            // dead stream up with just a "Disconnected" status.
+            initWebRTC(windowId, _whepUrl, _stunUrl, _currentSerial);
+          }
         }
       };
 
-      const ws = new WebSocket(
+      ws = new WebSocket(
         `${signalingUrl}/?session=${encodeURIComponent(instanceName)}&role=viewer`
       );
 
@@ -853,7 +883,12 @@ document.addEventListener('DOMContentLoaded', () => {
         connectWS();
       }
       if (document.getElementById('screen-stream').classList.contains('active')) {
-        if (_webrtcActive && _activeWindowId) {
+        if (_publicModeActive && _activeWindowId && _signalingUrl && _instanceName) {
+          // The active session was negotiated via the public signaling path
+          // (VPS relay), not local WHEP -- resume through the same path
+          // instead of renegotiating against a stale/unreachable _whepUrl.
+          initWebRTCPublic(_activeWindowId, _signalingUrl, _instanceName, _currentSerial);
+        } else if (_webrtcActive && _activeWindowId) {
           initWebRTC(_activeWindowId, _whepUrl, undefined, _currentSerial);
         } else {
           initStream();

@@ -104,7 +104,6 @@ def test_select_returns_instance_whep():
 
 
 def test_select_instance_includes_signaling_url_when_configured():
-    import config
     inst = MagicMock()
     inst.serial = "emulator-5554"
     inst.id = "adb:emulator-5554"
@@ -116,8 +115,10 @@ def test_select_instance_includes_signaling_url_when_configured():
     im.select.return_value = True
     im.active = inst
 
+    bridge_calls = []
+
     async def fake_bridge(*args, **kwargs):
-        pass
+        bridge_calls.append(args)
 
     with patch("config.VPS_SIGNALING_URL", "ws://vps.example.test:8443"), \
          patch("server.app.VPS_SIGNALING_URL", "ws://vps.example.test:8443"), \
@@ -129,6 +130,9 @@ def test_select_instance_includes_signaling_url_when_configured():
         r = client.post("/instances/emulator-5554/select")
     assert r.status_code == 200
     assert r.json()["signaling_url"] == "ws://vps.example.test:8443"
+    # The bridge's rendezvous key must match the just-selected instance's
+    # name -- findings 1-2 (reconnect + client WS close) depend on this.
+    assert bridge_calls and bridge_calls[0][0] == "instance0"
 
 
 def test_select_instance_omits_signaling_url_when_not_configured():
@@ -151,6 +155,31 @@ def test_select_instance_omits_signaling_url_when_not_configured():
         r = client.post("/instances/emulator-5554/select")
     assert r.status_code == 200
     assert r.json()["signaling_url"] is None
+
+
+def test_legacy_select_includes_name():
+    # Legacy /select must stay in sync with /instances/{id}/select -- both
+    # already agree on whep_url/stun_url; "name" was missing here, which
+    # breaks any caller reusing the public-path wiring against this endpoint
+    # (session=undefined on the VPS signaling relay).
+    inst = MagicMock()
+    inst.serial = "emulator-5554"
+    inst.id = "adb:emulator-5554"
+    inst.name = "instance0"
+    inst.w = 720
+    inst.h = 1280
+    inst.ldplayer_index = 0
+    client, im = _make_client()
+    im.select.return_value = True
+    im.active = inst
+
+    with patch("server.app.adb_manager") as mock_adb:
+        mock_session = MagicMock()
+        mock_session.start.return_value = True
+        mock_adb.AdbSession.return_value = mock_session
+        r = client.post("/select", json={"id": "adb:emulator-5554"})
+    assert r.status_code == 200
+    assert r.json()["name"] == "instance0"
 
 
 def test_keyframe_requests_idr_on_instance():

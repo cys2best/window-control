@@ -3,6 +3,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 import asyncio
 import pytest
+import websockets.exceptions
 from unittest.mock import AsyncMock, MagicMock
 
 from server.signaling_bridge import relay_one_instance
@@ -101,6 +102,53 @@ async def test_run_bridge_with_reconnect_retries_after_disconnect():
     finally:
         bridge_module.relay_one_instance = original
 
+    assert call_count >= 3
+    assert all(s == 0.01 for s in sleeps)
+
+
+@pytest.mark.asyncio
+async def test_run_bridge_with_reconnect_retries_after_real_websockets_disconnect():
+    # Empirically, real `websockets` 16.0 raises ConnectionClosedError (a
+    # WebSocketException, NOT a ConnectionError) from recv() on a normal
+    # disconnect -- this is the exception the loop must actually catch,
+    # unlike the other retry test above which only proves it catches the
+    # literal ConnectionError type its fakes happen to raise.
+    from server.signaling_bridge import run_bridge_with_reconnect
+
+    call_count = 0
+
+    async def fake_relay(instance_name, signaling_url, whep_port, ws_connect=None, http_client=None):
+        nonlocal call_count
+        call_count += 1
+        raise websockets.exceptions.ConnectionClosedError(None, None)
+
+    sleeps = []
+
+    async def fake_sleep(seconds):
+        sleeps.append(seconds)
+
+    import server.signaling_bridge as bridge_module
+    original = bridge_module.relay_one_instance
+    bridge_module.relay_one_instance = fake_relay
+    try:
+        task = asyncio.ensure_future(
+            run_bridge_with_reconnect(
+                "instance0", "ws://vps.example.test:8443", 8889,
+                backoff_seconds=0.01, sleep=fake_sleep,
+            )
+        )
+        for _ in range(50):
+            if call_count >= 3:
+                break
+            await asyncio.sleep(0.01)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    finally:
+        bridge_module.relay_one_instance = original
+
+    # The key assertion: the loop kept retrying past the first
+    # ConnectionClosedError instead of letting it escape and kill the task.
     assert call_count >= 3
     assert all(s == 0.01 for s in sleeps)
 

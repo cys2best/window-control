@@ -37,6 +37,13 @@ RTMP_PORT = 1935       # mediamtx RTMP (unused by us, kept for mediamtx default 
 WEBRTC_UDP_PORT = 8288 # WebRTC ICE UDP mux (mediamtx default 8000 collided)
 STUN_PORT = 3478       # embedded STUN server, bound to Tailscale IP (see stun_server.py)
 VPS_SIGNALING_URL = os.environ.get("VPS_SIGNALING_URL")  # e.g. "ws://VPS_IP:8443"; None disables the public bridge path
+# NOTE: if the web client is ever served over HTTPS, this must be "wss://" —
+# browsers block plaintext ws:// as mixed content under HTTPS, which fails
+# silently (ws.onerror fires, client falls back to a local URL a public
+# client can't reach). No TLS termination exists yet, so this is still
+# ws://. Also: session ids on the VPS signaling relay are sequential/
+# enumerable and there is no auth on that path yet — not safe to expose
+# publicly without the planned follow-up auth work.
 
 ADB_PATH = "adb"       # overridden at runtime by _find_adb()
 SCRCPY_PATH = os.path.join("assets", "scrcpy", "scrcpy.exe")
