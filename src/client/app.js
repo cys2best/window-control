@@ -530,8 +530,41 @@ async function initWebRTCPublic(windowId, signalingUrl, instanceName, serial, ic
         img.style.display = 'none';
       };
 
+      // Shared by the 'failed'/'closed' branch and the 'disconnected'
+      // watchdog below: wait out a tier-switch window and retry the SAME
+      // public path, or fall back to local WHEP if we weren't mid-switch.
+      // A quality-tier change restarts scrcpy, which bounces ICE
+      // transiently on the underlying media source regardless of which
+      // path negotiated it -- retrying the same path (not jumping to
+      // local) matters because a user actually on the public path is
+      // very likely off Tailscale/LAN in the first place, so local WHEP
+      // is unreachable and that jump previously left the stream stuck.
+      const retryPublicOrFallbackLocal = () => {
+        if (!(_pc === thisPc && _activeWindowId === windowId)) return;
+        const inSwitch = Date.now() < _tierSwitchUntil;
+        if (inSwitch) {
+          const retryPc = _pc;
+          const delay = (_tierSwitchUntil - Date.now()) + 1500;
+          setTimeout(() => {
+            if (_pc === retryPc && (_pc.iceConnectionState === 'connected' ||
+                                    _pc.iceConnectionState === 'completed')) {
+              return; // recovered on its own during the wait
+            }
+            if (_activeWindowId === windowId && _pc === retryPc && !_webrtcInProgress) {
+              initWebRTCPublic(windowId, signalingUrl, instanceName, _currentSerial, iceServers);
+            }
+          }, delay);
+        } else {
+          // Dropped outside any tier-switch window: actively fall back to
+          // local WHEP (using the last-known local whep/stun params)
+          // instead of leaving a dead stream up with just "Disconnected".
+          initWebRTC(windowId, _whepUrl, _stunUrl, _currentSerial);
+        }
+      };
+
       _pc.oniceconnectionstatechange = () => {
         const s = _pc ? _pc.iceConnectionState : '';
+        console.log('[ice-public] state:', s);
         if (s === 'connected' || s === 'completed') {
           _webrtcActive = true;
           setNetStatus('good', 'Connected (public)');
@@ -549,35 +582,27 @@ async function initWebRTCPublic(windowId, signalingUrl, instanceName, serial, ic
           if (!settled) {
             // Never connected -- let the caller fall back to local WHEP.
             finish(false);
-          } else if (_pc === thisPc && _activeWindowId === windowId) {
-            // Was connected and then dropped after we'd already resolved
-            // success. A quality-tier switch restarts scrcpy, which bounces
-            // ICE transiently on the underlying media source regardless of
-            // which path negotiated it -- mirrors initWebRTC()'s handling
-            // above: wait out the switch window and retry the SAME public
-            // path, instead of immediately jumping to local WHEP (which is
-            // very likely unreachable for a user who is on the public path
-            // in the first place, i.e. off Tailscale/LAN -- that jump left
-            // the stream stuck on a failed local attempt with no way back).
-            const inSwitch = Date.now() < _tierSwitchUntil;
-            if (inSwitch) {
-              const retryPc = _pc;
-              const delay = (_tierSwitchUntil - Date.now()) + 1500;
-              setTimeout(() => {
-                if (_pc === retryPc && (_pc.iceConnectionState === 'connected' ||
-                                        _pc.iceConnectionState === 'completed')) {
-                  return; // recovered on its own during the wait
-                }
-                if (_activeWindowId === windowId && _pc === retryPc && !_webrtcInProgress) {
-                  initWebRTCPublic(windowId, signalingUrl, instanceName, _currentSerial, iceServers);
-                }
-              }, delay);
-            } else {
-              // Dropped outside any tier-switch window: actively fall back
-              // to local WHEP (using the last-known local whep/stun params)
-              // instead of leaving a dead stream up with just "Disconnected".
-              initWebRTC(windowId, _whepUrl, _stunUrl, _currentSerial);
-            }
+          } else {
+            retryPublicOrFallbackLocal();
+          }
+        } else if (s === 'disconnected') {
+          setNetStatus('warn', 'Unstable');
+          if (settled) {
+            // Over a TURN relay, ICE connectivity checks are between the
+            // browser and the RELAY -- if mediamtx silently tears down
+            // its side (e.g. the scrcpy restart during a tier switch
+            // destroying its PeerConnection) the relay itself is still
+            // reachable, so this can sit in 'disconnected' forever and
+            // never reach 'failed' at all. A real transient network blip
+            // usually self-heals within a few seconds; give it a window,
+            // then treat a non-recovery the same as a hard failure.
+            const watchdogPc = _pc;
+            setTimeout(() => {
+              if (_pc !== watchdogPc) return; // superseded already
+              const cur = _pc.iceConnectionState;
+              if (cur === 'connected' || cur === 'completed') return;
+              retryPublicOrFallbackLocal();
+            }, 5000);
           }
         }
       };
