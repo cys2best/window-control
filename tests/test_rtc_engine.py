@@ -522,6 +522,33 @@ def test_h264_only_video_codecs_excludes_vp8_and_rtx():
     assert not any(codec.mimeType == "video/rtx" for codec in codecs)
 
 
+def test_h264_only_video_codecs_excludes_42001f_profile():
+    """_h264_only_video_codecs() must exclude the profile-level-id=42001f
+    H264 entry entirely, keeping only profile-level-id=42e01f.
+
+    Further E2E testing (after VP8 was already excluded) found aiortc's
+    installed capability list actually contains TWO H264 entries with
+    different profile-level-id values -- 42001f and 42e01f. Whichever one
+    the browser negotiated first was 42001f, which macOS VideoToolbox's
+    hardware decoder rejects outright (falls back to software decode,
+    framesDecoded stuck at 0 despite counting keyframes). The already
+    -working mediamtx/WHEP pipeline in this repo, tested against the same
+    device/encoder output, negotiates profile-level-id=42e01f specifically
+    and decodes successfully via VideoToolbox -- proving 42e01f is the
+    profile that must be offered, and that offering 42001f at all is
+    unnecessary since we control the encoder and it already round-trips
+    cleanly under 42e01f.
+    """
+    codecs = _h264_only_video_codecs()
+
+    assert len(codecs) == 1
+    assert codecs[0].mimeType == "video/H264"
+    assert codecs[0].parameters.get("profile-level-id") == "42e01f"
+    assert not any(
+        codec.parameters.get("profile-level-id") == "42001f" for codec in codecs
+    )
+
+
 async def test_offer_sdp_constrained_to_h264_only():
     """End-to-end proof that the fix actually constrains the generated SDP
     offer, not just that the filtering helper returns the right list.
@@ -550,5 +577,16 @@ async def test_offer_sdp_constrained_to_h264_only():
             f"non-H264 codec present in offer rtpmap lines: {rtpmap_lines}"
         )
         assert "VP8" not in sdp, f"VP8 leaked into offer SDP: {video_m_line}"
+
+        # profile-level-id=42e01f is the only profile proven to decode via
+        # macOS VideoToolbox on the target device (see mediamtx_manager.py's
+        # working WHEP pipeline); 42001f is rejected by that hardware
+        # decoder and must not appear in the offer at all.
+        fmtp_lines = [line for line in sdp.splitlines() if line.startswith("a=fmtp:")]
+        assert fmtp_lines, "offer SDP has no fmtp lines for video payload types"
+        assert all("profile-level-id=42e01f" in line for line in fmtp_lines), (
+            f"non-42e01f H264 profile present in offer fmtp lines: {fmtp_lines}"
+        )
+        assert "42001f" not in sdp, f"42001f profile leaked into offer SDP: {sdp}"
     finally:
         await pc.close()

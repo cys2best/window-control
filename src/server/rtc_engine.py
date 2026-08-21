@@ -258,9 +258,12 @@ from aiortc import (
 _ICE_URL_WITH_CREDENTIALS_RE = re.compile(r"^(turns?):([^:]+):([^@]+)@(.+)$")
 
 
+_H264_PROFILE_LEVEL_ID = "42e01f"
+
+
 def _h264_only_video_codecs() -> list:
-    """Return only the H264 entries from aiortc's video codec capabilities,
-    in the order aiortc reports them.
+    """Return only the H264 entry from aiortc's video codec capabilities
+    whose profile-level-id is 42e01f.
 
     Verified against the installed aiortc version (RTCRtpSender.getCapabilities
     ("video") returns VP8, video/rtx, and two H264 entries with different
@@ -269,17 +272,41 @@ def _h264_only_video_codecs() -> list:
     the remote peer pick; a real browser test picked VP8, and
     PassthroughH264Track only ever produces raw H264 Annex-B NALUs wrapped
     in av.Packet, so a VP8-negotiated connection silently sends garbage
-    (H264 bytes interpreted as VP8) and nothing decodes.
+    (H264 bytes interpreted as VP8) and nothing decodes. A prior fix round
+    excluded VP8/rtx but kept both H264 profile-level-id entries.
 
-    Keeping both H264 profile-level-id entries (rather than picking one) is
-    deliberate: scrcpy/MediaCodec's actual encoder profile varies by device,
-    and offering both still excludes VP8/rtx entirely, which is the actual
-    fix -- the browser must still land on H264, just possibly a different
-    profile-level-id line depending on what it/aiortc negotiate between
-    the two.
+    Further E2E testing against a real device found that keeping both was
+    not enough: whichever H264 entry the browser negotiated first was
+    42001f, and macOS VideoToolbox's hardware decoder rejects that profile
+    outright (silently falls back to software decode, framesDecoded stuck
+    at 0 despite counting keyframes -- a real decode failure). The
+    already-working, already-in-production mediamtx/WHEP pipeline in this
+    repo (src/server/mediamtx_manager.py) was tested against the exact same
+    device and scrcpy encoder output and rendered successfully via
+    VideoToolbox, with its negotiated SDP showing profile-level-id=42e01f
+    specifically -- proving the raw bitstream is fully decodable when the
+    SDP declares 42e01f; the problem is purely which profile-level-id our
+    offer lets the browser pick.
+
+    scrcpy/MediaCodec is not configured to force a specific H264 profile
+    (see scrcpy_session.py) -- it picks its own encoder default, so in
+    principle a different Android device/encoder version could emit a
+    stream that only round-trips cleanly under 42001f. But we control both
+    the encoder (already proven to emit output compatible with 42e01f via
+    the mediamtx path, on this same device/encoder combination) and this
+    SDP offer, so there is no reason to keep offering a profile-level-id
+    we've now confirmed a real hardware decoder rejects. Filtering down to
+    only 42e01f (rather than merely reordering/preferring it) removes the
+    failure mode entirely instead of leaving it reachable depending on
+    negotiation order.
     """
     caps = RTCRtpSender.getCapabilities("video")
-    return [codec for codec in caps.codecs if codec.mimeType == "video/H264"]
+    return [
+        codec
+        for codec in caps.codecs
+        if codec.mimeType == "video/H264"
+        and codec.parameters.get("profile-level-id") == _H264_PROFILE_LEVEL_ID
+    ]
 
 
 def _parse_ice_url(ice_url: str) -> RTCIceServer:
