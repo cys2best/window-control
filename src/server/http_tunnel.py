@@ -74,9 +74,19 @@ async def _run_ws_stream(ws, open_frame: dict, inbound_queue: "asyncio.Queue",
 
         pull_task = asyncio.ensure_future(_pull_from_tunnel())
         push_task = asyncio.ensure_future(_push_to_tunnel())
-        _, pending = await asyncio.wait(
+        done, pending = await asyncio.wait(
             {pull_task, push_task}, return_when=asyncio.FIRST_COMPLETED)
         for t in pending:
             t.cancel()
+        # Wait for cancellation to actually be delivered before the `async
+        # with` block below closes local_ws out from under a task that may
+        # still be mid-recv()/send().
+        await asyncio.gather(*pending, return_exceptions=True)
+
+        for t in done:
+            exc = t.exception()
+            if exc is not None:
+                log.error("ws stream %s: pipe task failed", stream_id,
+                          exc_info=exc)
 
     await ws.send(json.dumps({"type": "ws_close", "id": stream_id}))
