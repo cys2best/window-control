@@ -19,3 +19,6 @@ src/assets/scrcpy/
 # Runtime crash logs (written to ProgramData at runtime, never tracked)
 service_crash.log
 *service_crash.log
+
+# Git worktrees (superpowers subagent-driven-development scratch)
+.worktrees/
