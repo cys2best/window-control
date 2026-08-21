@@ -70,3 +70,27 @@ def test_websocket_input_rejected_without_cookie():
     with pytest.raises(Exception):
         with client.websocket_connect("/input"):
             pass
+
+
+def test_public_ui_url_without_auth_token_refuses_to_start():
+    os.environ["PUBLIC_UI_URL"] = "wss://tunnel.example.com/__tunnel/register"
+    os.environ.pop("AUTH_TOKEN", None)
+    import config
+    importlib.reload(config)
+    from server import auth
+    importlib.reload(auth)
+    from server.stream import CaptureState, FrameQueue
+    from server import app as app_module
+    importlib.reload(app_module)
+
+    state = CaptureState()
+    fq = FrameQueue()
+    im = MagicMock()
+    im.list_instances.return_value = []
+    try:
+        with patch("server.app.get_best_ip", return_value="127.0.0.1"):
+            with pytest.raises(RuntimeError, match="AUTH_TOKEN"):
+                app_module.create_app(state, fq, im)
+    finally:
+        os.environ.pop("PUBLIC_UI_URL", None)
+        importlib.reload(config)

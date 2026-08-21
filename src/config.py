@@ -55,6 +55,15 @@ AUTH_TOKEN = os.environ.get("AUTH_TOKEN")
 # to silently fail.
 COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "").lower() in ("1", "true", "yes")
 
+# Public-internet UI tunnel (VPS relay). Unset = tunnel disabled, matching
+# the VPS_SIGNALING_URL auto-start-only-if-configured pattern above. Full
+# URL including path, e.g. "wss://tunnel.example.com/__tunnel/register".
+PUBLIC_UI_URL = os.environ.get("PUBLIC_UI_URL")
+# Authenticates the tunnel *link* (PC <-> VPS), separate from AUTH_TOKEN
+# which authenticates the *browser user* — a leaked one doesn't compromise
+# the other. Required whenever PUBLIC_UI_URL is set.
+TUNNEL_SECRET = os.environ.get("TUNNEL_SECRET")
+
 ADB_PATH = "adb"       # overridden at runtime by _find_adb()
 SCRCPY_PATH = os.path.join("assets", "scrcpy", "scrcpy.exe")
 MEDIAMTX_PATH = os.path.join("assets", "mediamtx", "mediamtx.exe")

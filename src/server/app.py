@@ -151,6 +151,11 @@ def _restart_bridge_task(instance_name: str) -> None:
 def create_app(state: CaptureState, frame_queue: FrameQueue,
                instance_manager: InstanceManager) -> FastAPI:
     import asyncio
+    from config import PUBLIC_UI_URL, TUNNEL_SECRET
+    if PUBLIC_UI_URL and not auth.auth_enabled():
+        raise RuntimeError("PUBLIC_UI_URL requires AUTH_TOKEN to be set")
+    if PUBLIC_UI_URL and not TUNNEL_SECRET:
+        raise RuntimeError("PUBLIC_UI_URL requires TUNNEL_SECRET to be set")
     app = FastAPI()
 
     @app.middleware("http")
