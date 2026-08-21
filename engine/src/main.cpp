@@ -81,9 +81,11 @@ int main(int argc, char** argv) {
         // Request a fresh IDR once the connection is actually up (not blindly at
         // startup) so a viewer joining mid-stream doesn't wait for the next
         // scheduled keyframe.
-        peer.SetOnConnected([&control]() {
+        std::atomic<bool> peerConnected{false};
+        peer.SetOnConnected([&control, &peerConnected]() {
             std::cout << "[debug] peer connected, requesting IDR" << std::endl;
             control.RequestIdr();
+            peerConnected = true;
         });
 
         std::cout << "[debug] calling StartAsOfferer..." << std::endl;
@@ -95,8 +97,22 @@ int main(int argc, char** argv) {
         });
 
         std::cout << "Streaming started. Press Ctrl+C to stop.\n" << std::flush;
+        // The device H264 encoder can take 20-30s to emit its first natural
+        // IDR (documented in scrcpy_session.py's build_ffmpeg_args docstring;
+        // matches Python's proven fix, ScrcpyControl.request_idr() on a ~2s
+        // heartbeat). A single on-connect request isn't enough — it's been
+        // observed ignored on some devices (same docstring, line ~125) — so
+        // keep asking until a keyframe actually arrives and frames flow.
+        auto lastIdrRequest = std::chrono::steady_clock::now();
         while (g_running) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            if (peerConnected.load()) {
+                auto now = std::chrono::steady_clock::now();
+                if (now - lastIdrRequest >= std::chrono::seconds(2)) {
+                    control.RequestIdr();
+                    lastIdrRequest = now;
+                }
+            }
         }
 
         // Shutdown order is load-bearing: stop things in the reverse order they
