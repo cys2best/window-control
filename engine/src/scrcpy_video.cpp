@@ -13,6 +13,8 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <cstring>
+#include <cstdio>
+#include <algorithm>
 #include <vector>
 #include <iostream>
 #include <exception>
@@ -138,6 +140,18 @@ void ScrcpyVideoClient::StartReading(NaluCallback onNalu) {
 
             std::vector<uint8_t> payload(size);
             if (size > 0 && !RecvAll(impl_->sock, payload.data(), size)) break;
+
+            static int frameCount = 0;
+            if (frameCount < 5) {
+                std::cerr << "[debug] frame #" << frameCount << " size=" << size << " first16bytes=";
+                char hexBuf[4];
+                for (size_t i = 0; i < std::min<size_t>(16, payload.size()); ++i) {
+                    std::snprintf(hexBuf, sizeof(hexBuf), "%02x ", payload[i]);
+                    std::cerr << hexBuf;
+                }
+                std::cerr << std::endl;
+            }
+            ++frameCount;
 
             if (impl_->onNalu) {
                 try {
