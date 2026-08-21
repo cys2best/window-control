@@ -430,3 +430,40 @@ def test_handle_key_zero_is_ignored():
     )
 
     control.send_keycode.assert_not_called()
+
+
+def test_handle_non_dict_valid_json_is_swallowed():
+    """handle_input_message must not crash on valid-but-non-dict JSON.
+
+    json.loads() succeeds for any legal JSON document, including strings,
+    numbers, lists, and null. The function must treat these as malformed
+    input (swallow silently, no exception) rather than crashing with AttributeError
+    when trying to call .get() on a non-dict.
+    """
+    control = MagicMock(spec=ScrcpyControl)
+
+    # Test valid string JSON
+    handle_input_message(control, '"hello"', screen_width=720, screen_height=480)
+    control.send_touch.assert_not_called()
+    control.send_keycode.assert_not_called()
+
+    control.reset_mock()
+
+    # Test valid number JSON
+    handle_input_message(control, "42", screen_width=720, screen_height=480)
+    control.send_touch.assert_not_called()
+    control.send_keycode.assert_not_called()
+
+    control.reset_mock()
+
+    # Test valid list JSON
+    handle_input_message(control, "[1, 2, 3]", screen_width=720, screen_height=480)
+    control.send_touch.assert_not_called()
+    control.send_keycode.assert_not_called()
+
+    control.reset_mock()
+
+    # Test null JSON
+    handle_input_message(control, "null", screen_width=720, screen_height=480)
+    control.send_touch.assert_not_called()
+    control.send_keycode.assert_not_called()

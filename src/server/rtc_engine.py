@@ -223,6 +223,8 @@ def handle_input_message(
         msg = json_module.loads(raw_json)
     except json_module.JSONDecodeError:
         return
+    if not isinstance(msg, dict):
+        return
 
     msg_type = msg.get("type", "")
     if msg_type in ("tap", "swipe"):
