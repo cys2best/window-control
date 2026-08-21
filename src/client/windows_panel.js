@@ -100,7 +100,7 @@ async function selectWindow(id, serial) {
     // teardown to wait out.
     setAdaptiveSerial(_serial);
     if (data.signaling_url) {
-      const ok = await initWebRTCPublic(id, data.signaling_url, data.name, _serial);
+      const ok = await initWebRTCPublic(id, data.signaling_url, data.name, _serial, data.ice_servers);
       if (!ok) {
         initWebRTC(id, data.whep_url, data.stun_url, _serial);
       }

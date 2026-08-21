@@ -13,6 +13,7 @@ let _webrtcInProgress = false; // prevent concurrent initWebRTC calls
 let _currentSerial = null;     // serial of active instance (for adaptive quality)
 let _signalingUrl = null;      // VPS signaling relay URL for the active public session
 let _instanceName = null;      // instance name (rendezvous key) for the active public session
+let _iceServers = [];          // STUN/TURN servers for the public path (from server, see ice_config.py)
 let _publicModeActive = false; // true when the active stream was negotiated via initWebRTCPublic
 
 // ── Quality tiers ──────────────────────────────────────────────────────────────
@@ -458,7 +459,7 @@ async function initWebRTC(windowId, whepUrl, stunUrl, serial) {
   }
 }
 
-async function initWebRTCPublic(windowId, signalingUrl, instanceName, serial) {
+async function initWebRTCPublic(windowId, signalingUrl, instanceName, serial, iceServers) {
   // Structurally parallel to initWebRTC() above -- same _pc lifecycle,
   // same ontrack/oniceconnectionstatechange handlers, same in-flight-
   // negotiation race guards (if (_pc !== thisPc) return). Differs only in
@@ -476,6 +477,9 @@ async function initWebRTCPublic(windowId, signalingUrl, instanceName, serial) {
   setNetStatus('warn', 'Connecting (public)…');
   _activeWindowId = windowId;
   _currentSerial = serial || _currentSerial;
+  // Persist for the visibility-resume path, which calls this function again
+  // without re-fetching /select (see the visibilitychange handler below).
+  _iceServers = iceServers || _iceServers;
 
   return new Promise((resolve) => {
     let settled = false;
@@ -489,7 +493,12 @@ async function initWebRTCPublic(windowId, signalingUrl, instanceName, serial) {
     };
 
     try {
-      _pc = new RTCPeerConnection({ iceServers: [] });
+      // A NAT'd PC has no publicly reachable ICE candidate on its own --
+      // without a TURN relay here, ICE fails after signaling succeeds and
+      // the caller silently falls back to local WHEP (unreachable off the
+      // PC's LAN/Tailscale). _iceServers comes from the server's
+      // get_ice_servers() (STUN always, TURN when TURN_HOST is configured).
+      _pc = new RTCPeerConnection({ iceServers: _iceServers });
       const thisPc = _pc;
 
       const video = document.getElementById('stream-video');
@@ -887,7 +896,7 @@ async function _startApp() {
           // The active session was negotiated via the public signaling path
           // (VPS relay), not local WHEP -- resume through the same path
           // instead of renegotiating against a stale/unreachable _whepUrl.
-          initWebRTCPublic(_activeWindowId, _signalingUrl, _instanceName, _currentSerial);
+          initWebRTCPublic(_activeWindowId, _signalingUrl, _instanceName, _currentSerial, _iceServers);
         } else if (_webrtcActive && _activeWindowId) {
           initWebRTC(_activeWindowId, _whepUrl, undefined, _currentSerial);
         } else {

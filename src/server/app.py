@@ -15,6 +15,7 @@ from config import CLIENT_DIR, COOKIE_SECURE, QUALITY_MAP, WHEP_PORT, STUN_PORT,
 from server.stream import CaptureState, FrameQueue, mjpeg_generator
 from server import adb_manager
 from server import auth
+from server.ice_config import get_ice_servers
 from server.instance_manager import InstanceManager
 from server.http_tunnel import run_tunnel_with_reconnect
 from server.signaling_bridge import run_bridge_with_reconnect
@@ -270,6 +271,7 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
             "whep_url": whep_url,
             "stun_url": f"stun:{host}:{STUN_PORT}",
             "signaling_url": VPS_SIGNALING_URL,
+            "ice_servers": get_ice_servers(),
         }
 
     @app.post("/instances/{instance_id}/keyframe")
@@ -337,7 +339,8 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
         return {"ok": True, "id": req.id, "name": inst.name, "w": inst.w, "h": inst.h,
                 "whep_url": whep_url,
                 "stun_url": f"stun:{host}:{STUN_PORT}",
-                "signaling_url": VPS_SIGNALING_URL}
+                "signaling_url": VPS_SIGNALING_URL,
+                "ice_servers": get_ice_servers()}
 
     # ── MJPEG fallback stream ────────────────────────────────────────────────
 

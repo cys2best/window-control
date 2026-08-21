@@ -37,6 +37,17 @@ RTMP_PORT = 1935       # mediamtx RTMP (unused by us, kept for mediamtx default 
 WEBRTC_UDP_PORT = 8288 # WebRTC ICE UDP mux (mediamtx default 8000 collided)
 STUN_PORT = 3478       # embedded STUN server, bound to Tailscale IP (see stun_server.py)
 VPS_SIGNALING_URL = os.environ.get("VPS_SIGNALING_URL")  # e.g. "ws://VPS_IP:8443"; None disables the public bridge path
+# TURN (+ a public STUN fallback) for the *public* WebRTC path specifically
+# (initWebRTCPublic() in the client) -- the local/Tailscale path above keeps
+# using the embedded STUN_PORT server unchanged. A NAT'd PC has no publicly
+# reachable ICE candidate on its own; without a TURN relay, ICE on the public
+# path fails after signaling succeeds and the client silently falls back to
+# local WHEP (unreachable off-Tailscale) -- see ice_config.py. TURN is
+# optional: absent TURN_HOST, get_ice_servers() returns STUN-only.
+TURN_HOST = os.environ.get("TURN_HOST")
+TURN_PORT = os.environ.get("TURN_PORT", "3478")
+TURN_USERNAME = os.environ.get("TURN_USERNAME")
+TURN_CREDENTIAL = os.environ.get("TURN_CREDENTIAL")
 # NOTE: if the web client is ever served over HTTPS, this must be "wss://" —
 # browsers block plaintext ws:// as mixed content under HTTPS, which fails
 # silently (ws.onerror fires, client falls back to a local URL a public
