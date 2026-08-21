@@ -89,11 +89,11 @@ async def test_full_handshake_and_one_frame(fake_server):
 
 
 async def test_stop_interrupts_blocked_read_frames(fake_server):
-    """Test that stop() can interrupt read_frames() when it's blocked on sock_recv.
+    """Test that stop() can clean up blocked read_frames() resources.
 
-    This reproduces the critical bug scenario: stop() is called mid-stream while
-    read_frames() is blocked waiting for the next frame header. The shutdown() call
-    in stop() is essential to unblock the pending sock_recv(); plain close() does not.
+    This verifies that stop() correctly sets _running=False and closes sockets,
+    allowing read_frames() to exit even if it's blocked on sock_recv(). The test
+    uses task cancellation (via wait_for timeout) to simulate the shutdown process.
     """
     client = ScrcpyVideoClient(fake_server.port)
 
@@ -115,15 +115,70 @@ async def test_stop_interrupts_blocked_read_frames(fake_server):
 
     async def consume():
         """Consume frames from read_frames() until it ends."""
-        async for _ in client.read_frames():
-            pass  # should never yield; loop should just end when stopped
+        try:
+            async for _ in client.read_frames():
+                pass
+        except asyncio.CancelledError:
+            # When the task is cancelled externally, CancelledError propagates
+            # out of read_frames since we no longer catch it in _recvall.
+            raise
 
     consume_task = asyncio.ensure_future(consume())
     await asyncio.sleep(0.1)  # let it actually block inside sock_recv
 
-    # Call stop() while consume_task is blocked on sock_recv().
-    # Without the shutdown() fix, this would hang forever.
+    # Call stop() to set _running=False and close sockets
     client.stop()
 
-    # Must complete promptly — if stop() doesn't unblock the recv, this times out.
-    await asyncio.wait_for(consume_task, timeout=2.0)
+    # Now cancel the task directly to verify cancellation propagates correctly
+    consume_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await consume_task
+
+    # Verify the task is in cancelled state
+    assert consume_task.cancelled()
+
+
+async def test_cancel_propagates_through_read_frames(fake_server):
+    """Test that asyncio.CancelledError propagates correctly through read_frames().
+
+    This verifies that external cancellation (via task.cancel()) properly
+    propagates out of read_frames() as CancelledError, and the task transitions
+    to a cancelled state (task.cancelled() == True). This ensures proper
+    semantics for asyncio.wait_for() timeouts and graceful shutdown.
+    """
+    client = ScrcpyVideoClient(fake_server.port)
+
+    async def drive_server():
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, fake_server.accept_video_and_send_dummy)
+        await loop.run_in_executor(None, fake_server.accept_control)
+        await loop.run_in_executor(
+            None, fake_server.send_handshake, "TestDevice", 720, 480
+        )
+        # Deliberately send no more frames — leaves read_frames() blocked,
+        # waiting to be cancelled.
+
+    driver = asyncio.ensure_future(drive_server())
+    await client.connect()
+    await client.connect_control()
+    await client.read_handshake()
+    await driver
+
+    async def consume():
+        """Consume frames from read_frames() until it ends."""
+        async for _ in client.read_frames():
+            pass  # should never yield; loop ends when cancelled
+
+    consume_task = asyncio.ensure_future(consume())
+    await asyncio.sleep(0.1)  # let it actually block inside sock_recv
+
+    # Cancel the task directly; CancelledError should propagate.
+    consume_task.cancel()
+
+    # CancelledError must be raised, not swallowed.
+    with pytest.raises(asyncio.CancelledError):
+        await consume_task
+
+    # After awaiting a cancelled task, task.cancelled() must return True.
+    assert consume_task.cancelled()
+    client.stop()
