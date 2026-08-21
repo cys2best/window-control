@@ -455,26 +455,21 @@ async def run_engine(scrcpy_port: int, signaling_url: str, session_id: str, ice_
     # below pushes it to the track first, before resuming iteration of
     # video.read_frames() (an async generator, so it correctly picks up from
     # the SECOND frame onward once video_pump_loop's `async for` starts).
+    # Declare a fixed, browser-guaranteed-negotiable profile-level-id
+    # ("42e01f", one of the 5 exact values Chrome/Brave's H264 decoder
+    # capability list advertises -- confirmed via
+    # RTCRtpReceiver.getCapabilities('video') in-browser), rather than the
+    # value derived from the live SPS (extract_profile_level_id() is kept
+    # for future use, e.g. picking among the browser's small fixed set based
+    # on the live stream's actual profile_idc). E2E testing showed real
+    # in-band SPS/PPS content is NOT sufficient on its own to get frames
+    # decoding on this device/browser/decoder combination -- see
+    # docs/superpowers/plans/2026-08-21-python-rtc-engine.md's Task 6 status
+    # notes for the full investigation. This fixed value at least guarantees
+    # clean SDP negotiation (no browser-side substitution), isolating the
+    # remaining gap to something below the negotiation layer.
     frames = video.read_frames()
     first_frame = await frames.__anext__()
-    live_profile_level_id = extract_profile_level_id(first_frame)
-    # EXPERIMENT: declare a browser-guaranteed-negotiable profile-level-id in
-    # the SDP (one of the 5 exact values Chrome/Brave's H264 decoder
-    # capability list advertises, confirmed via RTCRtpReceiver.getCapabilities
-    # in-browser) regardless of what the live SPS actually says. H264 decoders
-    # are supposed to configure themselves from the real in-band SPS/PPS in
-    # the bitstream, not the SDP string -- profile-level-id in SDP is a
-    # negotiation/capability-advertisement hint, not a hard bitstream
-    # contract. Testing whether VideoToolbox actually honors that, since
-    # dynamically declaring the TRUE live value (e.g. 42c01f, which isn't in
-    # the browser's fixed 5-entry table) causes the browser to silently
-    # substitute 42e01f during answer generation anyway -- so declaring it
-    # ourselves should be equivalent or better, as long as decode genuinely
-    # keys off the real bitstream.
-    print(f"[debug] first_frame size={len(first_frame)} "
-          f"first8={first_frame[:8].hex()} "
-          f"live_profile_level_id={live_profile_level_id} "
-          f"(declaring 42e01f in SDP regardless, per experiment)", flush=True)
     profile_level_id = "42e01f"
 
     config = RTCConfiguration(iceServers=[_parse_ice_url(ice_url)])
@@ -517,9 +512,6 @@ async def run_engine(scrcpy_port: int, signaling_url: str, session_id: str, ice_
     # below does via _parse_ice_candidate()/pc.addIceCandidate().
 
     offer = await pc.createOffer()
-    print(f"[debug] offer video profile-level-id(s) in SDP: "
-          f"{[line for line in offer.sdp.splitlines() if 'profile-level-id' in line]}",
-          flush=True)
     await pc.setLocalDescription(offer)
     await signaling.send({"type": pc.localDescription.type, "sdp": pc.localDescription.sdp})
     print(f"[debug] sent {pc.localDescription.type}", flush=True)
@@ -550,70 +542,13 @@ async def run_engine(scrcpy_port: int, signaling_url: str, session_id: str, ice_
                     if cand is not None:
                         await pc.addIceCandidate(cand)
 
-    def _scan_nal_types(payload: bytes) -> list[int]:
-        # Find every Annex-B start code (3-byte 00 00 01 or 4-byte 00 00 00 01)
-        # within this single wire-frame payload and report each embedded
-        # NALU's type -- a scrcpy "frame" (12-byte-header wire unit) may
-        # concatenate multiple NALUs (e.g. SPS+PPS, or PPS+IDR slice), not
-        # necessarily one NALU per frame.
-        types = []
-        i = 0
-        n = len(payload)
-        while i < n - 3:
-            if payload[i] == 0 and payload[i + 1] == 0:
-                if payload[i + 2] == 1:
-                    start = i + 3
-                elif i < n - 4 and payload[i + 2] == 0 and payload[i + 3] == 1:
-                    start = i + 4
-                else:
-                    i += 1
-                    continue
-                if start < n:
-                    types.append(payload[start] & 0x1F)
-                i = start
-            else:
-                i += 1
-        return types
-
     async def video_pump_loop():
         # Push the SPS NALU already consumed above (to derive
         # profile_level_id) first -- it's still needed by the decoder --
         # then resume iterating the SAME async generator, which correctly
         # continues from the second frame onward.
         track.push_nalu(first_frame)
-        seen_pps = False
-        seen_idr_dump = False
-        pps_frame_num = None
-        idr_count = 0
-        scan_count = 1  # first_frame already counted
         async for nalu in frames:
-            if scan_count < 30:
-                types = _scan_nal_types(nalu)
-                if 8 in types and not seen_pps:
-                    seen_pps = True
-                    pps_frame_num = scan_count
-                    print(f"[debug] PPS (nal_type=8) found at frame #{scan_count}, "
-                          f"all_nal_types_in_frame={types}, "
-                          f"full_hex={nalu.hex()}", flush=True)
-                if 5 in types and not seen_idr_dump:
-                    seen_idr_dump = True
-                    print(f"[debug] first IDR (nal_type=5) at frame #{scan_count}, "
-                          f"size={len(nalu)}, first32bytes={nalu[:32].hex()}", flush=True)
-                elif scan_count < 5:
-                    print(f"[debug] frame #{scan_count} nal_types={types}", flush=True)
-                scan_count += 1
-                if scan_count == 30 and not seen_pps:
-                    print("[debug] NO PPS (nal_type=8) seen in first 30 frames "
-                          "(full multi-NALU scan)", flush=True)
-            # Track every subsequent IDR (not just the first) for the first
-            # 40 occurrences past the initial 30-frame scan window, to see
-            # whether any IDR arriving AFTER PPS became available
-            # (pps_frame_num) is ever given a fair shot at decode.
-            elif idr_count < 40 and 5 in _scan_nal_types(nalu):
-                idr_count += 1
-                print(f"[debug] later IDR #{idr_count} seen, "
-                      f"after_pps_available={pps_frame_num is not None}, "
-                      f"pps_was_at_frame={pps_frame_num}", flush=True)
             track.push_nalu(nalu)
 
     async def idr_heartbeat_loop():
