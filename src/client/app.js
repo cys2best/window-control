@@ -453,6 +453,105 @@ async function initWebRTC(windowId, whepUrl, stunUrl, serial) {
   }
 }
 
+async function initWebRTCPublic(windowId, signalingUrl, instanceName, serial) {
+  // Structurally parallel to initWebRTC() above -- same _pc lifecycle,
+  // same ontrack/oniceconnectionstatechange handlers, same in-flight-
+  // negotiation race guards (if (_pc !== thisPc) return). Differs only in
+  // negotiation transport: WS + raw SDP text instead of one-shot HTTP POST,
+  // matching signaling_bridge.py's relay_one_instance() protocol exactly
+  // (proven end-to-end against the real VPS + mediamtx during manual
+  // testing) -- {signalingUrl}/?session={instanceName}&role=viewer, no
+  // JSON envelope, raw SDP text both directions.
+  if (_pc) { try { _pc.close(); } catch(_) {} _pc = null; }
+  if (_webrtcInProgress) {
+    _webrtcInProgress = false;
+    await new Promise(r => setTimeout(r, 50));
+  }
+  _webrtcInProgress = true;
+  setNetStatus('warn', 'Connecting (public)…');
+  _activeWindowId = windowId;
+  _currentSerial = serial || _currentSerial;
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (ok) => {
+      if (settled) return;
+      settled = true;
+      _webrtcInProgress = false;
+      resolve(ok);
+    };
+
+    try {
+      _pc = new RTCPeerConnection({ iceServers: [] });
+      const thisPc = _pc;
+
+      const video = document.getElementById('stream-video');
+      const img = document.getElementById('stream-img');
+
+      _pc.ontrack = e => {
+        video.srcObject = e.streams[0];
+        video.style.display = 'block';
+        img.style.display = 'none';
+        _webrtcActive = true;
+        setNetStatus('good', 'Connected (public)');
+        startAdaptiveQuality(_currentSerial);
+        clearUnavailable();
+        finish(true);
+      };
+
+      _pc.oniceconnectionstatechange = () => {
+        const s = _pc ? _pc.iceConnectionState : '';
+        if (s === 'failed' || s === 'closed') {
+          setNetStatus('bad', 'Disconnected');
+          finish(false);
+        }
+      };
+
+      const ws = new WebSocket(
+        `${signalingUrl}/?session=${encodeURIComponent(instanceName)}&role=viewer`
+      );
+
+      ws.onopen = async () => {
+        try {
+          if (_pc !== thisPc) return;
+          thisPc.addTransceiver('video', { direction: 'recvonly' });
+          const offer = await thisPc.createOffer();
+          if (_pc !== thisPc) return;
+          await thisPc.setLocalDescription(offer);
+          if (_pc !== thisPc) return;
+          await waitForIceGatheringComplete(thisPc);
+          if (_pc !== thisPc) return;
+          ws.send(thisPc.localDescription.sdp);
+        } catch (err) {
+          console.error('[webrtc-public] offer setup error:', err);
+          finish(false);
+        }
+      };
+
+      ws.onmessage = async (event) => {
+        try {
+          if (_pc !== thisPc) return;
+          await thisPc.setRemoteDescription({ type: 'answer', sdp: event.data });
+        } catch (err) {
+          console.error('[webrtc-public] setRemoteDescription error:', err);
+          finish(false);
+        }
+      };
+
+      ws.onerror = () => { finish(false); };
+      ws.onclose = () => { finish(false); };
+
+      // Bound how long we wait for the public path before giving up and
+      // letting the caller fall back to local WHEP -- mirrors the timeout
+      // shape already used by waitForIceGatheringComplete's capMs.
+      setTimeout(() => finish(false), 8000);
+    } catch (err) {
+      console.error('[webrtc-public] init error:', err);
+      finish(false);
+    }
+  });
+}
+
 function normalizeCoords(clientX, clientY) {
   const r = getStreamRect();
   const el = _activeStreamEl();

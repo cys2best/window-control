@@ -99,7 +99,14 @@ async function selectWindow(id, serial) {
     // the new instance. No shared mux, no server-side repoint, no reader
     // teardown to wait out.
     setAdaptiveSerial(_serial);
-    initWebRTC(id, data.whep_url, data.stun_url, _serial);
+    if (data.signaling_url) {
+      const ok = await initWebRTCPublic(id, data.signaling_url, data.name, _serial);
+      if (!ok) {
+        initWebRTC(id, data.whep_url, data.stun_url, _serial);
+      }
+    } else {
+      initWebRTC(id, data.whep_url, data.stun_url, _serial);
+    }
   } catch (_) {}
 }
 
