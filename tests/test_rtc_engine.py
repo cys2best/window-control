@@ -3,7 +3,7 @@ import socket
 import struct
 import pytest
 
-from server.rtc_engine import ScrcpyVideoClient
+from server.rtc_engine import ScrcpyVideoClient, PassthroughH264Track
 
 
 class FakeScrcpyServer:
@@ -192,6 +192,30 @@ async def test_cancel_propagates_through_read_frames(fake_server):
     # After awaiting a cancelled task, task.cancelled() must return True.
     assert consume_task.cancelled()
     client.stop()
+
+
+async def test_recv_wraps_nalu_in_av_packet():
+    import av
+
+    track = PassthroughH264Track()
+    track.push_nalu(b"\x00\x00\x00\x01\x67SPSDATA")
+
+    packet = await track.recv()
+
+    assert isinstance(packet, av.Packet)
+    assert bytes(packet) == b"\x00\x00\x00\x01\x67SPSDATA"
+
+
+async def test_recv_yields_multiple_nalus_in_order():
+    track = PassthroughH264Track()
+    track.push_nalu(b"\x00\x00\x00\x01\x67SPS")
+    track.push_nalu(b"\x00\x00\x00\x01\x68PPS")
+
+    first = await track.recv()
+    second = await track.recv()
+
+    assert bytes(first) == b"\x00\x00\x00\x01\x67SPS"
+    assert bytes(second) == b"\x00\x00\x00\x01\x68PPS"
 
 
 async def test_stop_then_external_cancel_no_deadlock(fake_server):

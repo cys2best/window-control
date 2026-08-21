@@ -16,7 +16,12 @@ scrcpy_video.cpp's header comment:
 import asyncio
 import socket
 import struct
+import time
 from typing import AsyncIterator
+
+import av
+from aiortc import MediaStreamTrack
+from aiortc.mediastreams import VIDEO_TIME_BASE
 
 
 class ScrcpyVideoClient:
@@ -147,3 +152,31 @@ class ScrcpyVideoClient:
             except OSError:
                 pass  # socket already disconnected or not fully connected
             self.control_sock.close()
+
+
+class PassthroughH264Track(MediaStreamTrack):
+    """Wraps already-encoded Annex-B H264 NALUs as av.Packet so aiortc's
+    Encoder.pack() path repacketizes them into RTP with no decode/re-encode
+    — the Python equivalent of engine/src/peer.cpp's H264RtpPacketizer use.
+    """
+
+    kind = "video"
+
+    def __init__(self):
+        super().__init__()
+        self._queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=60)
+        self._start_time = time.monotonic()
+
+    def push_nalu(self, data: bytes) -> None:
+        try:
+            self._queue.put_nowait(data)
+        except asyncio.QueueFull:
+            pass  # drop rather than build unbounded latency on a slow consumer
+
+    async def recv(self) -> av.Packet:
+        data = await self._queue.get()
+        packet = av.Packet(data)
+        elapsed = time.monotonic() - self._start_time
+        packet.pts = int(elapsed * VIDEO_TIME_BASE.denominator / VIDEO_TIME_BASE.numerator)
+        packet.time_base = VIDEO_TIME_BASE
+        return packet
