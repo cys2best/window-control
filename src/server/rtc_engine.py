@@ -508,6 +508,9 @@ async def run_engine(scrcpy_port: int, signaling_url: str, session_id: str, ice_
     # below does via _parse_ice_candidate()/pc.addIceCandidate().
 
     offer = await pc.createOffer()
+    print(f"[debug] offer video profile-level-id(s) in SDP: "
+          f"{[line for line in offer.sdp.splitlines() if 'profile-level-id' in line]}",
+          flush=True)
     await pc.setLocalDescription(offer)
     await signaling.send({"type": pc.localDescription.type, "sdp": pc.localDescription.sdp})
     print(f"[debug] sent {pc.localDescription.type}", flush=True)
