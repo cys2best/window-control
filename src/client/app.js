@@ -301,7 +301,7 @@ function _fallbackToMJPEG() {
 // out with only the .local candidate → mediamtx "write queue is full" →
 // never connects. Now: resolve as soon as we have a srflx (fast path), else
 // on 'complete', else a longer hard cap so a slow gather still gets its srflx.
-function waitForIceGatheringComplete(pc, capMs = 4000) {
+function waitForIceGatheringComplete(pc, capMs = 4000, fastPathType = 'srflx') {
   if (pc.iceGatheringState === 'complete') return Promise.resolve();
   return new Promise(resolve => {
     let done = false;
@@ -313,10 +313,19 @@ function waitForIceGatheringComplete(pc, capMs = 4000) {
       resolve();
     };
     const check = () => { if (pc.iceGatheringState === 'complete') finish(); };
-    // Fast path: as soon as the reflexive candidate is in, we can POST.
+    // Fast path: as soon as a candidate of fastPathType is in, we can POST.
+    // 'srflx' (default) fires fast for the local/Tailscale path -- but for
+    // the public path (initWebRTCPublic), a relay (TURN) candidate is the
+    // load-bearing one: it typically arrives AFTER the srflx candidate
+    // (TURN allocation is a slower round-trip than a plain STUN query), so
+    // resolving on srflx there would POST the offer before the one
+    // candidate type that can actually reach a NAT'd PC ever gets gathered.
+    // Non-trickle ICE means a candidate missing from this offer is gone
+    // for good. If TURN isn't configured, no 'relay' candidate ever
+    // arrives and this correctly falls through to 'complete' or capMs.
     const onCand = e => {
       if (e.candidate && e.candidate.candidate &&
-          e.candidate.candidate.includes('typ srflx')) {
+          e.candidate.candidate.includes(`typ ${fastPathType}`)) {
         finish();
       }
     };
@@ -558,7 +567,7 @@ async function initWebRTCPublic(windowId, signalingUrl, instanceName, serial, ic
           if (_pc !== thisPc) return;
           await thisPc.setLocalDescription(offer);
           if (_pc !== thisPc) return;
-          await waitForIceGatheringComplete(thisPc);
+          await waitForIceGatheringComplete(thisPc, 4000, 'relay');
           if (_pc !== thisPc) return;
           ws.send(thisPc.localDescription.sdp);
         } catch (err) {
