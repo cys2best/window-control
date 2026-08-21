@@ -79,6 +79,11 @@
           console.error('setRemoteDescription(offer) failed', e);
           return;
         }
+        console.log('transceivers after SRD:', pc.getTransceivers().map(t => ({
+          mid: t.mid, direction: t.direction, currentDirection: t.currentDirection,
+          receiverTrack: t.receiver && t.receiver.track && t.receiver.track.kind,
+          receiverTrackState: t.receiver && t.receiver.track && t.receiver.track.readyState,
+        })));
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
         ws.send(JSON.stringify({ type: 'answer', sdp: pc.localDescription.sdp }));
