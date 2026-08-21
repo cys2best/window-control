@@ -1,6 +1,6 @@
 fastapi>=0.110.0
 uvicorn[standard]>=0.29.0
-websockets>=12.0
+websockets>=14.0  # >=14 for the asyncio client's additional_headers kwarg (http_tunnel /input cookie replay)
 Pillow>=10.0.0
 qrcode[pil]>=7.4.2
 pystray>=0.19.5
