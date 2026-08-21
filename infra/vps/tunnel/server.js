@@ -12,16 +12,18 @@ function filterHeaders(headers) {
 export async function createTunnelServer({ port = 0, tunnelSecret = null } = {}) {
   const httpServer = createServer();
   const registerWss = new WebSocketServer({ noServer: true });
+  const publicWss = new WebSocketServer({ noServer: true });
 
   let pcConn = null;
   const pendingHttp = new Map(); // stream id -> { resolve, reject }
+  const wsStreams = new Map(); // stream id -> browser-side ws
 
   httpServer.on('upgrade', (req, socket, head) => {
     const url = new URL(req.url, 'http://localhost');
     if (url.pathname === '/__tunnel/register') {
       registerWss.handleUpgrade(req, socket, head, (ws) => registerWss.emit('connection', ws, req));
     } else {
-      socket.destroy(); // WS-stream upgrades handled once Task 8 lands
+      publicWss.handleUpgrade(req, socket, head, (ws) => publicWss.emit('connection', ws, req));
     }
   });
 
@@ -51,18 +53,46 @@ export async function createTunnelServer({ port = 0, tunnelSecret = null } = {})
           pendingHttp.delete(frame.id);
           pending.resolve(frame);
         }
+      } else if (frame.type === 'ws_message') {
+        const browserWs = wsStreams.get(frame.id);
+        if (browserWs) browserWs.send(frame.data);
+      } else if (frame.type === 'ws_close') {
+        const browserWs = wsStreams.get(frame.id);
+        if (browserWs) { browserWs.close(); wsStreams.delete(frame.id); }
       }
+      // ws_open_ack is informational only -- the browser WS is already open
+      // by the time this arrives (opened eagerly on the public-side
+      // connection event below), so no action needed here.
     });
 
     ws.on('close', () => {
       if (pcConn === ws) pcConn = null;
       for (const pending of pendingHttp.values()) pending.reject(new Error('PC disconnected'));
       pendingHttp.clear();
+      for (const browserWs of wsStreams.values()) browserWs.close();
+      wsStreams.clear();
     });
 
     ws.on('error', (err) => {
       // 'close' always follows 'error' for ws connections; cleanup happens there.
       console.error('tunnel: registered PC connection error:', err.message);
+    });
+  });
+
+  publicWss.on('connection', (browserWs, req) => {
+    if (!pcConn) { browserWs.close(1013, 'no PC connected'); return; }
+    const id = randomUUID();
+    wsStreams.set(id, browserWs);
+    pcConn.send(JSON.stringify({
+      type: 'ws_open', id, path: req.url, headers: filterHeaders(req.headers),
+    }));
+
+    browserWs.on('message', (data) => {
+      if (pcConn) pcConn.send(JSON.stringify({ type: 'ws_message', id, data: data.toString() }));
+    });
+    browserWs.on('close', () => {
+      wsStreams.delete(id);
+      if (pcConn) pcConn.send(JSON.stringify({ type: 'ws_close', id }));
     });
   });
 

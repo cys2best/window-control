@@ -131,3 +131,53 @@ test('a new PC can register after the previous one disconnects', async () => {
   await server.close();
   assert.ok(true);
 });
+
+function openBrowserWs(port, path) {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(`ws://localhost:${port}${path}`);
+    ws.once('open', () => resolve(ws));
+    ws.once('error', reject);
+  });
+}
+
+test('proxies a browser /input WebSocket to the registered PC', async () => {
+  const { server, port } = await createTunnelServer({ port: 0 });
+  const pc = await registerPc(port);
+
+  let openFrame = null;
+  const pcGotOpen = new Promise((resolve) => {
+    pc.on('message', (raw) => {
+      const frame = JSON.parse(raw.toString());
+      if (frame.type === 'ws_open') {
+        openFrame = frame;
+        resolve();
+        pc.send(JSON.stringify({ type: 'ws_open_ack', id: frame.id }));
+      } else if (frame.type === 'ws_message') {
+        // Echo back with a prefix, proving round-trip through the PC side.
+        pc.send(JSON.stringify({ type: 'ws_message', id: frame.id, data: `echo:${frame.data}` }));
+      }
+    });
+  });
+
+  const browserWs = await openBrowserWs(port, '/input');
+  await pcGotOpen;
+  assert.strictEqual(openFrame.path, '/input');
+
+  const browserGotEcho = new Promise((resolve) => {
+    browserWs.once('message', (data) => resolve(data.toString()));
+  });
+  browserWs.send('tap');
+  assert.strictEqual(await browserGotEcho, 'echo:tap');
+
+  browserWs.close();
+  pc.close();
+  await server.close();
+});
+
+test('closes the browser WebSocket when no PC is connected', async () => {
+  const { server, port } = await createTunnelServer({ port: 0 });
+  const ws = new WebSocket(`ws://localhost:${port}/input`);
+  const closeCode = await new Promise((resolve) => ws.once('close', (code) => resolve(code)));
+  assert.strictEqual(closeCode, 1013);
+  await server.close();
+});
