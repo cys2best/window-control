@@ -2,8 +2,12 @@ import { test } from 'node:test';
 import assert from 'node:assert';
 import http from 'node:http';
 import net from 'node:net';
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { WebSocket } from 'ws';
 import { createTunnelServer } from './server.js';
+
+const SERVER_PATH = fileURLToPath(new URL('./server.js', import.meta.url));
 
 function registerPc(port, token) {
   return new Promise((resolve, reject) => {
@@ -180,4 +184,104 @@ test('closes the browser WebSocket when no PC is connected', async () => {
   const closeCode = await new Promise((resolve) => ws.once('close', (code) => resolve(code)));
   assert.strictEqual(closeCode, 1013);
   await server.close();
+});
+
+test('rejects a same-length wrong token (timing-safe compare does not throw)', async () => {
+  // timingSafeEqual throws on unequal-length buffers; 'wrongxx' is the same
+  // length as 'correct', so this exercises the compare itself rather than the
+  // length guard. Either way the registration must be refused, not crash.
+  const { server, port } = await createTunnelServer({ port: 0, tunnelSecret: 'correct' });
+  const ws = new WebSocket(`ws://localhost:${port}/__tunnel/register?token=wrongxx`);
+  const closeCode = await new Promise((resolve) => ws.once('close', (code) => resolve(code)));
+  assert.strictEqual(closeCode, 1008);
+  await server.close();
+});
+
+test('responds 502 instead of hanging when the PC never answers', async () => {
+  // Regression test: pendingHttp entries had no timeout, so a request the PC
+  // never responded to left the browser hanging forever.
+  const { server, port } = await createTunnelServer({ port: 0, requestTimeoutMs: 250 });
+  const pc = await registerPc(port);
+  pc.on('message', () => {}); // deliberately never sends an http_response
+
+  const started = Date.now();
+  const res = await get(port, '/instances');
+  const elapsed = Date.now() - started;
+
+  assert.strictEqual(res.status, 502);
+  assert.ok(elapsed >= 200, `responded too early (${elapsed}ms)`);
+  assert.ok(elapsed < 5000, `responded too late (${elapsed}ms)`);
+
+  pc.close();
+  await server.close();
+});
+
+test('survives an erroring browser WebSocket connection', async () => {
+  // Regression test: publicWss connections had no 'error' handler. In ws, an
+  // 'error' event with no listener throws out of the EventEmitter and takes
+  // the whole tunnel process down -- for every user, not just the one whose
+  // connection misbehaved. Verified vector (ws 8.21): a malformed frame makes
+  // the Receiver emit 'error' on the server-side WebSocket
+  // (websocket.js receiverOnError). Note socket-level failures (ECONNRESET)
+  // do NOT go this route in ws 8.21 -- socketOnError just destroys the socket
+  // -- so this, not a TCP reset, is the crash the handler prevents.
+  const { server, port } = await createTunnelServer({ port: 0 });
+  const pc = await registerPc(port);
+  pc.on('message', () => {});
+
+  const browserWs = await openBrowserWs(port, '/input');
+  browserWs.on('error', () => {}); // the client end sees the teardown too
+  // FIN + RSV1 set, opcode text, masked, zero-length: "RSV1 must be clear".
+  browserWs._socket.write(Buffer.from([0xC1, 0x80, 1, 2, 3, 4]));
+
+  await new Promise((resolve) => setTimeout(resolve, 150));
+
+  // The process is still alive and the server still serving: a second browser
+  // connection is proxied to the PC as normal.
+  const pcGotOpen = new Promise((resolve) => {
+    pc.on('message', (raw) => {
+      const frame = JSON.parse(raw.toString());
+      if (frame.type === 'ws_open') resolve(frame);
+    });
+  });
+  const second = await openBrowserWs(port, '/input');
+  const openFrame = await pcGotOpen;
+  assert.strictEqual(openFrame.path, '/input');
+
+  second.close();
+  pc.close();
+  await server.close();
+});
+
+function runCli(env) {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [SERVER_PATH], {
+      env: { ...process.env, ...env },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (c) => { stdout += c.toString(); });
+    child.stderr.on('data', (c) => { stderr += c.toString(); });
+    const killTimer = setTimeout(() => child.kill('SIGKILL'), 3000);
+    child.on('exit', (code, signal) => {
+      clearTimeout(killTimer);
+      resolve({ code, signal, stdout, stderr });
+    });
+  });
+}
+
+test('CLI refuses to start without TUNNEL_SECRET', async () => {
+  // Regression test: an unset TUNNEL_SECRET used to warn and start anyway,
+  // leaving an internet-facing server that accepts a registration from anyone.
+  const { code, stderr } = await runCli({ TUNNEL_SECRET: '', PORT: '0' });
+  assert.strictEqual(code, 1);
+  assert.match(stderr, /TUNNEL_SECRET/);
+});
+
+test('CLI starts when TUNNEL_SECRET is set', async () => {
+  const { signal, stdout } = await runCli({ TUNNEL_SECRET: 'a-real-secret', PORT: '0' });
+  // It stays up until the harness kills it, and reported a listening port.
+  assert.strictEqual(signal, 'SIGKILL');
+  assert.match(stdout, /Tunnel server listening on port/);
 });
