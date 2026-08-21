@@ -32,11 +32,14 @@ struct SignalingClient::Impl {
             std::lock_guard<std::mutex> lock(pendingMutex);
             toSend.swap(pending);
         }
+        std::cerr << "[debug] SignalingClient: flushing " << toSend.size() << " queued message(s)" << std::endl;
         for (auto& msg : toSend) {
             websocketpp::lib::error_code ec;
             client.send(handle, msg, websocketpp::frame::opcode::text, ec);
             if (ec) {
                 std::cerr << "[debug] SignalingClient: flush send failed: " << ec.message() << std::endl;
+            } else {
+                std::cerr << "[debug] SignalingClient: flush sent " << msg.size() << " bytes ok" << std::endl;
             }
         }
     }
