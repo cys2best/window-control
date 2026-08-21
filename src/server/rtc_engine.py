@@ -47,7 +47,11 @@ class ScrcpyVideoClient:
         loop = asyncio.get_event_loop()
         buf = b""
         while len(buf) < n:
-            chunk = await loop.sock_recv(self._sock, n - len(buf))
+            try:
+                chunk = await loop.sock_recv(self._sock, n - len(buf))
+            except (OSError, ValueError, asyncio.CancelledError):
+                # Socket closed, unregistered, or stop() called; treat as EOF
+                raise ConnectionError("ScrcpyVideoClient: connection closed mid-read")
             if not chunk:
                 raise ConnectionError("ScrcpyVideoClient: connection closed mid-read")
             buf += chunk
@@ -77,6 +81,14 @@ class ScrcpyVideoClient:
     def stop(self) -> None:
         self._running = False
         if self._sock:
+            try:
+                self._sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass  # socket already disconnected or not fully connected
             self._sock.close()
         if self.control_sock:
+            try:
+                self.control_sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass  # socket already disconnected or not fully connected
             self.control_sock.close()

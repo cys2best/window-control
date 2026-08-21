@@ -86,3 +86,44 @@ async def test_full_handshake_and_one_frame(fake_server):
     assert first_frame == b"\x00\x00\x00\x01\x67NALUDATA"
 
     client.stop()
+
+
+async def test_stop_interrupts_blocked_read_frames(fake_server):
+    """Test that stop() can interrupt read_frames() when it's blocked on sock_recv.
+
+    This reproduces the critical bug scenario: stop() is called mid-stream while
+    read_frames() is blocked waiting for the next frame header. The shutdown() call
+    in stop() is essential to unblock the pending sock_recv(); plain close() does not.
+    """
+    client = ScrcpyVideoClient(fake_server.port)
+
+    async def drive_server():
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, fake_server.accept_video_and_send_dummy)
+        await loop.run_in_executor(None, fake_server.accept_control)
+        await loop.run_in_executor(
+            None, fake_server.send_handshake, "TestDevice", 720, 480
+        )
+        # Deliberately send no more frames — leaves read_frames() blocked on the
+        # next 12-byte header read inside _recvall().
+
+    driver = asyncio.ensure_future(drive_server())
+    await client.connect()
+    await client.connect_control()
+    await client.read_handshake()
+    await driver
+
+    async def consume():
+        """Consume frames from read_frames() until it ends."""
+        async for _ in client.read_frames():
+            pass  # should never yield; loop should just end when stopped
+
+    consume_task = asyncio.ensure_future(consume())
+    await asyncio.sleep(0.1)  # let it actually block inside sock_recv
+
+    # Call stop() while consume_task is blocked on sock_recv().
+    # Without the shutdown() fix, this would hang forever.
+    client.stop()
+
+    # Must complete promptly — if stop() doesn't unblock the recv, this times out.
+    await asyncio.wait_for(consume_task, timeout=2.0)
