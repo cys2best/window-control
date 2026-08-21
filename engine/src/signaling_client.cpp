@@ -3,6 +3,7 @@
 #include <websocketpp/client.hpp>
 #include <thread>
 #include <atomic>
+#include <iostream>
 
 using WsClient = websocketpp::client<websocketpp::config::asio_client>;
 
@@ -72,6 +73,9 @@ void SignalingClient::Connect(MessageCallback onMessage) {
 void SignalingClient::Send(const std::string& jsonMessage) {
     websocketpp::lib::error_code ec;
     impl_->client.send(impl_->handle, jsonMessage, websocketpp::frame::opcode::text, ec);
+    if (ec) {
+        std::cerr << "[debug] SignalingClient::Send failed: " << ec.message() << std::endl;
+    }
 }
 
 void SignalingClient::Disconnect() {
