@@ -35,7 +35,11 @@
     let inputChannel = null;
 
     pc.ontrack = (event) => {
-      videoEl.srcObject = event.streams[0];
+      console.log('ontrack fired, streams:', event.streams.length, 'track:', event.track.kind, event.track.readyState);
+      // No a=msid on the engine's SDP means event.streams can be empty —
+      // fall back to wrapping the track directly instead of relying on a
+      // MediaStream the remote description never declared.
+      videoEl.srcObject = event.streams[0] || new MediaStream([event.track]);
       statusEl.textContent = 'receiving video';
     };
     pc.oniceconnectionstatechange = () => {
