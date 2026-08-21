@@ -457,16 +457,25 @@ async def run_engine(scrcpy_port: int, signaling_url: str, session_id: str, ice_
     # the SECOND frame onward once video_pump_loop's `async for` starts).
     frames = video.read_frames()
     first_frame = await frames.__anext__()
-    profile_level_id = extract_profile_level_id(first_frame)
+    live_profile_level_id = extract_profile_level_id(first_frame)
+    # EXPERIMENT: declare a browser-guaranteed-negotiable profile-level-id in
+    # the SDP (one of the 5 exact values Chrome/Brave's H264 decoder
+    # capability list advertises, confirmed via RTCRtpReceiver.getCapabilities
+    # in-browser) regardless of what the live SPS actually says. H264 decoders
+    # are supposed to configure themselves from the real in-band SPS/PPS in
+    # the bitstream, not the SDP string -- profile-level-id in SDP is a
+    # negotiation/capability-advertisement hint, not a hard bitstream
+    # contract. Testing whether VideoToolbox actually honors that, since
+    # dynamically declaring the TRUE live value (e.g. 42c01f, which isn't in
+    # the browser's fixed 5-entry table) causes the browser to silently
+    # substitute 42e01f during answer generation anyway -- so declaring it
+    # ourselves should be equivalent or better, as long as decode genuinely
+    # keys off the real bitstream.
     print(f"[debug] first_frame size={len(first_frame)} "
           f"first8={first_frame[:8].hex()} "
-          f"extracted_profile_level_id={profile_level_id}", flush=True)
-    if profile_level_id is None:
-        # Should not happen in practice (frame #0 is always SPS per H264
-        # stream structure), but fall back to a known-good value rather than
-        # crashing if some device/encoder ever violates that assumption.
-        profile_level_id = "42e01f"
-        print("[debug] extraction returned None, using fallback 42e01f", flush=True)
+          f"live_profile_level_id={live_profile_level_id} "
+          f"(declaring 42e01f in SDP regardless, per experiment)", flush=True)
+    profile_level_id = "42e01f"
 
     config = RTCConfiguration(iceServers=[_parse_ice_url(ice_url)])
     pc = RTCPeerConnection(configuration=config)
