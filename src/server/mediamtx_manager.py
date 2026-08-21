@@ -12,8 +12,12 @@ import sys
 import tempfile
 import threading
 import traceback
+import urllib.error
+import urllib.request
 
 from config import ASSETS_DIR, MEDIAMTX_PORT, WHEP_PORT, RTMP_PORT, WEBRTC_UDP_PORT
+
+_API_BASE = "http://127.0.0.1:9997"
 
 
 def _log(msg: str):
@@ -118,6 +122,7 @@ class MediamtxManager:
         # Last start() args, so the watchdog can relaunch with the same paths if
         # mediamtx.exe dies on its own.
         self._last_args: tuple | None = None
+        self._live_paths: set[str] = set()
         self._stopping = False  # set during an intentional stop() so the watchdog
                                 # doesn't fight it
         self._watchdog_thread = threading.Thread(target=self._watchdog, daemon=True)
@@ -127,6 +132,7 @@ class MediamtxManager:
         """Start (or restart) mediamtx with one path per instance."""
         with self._lock:
             self._last_args = (list(instance_names), tailscale_ip)
+            self._live_paths = set(instance_names)
             self._stopping = False
             self._stop_locked()
             _reap_orphan_mediamtx()
@@ -181,6 +187,61 @@ class MediamtxManager:
         with self._lock:
             self._stopping = True
             self._stop_locked()
+
+    def add_path(self, name: str) -> bool:
+        """Add a live path to the running instance without restarting it.
+
+        A full restart tears down every other instance's live WHEP stream, so
+        this patches the running mediamtx via its config API instead. Falls
+        back to a full restart if the API call fails, so this is never worse
+        than the old always-restart behavior.
+        """
+        with self._lock:
+            if self._proc is None or self._proc.poll() is not None:
+                return False
+            if name in self._live_paths:
+                return True
+            tailscale_ip = self._last_args[1] if self._last_args else None
+        if self._api_call("POST", f"/v3/config/paths/add/{name}", b"{}"):
+            with self._lock:
+                self._live_paths.add(name)
+                self._last_args = (list(self._live_paths), tailscale_ip)
+            return True
+        _log(f"[mediamtx] add_path {name} via API failed, falling back to full restart")
+        with self._lock:
+            names = list(self._live_paths) + [name]
+        self.start(names, tailscale_ip)
+        return True
+
+    def remove_path(self, name: str) -> bool:
+        """Remove a live path from the running instance without restarting it."""
+        with self._lock:
+            if self._proc is None or self._proc.poll() is not None:
+                return False
+            if name not in self._live_paths:
+                return True
+            tailscale_ip = self._last_args[1] if self._last_args else None
+        ok = self._api_call("DELETE", f"/v3/config/paths/delete/{name}", None)
+        with self._lock:
+            self._live_paths.discard(name)
+            self._last_args = (list(self._live_paths), tailscale_ip)
+        if not ok:
+            _log(f"[mediamtx] remove_path {name} via API failed (path left stale until next restart)")
+        return ok
+
+    def _api_call(self, method: str, path: str, body: bytes | None) -> bool:
+        req = urllib.request.Request(
+            f"{_API_BASE}{path}",
+            data=body,
+            method=method,
+            headers={"Content-Type": "application/json"} if body is not None else {},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                return 200 <= resp.status < 300
+        except Exception:
+            _log(f"[mediamtx] api {method} {path} failed: {traceback.format_exc()[:200]}")
+            return False
 
     def _watchdog(self):
         """Relaunch mediamtx.exe if it dies on its own.

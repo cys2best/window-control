@@ -93,3 +93,51 @@ def test_select_dead_session_refused():
 
     assert im.select(serial) is False
     assert im.active is None
+
+
+def test_refresh_uses_incremental_paths_when_mediamtx_already_running(monkeypatch):
+    # A full mediamtx.start() restart tears down every other instance's live
+    # WHEP stream, so refresh() must patch paths via add_path/remove_path
+    # once the process is up, and only call start() to boot it the first time.
+    from server import instance_manager as im_mod
+
+    monkeypatch.setattr(im_mod, "adb_manager", type("M", (), {
+        "list_vms": staticmethod(lambda: [
+            {"id": "adb:emulator-5554", "title": "t", "ldplayer_index": 0}
+        ]),
+        "get_screen_size": staticmethod(lambda serial: (100, 200)),
+    }))
+    monkeypatch.setattr("server.tailscale.get_best_ip", lambda: "100.64.1.1")
+    monkeypatch.setattr(im_mod.ScrcpySession, "start", lambda self: True)
+
+    class FakeMediamtx:
+        running = True
+
+        def __init__(self):
+            self.started = []
+            self.added = []
+            self.removed = []
+
+        def start(self, names, tailscale_ip=None):
+            self.started.append((list(names), tailscale_ip))
+
+        def add_path(self, name):
+            self.added.append(name)
+            return True
+
+        def remove_path(self, name):
+            self.removed.append(name)
+            return True
+
+        def rtsp_url(self, name):
+            return f"rtsp://localhost/{name}"
+
+    mediamtx = FakeMediamtx()
+    im = InstanceManager(mediamtx)
+    monkeypatch.setattr(im, "_ensure_stun", lambda ip: None)
+
+    im.refresh()
+
+    assert mediamtx.started == []  # process already running — no full restart
+    assert mediamtx.added == ["instance0"]
+    assert mediamtx.removed == []

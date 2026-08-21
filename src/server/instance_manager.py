@@ -76,6 +76,7 @@ class InstanceManager:
         with self._lock:
             # Stop sessions for devices that disconnected
             gone = set(self._instances) - current_serials
+            gone_names = [instance_name(serial) for serial in gone]
             for serial in gone:
                 _log(f"[instance] device gone: {serial}")
                 self._instances[serial].session.stop()
@@ -91,14 +92,22 @@ class InstanceManager:
         if not new_vms and not gone:
             return
 
-        # Restart mediamtx with updated path list, advertising Tailscale IP for fast ICE
         from server.tailscale import get_best_ip
         _ip = get_best_ip()
-        _log(f"[mediamtx] advertising IP for ICE: {_ip}")
         self._ensure_stun(_ip)
         # One always-live path per instance; the browser WHEPs directly to the
         # selected instance's path. No shared 'active' mux to seed or repoint.
-        self._mediamtx.start(all_names, tailscale_ip=_ip)
+        if not self._mediamtx.running:
+            _log(f"[mediamtx] booting mediamtx, advertising IP for ICE: {_ip}")
+            self._mediamtx.start(all_names, tailscale_ip=_ip)
+        else:
+            # Patch the running instance's path list via its config API instead
+            # of restarting the whole process — a restart tears down every
+            # other instance's live WHEP stream, not just the one that changed.
+            for name in gone_names:
+                self._mediamtx.remove_path(name)
+            for name in new_names:
+                self._mediamtx.add_path(name)
 
         # Start scrcpy sessions for new devices
         for vm in new_vms:
