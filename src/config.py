@@ -45,6 +45,16 @@ VPS_SIGNALING_URL = os.environ.get("VPS_SIGNALING_URL")  # e.g. "ws://VPS_IP:844
 # enumerable and there is no auth on that path yet — not safe to expose
 # publicly without the planned follow-up auth work.
 
+# App-wide access token. Unset = auth disabled (LAN-only / trusted-network
+# deployments). Set it before exposing the app past a trusted LAN — every
+# route (including /input control) is otherwise open to anyone with the URL.
+AUTH_TOKEN = os.environ.get("AUTH_TOKEN")
+# Mark the session cookie Secure (HTTPS-only) once the app sits behind TLS
+# (e.g. the VPS tunnel in this plan). Leave unset/false for plain-HTTP LAN
+# access — a Secure cookie would never be sent back and login would appear
+# to silently fail.
+COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "").lower() in ("1", "true", "yes")
+
 ADB_PATH = "adb"       # overridden at runtime by _find_adb()
 SCRCPY_PATH = os.path.join("assets", "scrcpy", "scrcpy.exe")
 MEDIAMTX_PATH = os.path.join("assets", "mediamtx", "mediamtx.exe")

@@ -6,14 +6,15 @@ import subprocess
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, Response, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Literal
 
-from config import CLIENT_DIR, QUALITY_MAP, WHEP_PORT, STUN_PORT, TIER_ORDER, VPS_SIGNALING_URL
+from config import CLIENT_DIR, COOKIE_SECURE, QUALITY_MAP, WHEP_PORT, STUN_PORT, TIER_ORDER, VPS_SIGNALING_URL
 from server.stream import CaptureState, FrameQueue, mjpeg_generator
 from server import adb_manager
+from server import auth
 from server.instance_manager import InstanceManager
 from server.signaling_bridge import run_bridge_with_reconnect
 from server.tailscale import get_best_ip
@@ -21,6 +22,10 @@ from server.tailscale import get_best_ip
 log = logging.getLogger(__name__)
 
 _bridge_task: "asyncio.Task | None" = None
+
+# Routes reachable without a session cookie even when AUTH_TOKEN is set —
+# just enough to load the login gate and let it authenticate.
+_AUTH_EXEMPT_PATHS = {"/", "/login"}
 
 
 def _log(msg: str):
@@ -44,6 +49,10 @@ class QualityRequest(BaseModel):
 
 class QualityTierRequest(BaseModel):
     tier: str
+
+
+class LoginRequest(BaseModel):
+    token: str
 
 
 def _make_exception_handler(default_handler):
@@ -143,6 +152,25 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
                instance_manager: InstanceManager) -> FastAPI:
     import asyncio
     app = FastAPI()
+
+    @app.middleware("http")
+    async def _auth_gate(request: Request, call_next):
+        if auth.auth_enabled() and request.url.path not in _AUTH_EXEMPT_PATHS \
+                and not request.url.path.startswith("/static/"):
+            if not auth.verify_session_cookie(request.cookies.get(auth.COOKIE_NAME)):
+                return JSONResponse({"detail": "Not authenticated"}, status_code=401)
+        return await call_next(request)
+
+    @app.post("/login")
+    async def login(req: LoginRequest, response: Response):
+        if not auth.check_token(req.token):
+            raise HTTPException(status_code=401, detail="Invalid token")
+        response.set_cookie(
+            auth.COOKIE_NAME, auth.make_session_cookie(),
+            max_age=auth.SESSION_MAX_AGE_SECONDS, httponly=True, samesite="lax",
+            secure=COOKIE_SECURE,
+        )
+        return {"ok": True}
 
     @app.on_event("startup")
     async def _startup():
@@ -333,6 +361,10 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
 
     @app.websocket("/input")
     async def ws_input(websocket: WebSocket):
+        if auth.auth_enabled() and not auth.verify_session_cookie(
+                websocket.cookies.get(auth.COOKIE_NAME)):
+            await websocket.close(code=1008)  # policy violation
+            return
         await websocket.accept()
         import asyncio as _asyncio
         from server.scrcpy_session import ScrcpyControl
