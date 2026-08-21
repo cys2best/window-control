@@ -4,6 +4,8 @@
 #include <thread>
 #include <atomic>
 #include <iostream>
+#include <mutex>
+#include <vector>
 
 using WsClient = websocketpp::client<websocketpp::config::asio_client>;
 
@@ -14,6 +16,30 @@ struct SignalingClient::Impl {
     std::thread ioThread;
     std::atomic<bool> connected{false};
     MessageCallback onMessage;
+
+    // setLocalDescription()'s offer/candidates fire on the caller's thread
+    // essentially synchronously — long before the WS handshake to a remote
+    // signaling server completes on ioThread. Without this queue, every
+    // Send() call made in that window silently fails ("invalid state") and
+    // the offer is lost for good; the peer then sits in ICE gathering
+    // forever with nothing sent to the other side.
+    std::mutex pendingMutex;
+    std::vector<std::string> pending;
+
+    void FlushPending() {
+        std::vector<std::string> toSend;
+        {
+            std::lock_guard<std::mutex> lock(pendingMutex);
+            toSend.swap(pending);
+        }
+        for (auto& msg : toSend) {
+            websocketpp::lib::error_code ec;
+            client.send(handle, msg, websocketpp::frame::opcode::text, ec);
+            if (ec) {
+                std::cerr << "[debug] SignalingClient: flush send failed: " << ec.message() << std::endl;
+            }
+        }
+    }
 
     ~Impl() {
         if (connected) {
@@ -51,6 +77,7 @@ void SignalingClient::Connect(MessageCallback onMessage) {
 
     impl_->client.set_open_handler([this](websocketpp::connection_hdl) {
         impl_->connected = true;
+        impl_->FlushPending();
     });
     impl_->client.set_close_handler([this](websocketpp::connection_hdl) {
         impl_->connected = false;
@@ -71,6 +98,20 @@ void SignalingClient::Connect(MessageCallback onMessage) {
 }
 
 void SignalingClient::Send(const std::string& jsonMessage) {
+    // Queue instead of dropping when the WS handshake hasn't completed yet —
+    // see the comment on Impl::pending. Once connected, send directly; a
+    // send-while-connected failure is a real transport error, not a timing
+    // gap, so it's still just logged rather than retried.
+    if (!impl_->connected.load()) {
+        std::lock_guard<std::mutex> lock(impl_->pendingMutex);
+        // Re-check under the lock: the open handler may have flushed and
+        // flipped `connected` between the load above and taking this lock.
+        if (!impl_->connected.load()) {
+            impl_->pending.push_back(jsonMessage);
+            return;
+        }
+    }
+
     websocketpp::lib::error_code ec;
     impl_->client.send(impl_->handle, jsonMessage, websocketpp::frame::opcode::text, ec);
     if (ec) {
