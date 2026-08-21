@@ -330,3 +330,52 @@ async def test_send_and_recv_roundtrip(echo_ws_server):
     assert reply == {"type": "offer", "sdp": "test-sdp"}
     assert json.loads(received[0]) == {"type": "offer", "sdp": "test-sdp"}
     await client.close()
+
+
+async def test_recv_returns_none_for_malformed_json(echo_ws_server):
+    """recv() must return None for syntactically invalid JSON, not raise."""
+    base_url, received = echo_ws_server
+    client = SignalingClient(base_url, "sess-1", "engine", "")
+    await client.connect()
+
+    # Send genuinely malformed JSON (not valid JSON at all)
+    malformed = "not valid json{{{"
+    await client._ws.send(malformed)
+    result = await client.recv()
+
+    assert result is None
+    await client.close()
+
+
+async def test_recv_returns_none_for_non_dict_valid_json(echo_ws_server):
+    """recv() must return None for valid-but-non-dict JSON (strings, numbers, lists, null)."""
+    base_url, received = echo_ws_server
+    client = SignalingClient(base_url, "sess-1", "engine", "")
+    await client.connect()
+
+    # Test valid string JSON
+    await client._ws.send('"hello"')
+    result = await client.recv()
+    assert result is None
+
+    # Test valid number JSON
+    await client._ws.send("42")
+    result = await client.recv()
+    assert result is None
+
+    # Test valid list JSON
+    await client._ws.send("[1, 2, 3]")
+    result = await client.recv()
+    assert result is None
+
+    # Test null JSON
+    await client._ws.send("null")
+    result = await client.recv()
+    assert result is None
+
+    # Verify that a valid dict still works
+    await client._ws.send('{"type": "test"}')
+    result = await client.recv()
+    assert result == {"type": "test"}
+
+    await client.close()

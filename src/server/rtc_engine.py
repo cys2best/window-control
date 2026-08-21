@@ -201,7 +201,10 @@ class SignalingClient:
     async def recv(self) -> dict | None:
         raw = await self._ws.recv()
         try:
-            return json_module.loads(raw)
+            parsed = json_module.loads(raw)
+            if not isinstance(parsed, dict):
+                return None
+            return parsed
         except json_module.JSONDecodeError:
             return None
 
