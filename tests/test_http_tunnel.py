@@ -293,6 +293,73 @@ async def test_run_tunnel_once_dispatches_http_request_and_responds():
     assert sent["status"] == 200
 
 
+class _YieldingDemuxWS(_FakeDemuxWS):
+    """Like _FakeDemuxWS, but __anext__ actually yields to the event loop
+    a few times before returning the next frame -- mirrors how a real
+    websocket read suspends between frames, so a background task dispatched
+    for a previous frame gets a genuine chance to run to completion (and be
+    discarded from `background_tasks`) before the next frame is processed.
+    """
+    async def __anext__(self):
+        for _ in range(5):
+            await asyncio.sleep(0)
+        return await super().__anext__()
+
+
+@pytest.mark.asyncio
+async def test_run_tunnel_once_logs_background_task_failure_mid_connection(caplog):
+    """Regression test for the reviewer finding on http_tunnel.py:120-123:
+    a dispatched task (_respond_http here) that fails *while the tunnel
+    connection is still open* must be logged immediately by the done
+    callback, not only reaped by the batch check when run_tunnel_once
+    exits. By the time the second frame is processed, the failing task
+    from the first frame has already completed and been discarded from
+    background_tasks (thanks to _YieldingDemuxWS's real yields) -- so if
+    the failure were only caught by the teardown batch gather, it would
+    never be logged at all, since discarded tasks aren't in that set.
+    """
+    from server.http_tunnel import run_tunnel_once
+
+    failing_frame = json.dumps({
+        "type": "http_request", "id": "s1", "method": "GET",
+        "path": "/boom", "headers": {}, "body": "",
+    })
+    ok_frame = json.dumps({
+        "type": "http_request", "id": "s2", "method": "GET",
+        "path": "/instances", "headers": {}, "body": "",
+    })
+    fake_ws = _YieldingDemuxWS([failing_frame, ok_frame])
+
+    def fake_ws_connect(url):
+        return fake_ws
+
+    fake_response = MagicMock()
+    fake_response.status_code = 200
+    fake_response.headers = {}
+    fake_response.content = b"[]"
+    fake_http = AsyncMock()
+    fake_http.request = AsyncMock(
+        side_effect=[RuntimeError("boom mid-connection"), fake_response])
+
+    with caplog.at_level(logging.ERROR, logger="server.http_tunnel"):
+        with pytest.raises(ConnectionError):
+            await run_tunnel_once(
+                "wss://tunnel.example.test/__tunnel/register", "tsecret",
+                ws_connect=fake_ws_connect, http_client=fake_http,
+            )
+
+    error_records = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert any("background task failed" in r.getMessage() for r in error_records)
+    assert any(r.exc_info is not None for r in error_records)
+    # The second (successful) request still got a response despite the
+    # first task's failure -- the connection kept running normally, and
+    # only one response was ever sent (the failed task never sent one).
+    assert len(fake_ws.sent) == 1
+    sent = json.loads(fake_ws.sent[0])
+    assert sent["id"] == "s2"
+    assert sent["status"] == 200
+
+
 @pytest.mark.asyncio
 async def test_run_tunnel_with_reconnect_retries_after_disconnect():
     from server.http_tunnel import run_tunnel_with_reconnect

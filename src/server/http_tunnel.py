@@ -112,15 +112,28 @@ async def run_tunnel_once(
     # the next frame) -- but a fire-and-forget asyncio.Task whose outcome is
     # never retrieved either leaks silently on success or logs nothing but
     # an unhandled "Task exception was never retrieved" warning on failure.
-    # Track every dispatched task here and reap it below (gather + log,
-    # same shape _run_ws_stream already uses for its own pipe tasks) once
-    # the connection ends, instead of leaving them fully unaccounted for.
+    # Track every dispatched task here so we can wait for genuinely
+    # in-flight ones once the connection ends (see the `finally` block
+    # below); the done-callback itself is what actually surfaces a
+    # failure -- it fires the instant a task completes, whether that's
+    # mid-connection or at teardown, so a request/stream failure is never
+    # silently handed to Python's default "Task exception was never
+    # retrieved" path.
     background_tasks: set[asyncio.Task] = set()
 
     def _dispatch(coro) -> None:
         task = asyncio.ensure_future(coro)
         background_tasks.add(task)
-        task.add_done_callback(background_tasks.discard)
+
+        def _on_task_done(t: asyncio.Task) -> None:
+            background_tasks.discard(t)
+            if t.cancelled():
+                return
+            exc = t.exception()
+            if exc is not None:
+                log.error("tunnel: background task failed", exc_info=exc)
+
+        task.add_done_callback(_on_task_done)
 
     try:
         async with ws_connect(url) as ws:
@@ -141,10 +154,13 @@ async def run_tunnel_once(
                         stream_queues.pop(stream_id, None)
     finally:
         if background_tasks:
-            results = await asyncio.gather(*background_tasks, return_exceptions=True)
-            for result in results:
-                if isinstance(result, BaseException):
-                    log.error("tunnel: background task failed", exc_info=result)
+            # Anything still in `background_tasks` here was genuinely
+            # in-flight when the connection loop exited (already-completed
+            # tasks were removed by `_on_task_done` as soon as they
+            # finished, and had their outcome logged there already). This
+            # is just "don't return with dangling work" -- not a second
+            # place exceptions get surfaced, so don't re-log them here.
+            await asyncio.gather(*background_tasks, return_exceptions=True)
 
 
 async def _respond_http(ws, client: httpx.AsyncClient, frame: dict) -> None:
