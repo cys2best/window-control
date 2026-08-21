@@ -99,7 +99,12 @@ async function selectWindow(id, serial) {
     // the new instance. No shared mux, no server-side repoint, no reader
     // teardown to wait out.
     setAdaptiveSerial(_serial);
-    if (data.signaling_url) {
+    if (data.signaling_url && data.whep_url) {
+      // Both paths available (e.g. on Tailscale/LAN while public is also
+      // configured) -- race them so LAN gets its low-latency path with no
+      // added delay off-network, instead of always preferring one.
+      initWebRTCRace(id, data.whep_url, data.stun_url, data.signaling_url, data.name, _serial, data.ice_servers);
+    } else if (data.signaling_url) {
       const ok = await initWebRTCPublic(id, data.signaling_url, data.name, _serial, data.ice_servers);
       if (!ok) {
         initWebRTC(id, data.whep_url, data.stun_url, _serial);

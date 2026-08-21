@@ -15,6 +15,8 @@ let _signalingUrl = null;      // VPS signaling relay URL for the active public 
 let _instanceName = null;      // instance name (rendezvous key) for the active public session
 let _iceServers = [];          // STUN/TURN servers for the public path (from server, see ice_config.py)
 let _publicModeActive = false; // true when the active stream was negotiated via initWebRTCPublic
+let _raceGen = 0;              // bumped by initWebRTC/initWebRTCPublic/initWebRTCRace on every call,
+                                // so a stale initWebRTCRace() can detect it's been superseded (see below)
 
 // ── Quality tiers ──────────────────────────────────────────────────────────────
 const _TIER_ORDER = ["480", "720", "1080", "1440"];
@@ -337,6 +339,7 @@ function waitForIceGatheringComplete(pc, capMs = 4000, fastPathType = 'srflx') {
 
 async function initWebRTC(windowId, whepUrl, stunUrl, serial) {
   // Cancel any in-flight negotiation
+  _raceGen++; // invalidate any in-flight initWebRTCRace() so it can't clobber us on completion
   if (_pc) { try { _pc.close(); } catch(_) {} _pc = null; }
   if (_webrtcInProgress) {
     _webrtcInProgress = false;
@@ -477,6 +480,7 @@ async function initWebRTCPublic(windowId, signalingUrl, instanceName, serial, ic
   // (proven end-to-end against the real VPS + mediamtx during manual
   // testing) -- {signalingUrl}/?session={instanceName}&role=viewer, no
   // JSON envelope, raw SDP text both directions.
+  _raceGen++; // invalidate any in-flight initWebRTCRace() so it can't clobber us on completion
   if (_pc) { try { _pc.close(); } catch(_) {} _pc = null; }
   if (_webrtcInProgress) {
     _webrtcInProgress = false;
@@ -598,6 +602,135 @@ async function initWebRTCPublic(windowId, signalingUrl, instanceName, serial, ic
       finish(false);
     }
   });
+}
+
+// ── Hybrid: race local WHEP against the public path ─────────────────────────
+// Tries both connection paths concurrently and uses whichever's ICE actually
+// connects first -- gives LAN/Tailscale users the low-latency local path
+// with zero added delay when off-network (the public probe just wins the
+// race instead of the caller waiting out a fixed local-first timeout).
+//
+// Each probe below is deliberately minimal and self-contained: its own
+// throwaway RTCPeerConnection (and WebSocket, for the public probe), no DOM
+// writes, no global _pc/_webrtcActive mutation. That's what makes racing
+// them safe -- neither can corrupt the other's negotiation, and if the user
+// switches windows/instances mid-race, a stale winner is caught by
+// raceGen below instead of clobbering the new selection. Once a winner is
+// picked, the loser's probe is left to close itself out (its own timeout or
+// failure path) rather than being force-aborted -- simpler, and harmless
+// since it never touched shared state.
+//
+// The cost: the winning path renegotiates from scratch via the real
+// initWebRTC()/initWebRTCPublic() below (one extra handshake, typically
+// well under 1s) instead of reusing the probe connection directly. That
+// keeps this function additive -- it doesn't touch either proven function's
+// internals, so their existing retry/tier-switch/fallback behavior is
+// exactly as before whether reached via a race or called directly.
+
+function _probeLocalWhep(whepUrl, stunUrl) {
+  return new Promise(resolve => {
+    if (!whepUrl) { resolve(false); return; }
+    let settled = false;
+    const pc = new RTCPeerConnection({ iceServers: stunUrl ? [{ urls: stunUrl }] : [] });
+    const finish = ok => {
+      if (settled) return;
+      settled = true;
+      try { pc.close(); } catch (_) {}
+      resolve(ok);
+    };
+    pc.oniceconnectionstatechange = () => {
+      const s = pc.iceConnectionState;
+      if (s === 'connected' || s === 'completed') finish(true);
+      else if (s === 'failed' || s === 'closed') finish(false);
+    };
+    pc.addTransceiver('video', { direction: 'recvonly' });
+    (async () => {
+      try {
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        await waitForIceGatheringComplete(pc);
+        const r = await fetch(whepUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/sdp' },
+          body: pc.localDescription.sdp,
+        });
+        if (!r || !r.ok) { finish(false); return; }
+        const answerSdp = await r.text();
+        await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
+      } catch (_) { finish(false); }
+    })();
+    setTimeout(() => finish(false), 6000);
+  });
+}
+
+function _probePublicSignaling(signalingUrl, instanceName, iceServers) {
+  return new Promise(resolve => {
+    if (!signalingUrl) { resolve(false); return; }
+    let settled = false;
+    const pc = new RTCPeerConnection({ iceServers: iceServers || [] });
+    let ws = null;
+    const finish = ok => {
+      if (settled) return;
+      settled = true;
+      try { pc.close(); } catch (_) {}
+      try { ws && ws.close(); } catch (_) {}
+      resolve(ok);
+    };
+    pc.oniceconnectionstatechange = () => {
+      const s = pc.iceConnectionState;
+      if (s === 'connected' || s === 'completed') finish(true);
+      else if (s === 'failed' || s === 'closed') finish(false);
+    };
+    pc.addTransceiver('video', { direction: 'recvonly' });
+    ws = new WebSocket(`${signalingUrl}/?session=${encodeURIComponent(instanceName)}&role=viewer`);
+    ws.onopen = async () => {
+      try {
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        await waitForIceGatheringComplete(pc, 4000, 'relay');
+        ws.send(pc.localDescription.sdp);
+      } catch (_) { finish(false); }
+    };
+    ws.onmessage = async (event) => {
+      try { await pc.setRemoteDescription({ type: 'answer', sdp: event.data }); }
+      catch (_) { finish(false); }
+    };
+    ws.onerror = () => finish(false);
+    ws.onclose = () => finish(false);
+    setTimeout(() => finish(false), 8000);
+  });
+}
+
+async function initWebRTCRace(windowId, whepUrl, stunUrl, signalingUrl, instanceName, serial, iceServers) {
+  const myGen = ++_raceGen;
+  setNetStatus('warn', 'Connecting…');
+
+  const winner = await new Promise(resolve => {
+    let localDone = false, publicDone = false, resolved = false;
+    const settle = kind => { if (!resolved) { resolved = true; resolve(kind); } };
+    _probeLocalWhep(whepUrl, stunUrl).then(ok => {
+      localDone = true;
+      if (ok) settle('local');
+      else if (publicDone) settle(null);
+    });
+    _probePublicSignaling(signalingUrl, instanceName, iceServers).then(ok => {
+      publicDone = true;
+      if (ok) settle('public');
+      else if (localDone) settle(null);
+    });
+  });
+
+  // A newer race (or a direct call) superseded this one while probing --
+  // whatever that call started owns the connection now, abandon silently.
+  if (myGen !== _raceGen) return;
+
+  if (winner === 'local') {
+    initWebRTC(windowId, whepUrl, stunUrl, serial);
+  } else if (winner === 'public') {
+    initWebRTCPublic(windowId, signalingUrl, instanceName, serial, iceServers);
+  } else {
+    _fallbackToMJPEG();
+  }
 }
 
 function normalizeCoords(clientX, clientY) {
