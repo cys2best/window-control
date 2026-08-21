@@ -49,6 +49,13 @@ class ScrcpyVideoClient:
         while len(buf) < n:
             try:
                 chunk = await loop.sock_recv(self._sock, n - len(buf))
+            except asyncio.CancelledError:
+                # If _running is False, stop() was called and closed the socket.
+                # Treat as EOF so read_frames() exits cleanly.
+                # Otherwise, this is external task cancellation; let it propagate.
+                if not self._running:
+                    raise ConnectionError("ScrcpyVideoClient: connection closed mid-read")
+                raise
             except (OSError, ValueError):
                 # Socket closed, unregistered, or stop() called; treat as EOF
                 raise ConnectionError("ScrcpyVideoClient: connection closed mid-read")

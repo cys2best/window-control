@@ -89,11 +89,12 @@ async def test_full_handshake_and_one_frame(fake_server):
 
 
 async def test_stop_interrupts_blocked_read_frames(fake_server):
-    """Test that stop() can clean up blocked read_frames() resources.
+    """Test that stop() alone can clean up blocked read_frames() resources.
 
-    This verifies that stop() correctly sets _running=False and closes sockets,
-    allowing read_frames() to exit even if it's blocked on sock_recv(). The test
-    uses task cancellation (via wait_for timeout) to simulate the shutdown process.
+    This verifies that stop() correctly sets _running=False and closes sockets
+    (via shutdown + close), allowing read_frames() to exit even if it's blocked
+    inside sock_recv(). The generator should end cleanly without external
+    task cancellation.
     """
     client = ScrcpyVideoClient(fake_server.port)
 
@@ -115,27 +116,18 @@ async def test_stop_interrupts_blocked_read_frames(fake_server):
 
     async def consume():
         """Consume frames from read_frames() until it ends."""
-        try:
-            async for _ in client.read_frames():
-                pass
-        except asyncio.CancelledError:
-            # When the task is cancelled externally, CancelledError propagates
-            # out of read_frames since we no longer catch it in _recvall.
-            raise
+        async for _ in client.read_frames():
+            pass
 
     consume_task = asyncio.ensure_future(consume())
     await asyncio.sleep(0.1)  # let it actually block inside sock_recv
 
-    # Call stop() to set _running=False and close sockets
+    # Call stop() to set _running=False and close sockets via shutdown().
+    # This should unblock the blocked sock_recv and allow the generator to end.
     client.stop()
 
-    # Now cancel the task directly to verify cancellation propagates correctly
-    consume_task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await consume_task
-
-    # Verify the task is in cancelled state
-    assert consume_task.cancelled()
+    # The consume task should complete cleanly (generator exhausted), not hang or crash.
+    await asyncio.wait_for(consume_task, timeout=2.0)
 
 
 async def test_cancel_propagates_through_read_frames(fake_server):
