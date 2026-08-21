@@ -246,9 +246,40 @@ def handle_input_message(
 import re
 import sys
 
-from aiortc import RTCConfiguration, RTCIceCandidate, RTCIceServer, RTCPeerConnection, RTCSessionDescription
+from aiortc import (
+    RTCConfiguration,
+    RTCIceCandidate,
+    RTCIceServer,
+    RTCPeerConnection,
+    RTCRtpSender,
+    RTCSessionDescription,
+)
 
 _ICE_URL_WITH_CREDENTIALS_RE = re.compile(r"^(turns?):([^:]+):([^@]+)@(.+)$")
+
+
+def _h264_only_video_codecs() -> list:
+    """Return only the H264 entries from aiortc's video codec capabilities,
+    in the order aiortc reports them.
+
+    Verified against the installed aiortc version (RTCRtpSender.getCapabilities
+    ("video") returns VP8, video/rtx, and two H264 entries with different
+    profile-level-id values -- 42001f and 42e01f). By default aiortc's
+    createOffer() offers every one of these codecs (VP8 included) and lets
+    the remote peer pick; a real browser test picked VP8, and
+    PassthroughH264Track only ever produces raw H264 Annex-B NALUs wrapped
+    in av.Packet, so a VP8-negotiated connection silently sends garbage
+    (H264 bytes interpreted as VP8) and nothing decodes.
+
+    Keeping both H264 profile-level-id entries (rather than picking one) is
+    deliberate: scrcpy/MediaCodec's actual encoder profile varies by device,
+    and offering both still excludes VP8/rtx entirely, which is the actual
+    fix -- the browser must still land on H264, just possibly a different
+    profile-level-id line depending on what it/aiortc negotiate between
+    the two.
+    """
+    caps = RTCRtpSender.getCapabilities("video")
+    return [codec for codec in caps.codecs if codec.mimeType == "video/H264"]
 
 
 def _parse_ice_url(ice_url: str) -> RTCIceServer:
@@ -308,7 +339,15 @@ async def run_engine(scrcpy_port: int, signaling_url: str, session_id: str, ice_
     pc = RTCPeerConnection(configuration=config)
 
     track = PassthroughH264Track()
-    pc.addTrack(track)
+    # Use addTransceiver() instead of addTrack() so we get the
+    # RTCRtpTransceiver directly (addTrack() returns only the RTCRtpSender).
+    # Constrain the offer to H264-only: aiortc's createOffer() otherwise
+    # offers every codec it supports (VP8 included) and lets the remote
+    # peer choose -- real E2E testing against a browser showed it picking
+    # VP8, which PassthroughH264Track's raw H264 Annex-B NALUs cannot
+    # satisfy (the browser decodes H264 bytes as VP8 and nothing renders).
+    transceiver = pc.addTransceiver(track, direction="sendrecv")
+    transceiver.setCodecPreferences(_h264_only_video_codecs())
 
     input_channel = pc.createDataChannel("input")
 

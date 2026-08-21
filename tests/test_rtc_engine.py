@@ -6,7 +6,15 @@ import pytest
 
 import websockets
 
-from server.rtc_engine import ScrcpyVideoClient, PassthroughH264Track, SignalingClient, _parse_ice_url
+from aiortc import RTCPeerConnection
+
+from server.rtc_engine import (
+    ScrcpyVideoClient,
+    PassthroughH264Track,
+    SignalingClient,
+    _parse_ice_url,
+    _h264_only_video_codecs,
+)
 
 
 class FakeScrcpyServer:
@@ -491,3 +499,56 @@ def test_handle_non_dict_valid_json_is_swallowed():
     handle_input_message(control, "null", screen_width=720, screen_height=480)
     control.send_touch.assert_not_called()
     control.send_keycode.assert_not_called()
+
+
+def test_h264_only_video_codecs_excludes_vp8_and_rtx():
+    """_h264_only_video_codecs() must filter aiortc's real video codec
+    capability list down to H264 entries only.
+
+    Manual E2E testing against a real browser found that the negotiated
+    codec was VP8 (97) via libvpx, not H264 -- because nothing constrained
+    createOffer() to H264-only, so aiortc offered every codec it supports
+    (VP8 and video/rtx included, confirmed via RTCRtpSender.getCapabilities
+    ("video")) and the browser picked VP8. PassthroughH264Track only ever
+    produces raw H264 Annex-B NALUs, so a VP8-negotiated connection cannot
+    decode anything. This test locks down the filtering helper against the
+    real installed aiortc codec capability list, not a hand-rolled fake.
+    """
+    codecs = _h264_only_video_codecs()
+
+    assert len(codecs) >= 1
+    assert all(codec.mimeType == "video/H264" for codec in codecs)
+    assert not any(codec.mimeType == "video/VP8" for codec in codecs)
+    assert not any(codec.mimeType == "video/rtx" for codec in codecs)
+
+
+async def test_offer_sdp_constrained_to_h264_only():
+    """End-to-end proof that the fix actually constrains the generated SDP
+    offer, not just that the filtering helper returns the right list.
+
+    Builds a real RTCPeerConnection + PassthroughH264Track using the same
+    addTransceiver()/setCodecPreferences() sequence run_engine() uses, then
+    inspects the real offer SDP: the video m= line's payload types must
+    resolve only to H264 rtpmap entries, and VP8's mimeType must not appear
+    anywhere in the SDP at all.
+    """
+    pc = RTCPeerConnection()
+    try:
+        track = PassthroughH264Track()
+        transceiver = pc.addTransceiver(track, direction="sendrecv")
+        transceiver.setCodecPreferences(_h264_only_video_codecs())
+
+        offer = await pc.createOffer()
+        await pc.setLocalDescription(offer)
+        sdp = pc.localDescription.sdp
+
+        video_m_line = next(line for line in sdp.splitlines() if line.startswith("m=video"))
+        rtpmap_lines = [line for line in sdp.splitlines() if line.startswith("a=rtpmap:")]
+
+        assert rtpmap_lines, "offer SDP has no rtpmap lines for video payload types"
+        assert all("H264" in line for line in rtpmap_lines), (
+            f"non-H264 codec present in offer rtpmap lines: {rtpmap_lines}"
+        )
+        assert "VP8" not in sdp, f"VP8 leaked into offer SDP: {video_m_line}"
+    finally:
+        await pc.close()
