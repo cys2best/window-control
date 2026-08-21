@@ -16,12 +16,14 @@ from server.stream import CaptureState, FrameQueue, mjpeg_generator
 from server import adb_manager
 from server import auth
 from server.instance_manager import InstanceManager
+from server.http_tunnel import run_tunnel_with_reconnect
 from server.signaling_bridge import run_bridge_with_reconnect
 from server.tailscale import get_best_ip
 
 log = logging.getLogger(__name__)
 
 _bridge_task: "asyncio.Task | None" = None
+_tunnel_task: "asyncio.Task | None" = None
 
 # Routes reachable without a session cookie even when AUTH_TOKEN is set —
 # just enough to load the login gate and let it authenticate.
@@ -185,6 +187,12 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
         import threading
         threading.Thread(target=instance_manager.refresh, daemon=True).start()
 
+        global _tunnel_task
+        if PUBLIC_UI_URL:
+            log.info("tunnel: starting task for %s", PUBLIC_UI_URL)
+            _tunnel_task = asyncio.create_task(
+                run_tunnel_with_reconnect(PUBLIC_UI_URL, TUNNEL_SECRET))
+
     @app.on_event("shutdown")
     async def _shutdown():
         # The public signaling bridge task (if any) is otherwise left
@@ -196,6 +204,15 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
             _bridge_task.cancel()
             try:
                 await _bridge_task
+            except asyncio.CancelledError:
+                pass
+
+        global _tunnel_task
+        if _tunnel_task is not None and not _tunnel_task.done():
+            log.info("tunnel: cancelling task on shutdown")
+            _tunnel_task.cancel()
+            try:
+                await _tunnel_task
             except asyncio.CancelledError:
                 pass
 

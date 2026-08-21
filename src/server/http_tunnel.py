@@ -20,6 +20,7 @@ import json
 import logging
 
 import httpx
+import websockets
 
 log = logging.getLogger(__name__)
 
@@ -90,3 +91,99 @@ async def _run_ws_stream(ws, open_frame: dict, inbound_queue: "asyncio.Queue",
                           exc_info=exc)
 
     await ws.send(json.dumps({"type": "ws_close", "id": stream_id}))
+
+
+async def run_tunnel_once(
+    tunnel_url: str, tunnel_secret: str,
+    ws_connect=websockets.connect,
+    http_client: httpx.AsyncClient | None = None,
+    local_ws_connect=websockets.connect,
+) -> None:
+    """Hold one tunnel connection, demultiplexing frames to per-stream
+    handlers until the connection drops (raises, per the same
+    caller-owns-reconnect contract as signaling_bridge.relay_one_instance).
+    """
+    client = http_client or httpx.AsyncClient()
+    stream_queues: dict[str, asyncio.Queue] = {}
+    url = f"{tunnel_url}?token={tunnel_secret}"
+
+    # Both _respond_http and _run_ws_stream are dispatched fire-and-forget
+    # (so one slow request/stream never blocks the demux loop from reading
+    # the next frame) -- but a fire-and-forget asyncio.Task whose outcome is
+    # never retrieved either leaks silently on success or logs nothing but
+    # an unhandled "Task exception was never retrieved" warning on failure.
+    # Track every dispatched task here and reap it below (gather + log,
+    # same shape _run_ws_stream already uses for its own pipe tasks) once
+    # the connection ends, instead of leaving them fully unaccounted for.
+    background_tasks: set[asyncio.Task] = set()
+
+    def _dispatch(coro) -> None:
+        task = asyncio.ensure_future(coro)
+        background_tasks.add(task)
+        task.add_done_callback(background_tasks.discard)
+
+    try:
+        async with ws_connect(url) as ws:
+            async for raw in ws:
+                frame = json.loads(raw)
+                ftype = frame.get("type")
+                stream_id = frame.get("id")
+
+                if ftype == "http_request":
+                    _dispatch(_respond_http(ws, client, frame))
+                elif ftype == "ws_open":
+                    queue: asyncio.Queue = asyncio.Queue()
+                    stream_queues[stream_id] = queue
+                    _dispatch(_run_ws_stream(ws, frame, queue, local_ws_connect))
+                elif stream_id in stream_queues:
+                    await stream_queues[stream_id].put(frame)
+                    if frame.get("type") == "ws_close":
+                        stream_queues.pop(stream_id, None)
+    finally:
+        if background_tasks:
+            results = await asyncio.gather(*background_tasks, return_exceptions=True)
+            for result in results:
+                if isinstance(result, BaseException):
+                    log.error("tunnel: background task failed", exc_info=result)
+
+
+async def _respond_http(ws, client: httpx.AsyncClient, frame: dict) -> None:
+    response = await _forward_http_request(client, frame)
+    await ws.send(json.dumps(response))
+
+
+async def run_tunnel_with_reconnect(
+    tunnel_url: str, tunnel_secret: str,
+    backoff_seconds: float = 2.0,
+    ws_connect=websockets.connect,
+    http_client: httpx.AsyncClient | None = None,
+    local_ws_connect=websockets.connect,
+    sleep=asyncio.sleep,
+) -> None:
+    """Run run_tunnel_once() forever, reconnecting after each disconnect.
+
+    Mirrors signaling_bridge.run_bridge_with_reconnect: catches
+    ConnectionError/OSError/websockets.exceptions.WebSocketException,
+    logs, waits backoff_seconds, retries. asyncio.CancelledError propagates
+    normally (app shutdown / config change stops this the same way).
+    """
+    async def _loop(client: httpx.AsyncClient | None) -> None:
+        while True:
+            try:
+                log.info("tunnel: connecting to %s", tunnel_url)
+                await run_tunnel_once(
+                    tunnel_url, tunnel_secret,
+                    ws_connect=ws_connect, http_client=client,
+                    local_ws_connect=local_ws_connect,
+                )
+            except (ConnectionError, OSError, websockets.exceptions.WebSocketException) as exc:
+                log.warning("tunnel: connection ended (%s), retrying in %ss",
+                            exc.__class__.__name__, backoff_seconds)
+            await sleep(backoff_seconds)
+            await asyncio.sleep(0)  # ensure cancellation can be delivered
+
+    if http_client is not None:
+        await _loop(http_client)
+    else:
+        async with httpx.AsyncClient() as client:
+            await _loop(client)

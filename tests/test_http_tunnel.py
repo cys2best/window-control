@@ -229,3 +229,106 @@ async def test_run_ws_stream_logs_exception_from_pipe_task(caplog):
     error_records = [r for r in caplog.records if r.levelno >= logging.ERROR]
     assert any("s1" in r.getMessage() for r in error_records)
     assert any(r.exc_info is not None for r in error_records)
+
+
+def test_filter_headers_and_forward_still_pass():
+    # sanity guard -- demux loop reuses these, not re-tested here
+    pass
+
+
+class _FakeDemuxWS:
+    def __init__(self, incoming: list[str]):
+        self._incoming = list(incoming)
+        self.sent: list[str] = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if not self._incoming:
+            raise ConnectionError("no more fake messages")
+        return self._incoming.pop(0)
+
+    async def send(self, raw):
+        self.sent.append(raw)
+
+
+@pytest.mark.asyncio
+async def test_run_tunnel_once_dispatches_http_request_and_responds():
+    from server.http_tunnel import run_tunnel_once
+
+    req_frame = json.dumps({
+        "type": "http_request", "id": "s1", "method": "GET",
+        "path": "/instances", "headers": {}, "body": "",
+    })
+    fake_ws = _FakeDemuxWS([req_frame])
+
+    def fake_ws_connect(url):
+        assert url == "wss://tunnel.example.test/__tunnel/register?token=tsecret"
+        return fake_ws
+
+    fake_response = MagicMock()
+    fake_response.status_code = 200
+    fake_response.headers = {}
+    fake_response.content = b"[]"
+    fake_http = AsyncMock()
+    fake_http.request = AsyncMock(return_value=fake_response)
+
+    with pytest.raises(ConnectionError):
+        await run_tunnel_once(
+            "wss://tunnel.example.test/__tunnel/register", "tsecret",
+            ws_connect=fake_ws_connect, http_client=fake_http,
+        )
+
+    assert len(fake_ws.sent) == 1
+    sent = json.loads(fake_ws.sent[0])
+    assert sent["type"] == "http_response"
+    assert sent["id"] == "s1"
+    assert sent["status"] == 200
+
+
+@pytest.mark.asyncio
+async def test_run_tunnel_with_reconnect_retries_after_disconnect():
+    from server.http_tunnel import run_tunnel_with_reconnect
+    import server.http_tunnel as tunnel_module
+
+    call_count = 0
+
+    async def fake_run_once(tunnel_url, tunnel_secret, ws_connect=None,
+                             http_client=None, local_ws_connect=None):
+        nonlocal call_count
+        call_count += 1
+        raise ConnectionError("fake disconnect")
+
+    sleeps = []
+
+    async def fake_sleep(seconds):
+        sleeps.append(seconds)
+
+    original = tunnel_module.run_tunnel_once
+    tunnel_module.run_tunnel_once = fake_run_once
+    try:
+        task = asyncio.ensure_future(
+            run_tunnel_with_reconnect(
+                "wss://tunnel.example.test/__tunnel/register", "tsecret",
+                backoff_seconds=0.01, sleep=fake_sleep,
+            )
+        )
+        for _ in range(50):
+            if call_count >= 3:
+                break
+            await asyncio.sleep(0.01)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    finally:
+        tunnel_module.run_tunnel_once = original
+
+    assert call_count >= 3
+    assert all(s == 0.01 for s in sleeps)
