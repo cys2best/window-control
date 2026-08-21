@@ -1,0 +1,16 @@
+[Unit]
+Description=WebRTC PoC Tunnel Server
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/webrtc-tunnel
+EnvironmentFile=/opt/webrtc-tunnel/.env
+ExecStart=/usr/bin/node server.js
+Restart=on-failure
+RestartSec=2
+User=webrtc-tunnel
+Group=webrtc-tunnel
+
+[Install]
+WantedBy=multi-user.target
