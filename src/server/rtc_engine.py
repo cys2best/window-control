@@ -582,6 +582,7 @@ async def run_engine(scrcpy_port: int, signaling_url: str, session_id: str, ice_
         # continues from the second frame onward.
         track.push_nalu(first_frame)
         seen_pps = False
+        seen_idr_dump = False
         scan_count = 1  # first_frame already counted
         async for nalu in frames:
             if scan_count < 30:
@@ -589,7 +590,12 @@ async def run_engine(scrcpy_port: int, signaling_url: str, session_id: str, ice_
                 if 8 in types and not seen_pps:
                     seen_pps = True
                     print(f"[debug] PPS (nal_type=8) found at frame #{scan_count}, "
-                          f"all_nal_types_in_frame={types}", flush=True)
+                          f"all_nal_types_in_frame={types}, "
+                          f"full_hex={nalu.hex()}", flush=True)
+                if 5 in types and not seen_idr_dump:
+                    seen_idr_dump = True
+                    print(f"[debug] first IDR (nal_type=5) at frame #{scan_count}, "
+                          f"size={len(nalu)}, first32bytes={nalu[:32].hex()}", flush=True)
                 elif scan_count < 5:
                     print(f"[debug] frame #{scan_count} nal_types={types}", flush=True)
                 scan_count += 1
