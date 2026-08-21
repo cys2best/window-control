@@ -25,6 +25,16 @@ class ScrcpyVideoClient:
         self._sock: socket.socket | None = None
         self.control_sock: socket.socket | None = None
         self._running = False
+        self._read_task: asyncio.Task | None = None
+        self._stopping = False
+        # True only while read_frames() is actually suspended inside a
+        # socket read (_recvall's `await loop.sock_recv(...)`), as opposed
+        # to suspended at `yield payload` between frames (e.g. a caller that
+        # only pulls one frame via __anext__() and never resumes the
+        # generator). stop() must only cancel self._read_task while this is
+        # True -- cancelling a task that's merely paused at `yield` would
+        # cancel whatever unrelated code the task is actually running now.
+        self._blocked_in_recv = False
 
     async def connect(self) -> None:
         loop = asyncio.get_event_loop()
@@ -47,18 +57,14 @@ class ScrcpyVideoClient:
         loop = asyncio.get_event_loop()
         buf = b""
         while len(buf) < n:
+            self._blocked_in_recv = True
             try:
                 chunk = await loop.sock_recv(self._sock, n - len(buf))
-            except asyncio.CancelledError:
-                # If _running is False, stop() was called and closed the socket.
-                # Treat as EOF so read_frames() exits cleanly.
-                # Otherwise, this is external task cancellation; let it propagate.
-                if not self._running:
-                    raise ConnectionError("ScrcpyVideoClient: connection closed mid-read")
-                raise
             except (OSError, ValueError):
                 # Socket closed, unregistered, or stop() called; treat as EOF
                 raise ConnectionError("ScrcpyVideoClient: connection closed mid-read")
+            finally:
+                self._blocked_in_recv = False
             if not chunk:
                 raise ConnectionError("ScrcpyVideoClient: connection closed mid-read")
             buf += chunk
@@ -72,21 +78,63 @@ class ScrcpyVideoClient:
         return device_name, width, height
 
     async def read_frames(self) -> AsyncIterator[bytes]:
+        # Capture the task we're running in so stop() can cancel exactly this
+        # task to interrupt a blocked sock_recv() (see module docstring /
+        # class-level design note in stop()). Closing the socket out from
+        # under asyncio's selector does NOT reliably wake a pending
+        # loop.sock_recv() — task cancellation is the only mechanism asyncio
+        # guarantees will interrupt it.
+        self._read_task = asyncio.current_task()
         self._running = True
-        while self._running:
-            try:
-                header = await self._recvall(12)
-            except ConnectionError:
-                break
-            _pts_flags, size = struct.unpack(">QI", header)
-            if size == 0:
-                payload = b""
-            else:
-                payload = await self._recvall(size)
-            yield payload
+        try:
+            while self._running:
+                try:
+                    header = await self._recvall(12)
+                except ConnectionError:
+                    break
+                except asyncio.CancelledError:
+                    # Distinguish "stop() cancelled us on purpose" from a
+                    # genuine external cancellation of this task. stop() sets
+                    # _stopping=True before calling .cancel() on this exact
+                    # task, so if both hold, this is our own clean-shutdown
+                    # signal: end the generator quietly instead of
+                    # propagating CancelledError to whoever is iterating us.
+                    if self._stopping and asyncio.current_task() is self._read_task:
+                        break
+                    raise
+                _pts_flags, size = struct.unpack(">QI", header)
+                if size == 0:
+                    payload = b""
+                else:
+                    payload = await self._recvall(size)
+                yield payload
+        finally:
+            self._read_task = None
 
     def stop(self) -> None:
         self._running = False
+        self._stopping = True
+        # Cancel the task blocked inside read_frames()/_recvall() FIRST — this
+        # is what actually interrupts a pending loop.sock_recv(). Socket
+        # shutdown/close alone does not reliably wake a selector-registered
+        # sock_recv() on this platform; it can sit forever with no error and
+        # no completion. Task cancellation is asyncio's guaranteed mechanism.
+        #
+        # Only cancel while the task is genuinely suspended inside a socket
+        # read. If it's merely paused at `yield payload` between frames (a
+        # caller that hasn't resumed the generator), self._read_task may by
+        # now refer to a task doing something else entirely (e.g. the
+        # caller's own task, running unrelated code) -- cancelling it there
+        # would be wrong. In that case _running=False alone is enough: the
+        # generator's while-loop check ends it cleanly next time it resumes.
+        if (
+            self._read_task is not None
+            and not self._read_task.done()
+            and self._blocked_in_recv
+        ):
+            self._read_task.cancel()
+        # Close sockets for resource cleanup only (releasing the fds) — no
+        # longer relied upon to interrupt the blocked read.
         if self._sock:
             try:
                 self._sock.shutdown(socket.SHUT_RDWR)

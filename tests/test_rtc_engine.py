@@ -89,12 +89,20 @@ async def test_full_handshake_and_one_frame(fake_server):
 
 
 async def test_stop_interrupts_blocked_read_frames(fake_server):
-    """Test that stop() alone can clean up blocked read_frames() resources.
+    """stop() ALONE must promptly unblock a read_frames() consumer.
 
-    This verifies that stop() correctly sets _running=False and closes sockets
-    (via shutdown + close), allowing read_frames() to exit even if it's blocked
-    inside sock_recv(). The generator should end cleanly without external
-    task cancellation.
+    Regression test for the real bug: stop() used to rely on
+    socket.shutdown()+close() to wake a blocked loop.sock_recv(). That does
+    NOT reliably interrupt a selector-registered sock_recv() — the awaiting
+    Future can sit forever with no error and no completion. The fix is
+    task cancellation: stop() must cancel the exact asyncio Task blocked
+    inside read_frames().
+
+    Uses a SHORT wait_for timeout (0.5s, not a generous 2s+) deliberately:
+    a regression back to the broken socket-shutdown approach must fail fast
+    and obviously by hitting this short timeout, not silently "pass" by
+    happening to complete just under a generous one. This is exactly the
+    false-positive pattern that hid the bug for three prior fix rounds.
     """
     client = ScrcpyVideoClient(fake_server.port)
 
@@ -122,12 +130,22 @@ async def test_stop_interrupts_blocked_read_frames(fake_server):
     consume_task = asyncio.ensure_future(consume())
     await asyncio.sleep(0.1)  # let it actually block inside sock_recv
 
-    # Call stop() to set _running=False and close sockets via shutdown().
-    # This should unblock the blocked sock_recv and allow the generator to end.
+    # Call stop() alone -- no external task.cancel() from the test itself.
+    # stop() must internally cancel the task blocked in read_frames().
+    start = asyncio.get_event_loop().time()
     client.stop()
 
-    # The consume task should complete cleanly (generator exhausted), not hang or crash.
-    await asyncio.wait_for(consume_task, timeout=2.0)
+    # Short timeout: proves the unblock is immediate (task cancellation),
+    # not "eventually" (which would indicate the old broken mechanism, or
+    # no mechanism at all, papered over by a generous timeout).
+    await asyncio.wait_for(consume_task, timeout=0.5)
+    elapsed = asyncio.get_event_loop().time() - start
+    assert elapsed < 0.5, f"stop() took {elapsed:.3f}s to unblock read_frames(); expected near-instant"
+
+    # The task ended cleanly (generator exhausted), NOT via CancelledError
+    # propagating out -- stop()-triggered cancellation is swallowed internally.
+    assert not consume_task.cancelled()
+    assert consume_task.exception() is None
 
 
 async def test_cancel_propagates_through_read_frames(fake_server):
@@ -174,3 +192,61 @@ async def test_cancel_propagates_through_read_frames(fake_server):
     # After awaiting a cancelled task, task.cancelled() must return True.
     assert consume_task.cancelled()
     client.stop()
+
+
+async def test_stop_then_external_cancel_no_deadlock(fake_server):
+    """Realistic shutdown race: engine calls stop() first, then whatever is
+    consuming read_frames() is also torn down (its wrapping task cancelled).
+
+    This is the round-3-flagged danger case: stop() cancels self._read_task
+    internally (swallowing that CancelledError so the generator ends
+    cleanly), and then the caller's own task.cancel() arrives on top of
+    that. Must not deadlock, must not silently swallow a genuine external
+    cancellation, and must behave reasonably either way.
+
+    Ordering chosen to match how Task 1's consumers in this plan will use
+    the class: stop() is called first during engine shutdown, then the
+    task consuming frames naturally winds down/gets cancelled.
+    """
+    client = ScrcpyVideoClient(fake_server.port)
+
+    async def drive_server():
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, fake_server.accept_video_and_send_dummy)
+        await loop.run_in_executor(None, fake_server.accept_control)
+        await loop.run_in_executor(
+            None, fake_server.send_handshake, "TestDevice", 720, 480
+        )
+        # No more frames -- read_frames() blocks waiting for the next header.
+
+    driver = asyncio.ensure_future(drive_server())
+    await client.connect()
+    await client.connect_control()
+    await client.read_handshake()
+    await driver
+
+    async def consume():
+        async for _ in client.read_frames():
+            pass
+
+    consume_task = asyncio.ensure_future(consume())
+    await asyncio.sleep(0.1)  # let it actually block inside sock_recv
+
+    # Realistic shutdown sequence: stop() first (engine shutdown), then the
+    # consumer's own wrapping task is cancelled in close succession.
+    client.stop()
+    consume_task.cancel()
+
+    # No deadlock: this must resolve promptly regardless of which
+    # cancellation "wins" the race.
+    try:
+        await asyncio.wait_for(asyncio.shield(consume_task), timeout=0.5)
+        # stop()'s internal cancel landed first and was swallowed cleanly;
+        # the task finished normally before the external cancel could take
+        # effect on it.
+        assert consume_task.exception() is None
+    except asyncio.CancelledError:
+        # The external consume_task.cancel() won the race instead -- also a
+        # legitimate, correctly-propagated outcome (real cancellation, not a
+        # hang and not a silently swallowed error).
+        assert consume_task.cancelled()
