@@ -14,12 +14,14 @@ scrcpy_video.cpp's header comment:
   6. Frame loop: 12-byte header (u64 BE pts_flags + u32 BE size) + payload.
 """
 import asyncio
+import json as json_module
 import socket
 import struct
 import time
 from typing import AsyncIterator
 
 import av
+import websockets
 from aiortc import MediaStreamTrack
 from aiortc.mediastreams import VIDEO_TIME_BASE
 
@@ -180,3 +182,29 @@ class PassthroughH264Track(MediaStreamTrack):
         packet.pts = int(elapsed * VIDEO_TIME_BASE.denominator / VIDEO_TIME_BASE.numerator)
         packet.time_base = VIDEO_TIME_BASE
         return packet
+
+
+class SignalingClient:
+    def __init__(self, ws_url: str, session_id: str, role: str, token: str = ""):
+        url = f"{ws_url}/?session={session_id}&role={role}"
+        if token:
+            url += f"&token={token}"
+        self._url = url
+        self._ws: websockets.WebSocketClientProtocol | None = None
+
+    async def connect(self) -> None:
+        self._ws = await websockets.connect(self._url)
+
+    async def send(self, message: dict) -> None:
+        await self._ws.send(json_module.dumps(message))
+
+    async def recv(self) -> dict | None:
+        raw = await self._ws.recv()
+        try:
+            return json_module.loads(raw)
+        except json_module.JSONDecodeError:
+            return None
+
+    async def close(self) -> None:
+        if self._ws is not None:
+            await self._ws.close()

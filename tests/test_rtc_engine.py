@@ -1,9 +1,12 @@
 import asyncio
+import json
 import socket
 import struct
 import pytest
 
-from server.rtc_engine import ScrcpyVideoClient, PassthroughH264Track
+import websockets
+
+from server.rtc_engine import ScrcpyVideoClient, PassthroughH264Track, SignalingClient
 
 
 class FakeScrcpyServer:
@@ -274,3 +277,56 @@ async def test_stop_then_external_cancel_no_deadlock(fake_server):
         # legitimate, correctly-propagated outcome (real cancellation, not a
         # hang and not a silently swallowed error).
         assert consume_task.cancelled()
+
+
+@pytest.fixture
+async def echo_ws_server():
+    received = []
+
+    async def handler(ws):
+        async for message in ws:
+            received.append(message)
+            await ws.send(message)  # echo back
+
+    server = await websockets.serve(handler, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    yield f"ws://127.0.0.1:{port}", received
+    server.close()
+    await server.wait_closed()
+
+
+async def test_connect_sends_session_and_role_in_url():
+    captured = {}
+
+    async def handler(ws):
+        captured["path"] = ws.request.path
+        async for _ in ws:
+            pass
+
+    server = await websockets.serve(handler, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    try:
+        client = SignalingClient(f"ws://127.0.0.1:{port}", "sess-42", "engine", "tok123")
+        await client.connect()
+        await client.close()
+        await asyncio.sleep(0.05)  # let the server-side handler observe the path
+    finally:
+        server.close()
+        await server.wait_closed()
+
+    assert "session=sess-42" in captured["path"]
+    assert "role=engine" in captured["path"]
+    assert "token=tok123" in captured["path"]
+
+
+async def test_send_and_recv_roundtrip(echo_ws_server):
+    base_url, received = echo_ws_server
+    client = SignalingClient(base_url, "sess-1", "engine", "")
+    await client.connect()
+
+    await client.send({"type": "offer", "sdp": "test-sdp"})
+    reply = await client.recv()
+
+    assert reply == {"type": "offer", "sdp": "test-sdp"}
+    assert json.loads(received[0]) == {"type": "offer", "sdp": "test-sdp"}
+    await client.close()
