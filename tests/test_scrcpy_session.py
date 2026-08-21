@@ -26,6 +26,16 @@ def test_build_scrcpy_args_uses_tier():
     assert f"max_fps={QUALITY_TIERS['1080']['max_fps']}" in joined
     assert "i-frame-interval=2" in joined  # keyframe every ~2s for fast WebRTC first-frame
     assert "scid=1a" in joined
+    # scrcpy-server 3.1's real option key is video_codec_options -- the
+    # previous video_encoder_options name isn't recognized by this server
+    # version at all (silently dropped server-side, "Unknown server option").
+    assert "video_codec_options=" in joined
+    assert "video_encoder_options=" not in joined
+    # profile=1 (Baseline), level=512 (Level 3.1) -- a hint MediaCodec isn't
+    # guaranteed to honor, but the only mitigation available for WebRTC H264
+    # decoders that only support Level 3.1 profile-level-id variants.
+    assert "profile=1" in joined
+    assert "level=512" in joined
 
 
 def test_session_defaults_to_default_tier():

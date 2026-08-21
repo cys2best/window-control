@@ -118,12 +118,31 @@ def build_scrcpy_args(tier: str, scid: int) -> list[str]:
         "send_frame_meta=true",
         "control=true",
         "audio=false",
-        # Keyframe cadence. With copy-mux there is no ffmpeg GOP to force
-        # keyframes, so WebRTC's time-to-first-frame is bounded by how often the
-        # device encoder emits an IDR. i-frame-interval=2 (seconds) is the value
-        # that historically got honored by MediaCodec (commit 7adff44); =1 was
-        # observed ignored on some devices, leaving ~20s first-frame waits.
-        "video_encoder_options=i-frame-interval=2",
+        # Keyframe cadence + H264 profile/level hints for MediaCodec.
+        #
+        # `video_codec_options` is scrcpy-server 3.1's real option key (confirmed
+        # against the bundled server's decompiled source) — the previous
+        # `video_encoder_options` name is not recognized by this server version
+        # at all; it's silently logged as "Unknown server option" and dropped,
+        # meaning i-frame-interval was never actually applied. The IDR heartbeat
+        # (ScrcpyControl.request_idr(), called on a ~2s cadence by callers) has
+        # been masking the resulting lack of keyframe cadence control.
+        #
+        # profile=1,level=512 requests H264 Baseline + Level 3.1
+        # (MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline=0x01,
+        # AVCLevel31=0x200=512). This is a HINT, not a guarantee — MediaCodec's
+        # own docs state the encoder is free to pick a different, compatible
+        # level if the configured resolution/bitrate/fps dictate it (confirmed:
+        # this device was observed emitting Level 4.1 output for identical
+        # max_size/bit_rate/max_fps settings on a different run). Requesting
+        # Level 3.1 explicitly is still worth doing since browsers' WebRTC H264
+        # decoders only advertise Level 3.1 variants (profile-level-id ending in
+        # "1f") — Level 4.1 output cannot be negotiated by any WebRTC-based
+        # client at all, so this is the best available mitigation even though
+        # it isn't hard-enforced. 720p@30fps@4Mbps fits Level 3.1's ceiling
+        # (MaxFS=3600 MB, MaxMBPS=108000 MB/s — both exactly met at 1280x720@30,
+        # zero headroom but spec-compliant; MaxBR=14Mbps, well under 4Mbps).
+        "video_codec_options=i-frame-interval=2,profile=1,level=512",
         f"scid={scid:x}",
     ]
 
