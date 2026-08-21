@@ -41,7 +41,12 @@ public IP. Confirm propagation before running certbot:
 
 ## TLS (nginx + certbot)
 
-Create `/etc/nginx/sites-available/webrtc-tunnel`:
+Order matters here: nginx refuses to load a `listen 443 ssl` block that has
+no certificate configured, so the port-443 block must not exist until certbot
+has created it. Follow these steps in sequence.
+
+**1. Write only the port-80 block** to
+`/etc/nginx/sites-available/webrtc-tunnel`:
 
     server {
         listen 80;
@@ -50,9 +55,24 @@ Create `/etc/nginx/sites-available/webrtc-tunnel`:
         location / { return 301 https://$host$request_uri; }
     }
 
-    server {
-        listen 443 ssl;
-        server_name tunnel.example.com;
+**2. Enable it and reload** (this must pass before certbot runs):
+
+    sudo mkdir -p /var/www/certbot
+    sudo ln -s /etc/nginx/sites-available/webrtc-tunnel /etc/nginx/sites-enabled/
+    sudo nginx -t && sudo systemctl reload nginx
+
+**3. Get the certificate.** certbot writes a working
+`server { listen 443 ssl; ... }` block into this same file, with real
+`ssl_certificate`/`ssl_certificate_key` paths, and sets up auto-renewal
+(`certbot renew` via its own systemd timer — no manual cron needed):
+
+    sudo certbot --nginx -d tunnel.example.com
+
+**4. Add the proxy directives to the 443 block certbot just created.** Edit
+`/etc/nginx/sites-available/webrtc-tunnel` — do NOT recreate the file, or you
+lose certbot's `ssl_certificate` lines — and put this `location` block inside
+the `server { listen 443 ssl; ... }` block, replacing whatever placeholder
+`location /` certbot left there:
 
         location / {
             proxy_pass http://127.0.0.1:8444;
@@ -62,18 +82,14 @@ Create `/etc/nginx/sites-available/webrtc-tunnel`:
             proxy_set_header Host $host;
             proxy_read_timeout 3600s;
         }
-    }
 
-Enable it and get the cert:
+The `Upgrade`/`Connection` headers are what let the browser's `/input`
+WebSocket through; `proxy_read_timeout 3600s` keeps nginx from cutting an
+idle control connection.
 
-    sudo mkdir -p /var/www/certbot
-    sudo ln -s /etc/nginx/sites-available/webrtc-tunnel /etc/nginx/sites-enabled/
+**5. Validate and reload again:**
+
     sudo nginx -t && sudo systemctl reload nginx
-    sudo certbot --nginx -d tunnel.example.com
-
-certbot rewrites the `server { listen 443 ssl; ... }` block in place to add
-`ssl_certificate`/`ssl_certificate_key` lines and sets up auto-renewal
-(`certbot renew` via its own systemd timer — no manual cron needed).
 
 ## Firewall
 
@@ -91,21 +107,73 @@ On the Windows PC, set before starting the app:
     $env:PUBLIC_UI_URL = "wss://tunnel.example.com/__tunnel/register"
     $env:TUNNEL_SECRET = "<the value generated above>"
     $env:AUTH_TOKEN = "<a separate, strong shared secret for browser login>"
-    $env:COOKIE_SECURE = "true"
 
-`COOKIE_SECURE=true` is required here (unlike the LAN-only case) — the
-session cookie is set by a response that ultimately reaches the browser
-over HTTPS (via the VPS), so marking it Secure is safe and is the
-correct hardening default for a public deployment.
+`AUTH_TOKEN` is mandatory whenever `PUBLIC_UI_URL` is set — the app refuses
+to start otherwise (`create_app()` raises), and so does the VPS server
+without its `TUNNEL_SECRET`.
+
+### `COOKIE_SECURE` — optional hardening, with a real tradeoff
+
+`COOKIE_SECURE` is **not required** for the public deployment to work, and
+leaving it unset is the right default if you also use Tailscale/LAN access.
+
+**⚠️ Setting `COOKIE_SECURE=true` breaks LAN/Tailscale login.** With it on,
+the session cookie is marked `Secure`, so a browser will only store and send
+it over HTTPS. A user who visits `http://<tailscale-ip>:8080` still sees the
+login overlay and still gets `200 OK` from `POST /login`, but the browser
+silently discards the cookie — the next request is unauthenticated and the
+login overlay comes straight back, with no error message anywhere. There is
+no way to tell from the browser that this is what happened.
+
+Guidance:
+
+- **Want both public and Tailscale/LAN access (the normal case)?** Leave
+  `COOKIE_SECURE` unset. A cookie without the `Secure` flag is still sent
+  over HTTPS — `Secure` only *restricts* it to HTTPS, it is not needed for
+  HTTPS to work. So the public tunnel path works exactly the same either way.
+  What you give up is hardening against a hypothetical plaintext hop leaking
+  the cookie; on the tunnel path there is no plaintext hop (browser→nginx is
+  HTTPS, nginx→tunnel and tunnel→PC are the PC's own outbound WSS link).
+- **Public access only, with LAN/Tailscale access unused?** Set
+  `COOKIE_SECURE=true` for the extra hardening — and remember that plain-HTTP
+  access to `:8080` will no longer be able to log in.
+
+Whichever you choose, test both access paths after changing it: the failure
+mode is invisible unless you actually try to log in over plain HTTP.
 
 ## Verify
 
     sudo journalctl -u webrtc-tunnel -n 50 --no-pager
 
-Expect: `Tunnel server listening on port 8444`, no `WARNING: TUNNEL_SECRET
-not set`.
+Expect: `Tunnel server listening on port 8444`. If you instead see
+`FATAL: TUNNEL_SECRET is not set` and the unit in a restart loop, the `.env`
+file wasn't read or the variable is empty — the server refuses to run
+unauthenticated, because any client could otherwise register as "the PC" and
+harvest `AUTH_TOKEN` at the operator's next login.
 
 From a browser on a network that is neither Tailscale nor the PC's LAN
 (e.g. mobile data): open `https://tunnel.example.com`, confirm the login
 overlay appears, log in with `AUTH_TOKEN`, confirm the window list loads
 and mouse/keyboard control works.
+
+Then re-check the LAN/Tailscale path (`http://<tailscale-ip>:8080`) and log
+in there too — see the `COOKIE_SECURE` note above for the one setting that
+silently breaks it.
+
+### Known limitation: no MJPEG fallback over the tunnel
+
+`GET /stream` (the `multipart/x-mixed-replace` MJPEG fallback the client uses
+when WebRTC negotiation fails) is **not** forwarded through the tunnel. The
+PC-side forwarder buffers each response in full before wrapping it in one
+JSON envelope, and an MJPEG stream never ends — forwarding it would grow in
+the PC's RAM until the process died. Requests for `/stream` are answered with
+`501 Not Implemented` instead (`src/server/http_tunnel.py`,
+`_UNSUPPORTED_STREAMING_PATHS`).
+
+Practical consequence: over the public tunnel, video works only via WebRTC.
+If WebRTC negotiation fails, the client keeps retrying `/stream` in the
+background (cheap: each attempt is an immediate 501) and the video area stays
+blank — the window list and mouse/keyboard control still work normally. If
+you see that, the thing to fix is the WebRTC signaling path
+(`VPS_SIGNALING_URL` / `infra/vps/signaling/`), which is a separate service
+from this tunnel; the tunnel itself is working.
