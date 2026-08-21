@@ -41,7 +41,8 @@ export async function createTunnelServer({ port = 0, tunnelSecret = null } = {})
       let frame;
       try {
         frame = JSON.parse(raw.toString());
-      } catch {
+      } catch (err) {
+        console.error('tunnel: received malformed frame from registered PC:', err.message);
         return; // ignore malformed frames rather than crashing the connection handler
       }
       if (frame.type === 'http_response') {
@@ -59,45 +60,59 @@ export async function createTunnelServer({ port = 0, tunnelSecret = null } = {})
       pendingHttp.clear();
     });
 
-    ws.on('error', () => {
+    ws.on('error', (err) => {
       // 'close' always follows 'error' for ws connections; cleanup happens there.
+      console.error('tunnel: registered PC connection error:', err.message);
     });
   });
 
   httpServer.on('request', async (req, res) => {
-    if (!pcConn) {
-      res.writeHead(502, { 'Content-Type': 'text/plain' });
-      res.end('No PC connected');
-      return;
-    }
-
-    const chunks = [];
-    for await (const chunk of req) chunks.push(chunk);
-    const body = Buffer.concat(chunks).toString('base64');
-
-    const id = randomUUID();
-    const responded = new Promise((resolve, reject) => {
-      pendingHttp.set(id, { resolve, reject });
-    });
     try {
-      pcConn.send(JSON.stringify({
-        type: 'http_request', id, method: req.method, path: req.url,
-        headers: filterHeaders(req.headers), body,
-      }));
+      if (!pcConn) {
+        res.writeHead(502, { 'Content-Type': 'text/plain' });
+        res.end('No PC connected');
+        return;
+      }
+
+      const chunks = [];
+      for await (const chunk of req) chunks.push(chunk);
+      const body = Buffer.concat(chunks).toString('base64');
+
+      const id = randomUUID();
+      const responded = new Promise((resolve, reject) => {
+        pendingHttp.set(id, { resolve, reject });
+      });
+      try {
+        pcConn.send(JSON.stringify({
+          type: 'http_request', id, method: req.method, path: req.url,
+          headers: filterHeaders(req.headers), body,
+        }));
+      } catch (err) {
+        pendingHttp.delete(id);
+        res.writeHead(502, { 'Content-Type': 'text/plain' });
+        res.end('Failed to reach PC');
+        return;
+      }
+
+      try {
+        const frame = await responded;
+        res.writeHead(frame.status, filterHeaders(frame.headers));
+        res.end(Buffer.from(frame.body, 'base64'));
+      } catch {
+        res.writeHead(502, { 'Content-Type': 'text/plain' });
+        res.end('PC disconnected before responding');
+      }
     } catch (err) {
-      pendingHttp.delete(id);
-      res.writeHead(502, { 'Content-Type': 'text/plain' });
-      res.end('Failed to reach PC');
-      return;
-    }
-
-    try {
-      const frame = await responded;
-      res.writeHead(frame.status, filterHeaders(frame.headers));
-      res.end(Buffer.from(frame.body, 'base64'));
-    } catch {
-      res.writeHead(502, { 'Content-Type': 'text/plain' });
-      res.end('PC disconnected before responding');
+      // Defends against e.g. the client aborting mid-upload, which makes the
+      // `for await` body-drain loop above throw. Without this, that throw
+      // would escape as an unhandled rejection and crash the whole process.
+      console.error('tunnel: request handler error:', err.message);
+      if (!res.headersSent) {
+        res.writeHead(502, { 'Content-Type': 'text/plain' });
+        res.end('Internal tunnel error');
+      } else {
+        res.destroy();
+      }
     }
   });
 

@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
 import http from 'node:http';
+import net from 'node:net';
 import { WebSocket } from 'ws';
 import { createTunnelServer } from './server.js';
 
@@ -78,6 +79,45 @@ test('rejects a second registration while one PC is already connected', async ()
   const closeCode = await new Promise((resolve) => pc2.once('close', (code) => resolve(code)));
   assert.strictEqual(closeCode, 1008);
   pc1.close();
+  await server.close();
+});
+
+test('server survives a client aborting the request mid-upload', async () => {
+  const { server, port } = await createTunnelServer({ port: 0 });
+  const pc = await registerPc(port);
+  pc.on('message', () => {}); // this PC should never see a fully-drained request in this test
+
+  // Send a chunked-encoding request but never send the terminating 0-length
+  // chunk, then destroy the socket mid-stream. This makes `req` (the
+  // IncomingMessage the server is reading via `for await`) emit an 'error',
+  // which without a surrounding try/catch would crash the whole process.
+  await new Promise((resolve) => {
+    const socket = net.connect(port, 'localhost', () => {
+      socket.write(
+        'POST /upload HTTP/1.1\r\n' +
+        'Host: localhost\r\n' +
+        'Transfer-Encoding: chunked\r\n' +
+        '\r\n' +
+        '5\r\nhello\r\n'
+      );
+      setTimeout(() => {
+        socket.destroy();
+        resolve();
+      }, 50);
+    });
+    socket.on('error', () => {}); // a local ECONNRESET/EPIPE here is expected too
+  });
+
+  // give the server's request handler a chance to catch the resulting error
+  await new Promise((resolve) => setTimeout(resolve, 100));
+
+  // the process must still be alive and the server still functional
+  pc.close();
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  const res = await get(port, '/still-alive');
+  assert.strictEqual(res.status, 502); // no PC connected -> confirms the server survived
+  assert.strictEqual(res.body, 'No PC connected');
+
   await server.close();
 });
 
