@@ -258,55 +258,132 @@ from aiortc import (
 _ICE_URL_WITH_CREDENTIALS_RE = re.compile(r"^(turns?):([^:]+):([^@]+)@(.+)$")
 
 
-_H264_PROFILE_LEVEL_ID = "42e01f"
+def extract_profile_level_id(sps_nalu: bytes) -> str | None:
+    """Extract the 6-hex-char H264 profile-level-id from a raw Annex-B SPS
+    NALU (start code + nal_type==7 header byte + profile_idc/constraint_flags
+    /level_idc bytes).
 
+    Expects the Annex-B 4-byte start code (00 00 00 01) followed by the NAL
+    header byte, mirroring the exact frame format seen live over the scrcpy
+    video socket and already exercised by this test suite's fixtures (e.g.
+    b"\\x00\\x00\\x00\\x01\\x67...").  For a NALU starting `00 00 00 01 67 XX
+    YY ZZ ...`: `67` is the NAL header byte (forbidden_zero_bit=0,
+    nal_ref_idc=3, nal_type=7=SPS), and `XX YY ZZ` are profile_idc,
+    constraint_flags, and level_idc respectively -- exactly the three bytes
+    that make up the SDP fmtp `profile-level-id` value when formatted as
+    hex. Confirmed against a real captured SPS from live E2E debug logging:
+    `0000000167 42c0298d680b435f964200` (spaces removed before parsing)
+    decodes to profile_idc=0x42, constraint_flags=0xc0, level_idc=0x29 ->
+    "42c029".
 
-def _h264_only_video_codecs() -> list:
-    """Return only the H264 entry from aiortc's video codec capabilities
-    whose profile-level-id is 42e01f.
-
-    Verified against the installed aiortc version (RTCRtpSender.getCapabilities
-    ("video") returns VP8, video/rtx, and two H264 entries with different
-    profile-level-id values -- 42001f and 42e01f). By default aiortc's
-    createOffer() offers every one of these codecs (VP8 included) and lets
-    the remote peer pick; a real browser test picked VP8, and
-    PassthroughH264Track only ever produces raw H264 Annex-B NALUs wrapped
-    in av.Packet, so a VP8-negotiated connection silently sends garbage
-    (H264 bytes interpreted as VP8) and nothing decodes. A prior fix round
-    excluded VP8/rtx but kept both H264 profile-level-id entries.
-
-    Further E2E testing against a real device found that keeping both was
-    not enough: whichever H264 entry the browser negotiated first was
-    42001f, and macOS VideoToolbox's hardware decoder rejects that profile
-    outright (silently falls back to software decode, framesDecoded stuck
-    at 0 despite counting keyframes -- a real decode failure). The
-    already-working, already-in-production mediamtx/WHEP pipeline in this
-    repo (src/server/mediamtx_manager.py) was tested against the exact same
-    device and scrcpy encoder output and rendered successfully via
-    VideoToolbox, with its negotiated SDP showing profile-level-id=42e01f
-    specifically -- proving the raw bitstream is fully decodable when the
-    SDP declares 42e01f; the problem is purely which profile-level-id our
-    offer lets the browser pick.
-
-    scrcpy/MediaCodec is not configured to force a specific H264 profile
-    (see scrcpy_session.py) -- it picks its own encoder default, so in
-    principle a different Android device/encoder version could emit a
-    stream that only round-trips cleanly under 42001f. But we control both
-    the encoder (already proven to emit output compatible with 42e01f via
-    the mediamtx path, on this same device/encoder combination) and this
-    SDP offer, so there is no reason to keep offering a profile-level-id
-    we've now confirmed a real hardware decoder rejects. Filtering down to
-    only 42e01f (rather than merely reordering/preferring it) removes the
-    failure mode entirely instead of leaving it reachable depending on
-    negotiation order.
+    Returns None if `sps_nalu` is too short to contain a start code + NAL
+    header + 3 profile bytes, or if the NAL header byte's low 5 bits don't
+    indicate nal_type==7 (SPS). Does not attempt to locate the start code
+    if it isn't at offset 0 (real frames from ScrcpyVideoClient.read_frames()
+    always begin exactly at the start code with no leading garbage).
     """
-    caps = RTCRtpSender.getCapabilities("video")
-    return [
-        codec
-        for codec in caps.codecs
-        if codec.mimeType == "video/H264"
-        and codec.parameters.get("profile-level-id") == _H264_PROFILE_LEVEL_ID
+    if len(sps_nalu) < 8:
+        return None
+    if sps_nalu[:3] == b"\x00\x00\x01":
+        header_offset = 3
+    elif sps_nalu[:4] == b"\x00\x00\x00\x01":
+        header_offset = 4
+    else:
+        return None
+    if len(sps_nalu) < header_offset + 4:
+        return None
+    header_byte = sps_nalu[header_offset]
+    nal_type = header_byte & 0x1F
+    if nal_type != 7:
+        return None
+    profile_idc = sps_nalu[header_offset + 1]
+    constraint_flags = sps_nalu[header_offset + 2]
+    level_idc = sps_nalu[header_offset + 3]
+    return f"{profile_idc:02x}{constraint_flags:02x}{level_idc:02x}"
+
+
+def _h264_codec_for_profile(profile_level_id: str) -> list:
+    """Build a single-entry H264 codec capability list for
+    setCodecPreferences(), with profile-level-id set to the given value.
+
+    Prior fix rounds hardcoded a single profile-level-id constant
+    ("42e01f"), reasoning it from a *different* WebRTC session (the
+    existing mediamtx/WHEP pipeline) that happened to negotiate that value.
+    Real E2E testing against THIS engine, with live scrcpy debug logging,
+    found the actual SPS NAL unit currently emitted by the device decodes
+    to profile-level-id "42c029" -- genuinely different (different
+    constraint flags AND a different level: 4.1 vs 3.1), not a formatting
+    quirk. scrcpy/MediaCodec is not configured to force a specific H264
+    profile (see scrcpy_session.py) -- the encoder picks its own default,
+    which can plausibly vary run to run / device to device. Hardcoding any
+    single value is fragile; the only robust fix is to derive
+    profile-level-id from the live SPS at connection time (see
+    extract_profile_level_id() and run_engine()) and plug it in here.
+
+    IMPORTANT aiortc-specific wrinkle, verified by reading the installed
+    source directly (not guessed): RTCRtpTransceiver.setCodecPreferences()
+    requires every codec passed in to satisfy `codec in
+    get_capabilities(kind).codecs` (aiortc/rtcrtptransceiver.py) -- i.e.
+    dataclass *equality* against that list, not merely a compatible shape.
+    A freshly hand-built RTCRtpCodecCapability (even one copied from a
+    template via dataclasses.replace()) is never `in` that list, since
+    equality compares all fields including `parameters`, and raises
+    "ValueError: Codec is not in capabilities" (confirmed empirically).
+    Separately, createOffer() itself does not use getCapabilities()/
+    setCodecPreferences()'s output directly either -- it filters aiortc's
+    module-level `aiortc.codecs.CODECS["video"]` list (via
+    filter_preferred_codecs() in rtcpeerconnection.py, matched the same way:
+    mimeType + parameters equality) to build the actual SDP payload-type
+    entries. Both of those checks read from the SAME shared, mutable
+    `CODECS["video"]` list, populated once at import time by
+    aiortc.codecs.init_codecs() with two fixed H264 profile-level-id
+    entries (42001f, 42e01f) baked in.
+
+    The only way to make BOTH setCodecPreferences()'s equality check and
+    createOffer()'s SDP generation agree on a profile-level-id that isn't
+    one of those two fixed values is to mutate that shared source of truth
+    in place, then re-derive fresh capability objects from it (which will
+    then correctly satisfy the equality check because both sides are now
+    reading the same updated parameters). This mutates the "42e01f" H264
+    entry specifically (chosen since it's the one previously proven to
+    work with a real hardware decoder, i.e. any future SPS content this
+    device emits still lands on the "known-good" table slot) -- this
+    process runs exactly one engine/one scrcpy device connection at a
+    time, so there is no cross-connection interference from this
+    process-wide mutation.
+    """
+    import aiortc.codecs as _aiortc_codecs
+
+    h264_entries = [
+        params
+        for params in _aiortc_codecs.CODECS["video"]
+        if params.mimeType == "video/H264"
     ]
+    # Always target the SAME table slot (the second H264 entry, historically
+    # "42e01f") by fixed position, not by matching its current
+    # profile-level-id value. Selecting "whichever entry currently equals
+    # 42e01f" would break on a second call within the same process (e.g. a
+    # reconnect after the device's encoder profile changes): the first call
+    # already overwrote that entry's value, so nothing would match "42e01f"
+    # on the second call, causing the wrong (first) entry to be mutated
+    # instead and leaving both entries with duplicate profile-level-id
+    # values -- confirmed via a real repeated-call regression before this
+    # fix (two calls with different profile_level_id produced 2 duplicate
+    # entries instead of 1 each). Targeting by fixed position is idempotent
+    # across any number of calls.
+    target = h264_entries[-1]
+    target.parameters["profile-level-id"] = profile_level_id
+
+    # Re-derive fresh RTCRtpCodecCapability objects from the now-mutated
+    # CODECS table (get_capabilities() always rebuilds from CODECS, never
+    # caches) and pick out the one at the same table slot we just mutated,
+    # by identity of position rather than re-matching on profile-level-id
+    # value -- avoids ambiguity if profile_level_id ever happened to equal
+    # the OTHER (untouched) H264 entry's value ("42001f"), which would
+    # otherwise make a value-based filter return both.
+    caps = RTCRtpSender.getCapabilities("video")
+    h264_caps = [codec for codec in caps.codecs if codec.mimeType == "video/H264"]
+    return [h264_caps[-1]]
 
 
 def _parse_ice_url(ice_url: str) -> RTCIceServer:
@@ -362,19 +439,45 @@ async def run_engine(scrcpy_port: int, signaling_url: str, session_id: str, ice_
     control = ScrcpyControl(scrcpy_port, device_name)
     control._sock = video.control_sock  # already connected by connect_control()
 
+    # Read frames from the video socket until we get the first SPS NALU
+    # (nal_type==7), which per H264 stream structure is always frame #0 --
+    # confirmed via live scrcpy debug logging in a prior fix round. We need
+    # its profile-level-id BEFORE building the offer, since that value must
+    # be embedded in the SDP's fmtp line and can't be changed after
+    # negotiation. A fixed constant was tried in earlier fix rounds and
+    # proved fragile: MediaCodec picks its own encoder profile default (see
+    # scrcpy_session.py), and a real E2E run showed it emitting a different
+    # profile-level-id than what an unrelated WebRTC session (mediamtx/WHEP)
+    # had previously negotiated. Deriving it live from the actual SPS is the
+    # only robust fix.
+    #
+    # The frame we consume here to inspect it is not lost -- video_pump_loop()
+    # below pushes it to the track first, before resuming iteration of
+    # video.read_frames() (an async generator, so it correctly picks up from
+    # the SECOND frame onward once video_pump_loop's `async for` starts).
+    frames = video.read_frames()
+    first_frame = await frames.__anext__()
+    profile_level_id = extract_profile_level_id(first_frame)
+    if profile_level_id is None:
+        # Should not happen in practice (frame #0 is always SPS per H264
+        # stream structure), but fall back to a known-good value rather than
+        # crashing if some device/encoder ever violates that assumption.
+        profile_level_id = "42e01f"
+
     config = RTCConfiguration(iceServers=[_parse_ice_url(ice_url)])
     pc = RTCPeerConnection(configuration=config)
 
     track = PassthroughH264Track()
     # Use addTransceiver() instead of addTrack() so we get the
     # RTCRtpTransceiver directly (addTrack() returns only the RTCRtpSender).
-    # Constrain the offer to H264-only: aiortc's createOffer() otherwise
+    # Constrain the offer to H264-only, with profile-level-id set to the
+    # value just derived from the live SPS: aiortc's createOffer() otherwise
     # offers every codec it supports (VP8 included) and lets the remote
     # peer choose -- real E2E testing against a browser showed it picking
     # VP8, which PassthroughH264Track's raw H264 Annex-B NALUs cannot
     # satisfy (the browser decodes H264 bytes as VP8 and nothing renders).
     transceiver = pc.addTransceiver(track, direction="sendrecv")
-    transceiver.setCodecPreferences(_h264_only_video_codecs())
+    transceiver.setCodecPreferences(_h264_codec_for_profile(profile_level_id))
 
     input_channel = pc.createDataChannel("input")
 
@@ -432,13 +535,12 @@ async def run_engine(scrcpy_port: int, signaling_url: str, session_id: str, ice_
                         await pc.addIceCandidate(cand)
 
     async def video_pump_loop():
-        frame_count = 0
-        async for nalu in video.read_frames():
-            if frame_count < 5:
-                nal_type = nalu[4] & 0x1F if len(nalu) > 4 else -1
-                print(f"[debug] frame #{frame_count} size={len(nalu)} nal_type={nal_type} "
-                      f"first16={nalu[:16].hex()}", flush=True)
-            frame_count += 1
+        # Push the SPS NALU already consumed above (to derive
+        # profile_level_id) first -- it's still needed by the decoder --
+        # then resume iterating the SAME async generator, which correctly
+        # continues from the second frame onward.
+        track.push_nalu(first_frame)
+        async for nalu in frames:
             track.push_nalu(nalu)
 
     async def idr_heartbeat_loop():

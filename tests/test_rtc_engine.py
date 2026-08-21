@@ -13,7 +13,8 @@ from server.rtc_engine import (
     PassthroughH264Track,
     SignalingClient,
     _parse_ice_url,
-    _h264_only_video_codecs,
+    _h264_codec_for_profile,
+    extract_profile_level_id,
 )
 
 
@@ -501,9 +502,9 @@ def test_handle_non_dict_valid_json_is_swallowed():
     control.send_keycode.assert_not_called()
 
 
-def test_h264_only_video_codecs_excludes_vp8_and_rtx():
-    """_h264_only_video_codecs() must filter aiortc's real video codec
-    capability list down to H264 entries only.
+def test_h264_codec_for_profile_excludes_vp8_and_rtx():
+    """_h264_codec_for_profile() must return only H264 entries, never VP8
+    or video/rtx.
 
     Manual E2E testing against a real browser found that the negotiated
     codec was VP8 (97) via libvpx, not H264 -- because nothing constrained
@@ -514,7 +515,7 @@ def test_h264_only_video_codecs_excludes_vp8_and_rtx():
     decode anything. This test locks down the filtering helper against the
     real installed aiortc codec capability list, not a hand-rolled fake.
     """
-    codecs = _h264_only_video_codecs()
+    codecs = _h264_codec_for_profile("42c029")
 
     assert len(codecs) >= 1
     assert all(codec.mimeType == "video/H264" for codec in codecs)
@@ -522,48 +523,98 @@ def test_h264_only_video_codecs_excludes_vp8_and_rtx():
     assert not any(codec.mimeType == "video/rtx" for codec in codecs)
 
 
-def test_h264_only_video_codecs_excludes_42001f_profile():
-    """_h264_only_video_codecs() must exclude the profile-level-id=42001f
-    H264 entry entirely, keeping only profile-level-id=42e01f.
+def test_h264_codec_for_profile_sets_requested_profile_level_id():
+    """_h264_codec_for_profile() must embed the EXACT profile-level-id it
+    was given, not a hardcoded constant.
 
-    Further E2E testing (after VP8 was already excluded) found aiortc's
-    installed capability list actually contains TWO H264 entries with
-    different profile-level-id values -- 42001f and 42e01f. Whichever one
-    the browser negotiated first was 42001f, which macOS VideoToolbox's
-    hardware decoder rejects outright (falls back to software decode,
-    framesDecoded stuck at 0 despite counting keyframes). The already
-    -working mediamtx/WHEP pipeline in this repo, tested against the same
-    device/encoder output, negotiates profile-level-id=42e01f specifically
-    and decodes successfully via VideoToolbox -- proving 42e01f is the
-    profile that must be offered, and that offering 42001f at all is
-    unnecessary since we control the encoder and it already round-trips
-    cleanly under 42e01f.
+    A prior fix round hardcoded profile-level-id=42e01f, reasoned from a
+    *different* WebRTC session (the existing mediamtx/WHEP pipeline) that
+    happened to negotiate that value. Real E2E testing against this engine,
+    with live scrcpy debug logging, found the device's actual live SPS
+    decodes to profile-level-id=42c029 -- genuinely different (different
+    constraint flags AND level). scrcpy/MediaCodec is not configured to
+    force a specific H264 profile (see scrcpy_session.py) -- the encoder
+    picks its own default, which can plausibly vary. The only robust fix is
+    deriving profile-level-id live from the SPS and threading it through
+    here dynamically, so this test locks down that the function's output
+    actually reflects its argument rather than any fixed constant.
     """
-    codecs = _h264_only_video_codecs()
+    codecs = _h264_codec_for_profile("42c029")
 
     assert len(codecs) == 1
     assert codecs[0].mimeType == "video/H264"
-    assert codecs[0].parameters.get("profile-level-id") == "42e01f"
-    assert not any(
-        codec.parameters.get("profile-level-id") == "42001f" for codec in codecs
-    )
+    assert codecs[0].parameters.get("profile-level-id") == "42c029"
+
+    # Also verify a different input produces a different output -- proves
+    # this isn't silently ignoring its argument and falling back to some
+    # baked-in default.
+    other_codecs = _h264_codec_for_profile("640028")
+    assert other_codecs[0].parameters.get("profile-level-id") == "640028"
 
 
-async def test_offer_sdp_constrained_to_h264_only():
+def test_extract_profile_level_id_from_real_captured_sps():
+    """extract_profile_level_id() must correctly parse the real SPS bytes
+    captured via live scrcpy debug logging during E2E testing.
+
+    Captured bytes (hex, spaces for readability only, not in the real
+    stream): "0000000167 42c0298d680b435f964200". Start code 00 00 00 01,
+    NAL header 0x67 (nal_type=7=SPS), then profile_idc=0x42,
+    constraint_flags=0xc0, level_idc=0x29 -- decoding to "42c029". This is
+    NOT the same as the previously-hardcoded "42e01f": profile_idc matches
+    (0x42=Baseline in both) but constraint_flags (0xc0 vs 0xe0) and
+    level_idc (0x29=level 4.1 vs 0x1f=level 3.1) genuinely differ.
+    """
+    sps_nalu = bytes.fromhex("0000000167 42c0298d680b435f964200".replace(" ", ""))
+
+    assert extract_profile_level_id(sps_nalu) == "42c029"
+
+
+def test_extract_profile_level_id_accepts_3_byte_start_code():
+    """Annex-B allows either a 3-byte (00 00 01) or 4-byte (00 00 00 01)
+    start code; the extractor must handle both since real encoder output
+    is not guaranteed to always emit the 4-byte form."""
+    sps_nalu = bytes.fromhex("000001" + "6742c0298d680b435f964200")
+
+    assert extract_profile_level_id(sps_nalu) == "42c029"
+
+
+def test_extract_profile_level_id_returns_none_for_non_sps_nalu():
+    """A non-SPS NALU (e.g. nal_type=1, a regular slice) must return None,
+    not misinterpret arbitrary payload bytes as profile-level-id."""
+    non_sps = bytes.fromhex("00000001" + "419A24" + "AABBCC")
+
+    assert extract_profile_level_id(non_sps) is None
+
+
+def test_extract_profile_level_id_returns_none_for_too_short_input():
+    """Input too short to contain a start code + NAL header + 3 profile
+    bytes must return None rather than raising IndexError."""
+    assert extract_profile_level_id(b"\x00\x00\x00\x01\x67\x42") is None
+    assert extract_profile_level_id(b"") is None
+
+
+async def test_offer_sdp_constrained_to_h264_only_with_dynamic_profile():
     """End-to-end proof that the fix actually constrains the generated SDP
-    offer, not just that the filtering helper returns the right list.
+    offer to a dynamically-derived profile-level-id, not just that the
+    helper functions return the right values in isolation.
 
     Builds a real RTCPeerConnection + PassthroughH264Track using the same
-    addTransceiver()/setCodecPreferences() sequence run_engine() uses, then
+    addTransceiver()/setCodecPreferences() sequence run_engine() now uses
+    (deriving profile-level-id from a simulated live SPS via
+    extract_profile_level_id(), then _h264_codec_for_profile()), then
     inspects the real offer SDP: the video m= line's payload types must
-    resolve only to H264 rtpmap entries, and VP8's mimeType must not appear
-    anywhere in the SDP at all.
+    resolve only to H264 rtpmap entries with the derived profile-level-id,
+    and VP8's mimeType must not appear anywhere in the SDP at all.
     """
+    sps_nalu = bytes.fromhex("0000000167 42c0298d680b435f964200".replace(" ", ""))
+    profile_level_id = extract_profile_level_id(sps_nalu)
+    assert profile_level_id == "42c029"
+
     pc = RTCPeerConnection()
     try:
         track = PassthroughH264Track()
         transceiver = pc.addTransceiver(track, direction="sendrecv")
-        transceiver.setCodecPreferences(_h264_only_video_codecs())
+        transceiver.setCodecPreferences(_h264_codec_for_profile(profile_level_id))
 
         offer = await pc.createOffer()
         await pc.setLocalDescription(offer)
@@ -578,15 +629,15 @@ async def test_offer_sdp_constrained_to_h264_only():
         )
         assert "VP8" not in sdp, f"VP8 leaked into offer SDP: {video_m_line}"
 
-        # profile-level-id=42e01f is the only profile proven to decode via
-        # macOS VideoToolbox on the target device (see mediamtx_manager.py's
-        # working WHEP pipeline); 42001f is rejected by that hardware
-        # decoder and must not appear in the offer at all.
+        # profile-level-id must match exactly what was derived from the live
+        # SPS above (42c029) -- not any hardcoded constant from a prior fix
+        # round (42e01f) or the other static aiortc capability (42001f).
         fmtp_lines = [line for line in sdp.splitlines() if line.startswith("a=fmtp:")]
         assert fmtp_lines, "offer SDP has no fmtp lines for video payload types"
-        assert all("profile-level-id=42e01f" in line for line in fmtp_lines), (
-            f"non-42e01f H264 profile present in offer fmtp lines: {fmtp_lines}"
+        assert all("profile-level-id=42c029" in line for line in fmtp_lines), (
+            f"derived profile-level-id missing from offer fmtp lines: {fmtp_lines}"
         )
+        assert "42e01f" not in sdp, f"stale hardcoded profile leaked into offer SDP: {sdp}"
         assert "42001f" not in sdp, f"42001f profile leaked into offer SDP: {sdp}"
     finally:
         await pc.close()
