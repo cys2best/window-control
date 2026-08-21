@@ -583,12 +583,15 @@ async def run_engine(scrcpy_port: int, signaling_url: str, session_id: str, ice_
         track.push_nalu(first_frame)
         seen_pps = False
         seen_idr_dump = False
+        pps_frame_num = None
+        idr_count = 0
         scan_count = 1  # first_frame already counted
         async for nalu in frames:
             if scan_count < 30:
                 types = _scan_nal_types(nalu)
                 if 8 in types and not seen_pps:
                     seen_pps = True
+                    pps_frame_num = scan_count
                     print(f"[debug] PPS (nal_type=8) found at frame #{scan_count}, "
                           f"all_nal_types_in_frame={types}, "
                           f"full_hex={nalu.hex()}", flush=True)
@@ -602,6 +605,15 @@ async def run_engine(scrcpy_port: int, signaling_url: str, session_id: str, ice_
                 if scan_count == 30 and not seen_pps:
                     print("[debug] NO PPS (nal_type=8) seen in first 30 frames "
                           "(full multi-NALU scan)", flush=True)
+            # Track every subsequent IDR (not just the first) for the first
+            # 40 occurrences past the initial 30-frame scan window, to see
+            # whether any IDR arriving AFTER PPS became available
+            # (pps_frame_num) is ever given a fair shot at decode.
+            elif idr_count < 40 and 5 in _scan_nal_types(nalu):
+                idr_count += 1
+                print(f"[debug] later IDR #{idr_count} seen, "
+                      f"after_pps_available={pps_frame_num is not None}, "
+                      f"pps_was_at_frame={pps_frame_num}", flush=True)
             track.push_nalu(nalu)
 
     async def idr_heartbeat_loop():
