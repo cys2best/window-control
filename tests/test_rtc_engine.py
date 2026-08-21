@@ -6,7 +6,7 @@ import pytest
 
 import websockets
 
-from server.rtc_engine import ScrcpyVideoClient, PassthroughH264Track, SignalingClient
+from server.rtc_engine import ScrcpyVideoClient, PassthroughH264Track, SignalingClient, _parse_ice_url
 
 
 class FakeScrcpyServer:
@@ -430,6 +430,30 @@ def test_handle_key_zero_is_ignored():
     )
 
     control.send_keycode.assert_not_called()
+
+
+def test_parse_ice_url_splits_combined_turn_credentials():
+    """The 4th CLI arg arrives as a combined `turn:user:pass@host:port`
+    string. aiortc's RTCIceServer.urls must be the bare `turn:host:port`
+    part only, with username/credential as separate fields -- otherwise
+    aiortc.rtcicetransport.parse_stun_turn_uri() raises
+    `ValueError: malformed uri` the moment a track is added.
+    """
+    server = _parse_ice_url("turn:poc-user:poc-secret-change-me@13.214.163.82:3478")
+
+    assert server.urls == "turn:13.214.163.82:3478"
+    assert server.username == "poc-user"
+    assert server.credential == "poc-secret-change-me"
+
+
+def test_parse_ice_url_passes_through_bare_stun_url():
+    """A bare STUN URL with no embedded credentials must pass through
+    unchanged, with username/credential left at their None defaults."""
+    server = _parse_ice_url("stun:stun.l.google.com:19302")
+
+    assert server.urls == "stun:stun.l.google.com:19302"
+    assert server.username is None
+    assert server.credential is None
 
 
 def test_handle_non_dict_valid_json_is_swallowed():

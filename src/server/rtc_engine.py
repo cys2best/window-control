@@ -243,9 +243,32 @@ def handle_input_message(
             control.send_keycode(keycode)
 
 
+import re
 import sys
 
 from aiortc import RTCConfiguration, RTCIceCandidate, RTCIceServer, RTCPeerConnection, RTCSessionDescription
+
+_ICE_URL_WITH_CREDENTIALS_RE = re.compile(r"^(turns?):([^:]+):([^@]+)@(.+)$")
+
+
+def _parse_ice_url(ice_url: str) -> RTCIceServer:
+    """Parse a combined `turn:user:pass@host:port`-style CLI argument into
+    an aiortc RTCIceServer.
+
+    aiortc.RTCIceServer (a plain dataclass) does NOT accept embedded
+    credentials in `urls` -- `urls` must be the bare `turn:host:port` (or
+    `stun:host:port`) string, with `username`/`credential` passed as their
+    own fields. Passing the combined form directly as `urls` crashes deep
+    inside aiortc.rtcicetransport.parse_stun_turn_uri() with
+    `ValueError: malformed uri` the first time a track/DTLS transport is
+    created. This mirrors engine/test/test_page.html's JS-side
+    parseIceServer(), which solves the identical problem for the browser.
+    """
+    match = _ICE_URL_WITH_CREDENTIALS_RE.match(ice_url)
+    if match is None:
+        return RTCIceServer(urls=ice_url)
+    scheme, username, credential, hostpart = match.groups()
+    return RTCIceServer(urls=f"{scheme}:{hostpart}", username=username, credential=credential)
 
 
 def _parse_ice_candidate(candidate_str: str, mid: str) -> RTCIceCandidate | None:
@@ -281,7 +304,7 @@ async def run_engine(scrcpy_port: int, signaling_url: str, session_id: str, ice_
     control = ScrcpyControl(scrcpy_port, device_name)
     control._sock = video.control_sock  # already connected by connect_control()
 
-    config = RTCConfiguration(iceServers=[RTCIceServer(urls=ice_url)])
+    config = RTCConfiguration(iceServers=[_parse_ice_url(ice_url)])
     pc = RTCPeerConnection(configuration=config)
 
     track = PassthroughH264Track()
