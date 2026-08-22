@@ -853,68 +853,6 @@ function normalizeCoords(clientX, clientY) {
   };
 }
 
-// TEMP: diagnostic overlay for the CSS forced-landscape black-bar bug --
-// remove once the safe-area/viewport numbers are confirmed and a real fix
-// lands. Visible only while forced-landscape is actually engaged.
-function _safeAreaInsets() {
-  let probe = document.getElementById('_safe-area-probe');
-  if (!probe) {
-    probe = document.createElement('div');
-    probe.id = '_safe-area-probe';
-    probe.style.cssText = 'position:fixed;top:0;left:0;width:0;height:0;' +
-      'pointer-events:none;visibility:hidden;' +
-      'padding-top:env(safe-area-inset-top,0px);' +
-      'padding-right:env(safe-area-inset-right,0px);' +
-      'padding-bottom:env(safe-area-inset-bottom,0px);' +
-      'padding-left:env(safe-area-inset-left,0px);';
-    document.body.appendChild(probe);
-  }
-  const cs = getComputedStyle(probe);
-  return { top: cs.paddingTop, right: cs.paddingRight, bottom: cs.paddingBottom, left: cs.paddingLeft };
-}
-
-function _updateLandscapeDebugOverlay() {
-  const ov = document.getElementById('_debug-overlay');
-  if (!ov) return;
-  const streamActive = document.getElementById('screen-stream').classList.contains('active');
-  if (!streamActive || !_forcedLandscapeActive()) {
-    ov.style.display = 'none';
-    return;
-  }
-  ov.style.display = 'block';
-  const el = _activeStreamEl();
-  const nat = el && el.naturalWidth ? `${el.naturalWidth}x${el.naturalHeight}`
-    : el && el.videoWidth ? `${el.videoWidth}x${el.videoHeight}` : 'n/a';
-  const container = document.getElementById('stream-container');
-  const cr = container.getBoundingClientRect();
-  const er = el ? el.getBoundingClientRect() : null;
-  const vv = window.visualViewport;
-  const insets = _safeAreaInsets();
-  ov.textContent =
-    `inner: ${window.innerWidth}x${window.innerHeight}\n` +
-    `visualVP: ${vv ? Math.round(vv.width) + 'x' + Math.round(vv.height) + ' off ' + Math.round(vv.offsetLeft) + ',' + Math.round(vv.offsetTop) : 'n/a'}\n` +
-    `safe-area: T${insets.top} R${insets.right} B${insets.bottom} L${insets.left}\n` +
-    `video native: ${nat}\n` +
-    `container rect: ${Math.round(cr.left)},${Math.round(cr.top)} ${Math.round(cr.width)}x${Math.round(cr.height)}\n` +
-    `el rect: ${er ? Math.round(er.left) + ',' + Math.round(er.top) + ' ' + Math.round(er.width) + 'x' + Math.round(er.height) : 'n/a'}\n` +
-    `standalone: ${window.navigator.standalone}  dpr: ${window.devicePixelRatio}`;
-}
-
-function initLandscapeDebugOverlay() {
-  const ov = document.createElement('div');
-  ov.id = '_debug-overlay';
-  ov.style.cssText = 'position:fixed;top:4px;left:4px;z-index:99999;display:none;' +
-    'background:rgba(0,0,0,0.75);color:#0f0;font:10px/1.4 monospace;' +
-    'padding:6px 8px;white-space:pre;pointer-events:none;border-radius:4px;';
-  document.body.appendChild(ov);
-  ['resize', 'orientationchange'].forEach(evt =>
-    window.addEventListener(evt, _updateLandscapeDebugOverlay));
-  if (window.visualViewport) {
-    window.visualViewport.addEventListener('resize', _updateLandscapeDebugOverlay);
-  }
-  setInterval(_updateLandscapeDebugOverlay, 500);
-}
-
 function initTouch() {
   const container = document.getElementById('stream-container');
 
@@ -1134,7 +1072,6 @@ async function _startApp() {
   initFPS();
   initDrawer();
   startWindowsPolling();
-  initLandscapeDebugOverlay();
 
   // ── Settings popup (gear) ──────────────────────────────────────────────────
   const setBtn = document.getElementById('settings-btn');
