@@ -156,6 +156,22 @@ html, body {
   object-fit: contain;
 }
 
+/* Forced landscape fallback: browsers without Screen Orientation lock
+   (iOS Safari, desktop) keep the device/window physically portrait, so
+   rotate the stream itself to match mobile's landscape-locked view. Scoped
+   to phone-sized viewports so a resized desktop window isn't affected.
+   No-ops on browsers where the JS lock succeeded, since orientation is
+   already landscape there and this query won't match. */
+@media screen and (max-width: 900px) and (orientation: portrait) {
+  #screen-stream.active {
+    position: fixed;
+    top: 0; left: 0;
+    width: 100vh; height: 100vw;
+    transform-origin: top left;
+    transform: rotate(90deg) translateY(-100%);
+  }
+}
+
 /* ── RIGHT TOOLBAR ──────────────────────────────────────────── */
 #right-toolbar {
   position: absolute;
