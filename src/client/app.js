@@ -425,6 +425,23 @@ async function initWebRTC(windowId, whepUrl, stunUrl, serial) {
             initWebRTC(retryId, undefined, undefined, _currentSerial);
           }
         }, delay);
+      } else if (s === 'disconnected') {
+        // mediamtx tearing down its side (e.g. the scrcpy restart during a
+        // tier switch destroying its PeerConnection) doesn't always produce
+        // a clean 'failed' on the browser side -- some closes leave ICE
+        // sitting in 'disconnected' indefinitely instead. A real transient
+        // network blip usually self-heals within a few seconds; give it a
+        // window, then treat a non-recovery the same as a hard failure.
+        const retryId = _activeWindowId;
+        const watchdogPc = _pc;
+        setTimeout(() => {
+          if (_pc !== watchdogPc) return; // superseded already
+          const cur = _pc.iceConnectionState;
+          if (cur === 'connected' || cur === 'completed') return;
+          if (_activeWindowId === retryId && _pc === watchdogPc && !_webrtcInProgress) {
+            initWebRTC(retryId, undefined, undefined, _currentSerial);
+          }
+        }, 5000);
       }
     };
 
