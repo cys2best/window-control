@@ -96,6 +96,45 @@ def _dispatch_key_control(ctrl, key: str):
         ctrl.send_keycode(kc)
 
 
+def _grab_rtsp_frame(rtsp_url: str) -> bytes:
+    """Grab a single JPEG frame from a live local RTSP stream via ffmpeg.
+
+    mediamtx already has this instance's scrcpy feed flowing on loopback, so
+    this decodes one frame locally instead of the ADB screencap path's
+    on-device PNG encode + USB/adb-speed transfer.
+    """
+    from server.scrcpy_session import _get_ffmpeg
+    ffmpeg = _get_ffmpeg()
+    if not ffmpeg:
+        raise RuntimeError("ffmpeg not available")
+    args = [
+        ffmpeg, "-loglevel", "error",
+        "-rtsp_transport", "tcp",
+        "-i", rtsp_url,
+        "-frames:v", "1",
+        "-vf", "scale=640:384:force_original_aspect_ratio=decrease",
+        "-q:v", "5",
+        "-f", "image2", "-",
+    ]
+    return subprocess.check_output(args, timeout=4, **adb_manager._no_window_flags())
+
+
+async def _capture_preview_via_stream(inst, rtsp_url: str) -> bytes | None:
+    """Try the RTSP-frame-grab preview path; None means "fall back to ADB".
+
+    Forces an IDR first (same best-effort pattern as select()) so ffmpeg
+    doesn't have to wait out the ~2s heartbeat before it sees a keyframe.
+    """
+    try:
+        inst.session.control.request_idr()
+    except Exception:
+        pass
+    try:
+        return await asyncio.to_thread(_grab_rtsp_frame, rtsp_url)
+    except Exception:
+        return None
+
+
 async def _capture_preview(serial: str) -> Response:
     """Grab a device screenshot and return a small JPEG thumbnail.
 
@@ -307,6 +346,12 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
 
     @app.get("/instances/{instance_id}/preview")
     async def instance_preview(instance_id: str):
+        inst = instance_manager.get(instance_id)
+        rtsp_url = instance_manager.rtsp_url(instance_id)
+        if inst is not None and rtsp_url:
+            data = await _capture_preview_via_stream(inst, rtsp_url)
+            if data is not None:
+                return Response(content=data, media_type="image/jpeg")
         return await _capture_preview(instance_id)
 
     # ── Legacy /windows + /select (kept for backward compat) ────────────────

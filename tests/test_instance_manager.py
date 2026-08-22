@@ -141,3 +141,48 @@ def test_refresh_uses_incremental_paths_when_mediamtx_already_running(monkeypatc
     assert mediamtx.started == []  # process already running — no full restart
     assert mediamtx.added == ["instance0"]
     assert mediamtx.removed == []
+
+
+def test_rtsp_url_unknown_serial_returns_none():
+    im = InstanceManager(MediamtxManager())
+    assert im.rtsp_url("emulator-9999") is None
+
+
+def test_rtsp_url_dead_session_returns_none():
+    from server.instance_manager import Instance
+
+    im = InstanceManager(MediamtxManager())
+    serial = "emulator-5554"
+
+    class DeadSession:
+        alive = False
+
+    inst = Instance(
+        {"id": f"adb:{serial}", "title": "t", "ldplayer_index": 0},
+        DeadSession(), 100, 200,
+    )
+    im._instances[serial] = inst
+
+    assert im.rtsp_url(serial) is None
+
+
+def test_rtsp_url_live_session_delegates_to_mediamtx():
+    from server.instance_manager import Instance
+
+    class FakeMediamtx:
+        def rtsp_url(self, name):
+            return f"rtsp://localhost/{name}"
+
+    im = InstanceManager(FakeMediamtx())
+    serial = "emulator-5554"
+
+    class LiveSession:
+        alive = True
+
+    inst = Instance(
+        {"id": f"adb:{serial}", "title": "t", "ldplayer_index": 0},
+        LiveSession(), 100, 200,
+    )
+    im._instances[serial] = inst
+
+    assert im.rtsp_url(serial) == "rtsp://localhost/instance0"
