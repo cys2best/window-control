@@ -158,19 +158,12 @@ html, body {
 
 /* Forced landscape fallback: browsers without Screen Orientation lock
    (iOS Safari, desktop) keep the device/window physically portrait, so
-   rotate the video itself to match mobile's landscape-locked view. Scoped
+   rotate the stream itself to match mobile's landscape-locked view. Scoped
    to phone-sized viewports so a resized desktop window isn't affected.
    No-ops on browsers where the JS lock succeeded, since orientation is
-   already landscape there and this query won't match.
-   Rotates #stream-container only, NOT #screen-stream -- #right-toolbar is
-   a sibling inside #screen-stream, and rotating that ancestor warps its
-   right:0/top:0/bottom:0 strip into a full-width band (its box dimensions
-   swap along with the parent's). Leaving #screen-stream unrotated keeps
-   the toolbar in its normal position, floating over the rotated video
-   same as it always does in portrait. See normalizeCoords() in app.js
-   for the matching pointer-coordinate fix this transform requires. */
+   already landscape there and this query won't match. */
 @media screen and (max-width: 900px) and (orientation: portrait) {
-  #screen-stream.active #stream-container {
+  #screen-stream.active {
     position: fixed;
     top: 0; left: 0;
     width: 100vh; height: 100vw;

@@ -798,58 +798,32 @@ async function initWebRTCRace(windowId, whepUrl, stunUrl, signalingUrl, instance
   }
 }
 
-// True when the CSS forced-landscape fallback in style.css is rotating
-// #stream-container (see the comment there). getBoundingClientRect() on a
-// rotated element returns the screen-space AABB, which for an exact 90deg
-// rotation reports portrait dimensions again -- not usable for object-fit
-// math. When active, normalizeCoords() works in the element's pre-rotation
-// local box instead of trusting the rect.
-function _forcedLandscapeActive() {
-  return window.matchMedia('(max-width: 900px) and (orientation: portrait)').matches;
-}
-
 function normalizeCoords(clientX, clientY) {
+  const r = getStreamRect();
   const el = _activeStreamEl();
-
-  let boxW, boxH, x, y;
-  if (_forcedLandscapeActive()) {
-    // #stream-container is fixed at 100vh x 100vw (pre-rotation local box),
-    // rotated 90deg + translateY(-100%). Inverting that transform: a
-    // screen-space tap (clientX, clientY) maps to local (clientY, boxH - clientX).
-    boxW = window.innerHeight;
-    boxH = window.innerWidth;
-    x = clientY;
-    y = boxH - clientX;
-  } else {
-    const r = getStreamRect();
-    boxW = r.width;
-    boxH = r.height;
-    x = clientX - r.left;
-    y = clientY - r.top;
-  }
 
   // Account for object-fit:contain letterboxing.
   // The element box may be larger than the actual rendered content.
-  let contentW = boxW, contentH = boxH, offsetX = 0, offsetY = 0;
+  let contentW = r.width, contentH = r.height, offsetX = 0, offsetY = 0;
   if (el && el.naturalWidth && el.naturalHeight) {
     // img: use naturalWidth/naturalHeight
-    const scale = Math.min(boxW / el.naturalWidth, boxH / el.naturalHeight);
+    const scale = Math.min(r.width / el.naturalWidth, r.height / el.naturalHeight);
     contentW = el.naturalWidth * scale;
     contentH = el.naturalHeight * scale;
-    offsetX = (boxW - contentW) / 2;
-    offsetY = (boxH - contentH) / 2;
+    offsetX = (r.width - contentW) / 2;
+    offsetY = (r.height - contentH) / 2;
   } else if (el && el.videoWidth && el.videoHeight) {
     // video: use videoWidth/videoHeight
-    const scale = Math.min(boxW / el.videoWidth, boxH / el.videoHeight);
+    const scale = Math.min(r.width / el.videoWidth, r.height / el.videoHeight);
     contentW = el.videoWidth * scale;
     contentH = el.videoHeight * scale;
-    offsetX = (boxW - contentW) / 2;
-    offsetY = (boxH - contentH) / 2;
+    offsetX = (r.width - contentW) / 2;
+    offsetY = (r.height - contentH) / 2;
   }
 
   return {
-    x: Math.max(0, Math.min(1, (x - offsetX) / contentW)),
-    y: Math.max(0, Math.min(1, (y - offsetY) / contentH)),
+    x: Math.max(0, Math.min(1, (clientX - r.left - offsetX) / contentW)),
+    y: Math.max(0, Math.min(1, (clientY - r.top - offsetY) / contentH)),
   };
 }
 
