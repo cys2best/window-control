@@ -813,10 +813,12 @@ function normalizeCoords(clientX, clientY) {
 
   let boxW, boxH, x, y;
   if (_forcedLandscapeActive()) {
-    // #stream-container is fixed at 100vh x 100vw (pre-rotation local box),
-    // rotated 90deg + translateY(-100%). Inverting that transform: a
-    // screen-space tap (clientX, clientY) maps to local (clientY, boxH - clientX).
-    boxW = window.innerHeight;
+    // #stream-container is fixed at (100vh - 52px) x 100vw (pre-rotation
+    // local box -- the 52px is #right-toolbar's reserved strip, see
+    // style.css), rotated 90deg + translateY(-100%). Inverting that
+    // transform: a screen-space tap (clientX, clientY) maps to local
+    // (clientY, boxH - clientX).
+    boxW = window.innerHeight - 52;
     boxH = window.innerWidth;
     x = clientY;
     y = boxH - clientX;
