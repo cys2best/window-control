@@ -17,6 +17,9 @@ let _iceServers = [];          // STUN/TURN servers for the public path (from se
 let _publicModeActive = false; // true when the active stream was negotiated via initWebRTCPublic
 let _raceGen = 0;              // bumped by initWebRTC/initWebRTCPublic/initWebRTCRace on every call,
                                 // so a stale initWebRTCRace() can detect it's been superseded (see below)
+let _streamFailCount = 0;      // consecutive MJPEG load failures for the current _streamGeneration --
+                                // caps the retry loop so a permanently-unsupported path (e.g. /stream
+                                // over the public tunnel, which always 501s) can't retry forever
 
 // ── Quality tiers ──────────────────────────────────────────────────────────────
 const _TIER_ORDER = ["480", "720", "1080", "1440"];
@@ -231,11 +234,16 @@ function sendInput(obj) {
 
 let _streamGeneration = 0;
 
+const MAX_STREAM_RETRIES = 3;
+
 function initStream() {
   clearInterval(window._streamPoll);
   _streamGeneration++;
-  const gen = _streamGeneration;
+  _streamFailCount = 0;
+  _loadStreamFrame(_streamGeneration);
+}
 
+function _loadStreamFrame(gen) {
   // Remove and recreate img to force browser to drop the TCP connection.
   // Setting img.src='' is not enough — Safari keeps the socket open.
   const oldImg = document.getElementById('stream-img');
@@ -248,12 +256,23 @@ function initStream() {
   newImg.src = '/stream?' + Date.now();
 
   // MJPEG img onload fires once on first frame only — not per-frame
-  newImg.onload = () => { if (gen === _streamGeneration) { clearUnavailable(); } };
+  newImg.onload = () => { if (gen === _streamGeneration) { _streamFailCount = 0; clearUnavailable(); } };
 
   newImg.onerror = () => {
     if (gen !== _streamGeneration) return;
     clearInterval(window._streamPoll);
-    setTimeout(() => { if (gen === _streamGeneration) initStream(); }, 2000);
+    _streamFailCount++;
+    // Some paths (e.g. this browser is off-LAN, reachable only through the
+    // public tunnel) will NEVER serve MJPEG -- the tunnel refuses /stream
+    // outright (http_tunnel.py, unbounded body) on every single attempt.
+    // Retrying forever there just hammers the tunnel and spams its log.
+    // Give up after a few tries and surface the manual-reconnect overlay
+    // instead of retrying silently forever.
+    if (_streamFailCount >= MAX_STREAM_RETRIES) {
+      showUnavailable();
+      return;
+    }
+    setTimeout(() => { if (gen === _streamGeneration) _loadStreamFrame(gen); }, 2000);
   };
 
   // Staleness: if img stops loading (server died), onerror fires.
@@ -263,6 +282,27 @@ function initStream() {
 
 function clearUnavailable() {
   document.getElementById('unavailable-overlay').classList.remove('show');
+}
+
+function showUnavailable() {
+  document.getElementById('unavailable-overlay').classList.add('show');
+}
+
+// Shared by the reconnect button and the visibilitychange resume path.
+// Retries whichever transport already proved it works for this session, or
+// -- if we're here because initWebRTCRace fell all the way to MJPEG, which
+// then hit the tunnel's permanent /stream refusal -- races both WebRTC paths
+// again instead of retrying MJPEG, the one path already proven dead here.
+function _reconnectStream() {
+  if (_publicModeActive && _activeWindowId && _signalingUrl && _instanceName) {
+    initWebRTCPublic(_activeWindowId, _signalingUrl, _instanceName, _currentSerial, _iceServers);
+  } else if (_webrtcActive && _activeWindowId) {
+    initWebRTC(_activeWindowId, _whepUrl, undefined, _currentSerial);
+  } else if (_activeWindowId) {
+    initWebRTCRace(_activeWindowId, _whepUrl, _stunUrl, _signalingUrl, _instanceName, _currentSerial, _iceServers);
+  } else {
+    initStream();
+  }
 }
 
 function getStreamRect() {
@@ -769,6 +809,18 @@ function _probePublicSignaling(signalingUrl, instanceName, iceServers) {
 async function initWebRTCRace(windowId, whepUrl, stunUrl, signalingUrl, instanceName, serial, iceServers) {
   const myGen = ++_raceGen;
   setNetStatus('warn', 'Connecting…');
+  // Stash params unconditionally (mirrors what initWebRTC/initWebRTCPublic do
+  // for themselves): if BOTH probes fail below, neither of those functions
+  // ever runs, so without this a manual reconnect after MJPEG fallback would
+  // retry with stale/null params instead of the ones this call was actually
+  // given.
+  _activeWindowId = windowId;
+  _whepUrl = whepUrl || _whepUrl;
+  _stunUrl = stunUrl || _stunUrl;
+  _signalingUrl = signalingUrl || _signalingUrl;
+  _instanceName = instanceName || _instanceName;
+  _currentSerial = serial || _currentSerial;
+  _iceServers = iceServers || _iceServers;
 
   const winner = await new Promise(resolve => {
     let localDone = false, publicDone = false, resolved = false;
@@ -1116,7 +1168,7 @@ async function _startApp() {
 
   document.getElementById('reconnect-btn').addEventListener('click', () => {
     clearUnavailable();
-    initStream();
+    _reconnectStream();
   });
 
   // Reconnect stream + WS when app returns from background (iOS Safari suspends both)
@@ -1127,16 +1179,7 @@ async function _startApp() {
         connectWS();
       }
       if (document.getElementById('screen-stream').classList.contains('active')) {
-        if (_publicModeActive && _activeWindowId && _signalingUrl && _instanceName) {
-          // The active session was negotiated via the public signaling path
-          // (VPS relay), not local WHEP -- resume through the same path
-          // instead of renegotiating against a stale/unreachable _whepUrl.
-          initWebRTCPublic(_activeWindowId, _signalingUrl, _instanceName, _currentSerial, _iceServers);
-        } else if (_webrtcActive && _activeWindowId) {
-          initWebRTC(_activeWindowId, _whepUrl, undefined, _currentSerial);
-        } else {
-          initStream();
-        }
+        _reconnectStream();
       }
     }
   });
