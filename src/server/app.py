@@ -111,6 +111,13 @@ def _grab_rtsp_frame(rtsp_url: str) -> bytes:
     args = [
         ffmpeg, "-loglevel", "error",
         "-rtsp_transport", "tcp",
+        # RTSP's SDP already declares codec/profile, so ffmpeg's default
+        # probe (up to analyzeduration=5s / probesize=5MB) before it starts
+        # reading is pure overhead here, not signal — measured logs showed
+        # ~1.3-2.4s per grab with idr=~0s, i.e. the delay is inside ffmpeg
+        # itself, not the IDR round-trip.
+        "-probesize", "32k",
+        "-analyzeduration", "0",
         "-i", rtsp_url,
         "-frames:v", "1",
         "-vf", "scale=640:384:force_original_aspect_ratio=decrease",

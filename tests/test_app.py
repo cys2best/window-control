@@ -282,6 +282,24 @@ def test_grab_rtsp_frame_no_ffmpeg_raises():
             _grab_rtsp_frame("rtsp://localhost:8554/instance0")
 
 
+def test_grab_rtsp_frame_skips_default_probe():
+    # ffmpeg's default probe (analyzeduration=5s/probesize=5MB) is pure
+    # overhead against an RTSP source whose SDP already declares the codec --
+    # measured logs showed ~1.3-2.4s per grab with idr=~0s, isolating the
+    # delay to ffmpeg's own startup, not the IDR round-trip. Regression guard
+    # so these flags aren't dropped later.
+    from server.app import _grab_rtsp_frame
+    with patch("server.scrcpy_session._get_ffmpeg", return_value="/usr/bin/ffmpeg"), \
+         patch("server.app.subprocess.check_output", return_value=b"jpegbytes") as co:
+        data = _grab_rtsp_frame("rtsp://localhost:8554/instance0")
+    assert data == b"jpegbytes"
+    args = co.call_args[0][0]
+    assert "-probesize" in args
+    assert args[args.index("-probesize") + 1] == "32k"
+    assert "-analyzeduration" in args
+    assert args[args.index("-analyzeduration") + 1] == "0"
+
+
 @pytest.mark.asyncio
 async def test_capture_preview_via_stream_requests_idr_then_grabs():
     from server.app import _capture_preview_via_stream
