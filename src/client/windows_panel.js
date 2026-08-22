@@ -28,21 +28,10 @@ function showScreen(id) {
 // viewport without it.
 function enterFullscreen(el) {
   const req = el.requestFullscreen || el.webkitRequestFullscreen;
-  if (!req) return;
-  const p = req.call(el);
-  // Orientation lock requires an active fullscreen context on the browsers
-  // that support it at all (Android Chrome) -- iOS Safari has no Screen
-  // Orientation lock, forced-landscape there falls to the CSS rule in
-  // style.css instead, which only fires while physically portrait.
-  (p && p.then ? p : Promise.resolve())
-    .then(() => screen.orientation && screen.orientation.lock('landscape'))
-    .catch(() => {});
+  if (req) req.call(el).catch(() => {});
 }
 
 function exitFullscreen() {
-  if (screen.orientation && screen.orientation.unlock) {
-    try { screen.orientation.unlock(); } catch (_) {}
-  }
   const exit = document.exitFullscreen || document.webkitExitFullscreen;
   if (exit && (document.fullscreenElement || document.webkitFullscreenElement)) {
     exit.call(document).catch(() => {});
