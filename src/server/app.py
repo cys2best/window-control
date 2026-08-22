@@ -3,6 +3,7 @@ import io
 import logging
 import os
 import subprocess
+import traceback
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -125,13 +126,21 @@ async def _capture_preview_via_stream(inst, rtsp_url: str) -> bytes | None:
     Forces an IDR first (same best-effort pattern as select()) so ffmpeg
     doesn't have to wait out the ~2s heartbeat before it sees a keyframe.
     """
+    import time as _time
+    t0 = _time.monotonic()
     try:
         inst.session.control.request_idr()
     except Exception:
         pass
+    t1 = _time.monotonic()
     try:
-        return await asyncio.to_thread(_grab_rtsp_frame, rtsp_url)
+        data = await asyncio.to_thread(_grab_rtsp_frame, rtsp_url)
+        t2 = _time.monotonic()
+        _log(f"[preview] stream grab ok idr={t1-t0:.2f}s ffmpeg={t2-t1:.2f}s total={t2-t0:.2f}s")
+        return data
     except Exception:
+        t2 = _time.monotonic()
+        _log(f"[preview] stream grab failed idr={t1-t0:.2f}s ffmpeg={t2-t1:.2f}s: {traceback.format_exc()[:300]}")
         return None
 
 
@@ -352,6 +361,8 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
             data = await _capture_preview_via_stream(inst, rtsp_url)
             if data is not None:
                 return Response(content=data, media_type="image/jpeg")
+        else:
+            _log(f"[preview] {instance_id}: no live rtsp_url (inst={inst is not None}), using ADB")
         return await _capture_preview(instance_id)
 
     # ── Legacy /windows + /select (kept for backward compat) ────────────────
