@@ -175,13 +175,18 @@ html, body {
    screen's physical BOTTOM (Y=Hp, X spanning [0,Wp]) -- not the physical
    right edge. A toolbar left at physical-right sits on the edge the
    video's TOP maps to instead, so it visually reads as sitting above the
-   scene, not beside it. Moving the toolbar to physical-bottom (full
-   portrait width, 52px tall) puts it on the edge that actually
-   corresponds to the video's right side. Its icons get an individual
-   rotate(90deg) (same direction as the video) so they render upright
-   once the phone is actually turned, instead of relying on the DOM
-   layout direction alone. See normalizeCoords() in app.js for the
-   matching pointer-coordinate fix the video's transform requires. */
+   scene, not beside it. Moving the toolbar to physical-bottom puts it on
+   the edge that actually corresponds to the video's right side. Its
+   icons get an individual rotate(90deg) (same direction as the video)
+   so they render upright once the phone is actually turned, instead of
+   relying on the DOM layout direction alone.
+
+   Kept as a compact bottom-right cluster (auto width, spacer collapsed),
+   NOT a full-width band: most games place their own action buttons along
+   the screen's bottom edge too, and on small screens a full-width strip
+   there covers them. A corner cluster keeps the footprint small enough to
+   stay clear. See normalizeCoords() in app.js for the matching
+   pointer-coordinate fix the video's transform requires. */
 @media screen and (max-width: 900px) and (orientation: portrait) {
   #screen-stream.active #stream-container {
     position: fixed;
@@ -192,13 +197,17 @@ html, body {
   }
 
   #screen-stream.active #right-toolbar {
-    top: auto; right: auto; bottom: 0; left: 0;
-    width: 100%; height: 52px;
+    top: auto; left: auto; bottom: 0; right: 0;
+    width: auto; height: 52px;
     flex-direction: row;
-    padding: 0 max(12px, env(safe-area-inset-right)) 0 max(12px, env(safe-area-inset-left));
+    padding: 0 max(12px, env(safe-area-inset-right)) 0 8px;
     box-shadow: 0 -8px 24px rgba(0,0,0,0.28);
     border-left: none;
     border-top: 1px solid rgba(255,255,255,0.08);
+    border-top-left-radius: 13px;
+  }
+  #screen-stream.active #right-toolbar .rt-spacer {
+    display: none;   /* no full-width spread -- keep the cluster compact */
   }
   #screen-stream.active #right-toolbar > * {
     transform: rotate(90deg);
