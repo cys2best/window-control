@@ -181,15 +181,6 @@ class InstanceManager:
         with self._lock:
             return self._instances.get(serial)
 
-    def rtsp_url(self, serial: str) -> str | None:
-        """Local RTSP URL for a live instance's mediamtx path, or None if the
-        instance is unknown or its scrcpy session isn't publishing."""
-        with self._lock:
-            inst = self._instances.get(serial)
-        if inst is None or not inst.session.alive:
-            return None
-        return self._mediamtx.rtsp_url(inst.name)
-
     @property
     def active(self) -> Instance | None:
         with self._lock:

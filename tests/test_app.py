@@ -1,8 +1,7 @@
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-import subprocess
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 from server.stream import CaptureState, FrameQueue
@@ -233,105 +232,3 @@ def test_quality_endpoint_rejects_bad_tier(client=None):
         client, _ = _make_client()
     r = client.post("/instances/emulator-5554/quality", json={"tier": "9000"})
     assert r.status_code == 400
-
-
-def test_preview_uses_rtsp_stream_when_live():
-    client, im = _make_client()
-    im.get.return_value = MagicMock()
-    im.rtsp_url.return_value = "rtsp://localhost:8554/instance0"
-    with patch("server.app._capture_preview_via_stream", new=AsyncMock(return_value=b"jpegbytes")) as stream_mock, \
-         patch("server.app._capture_preview", new=AsyncMock()) as adb_mock:
-        r = client.get("/instances/emulator-5554/preview")
-        assert r.status_code == 200
-        assert r.content == b"jpegbytes"
-        assert r.headers["content-type"] == "image/jpeg"
-        stream_mock.assert_awaited_once()
-        adb_mock.assert_not_called()
-
-
-def test_preview_falls_back_to_adb_when_stream_grab_fails():
-    client, im = _make_client()
-    im.get.return_value = MagicMock()
-    im.rtsp_url.return_value = "rtsp://localhost:8554/instance0"
-    from fastapi.responses import Response as _Response
-    with patch("server.app._capture_preview_via_stream", new=AsyncMock(return_value=None)), \
-         patch("server.app._capture_preview", new=AsyncMock(return_value=_Response(content=b"adbjpeg", media_type="image/jpeg"))) as adb_mock:
-        r = client.get("/instances/emulator-5554/preview")
-        assert r.status_code == 200
-        assert r.content == b"adbjpeg"
-        adb_mock.assert_awaited_once()
-
-
-def test_preview_falls_back_to_adb_when_no_live_rtsp():
-    client, im = _make_client()
-    im.get.return_value = None
-    im.rtsp_url.return_value = None
-    from fastapi.responses import Response as _Response
-    with patch("server.app._capture_preview_via_stream", new=AsyncMock()) as stream_mock, \
-         patch("server.app._capture_preview", new=AsyncMock(return_value=_Response(content=b"adbjpeg", media_type="image/jpeg"))) as adb_mock:
-        r = client.get("/instances/emulator-5554/preview")
-        assert r.status_code == 200
-        assert r.content == b"adbjpeg"
-        stream_mock.assert_not_called()
-        adb_mock.assert_awaited_once()
-
-
-def test_grab_rtsp_frame_no_ffmpeg_raises():
-    from server.app import _grab_rtsp_frame
-    with patch("server.scrcpy_session._get_ffmpeg", return_value=None):
-        with pytest.raises(RuntimeError):
-            _grab_rtsp_frame("rtsp://localhost:8554/instance0")
-
-
-def test_grab_rtsp_frame_returns_stdout_and_logs_stderr():
-    from server.app import _grab_rtsp_frame
-    fake_proc = MagicMock(stdout=b"jpegbytes", stderr=b"ffmpeg verbose log", returncode=0)
-    fake_proc.check_returncode.return_value = None
-    with patch("server.scrcpy_session._get_ffmpeg", return_value="/usr/bin/ffmpeg"), \
-         patch("server.app.subprocess.run", return_value=fake_proc) as run_mock, \
-         patch("server.app._log") as log_mock:
-        data = _grab_rtsp_frame("rtsp://localhost:8554/instance0")
-    assert data == b"jpegbytes"
-    args = run_mock.call_args[0][0]
-    assert "-loglevel" in args
-    assert args[args.index("-loglevel") + 1] == "verbose"
-    assert any("ffmpeg verbose log" in str(c) for c in log_mock.call_args_list)
-
-
-def test_grab_rtsp_frame_nonzero_exit_raises():
-    from server.app import _grab_rtsp_frame
-    fake_proc = MagicMock(stdout=b"", stderr=b"connection refused", returncode=1)
-    fake_proc.check_returncode.side_effect = subprocess.CalledProcessError(1, "ffmpeg")
-    with patch("server.scrcpy_session._get_ffmpeg", return_value="/usr/bin/ffmpeg"), \
-         patch("server.app.subprocess.run", return_value=fake_proc):
-        with pytest.raises(subprocess.CalledProcessError):
-            _grab_rtsp_frame("rtsp://localhost:8554/instance0")
-
-
-@pytest.mark.asyncio
-async def test_capture_preview_via_stream_requests_idr_then_grabs():
-    from server.app import _capture_preview_via_stream
-    inst = MagicMock()
-    with patch("server.app._grab_rtsp_frame", return_value=b"jpegbytes"):
-        data = await _capture_preview_via_stream(inst, "rtsp://localhost:8554/instance0")
-    assert data == b"jpegbytes"
-    inst.session.control.request_idr.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_capture_preview_via_stream_idr_failure_is_best_effort():
-    from server.app import _capture_preview_via_stream
-    inst = MagicMock()
-    inst.session.control.request_idr.side_effect = Exception("not connected")
-    with patch("server.app._grab_rtsp_frame", return_value=b"jpegbytes"):
-        data = await _capture_preview_via_stream(inst, "rtsp://localhost:8554/instance0")
-    assert data == b"jpegbytes"
-
-
-@pytest.mark.asyncio
-async def test_capture_preview_via_stream_grab_failure_returns_none():
-    from server.app import _capture_preview_via_stream
-    inst = MagicMock()
-    with patch("server.app._grab_rtsp_frame", side_effect=Exception("timeout")):
-        data = await _capture_preview_via_stream(inst, "rtsp://localhost:8554/instance0")
-    assert data is None

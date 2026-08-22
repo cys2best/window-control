@@ -3,7 +3,6 @@ import io
 import logging
 import os
 import subprocess
-import traceback
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -95,67 +94,6 @@ def _dispatch_key_control(ctrl, key: str):
     kc = _JS_KEY_TO_KEYCODE.get(key)
     if kc:
         ctrl.send_keycode(kc)
-
-
-def _grab_rtsp_frame(rtsp_url: str) -> bytes:
-    """Grab a single JPEG frame from a live local RTSP stream via ffmpeg.
-
-    mediamtx already has this instance's scrcpy feed flowing on loopback, so
-    this decodes one frame locally instead of the ADB screencap path's
-    on-device PNG encode + USB/adb-speed transfer.
-    """
-    from server.scrcpy_session import _get_ffmpeg
-    ffmpeg = _get_ffmpeg()
-    if not ffmpeg:
-        raise RuntimeError("ffmpeg not available")
-    # -loglevel verbose: a grab against an already-publishing path still took
-    # 2.31s and its stats showed "30 packets read, 10 frames decoded" for a
-    # single requested output frame -- a ~3:1 packet:frame ratio matches
-    # normal H.264 FU-A fragmentation, i.e. ffmpeg wasn't discarding
-    # undecodable frames waiting for a keyframe, it decoded ~everything that
-    # arrived. That's ffmpeg's default -vsync/CFR-matching logic watching
-    # several frames of timestamps before it'll flush the first output frame
-    # on a live/irregular-timestamp source. -fps_mode passthrough writes the
-    # first decoded frame straight out instead.
-    args = [
-        ffmpeg, "-loglevel", "verbose",
-        "-rtsp_transport", "tcp",
-        "-i", rtsp_url,
-        "-frames:v", "1",
-        "-fps_mode", "passthrough",
-        "-vf", "scale=640:384:force_original_aspect_ratio=decrease",
-        "-q:v", "5",
-        "-f", "image2", "-",
-    ]
-    proc = subprocess.run(args, timeout=4, capture_output=True, **adb_manager._no_window_flags())
-    stderr_tail = proc.stderr.decode("utf-8", errors="replace")[-1500:] if proc.stderr else ""
-    _log(f"[preview] ffmpeg stderr:\n{stderr_tail}")
-    proc.check_returncode()
-    return proc.stdout
-
-
-async def _capture_preview_via_stream(inst, rtsp_url: str) -> bytes | None:
-    """Try the RTSP-frame-grab preview path; None means "fall back to ADB".
-
-    Forces an IDR first (same best-effort pattern as select()) so ffmpeg
-    doesn't have to wait out the ~2s heartbeat before it sees a keyframe.
-    """
-    import time as _time
-    t0 = _time.monotonic()
-    try:
-        inst.session.control.request_idr()
-    except Exception:
-        pass
-    t1 = _time.monotonic()
-    try:
-        data = await asyncio.to_thread(_grab_rtsp_frame, rtsp_url)
-        t2 = _time.monotonic()
-        _log(f"[preview] stream grab ok idr={t1-t0:.2f}s ffmpeg={t2-t1:.2f}s total={t2-t0:.2f}s")
-        return data
-    except Exception:
-        t2 = _time.monotonic()
-        _log(f"[preview] stream grab failed idr={t1-t0:.2f}s ffmpeg={t2-t1:.2f}s: {traceback.format_exc()[:300]}")
-        return None
 
 
 async def _capture_preview(serial: str) -> Response:
@@ -369,14 +307,6 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
 
     @app.get("/instances/{instance_id}/preview")
     async def instance_preview(instance_id: str):
-        inst = instance_manager.get(instance_id)
-        rtsp_url = instance_manager.rtsp_url(instance_id)
-        if inst is not None and rtsp_url:
-            data = await _capture_preview_via_stream(inst, rtsp_url)
-            if data is not None:
-                return Response(content=data, media_type="image/jpeg")
-        else:
-            _log(f"[preview] {instance_id}: no live rtsp_url (inst={inst is not None}), using ADB")
         return await _capture_preview(instance_id)
 
     # ── Legacy /windows + /select (kept for backward compat) ────────────────
