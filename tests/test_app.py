@@ -1,6 +1,7 @@
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
+import subprocess
 from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
@@ -282,22 +283,29 @@ def test_grab_rtsp_frame_no_ffmpeg_raises():
             _grab_rtsp_frame("rtsp://localhost:8554/instance0")
 
 
-def test_grab_rtsp_frame_skips_default_probe():
-    # ffmpeg's default probe (analyzeduration=5s/probesize=5MB) is pure
-    # overhead against an RTSP source whose SDP already declares the codec --
-    # measured logs showed ~1.3-2.4s per grab with idr=~0s, isolating the
-    # delay to ffmpeg's own startup, not the IDR round-trip. Regression guard
-    # so these flags aren't dropped later.
+def test_grab_rtsp_frame_returns_stdout_and_logs_stderr():
     from server.app import _grab_rtsp_frame
+    fake_proc = MagicMock(stdout=b"jpegbytes", stderr=b"ffmpeg verbose log", returncode=0)
+    fake_proc.check_returncode.return_value = None
     with patch("server.scrcpy_session._get_ffmpeg", return_value="/usr/bin/ffmpeg"), \
-         patch("server.app.subprocess.check_output", return_value=b"jpegbytes") as co:
+         patch("server.app.subprocess.run", return_value=fake_proc) as run_mock, \
+         patch("server.app._log") as log_mock:
         data = _grab_rtsp_frame("rtsp://localhost:8554/instance0")
     assert data == b"jpegbytes"
-    args = co.call_args[0][0]
-    assert "-probesize" in args
-    assert args[args.index("-probesize") + 1] == "32k"
-    assert "-analyzeduration" in args
-    assert args[args.index("-analyzeduration") + 1] == "0"
+    args = run_mock.call_args[0][0]
+    assert "-loglevel" in args
+    assert args[args.index("-loglevel") + 1] == "verbose"
+    assert any("ffmpeg verbose log" in str(c) for c in log_mock.call_args_list)
+
+
+def test_grab_rtsp_frame_nonzero_exit_raises():
+    from server.app import _grab_rtsp_frame
+    fake_proc = MagicMock(stdout=b"", stderr=b"connection refused", returncode=1)
+    fake_proc.check_returncode.side_effect = subprocess.CalledProcessError(1, "ffmpeg")
+    with patch("server.scrcpy_session._get_ffmpeg", return_value="/usr/bin/ffmpeg"), \
+         patch("server.app.subprocess.run", return_value=fake_proc):
+        with pytest.raises(subprocess.CalledProcessError):
+            _grab_rtsp_frame("rtsp://localhost:8554/instance0")
 
 
 @pytest.mark.asyncio

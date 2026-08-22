@@ -108,23 +108,26 @@ def _grab_rtsp_frame(rtsp_url: str) -> bytes:
     ffmpeg = _get_ffmpeg()
     if not ffmpeg:
         raise RuntimeError("ffmpeg not available")
+    # -loglevel verbose (not "error"): timing logs showed idr=~0s but
+    # ffmpeg=1.3-2.4s per grab, and skipping ffmpeg's default probe
+    # (-probesize/-analyzeduration) made it *worse* (2.8-3.45s), ruling that
+    # out. Capturing ffmpeg's own event timeline is the next diagnostic step
+    # to tell RTSP-handshake time apart from time spent waiting for the first
+    # video packet (keyframe) to arrive.
     args = [
-        ffmpeg, "-loglevel", "error",
+        ffmpeg, "-loglevel", "verbose",
         "-rtsp_transport", "tcp",
-        # RTSP's SDP already declares codec/profile, so ffmpeg's default
-        # probe (up to analyzeduration=5s / probesize=5MB) before it starts
-        # reading is pure overhead here, not signal — measured logs showed
-        # ~1.3-2.4s per grab with idr=~0s, i.e. the delay is inside ffmpeg
-        # itself, not the IDR round-trip.
-        "-probesize", "32k",
-        "-analyzeduration", "0",
         "-i", rtsp_url,
         "-frames:v", "1",
         "-vf", "scale=640:384:force_original_aspect_ratio=decrease",
         "-q:v", "5",
         "-f", "image2", "-",
     ]
-    return subprocess.check_output(args, timeout=4, **adb_manager._no_window_flags())
+    proc = subprocess.run(args, timeout=4, capture_output=True, **adb_manager._no_window_flags())
+    stderr_tail = proc.stderr.decode("utf-8", errors="replace")[-1500:] if proc.stderr else ""
+    _log(f"[preview] ffmpeg stderr:\n{stderr_tail}")
+    proc.check_returncode()
+    return proc.stdout
 
 
 async def _capture_preview_via_stream(inst, rtsp_url: str) -> bytes | None:
