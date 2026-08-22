@@ -20,6 +20,24 @@ function showScreen(id) {
   document.getElementById(id).classList.add('active');
 }
 
+// Mirrors mobile's landscape-lock-on-enter behavior: browsers require a
+// user gesture to grant fullscreen, and every caller here (card click,
+// drawer row click, prev/next) is already gesture-triggered. Safari <16.4
+// has no Fullscreen API for arbitrary elements -- that's fine, #screen-stream
+// is `position: fixed; inset: 0` regardless, so the stream still fills the
+// viewport without it.
+function enterFullscreen(el) {
+  const req = el.requestFullscreen || el.webkitRequestFullscreen;
+  if (req) req.call(el).catch(() => {});
+}
+
+function exitFullscreen() {
+  const exit = document.exitFullscreen || document.webkitExitFullscreen;
+  if (exit && (document.fullscreenElement || document.webkitFullscreenElement)) {
+    exit.call(document).catch(() => {});
+  }
+}
+
 // ── Window grid rendering ────────────────────────────────────────
 let _thumbObserver = null;
 
@@ -90,6 +108,7 @@ async function selectWindow(id, serial) {
   const titleEl = document.getElementById('stream-title');
   if (titleEl && w) titleEl.textContent = w.title;
   showScreen('screen-stream');
+  enterFullscreen(document.getElementById('screen-stream'));
   try {
     const r = await fetch(`/instances/${_serial}/select`, { method: 'POST' });
     const data = await r.json();
@@ -194,6 +213,7 @@ function renderSwitchList() {
 
 function initDrawer() {
   document.getElementById('back-btn').addEventListener('click', () => {
+    exitFullscreen();
     showScreen('screen-list');
     fetchWindows();
   });
