@@ -108,17 +108,21 @@ def _grab_rtsp_frame(rtsp_url: str) -> bytes:
     ffmpeg = _get_ffmpeg()
     if not ffmpeg:
         raise RuntimeError("ffmpeg not available")
-    # -loglevel verbose (not "error"): timing logs showed idr=~0s but
-    # ffmpeg=1.3-2.4s per grab, and skipping ffmpeg's default probe
-    # (-probesize/-analyzeduration) made it *worse* (2.8-3.45s), ruling that
-    # out. Capturing ffmpeg's own event timeline is the next diagnostic step
-    # to tell RTSP-handshake time apart from time spent waiting for the first
-    # video packet (keyframe) to arrive.
+    # -loglevel verbose: a grab against an already-publishing path still took
+    # 2.31s and its stats showed "30 packets read, 10 frames decoded" for a
+    # single requested output frame -- a ~3:1 packet:frame ratio matches
+    # normal H.264 FU-A fragmentation, i.e. ffmpeg wasn't discarding
+    # undecodable frames waiting for a keyframe, it decoded ~everything that
+    # arrived. That's ffmpeg's default -vsync/CFR-matching logic watching
+    # several frames of timestamps before it'll flush the first output frame
+    # on a live/irregular-timestamp source. -fps_mode passthrough writes the
+    # first decoded frame straight out instead.
     args = [
         ffmpeg, "-loglevel", "verbose",
         "-rtsp_transport", "tcp",
         "-i", rtsp_url,
         "-frames:v", "1",
+        "-fps_mode", "passthrough",
         "-vf", "scale=640:384:force_original_aspect_ratio=decrease",
         "-q:v", "5",
         "-f", "image2", "-",
