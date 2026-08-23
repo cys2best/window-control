@@ -784,7 +784,7 @@ async function initWebRTCPublic(windowId, signalingUrl, instanceName, serial, ic
 // internals, so their existing retry/tier-switch/fallback behavior is
 // exactly as before whether reached via a race or called directly.
 
-function _probeLocalWhep(whepUrl, stunUrl) {
+function _probeLocalWhep(whepUrl, stunUrl, myGen) {
   return new Promise(resolve => {
     if (!whepUrl) { resolve(false); return; }
     let settled = false;
@@ -792,9 +792,20 @@ function _probeLocalWhep(whepUrl, stunUrl) {
     const finish = ok => {
       if (settled) return;
       settled = true;
+      clearInterval(supersededCheck);
       try { pc.close(); } catch (_) {}
       resolve(ok);
     };
+    // A newer initWebRTCRace() call (a faster instance switch than this
+    // probe's own 6s timeout) bumps _raceGen -- without this check, this
+    // probe's real WHEP POST + RTCPeerConnection stay alive on mediamtx's
+    // side for the rest of its own timeout, accumulating one abandoned
+    // session per switch (confirmed live: rapid switching piled up dozens
+    // of "write queue is full" sessions that only cleared via mediamtx's
+    // own ~10s "deadline exceeded" timeout, one per switch).
+    const supersededCheck = setInterval(() => {
+      if (myGen !== _raceGen) finish(false);
+    }, 250);
     pc.oniceconnectionstatechange = () => {
       const s = pc.iceConnectionState;
       if (s === 'connected' || s === 'completed') finish(true);
@@ -806,6 +817,7 @@ function _probeLocalWhep(whepUrl, stunUrl) {
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
         await waitForIceGatheringComplete(pc);
+        if (myGen !== _raceGen) { finish(false); return; }
         const r = await fetch(whepUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/sdp' },
@@ -820,7 +832,7 @@ function _probeLocalWhep(whepUrl, stunUrl) {
   });
 }
 
-function _probePublicSignaling(signalingUrl, instanceName, iceServers) {
+function _probePublicSignaling(signalingUrl, instanceName, iceServers, myGen) {
   return new Promise(resolve => {
     if (!signalingUrl) { resolve(false); return; }
     let settled = false;
@@ -829,10 +841,15 @@ function _probePublicSignaling(signalingUrl, instanceName, iceServers) {
     const finish = ok => {
       if (settled) return;
       settled = true;
+      clearInterval(supersededCheck);
       try { pc.close(); } catch (_) {}
       try { ws && ws.close(); } catch (_) {}
       resolve(ok);
     };
+    // See the matching comment in _probeLocalWhep -- same fix, same reason.
+    const supersededCheck = setInterval(() => {
+      if (myGen !== _raceGen) finish(false);
+    }, 250);
     pc.oniceconnectionstatechange = () => {
       const s = pc.iceConnectionState;
       if (s === 'connected' || s === 'completed') finish(true);
@@ -845,6 +862,7 @@ function _probePublicSignaling(signalingUrl, instanceName, iceServers) {
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
         await waitForIceGatheringComplete(pc, 4000, 'relay');
+        if (myGen !== _raceGen) { finish(false); return; }
         ws.send(pc.localDescription.sdp);
       } catch (_) { finish(false); }
     };
@@ -877,12 +895,12 @@ async function initWebRTCRace(windowId, whepUrl, stunUrl, signalingUrl, instance
   const winner = await new Promise(resolve => {
     let localDone = false, publicDone = false, resolved = false;
     const settle = kind => { if (!resolved) { resolved = true; resolve(kind); } };
-    _probeLocalWhep(whepUrl, stunUrl).then(ok => {
+    _probeLocalWhep(whepUrl, stunUrl, myGen).then(ok => {
       localDone = true;
       if (ok) settle('local');
       else if (publicDone) settle(null);
     });
-    _probePublicSignaling(signalingUrl, instanceName, iceServers).then(ok => {
+    _probePublicSignaling(signalingUrl, instanceName, iceServers, myGen).then(ok => {
       publicDone = true;
       if (ok) settle('public');
       else if (localDone) settle(null);
