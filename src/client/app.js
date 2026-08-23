@@ -15,21 +15,6 @@ let _signalingUrl = null;      // VPS signaling relay URL for the active public 
 let _instanceName = null;      // instance name (rendezvous key) for the active public session
 let _iceServers = [];          // STUN/TURN servers for the public path (from server, see ice_config.py)
 let _publicModeActive = false; // true when the active stream was negotiated via initWebRTCPublic
-let _pendingWhepResourceUrl = null; // DELETE target for the in-flight local WHEP POST, from its
-                                     // Location header -- cleared once ICE connects. pc.close() alone
-                                     // only tells mediamtx promptly once ICE is live (the closing
-                                     // DTLS/ICE signal has a channel to travel over); a session
-                                     // abandoned before that point has no such channel, so mediamtx
-                                     // only notices via its own "deadline exceeded" timeout unless we
-                                     // explicitly DELETE the WHEP resource ourselves (see initWebRTC's
-                                     // teardown of the previous _pc, and _probeLocalWhep's finish()).
-
-function _clearPendingWhepResource() {
-  if (_pendingWhepResourceUrl) {
-    fetch(_pendingWhepResourceUrl, { method: 'DELETE' }).catch(() => {});
-    _pendingWhepResourceUrl = null;
-  }
-}
 let _raceGen = 0;              // bumped by initWebRTC/initWebRTCPublic/initWebRTCRace on every call,
                                 // so a stale initWebRTCRace() can detect it's been superseded (see below)
 let _streamFailCount = 0;      // consecutive MJPEG load failures for the current _streamGeneration --
@@ -446,7 +431,6 @@ async function initWebRTC(windowId, whepUrl, stunUrl, serial) {
   // Cancel any in-flight negotiation
   _raceGen++; // invalidate any in-flight initWebRTCRace() so it can't clobber us on completion
   if (_pc) { try { _pc.close(); } catch(_) {} _pc = null; }
-  _clearPendingWhepResource();
   if (_webrtcInProgress) {
     _webrtcInProgress = false;
     await new Promise(r => setTimeout(r, 50));
@@ -508,13 +492,7 @@ async function initWebRTC(windowId, whepUrl, stunUrl, serial) {
     _pc.oniceconnectionstatechange = () => {
       const s = _pc ? _pc.iceConnectionState : '';
       console.log('[ice] state:', s);
-      if (s === 'connected' || s === 'completed') {
-        setNetStatus('good', 'Connected');
-        // Live now -- a future pc.close() on this connection can signal
-        // mediamtx directly over the established channel, so it no longer
-        // needs the explicit DELETE fallback used for abandoned negotiations.
-        _pendingWhepResourceUrl = null;
-      }
+      if (s === 'connected' || s === 'completed') setNetStatus('good', 'Connected');
       else if (s === 'checking' || s === 'new') setNetStatus('warn', 'Connecting…');
       else if (s === 'disconnected') setNetStatus('warn', 'Unstable');
       else if (s === 'failed' || s === 'closed') setNetStatus('bad', 'Disconnected');
@@ -587,15 +565,11 @@ async function initWebRTC(windowId, whepUrl, stunUrl, serial) {
       headers: { 'Content-Type': 'application/sdp' },
       body: thisPc.localDescription.sdp,
     });
-    if (r && r.ok) {
-      const loc = r.headers.get('Location');
-      if (loc) { try { _pendingWhepResourceUrl = new URL(loc, _whepUrl).href; } catch (_) {} }
-    }
-    if (_pc !== thisPc) { _clearPendingWhepResource(); return; }
+    if (_pc !== thisPc) return;
     if (!r || !r.ok) { _fallbackToMJPEG(); return; }
 
     const answerSdp = await r.text();
-    if (_pc !== thisPc) { _clearPendingWhepResource(); return; }
+    if (_pc !== thisPc) return;
     await thisPc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
   } catch (err) {
     console.error('[webrtc] initWebRTC error, falling back to MJPEG:', err);
@@ -616,7 +590,6 @@ async function initWebRTCPublic(windowId, signalingUrl, instanceName, serial, ic
   // JSON envelope, raw SDP text both directions.
   _raceGen++; // invalidate any in-flight initWebRTCRace() so it can't clobber us on completion
   if (_pc) { try { _pc.close(); } catch(_) {} _pc = null; }
-  _clearPendingWhepResource(); // in case we're switching away from a still-negotiating local WHEP attempt
   if (_webrtcInProgress) {
     _webrtcInProgress = false;
     await new Promise(r => setTimeout(r, 50));
@@ -815,30 +788,21 @@ function _probeLocalWhep(whepUrl, stunUrl, myGen) {
   return new Promise(resolve => {
     if (!whepUrl) { resolve(false); return; }
     let settled = false;
-    let resourceUrl = null; // this WHEP session's DELETE target, from the POST's Location header
     const pc = new RTCPeerConnection({ iceServers: stunUrl ? [{ urls: stunUrl }] : [] });
     const finish = ok => {
       if (settled) return;
       settled = true;
       clearInterval(supersededCheck);
       try { pc.close(); } catch (_) {}
-      // pc.close() only notifies mediamtx promptly when ICE had already
-      // connected (an established DTLS/ICE session can signal its own
-      // teardown over the live channel). A session that never got that far
-      // has no such channel -- mediamtx has no way to know it's abandoned
-      // except its own internal "deadline exceeded while waiting connection"
-      // timeout, which fires independently of anything the browser does
-      // (confirmed live: cancelling this probe early via _raceGen made no
-      // difference to how long the session lingered in mediamtx's log --
-      // only sending WHEP's own DELETE actually tears it down promptly).
-      if (!ok && resourceUrl) {
-        fetch(resourceUrl, { method: 'DELETE' }).catch(() => {});
-      }
       resolve(ok);
     };
     // A newer initWebRTCRace() call (a faster instance switch than this
-    // probe's own 6s timeout) bumps _raceGen -- stop negotiating for it
-    // immediately instead of waiting out the full timeout.
+    // probe's own 6s timeout) bumps _raceGen -- without this check, this
+    // probe's real WHEP POST + RTCPeerConnection stay alive on mediamtx's
+    // side for the rest of its own timeout, accumulating one abandoned
+    // session per switch (confirmed live: rapid switching piled up dozens
+    // of "write queue is full" sessions that only cleared via mediamtx's
+    // own ~10s "deadline exceeded" timeout, one per switch).
     const supersededCheck = setInterval(() => {
       if (myGen !== _raceGen) finish(false);
     }, 250);
@@ -860,8 +824,6 @@ function _probeLocalWhep(whepUrl, stunUrl, myGen) {
           body: pc.localDescription.sdp,
         });
         if (!r || !r.ok) { finish(false); return; }
-        const loc = r.headers.get('Location');
-        if (loc) { try { resourceUrl = new URL(loc, whepUrl).href; } catch (_) {} }
         const answerSdp = await r.text();
         await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
       } catch (_) { finish(false); }

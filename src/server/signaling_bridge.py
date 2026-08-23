@@ -17,7 +17,6 @@ is sent.
 """
 import asyncio
 import logging
-from urllib.parse import urljoin
 
 import httpx
 import websockets
@@ -48,35 +47,16 @@ async def relay_one_instance(
     client = http_client or httpx.AsyncClient()
     url = f"{signaling_url}/?session={instance_name}&role=engine"
     whep_url = f"http://127.0.0.1:{whep_port}/{instance_name}/whep"
-    pending_resource_url: str | None = None
 
     async with ws_connect(url) as ws:
         while True:
             offer_sdp = await ws.recv()
-            if pending_resource_url is not None:
-                # A new offer arrived before the previous one ever connected
-                # (e.g. the viewer switched instances again) -- the previous
-                # WHEP session is abandoned. Unlike an already-connected
-                # session (whose eventual pc.close() can signal mediamtx over
-                # the live media channel), an abandoned negotiation has no
-                # such channel; mediamtx only notices via its own "deadline
-                # exceeded" timeout unless told explicitly. Confirmed live:
-                # rapid instance switching left dozens of these sessions
-                # alive on mediamtx for 10-30+ seconds each.
-                try:
-                    await client.delete(pending_resource_url)
-                except httpx.HTTPError:
-                    pass
-                pending_resource_url = None
             response = await client.post(
                 whep_url,
                 content=offer_sdp,
                 headers={"Content-Type": "application/sdp"},
             )
             response.raise_for_status()
-            location = response.headers.get("Location")
-            if location:
-                pending_resource_url = urljoin(whep_url, location)
             await ws.send(response.text)
 
 

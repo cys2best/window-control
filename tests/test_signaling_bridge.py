@@ -44,7 +44,6 @@ async def test_relay_forwards_offer_to_whep_and_answer_back():
     fake_response = MagicMock()
     fake_response.text = "v=0 FAKE ANSWER SDP"
     fake_response.raise_for_status = MagicMock()
-    fake_response.headers = {}
     fake_http = AsyncMock()
     fake_http.post = AsyncMock(return_value=fake_response)
 
@@ -60,76 +59,6 @@ async def test_relay_forwards_offer_to_whep_and_answer_back():
         headers={"Content-Type": "application/sdp"},
     )
     assert fake_ws.sent == ["v=0 FAKE ANSWER SDP"]
-
-
-@pytest.mark.asyncio
-async def test_relay_deletes_abandoned_whep_session_on_new_offer():
-    # A viewer that abandons a negotiation (e.g. rapid instance switching)
-    # sends a new offer over the same engine ws connection without ever
-    # telling us the previous one was abandoned. mediamtx has no way to know
-    # either -- unlike an already-connected session (whose pc.close() can
-    # signal over the live channel), an abandoned negotiation just sits until
-    # mediamtx's own "deadline exceeded" timeout unless we explicitly DELETE
-    # the WHEP resource ourselves. Confirmed live: rapid switching left
-    # dozens of these sessions alive on mediamtx for 10-30+ seconds each.
-    fake_ws = _FakeWS(["v=0 FIRST OFFER", "v=0 SECOND OFFER"])
-
-    def fake_connect(url):
-        return fake_ws
-
-    first_response = MagicMock()
-    first_response.text = "v=0 FIRST ANSWER"
-    first_response.raise_for_status = MagicMock()
-    first_response.headers = {"Location": "/instance0/whep/abc123"}
-
-    second_response = MagicMock()
-    second_response.text = "v=0 SECOND ANSWER"
-    second_response.raise_for_status = MagicMock()
-    second_response.headers = {}
-
-    fake_http = AsyncMock()
-    fake_http.post = AsyncMock(side_effect=[first_response, second_response])
-    fake_http.delete = AsyncMock()
-
-    with pytest.raises(ConnectionError):
-        await relay_one_instance(
-            "instance0", "ws://vps.example.test:8443", 8889,
-            ws_connect=fake_connect, http_client=fake_http,
-        )
-
-    fake_http.delete.assert_awaited_once_with("http://127.0.0.1:8889/instance0/whep/abc123")
-
-
-@pytest.mark.asyncio
-async def test_relay_does_not_delete_when_no_location_header():
-    # mediamtx always sends Location on a successful WHEP POST in practice,
-    # but the relay must not crash if a response ever lacks one.
-    fake_ws = _FakeWS(["v=0 FIRST OFFER", "v=0 SECOND OFFER"])
-
-    def fake_connect(url):
-        return fake_ws
-
-    first_response = MagicMock()
-    first_response.text = "v=0 FIRST ANSWER"
-    first_response.raise_for_status = MagicMock()
-    first_response.headers = {}
-
-    second_response = MagicMock()
-    second_response.text = "v=0 SECOND ANSWER"
-    second_response.raise_for_status = MagicMock()
-    second_response.headers = {}
-
-    fake_http = AsyncMock()
-    fake_http.post = AsyncMock(side_effect=[first_response, second_response])
-    fake_http.delete = AsyncMock()
-
-    with pytest.raises(ConnectionError):
-        await relay_one_instance(
-            "instance0", "ws://vps.example.test:8443", 8889,
-            ws_connect=fake_connect, http_client=fake_http,
-        )
-
-    fake_http.delete.assert_not_awaited()
 
 
 @pytest.mark.asyncio
