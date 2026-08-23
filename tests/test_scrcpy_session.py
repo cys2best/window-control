@@ -227,3 +227,33 @@ def test_build_ffmpeg_args_safe_flags_only():
     assert "-analyzeduration" not in joined
     assert "nobuffer" not in joined
     assert "low_delay" not in joined
+
+
+def test_nalu_write_queue_drops_oldest_under_backpressure():
+    from server.scrcpy_session import _NaluWriteQueue
+    q = _NaluWriteQueue(maxsize=2)
+    q.put(b"frame1")
+    q.put(b"frame2")
+    q.put(b"frame3")  # queue full -> drops frame1, keeps frame2+frame3
+    assert q.dropped == 1
+    assert q.get() == b"frame2"
+    assert q.get() == b"frame3"
+
+
+def test_nalu_write_queue_never_splits_a_nalu():
+    """A dropped item is always one whole put() payload, never a partial write."""
+    from server.scrcpy_session import _NaluWriteQueue
+    q = _NaluWriteQueue(maxsize=1)
+    whole_nalu = b"\x00\x00\x00\x01" + b"x" * 5000
+    q.put(whole_nalu)
+    q.put(b"\x00\x00\x00\x01next")
+    got = q.get()
+    assert got == b"\x00\x00\x00\x01next"
+    assert len(got) == len(b"\x00\x00\x00\x01next")  # whole, not truncated
+
+
+def test_nalu_write_queue_close_unblocks_get():
+    from server.scrcpy_session import _NaluWriteQueue
+    q = _NaluWriteQueue(maxsize=4)
+    q.close()
+    assert q.get() is None  # shutdown sentinel

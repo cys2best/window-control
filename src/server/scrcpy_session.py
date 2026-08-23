@@ -45,6 +45,7 @@ Pipeline per instance:
 """
 
 import os
+import queue
 import socket
 import struct
 import subprocess
@@ -66,6 +67,64 @@ _SCRCPY_BASE_PORT = 27183   # instance 0 → 27183, instance 1 → 27184, …
 # multi-second gap means the pipeline is dead, not idle.
 _STALL_TIMEOUT = 15.0
 _SERVER_JAR = "scrcpy-server"  # filename in assets/scrcpy/
+
+_WRITE_QUEUE_DEPTH = 30  # ~1s of frames at 30fps
+
+
+class _NaluWriteQueue:
+    """Bounded queue of whole NAL units feeding a dedicated ffmpeg-stdin writer.
+
+    Decouples the video-read thread from ffmpeg's stdin: if the RTSP consumer
+    (mediamtx) stalls and ffmpeg's stdin pipe fills, the OLD code's direct
+    `stdin.write()` in the read loop would block the video-read thread right
+    along with it, eventually tripping `_STALL_TIMEOUT` and forcing a full
+    session restart. This queue instead drops the OLDEST whole NAL under
+    backpressure and keeps draining the scrcpy socket, so a transient stall
+    degrades to dropped frames (repaired by the next IDR) instead of a
+    restart. Never split a NAL when dropping -- a partial NAL corrupts the
+    decoder until the next IDR.
+    """
+
+    def __init__(self, maxsize: int = _WRITE_QUEUE_DEPTH):
+        self._q: "queue.Queue[bytes | None]" = queue.Queue(maxsize=maxsize)
+        self.dropped = 0
+
+    def put(self, nalu: bytes) -> None:
+        try:
+            self._q.put_nowait(nalu)
+            return
+        except queue.Full:
+            pass
+        try:
+            self._q.get_nowait()
+            self.dropped += 1
+        except queue.Empty:
+            pass
+        try:
+            self._q.put_nowait(nalu)
+        except queue.Full:
+            self.dropped += 1
+
+    def get(self) -> bytes | None:
+        return self._q.get()
+
+    def close(self) -> None:
+        """Unblock a thread waiting in get() with a shutdown sentinel."""
+        try:
+            self._q.put_nowait(None)
+        except queue.Full:
+            try:
+                self._q.get_nowait()
+            except queue.Empty:
+                pass
+            self._q.put_nowait(None)
+
+    def qsize(self) -> int:
+        return self._q.qsize()
+
+    @property
+    def full(self) -> bool:
+        return self._q.full()
 
 def _log(msg: str):
     for _p in [r"C:\ProgramData\WindowControl", r"C:\Windows\Temp"]:
