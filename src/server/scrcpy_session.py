@@ -461,6 +461,11 @@ class ScrcpySession:
         # stall detection in `alive` (see _STALL_TIMEOUT). 0.0 until first frame.
         self._last_frame_ts = 0.0
         self._lock = threading.Lock()
+        # Bounded NAL-unit queue feeding a dedicated ffmpeg-stdin writer thread
+        # (see _NaluWriteQueue). Set for the lifetime of one _stream_loop pass;
+        # None when no stream is running.
+        self._write_queue: _NaluWriteQueue | None = None
+        self._writer_thread: threading.Thread | None = None
         # Serializes a full stop→start cycle so a tier-change restart and the
         # watchdog's dead-session restart can't interleave. Without it, two
         # start() calls race two _stream_loop threads onto the same scrcpy TCP
@@ -587,6 +592,34 @@ class ScrcpySession:
             with self._lock:
                 self._ffmpeg_proc = ffmpeg_proc
 
+            # Dedicated writer thread decouples ffmpeg's stdin from the
+            # video-read loop below: if the RTSP consumer (mediamtx) stalls
+            # and ffmpeg's stdin pipe fills, a direct write() in the read loop
+            # would block the read loop right along with it, eventually
+            # tripping _STALL_TIMEOUT and forcing a full session restart. The
+            # bounded _NaluWriteQueue instead drops the oldest whole NAL under
+            # backpressure (repaired by the next IDR) while the read loop keeps
+            # draining the scrcpy socket.
+            write_queue = _NaluWriteQueue()
+            with self._lock:
+                self._write_queue = write_queue
+
+            def _writer_loop(proc=ffmpeg_proc, q=write_queue):
+                while True:
+                    nalu = q.get()
+                    if nalu is None:
+                        return
+                    try:
+                        proc.stdin.write(nalu)
+                        proc.stdin.flush()
+                    except Exception:
+                        return
+
+            writer_thread = threading.Thread(target=_writer_loop, daemon=True)
+            writer_thread.start()
+            with self._lock:
+                self._writer_thread = writer_thread
+
             # Seed the heartbeat so `alive` doesn't report a stall in the window
             # between stream start and the first frame write.
             self._last_frame_ts = time.monotonic()
@@ -615,12 +648,8 @@ class ScrcpySession:
                     break
                 # Config packets (SPS/PPS) are valid H.264 — pass through
                 _ = bool(pts_flags & _FLAG_CONFIG)
-                try:
-                    ffmpeg_proc.stdin.write(payload)
-                    ffmpeg_proc.stdin.flush()
-                    self._last_frame_ts = time.monotonic()
-                except Exception:
-                    break
+                write_queue.put(payload)
+                self._last_frame_ts = time.monotonic()
 
         except Exception:
             _log(f"[scrcpy] stream_loop error serial={self.serial}: {traceback.format_exc()[:400]}")
@@ -633,6 +662,10 @@ class ScrcpySession:
                     video_sock.close()
                 except Exception:
                     pass
+            with self._lock:
+                if self._write_queue is not None:
+                    self._write_queue.close()
+                    self._write_queue = None
             if ffmpeg_proc:
                 try:
                     ffmpeg_proc.stdin.close()
