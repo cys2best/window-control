@@ -802,30 +802,23 @@ class ScrcpySession:
 
     @property
     def alive(self) -> bool:
+        """Persistent-half health only. Whether ffmpeg/video is currently
+        active is `video_active`, a completely separate signal -- the
+        watchdog restarts based on THIS property, and ffmpeg being absent
+        while no viewer is connected is the normal, intended idle state
+        after on-demand ingest, not a failure. See Deviation 4 in this
+        plan's header for why the old ffmpeg-poll and writer-thread checks
+        were removed from here rather than kept alongside.
+        """
         with self._lock:
-            if not self._running or self._ffmpeg_proc is None:
+            if not self._running or self._video_sock is None:
                 return False
-            # ffmpeg crashed but the stream loop's finally hasn't cleared the
-            # handle yet (it may still be blocked on a socket read): treat as
-            # dead so the watchdog restarts the publisher.
-            poll = getattr(self._ffmpeg_proc, "poll", None)
-            if poll is not None and poll() is not None:
-                return False
-            # No frames written for too long → publisher stalled (RTSP wedged,
-            # device frozen). The process may still be up, but nothing is
-            # reaching mediamtx, so the session is effectively dead.
+            # No frames drained for too long → the scrcpy-server connection
+            # itself stalled (device frozen, adb forward wedged). Same
+            # 15s heartbeat this check has always used, just no longer
+            # gated on ffmpeg being alive too.
             if self._last_frame_ts and \
                     time.monotonic() - self._last_frame_ts > _STALL_TIMEOUT:
-                return False
-            # The writer thread can die (e.g. ffmpeg's stdin pipe breaks) while
-            # ffmpeg_proc itself lingers and the video-read loop keeps stamping
-            # _last_frame_ts from the still-healthy device socket -- that read
-            # heartbeat alone can't see a dead writer. Without this check,
-            # `alive` would report True forever while frames silently drop
-            # into a full, unconsumed queue and mediamtx sees "no one is
-            # publishing".
-            writer = self._writer_thread
-            if writer is not None and not writer.is_alive():
                 return False
             return True
 

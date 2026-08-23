@@ -110,20 +110,14 @@ def test_set_tier_updates_tier_when_not_running():
     assert s.tier == "1080"
 
 
-class _LiveProc:
-    """Stand-in ffmpeg proc that reports as running (poll() -> None)."""
-    def poll(self):
-        return None
-    def kill(self):
-        pass
-
-
 def _force_alive(s):
     """Put a session into the real 'alive' state the property reads: running,
-    a live ffmpeg proc, and a fresh frame heartbeat."""
+    a connected video socket (persistent half up), and a fresh frame
+    heartbeat. Does NOT touch ffmpeg/video_active -- alive no longer depends
+    on the on-demand half at all (see Task 2 of the on-demand-ingest plan)."""
     import time as _t
     s._running = True
-    s._ffmpeg_proc = _LiveProc()
+    s._video_sock = object()
     s._last_frame_ts = _t.monotonic()
 
 
@@ -141,33 +135,16 @@ def test_restart_if_dead_skips_when_alive():
     assert calls == {"start": 0, "stop": 0}  # no restart fired
 
 
-def test_alive_false_when_ffmpeg_exited():
-    # A crashed ffmpeg (poll() returns an exit code) means the RTSP publisher is
-    # gone even though the finally-block cleanup has not run yet (the stream loop
-    # may still be blocked on a socket read). alive must report dead so the
-    # watchdog restarts it, instead of trusting the stale _ffmpeg_proc handle.
-    from server.scrcpy_session import ScrcpySession
-    s = ScrcpySession("emulator-5554", 0, "rtsp://localhost:8554/instance0", 720, 1280)
-
-    class _DeadProc:
-        def poll(self):
-            return 1  # exited with code 1
-    s._running = True
-    s._ffmpeg_proc = _DeadProc()
-    import time as _t
-    s._last_frame_ts = _t.monotonic()
-    assert not s.alive
-
-
 def test_alive_false_when_frames_stalled():
-    # ffmpeg process still alive but no frames written for longer than the stall
-    # timeout: the scrcpy video read blocked (settimeout(None)) after the RTSP
-    # publish silently stalled overnight. alive must go False so the watchdog
-    # restarts the publisher instead of reporting a zombie session as healthy.
+    # scrcpy-server connection still up but no frames drained for longer than
+    # the stall timeout: the device read blocked (settimeout(None)) after the
+    # connection silently stalled overnight. alive must go False so the
+    # watchdog restarts the persistent half instead of reporting a zombie
+    # session as healthy.
     from server.scrcpy_session import ScrcpySession, _STALL_TIMEOUT
     s = ScrcpySession("emulator-5554", 0, "rtsp://localhost:8554/instance0", 720, 1280)
     s._running = True
-    s._ffmpeg_proc = _LiveProc()
+    s._video_sock = object()
     import time as _t
     s._last_frame_ts = _t.monotonic() - (_STALL_TIMEOUT + 1)
     assert not s.alive
@@ -178,29 +155,6 @@ def test_alive_true_when_frames_fresh():
     s = ScrcpySession("emulator-5554", 0, "rtsp://localhost:8554/instance0", 720, 1280)
     _force_alive(s)
     assert s.alive
-
-
-def test_alive_false_when_writer_thread_dead():
-    # The writer thread can die silently (e.g. ffmpeg's stdin pipe breaks)
-    # while ffmpeg_proc itself lingers (poll() still None) and the video-read
-    # loop keeps stamping _last_frame_ts from the still-healthy device socket.
-    # Without checking the writer thread's liveness, `alive` reports True
-    # forever while every frame silently drops into a full, unconsumed queue
-    # and mediamtx sees "no one is publishing" -- the exact zombie-publisher
-    # failure class this property exists to catch (see
-    # test_alive_false_when_frames_stalled), just via a different dead path.
-    from server.scrcpy_session import ScrcpySession
-    import threading
-    s = ScrcpySession("emulator-5554", 0, "rtsp://localhost:8554/instance0", 720, 1280)
-    _force_alive(s)
-
-    dead_thread = threading.Thread(target=lambda: None)
-    dead_thread.start()
-    dead_thread.join()
-    assert not dead_thread.is_alive()
-    s._writer_thread = dead_thread
-
-    assert not s.alive
 
 
 def test_set_tier_rejects_unknown():
