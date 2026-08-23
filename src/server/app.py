@@ -3,6 +3,7 @@ import io
 import logging
 import os
 import subprocess
+import time
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -406,6 +407,7 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
         drag_pos: tuple | None = None
         drag_start_pos: tuple | None = None
         finger_down = False  # track whether touch DOWN was sent (to pair with UP)
+        _last_idr_request = 0.0
         try:
             while True:
                 data = await websocket.receive_json()
@@ -419,6 +421,17 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
                         )
                     except Exception:
                         pass
+                    continue
+                if data.get("type") == "idr":
+                    now = time.monotonic()
+                    if now - _last_idr_request >= 0.5:
+                        _last_idr_request = now
+                        active = instance_manager.active
+                        if active is not None:
+                            try:
+                                active.session.control.request_idr()
+                            except Exception:
+                                pass
                     continue
                 inst = instance_manager.active
                 if inst is None:

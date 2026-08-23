@@ -186,6 +186,39 @@ let _twoFingerLastY = null;
 let _inputRttMs = 0;      // measured input-WS round-trip (client→server→client)
 let _echoTimer = null;
 
+// Decode-health signal → client-driven IDR repair. The scrcpy-side heartbeat
+// backed off from 2s to 8s (see project_copy_mux_idr) to cut bitrate tax, so
+// on real loss (PLI/freeze/dropped frames) we now ask for a fresh keyframe
+// over /input instead of waiting up to 8s for the next heartbeat tick.
+let _idrPrev = { pli: 0, freeze: 0, dropped: 0 };
+let _idrLastSent = 0;
+let _decodeHealthTimer = null;
+const FRAME_DROP_THRESHOLD = 5; // framesDropped delta per poll before treating as decode trouble
+
+async function pollDecodeHealth(pc, sock) {
+  if (!pc || pc.connectionState !== 'connected') return;
+  const stats = await pc.getStats();
+  stats.forEach(r => {
+    if (r.type !== 'inbound-rtp' || r.kind !== 'video') return;
+    const d = {
+      pli:     (r.pliCount     ?? 0) - _idrPrev.pli,
+      freeze:  (r.freezeCount  ?? 0) - _idrPrev.freeze,
+      dropped: (r.framesDropped ?? 0) - _idrPrev.dropped,
+    };
+    _idrPrev = {
+      pli: r.pliCount ?? 0,
+      freeze: r.freezeCount ?? 0,
+      dropped: r.framesDropped ?? 0,
+    };
+    const now = performance.now();
+    if ((d.pli > 0 || d.freeze > 0 || d.dropped > FRAME_DROP_THRESHOLD)
+        && now - _idrLastSent > 1000 && sock && sock.readyState === WebSocket.OPEN) {
+      _idrLastSent = now;
+      sock.send(JSON.stringify({ type: 'idr' }));
+    }
+  });
+}
+
 function connectWS() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   ws = new WebSocket(`${proto}://${location.host}/input`);
@@ -200,6 +233,8 @@ function connectWS() {
         ws.send(JSON.stringify({ type: 'echo', t: Date.now() }));
       }
     }, 2000);
+    if (_decodeHealthTimer) clearInterval(_decodeHealthTimer);
+    _decodeHealthTimer = setInterval(() => pollDecodeHealth(_pc, ws), 1000);
   };
   ws.onmessage = ev => {
     try {
@@ -207,7 +242,11 @@ function connectWS() {
       if (m.type === 'echo' && m.t) _inputRttMs = Date.now() - m.t;
     } catch (_) {}
   };
-  ws.onclose = () => { if (_echoTimer) { clearInterval(_echoTimer); _echoTimer = null; } scheduleWSReconnect(); };
+  ws.onclose = () => {
+    if (_echoTimer) { clearInterval(_echoTimer); _echoTimer = null; }
+    if (_decodeHealthTimer) { clearInterval(_decodeHealthTimer); _decodeHealthTimer = null; }
+    scheduleWSReconnect();
+  };
   ws.onerror = () => ws.close();
 }
 

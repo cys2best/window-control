@@ -1,6 +1,7 @@
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
+import time
 from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
@@ -232,3 +233,27 @@ def test_quality_endpoint_rejects_bad_tier(client=None):
         client, _ = _make_client()
     r = client.post("/instances/emulator-5554/quality", json={"tier": "9000"})
     assert r.status_code == 400
+
+
+def test_input_ws_idr_message_triggers_request_idr():
+    inst = MagicMock()
+    client, im = _make_client()
+    im.active = inst
+
+    with client.websocket_connect("/input") as ws:
+        ws.send_json({"type": "idr"})
+        ws.send_json({"type": "idr"})  # immediately after -- rate-limited, must not call again
+        time.sleep(0.6)                # past the 500ms rate-limit window
+        ws.send_json({"type": "idr"})
+        ws.close()
+
+    assert inst.session.control.request_idr.call_count == 2  # first call + the one after the window
+
+
+def test_input_ws_idr_message_noop_when_no_active_instance():
+    client, im = _make_client()
+    im.active = None
+
+    with client.websocket_connect("/input") as ws:
+        ws.send_json({"type": "idr"})  # must not raise
+        ws.close()
