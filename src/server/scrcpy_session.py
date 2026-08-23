@@ -112,12 +112,17 @@ class _NaluWriteQueue:
         """Unblock a thread waiting in get() with a shutdown sentinel."""
         try:
             self._q.put_nowait(None)
+            return
         except queue.Full:
-            try:
-                self._q.get_nowait()
-            except queue.Empty:
-                pass
+            pass
+        try:
+            self._q.get_nowait()
+        except queue.Empty:
+            pass
+        try:
             self._q.put_nowait(None)
+        except queue.Full:
+            pass
 
     def qsize(self) -> int:
         return self._q.qsize()

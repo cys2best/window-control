@@ -257,3 +257,16 @@ def test_nalu_write_queue_close_unblocks_get():
     q = _NaluWriteQueue(maxsize=4)
     q.close()
     assert q.get() is None  # shutdown sentinel
+
+
+def test_nalu_write_queue_close_when_full_doesnt_crash():
+    """close() must not raise queue.Full even if the queue is already full at call time."""
+    from server.scrcpy_session import _NaluWriteQueue
+    q = _NaluWriteQueue(maxsize=2)
+    q.put(b"frame1")
+    q.put(b"frame2")
+    # Queue is now full; close() must not crash when trying to inject the sentinel.
+    # The key test is that this doesn't raise queue.Full.
+    q.close()  # Should succeed without raising queue.Full
+    # Verify we can drain the queue without blocking (just verify get() returns something)
+    assert q.get() is not None  # First get() returns a frame
