@@ -270,3 +270,15 @@ def test_nalu_write_queue_close_when_full_doesnt_crash():
     q.close()  # Should succeed without raising queue.Full
     # Verify we can drain the queue without blocking (just verify get() returns something)
     assert q.get() is not None  # First get() returns a frame
+
+
+def test_idr_heartbeat_steady_state_interval_is_8s():
+    import inspect
+    from server.scrcpy_session import ScrcpySession
+    src = inspect.getsource(ScrcpySession._idr_heartbeat)
+    # Steady-state interval backed off from 2.0s to 8.0s -- the heartbeat is
+    # kept (it's a load-bearing encoder keep-alive during static screens,
+    # see project_copy_mux_idr), just made less frequent to cut its bitrate
+    # tax. The dense early-burst window (0.4s cadence, first 4s) is unchanged.
+    assert "else 8.0" in src
+    assert "else 2.0" not in src

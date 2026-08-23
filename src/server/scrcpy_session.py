@@ -693,14 +693,14 @@ class ScrcpySession:
             _log(f"[scrcpy] stream_loop exited serial={self.serial}")
 
     def _idr_heartbeat(self, ffmpeg_proc):
-        """Request an IDR on a fast burst early, then settle to every ~2s.
+        """Request an IDR on a fast burst early, then settle to every ~8s.
 
         The early burst matters on a quality-change/switch: the client tears down
         and renegotiates WHEP, and whichever moment its new subscriber joins, it
         can only paint once a keyframe arrives. A 2s-only cadence leaves a join
         that lands just after the initial IDR waiting up to ~2s (visible freeze).
         For the first few seconds we poke every ~0.4s so a fresh WHEP join gets a
-        keyframe almost immediately, then relax to 2s for steady state.
+        keyframe almost immediately, then relax to ~8s for steady state.
 
         Identity-guarded on ffmpeg_proc: an old heartbeat thread from a session
         that was replaced by a tier-change/restart must not keep poking the new
@@ -711,7 +711,7 @@ class ScrcpySession:
         while self._running:
             # Dense early (switch window), sparse after — keeps steady-state
             # control traffic low without penalizing the reconnect.
-            interval = 0.4 if (time.monotonic() - started) < 4.0 else 2.0
+            interval = 0.4 if (time.monotonic() - started) < 4.0 else 8.0
             time.sleep(interval)
             with self._lock:
                 if not self._running or self._ffmpeg_proc is not ffmpeg_proc:
