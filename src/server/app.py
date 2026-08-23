@@ -430,8 +430,11 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
                         if active is not None:
                             try:
                                 active.session.control.request_idr()
-                            except Exception:
-                                pass
+                                _log(f"[input] idr requested serial={active.session.serial}")
+                            except Exception as exc:
+                                _log(f"[input] idr request failed: {exc!r}")
+                        else:
+                            _log("[input] idr requested but no active instance")
                     continue
                 inst = instance_manager.active
                 if inst is None:
