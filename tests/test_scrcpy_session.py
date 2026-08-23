@@ -38,6 +38,19 @@ def test_build_scrcpy_args_uses_tier():
     assert "level=512" in joined
 
 
+def test_build_scrcpy_args_uses_vbr():
+    from server.scrcpy_session import build_scrcpy_args
+    args = build_scrcpy_args("720", scid=0x1a)
+    joined = " ".join(args)
+    # bitrate-mode=1 is MediaFormat's KEY_BITRATE_MODE VBR value. It must be
+    # appended to the SAME video_codec_options= token as the existing
+    # i-frame-interval/profile/level settings -- scrcpy only accepts one such
+    # argument; a second video_codec_options= (or the wrong key name
+    # video_encoder_options=) is silently dropped server-side (see the
+    # existing i-frame-interval regression test above this one).
+    assert "video_codec_options=i-frame-interval=2,profile=1,level=512,bitrate-mode=1" in joined
+
+
 def test_session_defaults_to_default_tier():
     from server.scrcpy_session import ScrcpySession
     from config import DEFAULT_TIER
