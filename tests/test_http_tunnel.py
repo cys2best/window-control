@@ -97,6 +97,34 @@ async def test_forward_http_request_refuses_streaming_path(path):
     assert b"streaming" in base64.b64decode(result["body"])
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", [
+    "/internal/instances/instance0/publish/start",
+    "/internal/instances/instance0/publish/stop",
+])
+async def test_forward_http_request_refuses_internal_path(path):
+    """Regression guard: /internal/* is meant for mediamtx's local
+    publish_hook.py only (see app.py's localhost-only guard on these
+    routes). The tunnel forwards every request to 127.0.0.1 itself, so a
+    request relayed from the public internet would look identical to
+    publish_hook.py's own call by source IP alone -- the tunnel must refuse
+    to forward these paths at all, the same way it already refuses /stream.
+    """
+    fake_client = AsyncMock()
+    fake_client.request = AsyncMock()
+
+    msg = {
+        "type": "http_request", "id": "s10", "method": "POST",
+        "path": path, "headers": {}, "body": "",
+    }
+
+    result = await _forward_http_request(fake_client, msg)
+
+    fake_client.request.assert_not_awaited()
+    assert result["type"] == "http_response"
+    assert result["status"] == 501
+
+
 def test_tunnel_http_client_has_generous_read_timeout():
     """httpx's 5s default would routinely time out POST
     /instances/{id}/select (a blocking scrcpy/adb cold start). Connect stays

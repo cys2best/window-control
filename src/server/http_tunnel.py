@@ -46,6 +46,15 @@ TUNNEL_HTTP_TIMEOUT = httpx.Timeout(60.0, connect=5.0)
 # explicitly with a 501 rather than OOMing the PC.
 _UNSUPPORTED_STREAMING_PATHS = {"/stream"}
 
+# /internal/* is meant for mediamtx's local publish_hook.py only (see app.py's
+# localhost-only guard on these routes). This module forwards every request to
+# the local app over 127.0.0.1 itself, so a request relayed from the public
+# internet would look identical to publish_hook.py's own call by source IP
+# alone -- the tunnel must refuse to forward these paths at all, mirroring the
+# _UNSUPPORTED_STREAMING_PATHS refusal above. A prefix check (not membership in
+# a set) since /internal/ has many sub-paths.
+_INTERNAL_PATH_PREFIX = "/internal/"
+
 _STREAM_UNSUPPORTED_BODY = (
     b"The public tunnel does not support streaming responses (MJPEG). "
     b"Use the WebRTC stream path instead."
@@ -87,8 +96,12 @@ def _cookie_headers(headers: dict) -> dict:
 
 
 async def _forward_http_request(client: httpx.AsyncClient, msg: dict) -> dict:
-    if msg["path"].split("?", 1)[0] in _UNSUPPORTED_STREAMING_PATHS:
+    path_only = msg["path"].split("?", 1)[0]
+    if path_only in _UNSUPPORTED_STREAMING_PATHS:
         log.warning("tunnel: refusing to forward streaming path %s", msg["path"])
+        return _error_response(msg["id"], 501, _STREAM_UNSUPPORTED_BODY)
+    if path_only.startswith(_INTERNAL_PATH_PREFIX):
+        log.warning("tunnel: refusing to forward internal path %s", msg["path"])
         return _error_response(msg["id"], 501, _STREAM_UNSUPPORTED_BODY)
 
     body = base64.b64decode(msg["body"]) if msg.get("body") else b""
