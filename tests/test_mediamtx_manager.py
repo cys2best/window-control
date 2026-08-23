@@ -71,6 +71,19 @@ def test_generate_config_short_webrtc_handshake_timeout():
     assert "webrtcHandshakeTimeout: 30s" not in cfg
 
 
+def test_generate_config_wires_on_demand_hooks():
+    cfg = _generate_config(["instance0"])
+    assert "pathDefaults:" in cfg
+    assert "runOnDemand:" in cfg
+    assert "runOnUnDemand:" in cfg
+    assert "runOnDemandRestart: no" in cfg
+    assert "runOnDemandStartTimeout: 6s" in cfg
+    assert "runOnDemandCloseAfter: 45s" in cfg
+    assert "publish_hook.py" in cfg
+    assert "start" in cfg
+    assert "stop" in cfg
+
+
 def test_no_set_active_source_method():
     # The mux-repoint API is gone; switching is a direct WHEP to instanceN.
     m = MediamtxManager()

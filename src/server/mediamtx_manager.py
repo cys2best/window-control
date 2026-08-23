@@ -20,6 +20,19 @@ from config import ASSETS_DIR, MEDIAMTX_PORT, WHEP_PORT, RTMP_PORT, WEBRTC_UDP_P
 _API_BASE = "http://127.0.0.1:9997"
 
 
+def _publish_hook_command(action: str) -> str:
+    """Build the shell command mediamtx runs for runOnDemand ('start') or
+    runOnUnDemand ('stop'). Uses sys.executable (this process's own
+    interpreter) rather than a bare 'python' so it works regardless of
+    what's on PATH for whatever shell mediamtx spawns the command through --
+    publish_hook.py itself is stdlib-only, so any interpreter that can run
+    it at all is fine, but sys.executable is guaranteed to exist and be a
+    real Python.
+    """
+    hook_path = os.path.join(os.path.dirname(__file__), "publish_hook.py")
+    return f'"{sys.executable}" "{hook_path}" {action}'
+
+
 def _log(msg: str):
     for _p in [r"C:\ProgramData\WindowControl", r"C:\Windows\Temp"]:
         try:
@@ -91,6 +104,8 @@ def _generate_config(instance_names: list[str], tailscale_ip: str | None = None)
     paths_config = "\n".join(
         f"  {name}:" for name in instance_names
     )
+    start_cmd = _publish_hook_command("start")
+    stop_cmd = _publish_hook_command("stop")
     return f"""\
 logLevel: info
 logDestinations: [stdout]
@@ -112,6 +127,24 @@ webrtcHandshakeTimeout: 10s
 webrtcICEServers2:
   - url: stun:stun.l.google.com:19302
 {nat_lines}
+
+# On-demand ingest: mediamtx runs `start_cmd` the first time a WHEP client
+# requests a path with no publisher, and `stop_cmd` runOnDemandCloseAfter
+# seconds after the last reader disconnects. Both are thin scripts
+# (publish_hook.py) that POST to this app's own /internal/instances/{{name}}/
+# publish/{{start,stop}} and exit immediately -- the actual ffmpeg process
+# they trigger is a separate, independently-tracked child of THIS Python
+# process, not of mediamtx's spawned command, so runOnDemandRestart: no is
+# correct here (there is nothing useful for mediamtx to restart -- the
+# script's job is already done by the time it would exit).
+# closeAfter is deliberately generous: keeps A<->B<->A instance switching
+# warm at zero ffmpeg-process cost. Do not lower it to chase faster teardown.
+pathDefaults:
+  runOnDemand: {start_cmd}
+  runOnDemandRestart: no
+  runOnDemandStartTimeout: 6s
+  runOnDemandCloseAfter: 45s
+  runOnUnDemand: {stop_cmd}
 
 paths:
 {paths_config}
