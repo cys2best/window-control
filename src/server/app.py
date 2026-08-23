@@ -32,6 +32,10 @@ _tunnel_task: "asyncio.Task | None" = None
 _AUTH_EXEMPT_PATHS = {"/", "/login"}
 
 
+def _is_localhost(host: str | None) -> bool:
+    return host in ("127.0.0.1", "::1")
+
+
 def _log(msg: str):
     for _p in [r"C:\ProgramData\WindowControl", r"C:\Windows\Temp"]:
         try:
@@ -164,6 +168,10 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
 
     @app.middleware("http")
     async def _auth_gate(request: Request, call_next):
+        if request.url.path.startswith("/internal/"):
+            if not _is_localhost(request.client.host if request.client else None):
+                return JSONResponse({"detail": "Not found"}, status_code=404)
+            return await call_next(request)
         if auth.auth_enabled() and request.url.path not in _AUTH_EXEMPT_PATHS \
                 and not request.url.path.startswith("/static/"):
             if not auth.verify_session_cookie(request.cookies.get(auth.COOKIE_NAME)):
@@ -274,6 +282,27 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
             "signaling_url": VPS_SIGNALING_URL,
             "ice_servers": get_ice_servers(),
         }
+
+    @app.post("/internal/instances/{name}/publish/start")
+    async def internal_publish_start(name: str):
+        """mediamtx's runOnDemand hook (via publish_hook.py) calls this when
+        a WHEP client requests a path with no one publishing yet. Starts
+        just the on-demand video half -- the persistent half (control
+        socket, input) is already up from discovery, regardless of viewers.
+        """
+        ok = await asyncio.to_thread(instance_manager.start_video, name)
+        return {"ok": ok}
+
+    @app.post("/internal/instances/{name}/publish/stop")
+    async def internal_publish_stop(name: str):
+        """mediamtx's runOnUnDemand hook calls this runOnDemandCloseAfter
+        seconds after the last reader disconnects. Always returns ok:true
+        (mediamtx doesn't wait on or retry this the way it does the start
+        hook's timeout) -- an unknown/already-gone instance is a no-op in
+        InstanceManager.stop_video, not an error.
+        """
+        await asyncio.to_thread(instance_manager.stop_video, name)
+        return {"ok": True}
 
     @app.post("/instances/{instance_id}/keyframe")
     async def request_keyframe(instance_id: str):

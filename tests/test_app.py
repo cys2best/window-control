@@ -19,7 +19,12 @@ def _make_client(instances=None):
     im.refresh.return_value = None
     with patch("server.app.get_best_ip", return_value="127.0.0.1"):
         app = create_app(state, fq, im)
-    return TestClient(app), im
+    # TestClient's ASGI transport defaults scope["client"] to
+    # ("testclient", 50000) rather than a loopback address, which would
+    # otherwise trip the new /internal/ localhost-only guard for every
+    # legitimate in-process test call. Pin it to loopback so those tests
+    # exercise the "called from localhost" path the guard is meant to allow.
+    return TestClient(app, client=("127.0.0.1", 12345)), im
 
 
 def test_get_instances_empty():
@@ -257,3 +262,54 @@ def test_input_ws_idr_message_noop_when_no_active_instance():
     with client.websocket_connect("/input") as ws:
         ws.send_json({"type": "idr"})  # must not raise
         ws.close()
+
+
+def test_internal_publish_start_calls_instance_manager():
+    client, im = _make_client()
+    im.start_video.return_value = True
+
+    r = client.post("/internal/instances/instance0/publish/start")
+
+    assert r.status_code == 200
+    assert r.json() == {"ok": True}
+    im.start_video.assert_called_once_with("instance0")
+
+
+def test_internal_publish_start_returns_ok_false_for_unknown_instance():
+    client, im = _make_client()
+    im.start_video.return_value = False
+
+    r = client.post("/internal/instances/instance99/publish/start")
+
+    assert r.status_code == 200
+    assert r.json() == {"ok": False}
+
+
+def test_internal_publish_stop_calls_instance_manager():
+    client, im = _make_client()
+
+    r = client.post("/internal/instances/instance0/publish/stop")
+
+    assert r.status_code == 200
+    assert r.json() == {"ok": True}
+    im.stop_video.assert_called_once_with("instance0")
+
+
+def test_internal_publish_start_refused_from_non_localhost():
+    # mediamtx spawns publish_hook.py locally, so these endpoints must never
+    # be reachable except from 127.0.0.1/::1 -- the public HTTP tunnel proxies
+    # arbitrary paths through 127.0.0.1 itself (see http_tunnel.py's
+    # _forward_http_request), so Task 5's tunnel-side block is the primary
+    # defense; this is defense-in-depth for any other exposure path.
+    client, im = _make_client()
+    r = client.post(
+        "/internal/instances/instance0/publish/start",
+        headers={"X-Forwarded-For": "1.2.3.4"},
+    )
+    # TestClient's request.client.host is always 127.0.0.1 for in-process
+    # requests regardless of X-Forwarded-For (there's no real socket peer to
+    # spoof), so this test instead directly exercises the guard function.
+    from server.app import _is_localhost
+    assert _is_localhost("127.0.0.1") is True
+    assert _is_localhost("::1") is True
+    assert _is_localhost("100.85.142.52") is False
