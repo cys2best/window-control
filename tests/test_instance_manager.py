@@ -141,3 +141,75 @@ def test_refresh_uses_incremental_paths_when_mediamtx_already_running(monkeypatc
     assert mediamtx.started == []  # process already running — no full restart
     assert mediamtx.added == ["instance0"]
     assert mediamtx.removed == []
+
+
+def test_get_by_name_known_returns_instance():
+    from server.instance_manager import Instance
+
+    im = InstanceManager(MediamtxManager())
+    serial = "emulator-5554"
+    inst = Instance(
+        {"id": f"adb:{serial}", "title": "t", "ldplayer_index": 0},
+        object(), 100, 200,
+    )
+    im._instances[serial] = inst
+
+    assert im.get_by_name("instance0") is inst
+
+
+def test_get_by_name_unknown_returns_none():
+    im = InstanceManager(MediamtxManager())
+    assert im.get_by_name("instance99") is None
+
+
+def test_start_video_by_name_delegates_to_session():
+    from server.instance_manager import Instance
+
+    im = InstanceManager(MediamtxManager())
+    serial = "emulator-5554"
+    calls = {"n": 0}
+
+    class FakeSession:
+        def start_video(self):
+            calls["n"] += 1
+            return True
+
+    inst = Instance(
+        {"id": f"adb:{serial}", "title": "t", "ldplayer_index": 0},
+        FakeSession(), 100, 200,
+    )
+    im._instances[serial] = inst
+
+    assert im.start_video("instance0") is True
+    assert calls["n"] == 1
+
+
+def test_start_video_unknown_name_returns_false():
+    im = InstanceManager(MediamtxManager())
+    assert im.start_video("instance99") is False
+
+
+def test_stop_video_by_name_delegates_to_session():
+    from server.instance_manager import Instance
+
+    im = InstanceManager(MediamtxManager())
+    serial = "emulator-5554"
+    calls = {"n": 0}
+
+    class FakeSession:
+        def stop_video(self):
+            calls["n"] += 1
+
+    inst = Instance(
+        {"id": f"adb:{serial}", "title": "t", "ldplayer_index": 0},
+        FakeSession(), 100, 200,
+    )
+    im._instances[serial] = inst
+
+    im.stop_video("instance0")
+    assert calls["n"] == 1
+
+
+def test_stop_video_unknown_name_is_noop():
+    im = InstanceManager(MediamtxManager())
+    im.stop_video("instance99")  # must not raise

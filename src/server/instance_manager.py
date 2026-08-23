@@ -181,6 +181,41 @@ class InstanceManager:
         with self._lock:
             return self._instances.get(serial)
 
+    def get_by_name(self, name: str) -> Instance | None:
+        """Look up a tracked Instance by its mediamtx path name (e.g.
+        'instance0'), not its ADB serial. mediamtx's runOnDemand/
+        runOnUnDemand hooks only know the path name (`$MTX_PATH`), so this
+        is the entry point the publish_hook.py script's HTTP calls resolve
+        through.
+        """
+        with self._lock:
+            for inst in self._instances.values():
+                if inst.name == name:
+                    return inst
+            return None
+
+    def start_video(self, name: str) -> bool:
+        """Start the on-demand video half for the instance at mediamtx path
+        `name`. Called by the internal /internal/instances/{name}/publish/start
+        endpoint, itself triggered by mediamtx's runOnDemand hook.
+        """
+        inst = self.get_by_name(name)
+        if inst is None:
+            return False
+        return inst.session.start_video()
+
+    def stop_video(self, name: str) -> None:
+        """Stop the on-demand video half for the instance at mediamtx path
+        `name`. Called by the internal /internal/instances/{name}/publish/stop
+        endpoint, itself triggered by mediamtx's runOnUnDemand hook. A no-op
+        for an unknown name -- the instance may have disconnected between
+        mediamtx firing the hook and the script's request landing.
+        """
+        inst = self.get_by_name(name)
+        if inst is None:
+            return
+        inst.session.stop_video()
+
     @property
     def active(self) -> Instance | None:
         with self._lock:
