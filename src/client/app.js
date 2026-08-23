@@ -194,6 +194,17 @@ let _idrPrev = { pli: 0, freeze: 0, dropped: 0 };
 let _idrLastSent = 0;
 let _decodeHealthTimer = null;
 const FRAME_DROP_THRESHOLD = 5; // framesDropped delta per poll before treating as decode trouble
+// A single freeze per poll happens naturally on idle/low-motion screens (the
+// device encoder emits frames sparsely, so the jitter buffer's wait for the
+// next one can itself register as one freeze tick) -- confirmed in practice:
+// an idle static screen produced ~1 freeze every ~7s with no real playback
+// problem, which drove near-continuous idr requests and defeated Task 1.4's
+// heartbeat backoff (2s -> 8s, done specifically to cut IDR bitrate tax).
+// Require multiple freezes in the same 1s poll window before treating it as
+// real decode trouble. pliCount is left unthresholded: it's an explicit
+// "decoder needs a keyframe" signal from the browser itself, not a passive
+// timing artifact, so any PLI should still repair immediately.
+const FREEZE_THRESHOLD = 2; // freezeCount delta per poll before treating as decode trouble
 
 async function pollDecodeHealth(pc, sock) {
   if (!pc || pc.connectionState !== 'connected') return;
@@ -211,7 +222,7 @@ async function pollDecodeHealth(pc, sock) {
       dropped: r.framesDropped ?? 0,
     };
     const now = performance.now();
-    if ((d.pli > 0 || d.freeze > 0 || d.dropped > FRAME_DROP_THRESHOLD)
+    if ((d.pli > 0 || d.freeze >= FREEZE_THRESHOLD || d.dropped > FRAME_DROP_THRESHOLD)
         && now - _idrLastSent > 1000 && sock && sock.readyState === WebSocket.OPEN) {
       _idrLastSent = now;
       sock.send(JSON.stringify({ type: 'idr' }));
