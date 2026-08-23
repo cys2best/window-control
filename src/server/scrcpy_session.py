@@ -716,12 +716,49 @@ class ScrcpySession:
         )
         idr_thread.start()
         self.control.request_idr()
+
+        # Re-check the SAME readiness conditions as the entry check, atomically
+        # with the commit. Everything above ran without holding the lock, so
+        # two concurrent start_video() calls can both get this far (double-
+        # spawn), or a concurrent stop()/_persistent_loop teardown can have
+        # torn the persistent half down while we were spawning (resurrection-
+        # after-teardown). This is the single point that decides who wins;
+        # the loser discards what it built instead of committing it.
         with self._lock:
-            self._ffmpeg_proc = ffmpeg_proc
-            self._write_queue = write_queue
-            self._writer_thread = writer_thread
-        _log(f"[scrcpy] video started serial={self.serial} -> {self.rtsp_url}")
-        return True
+            if not self._running or self._video_sock is None:
+                lost_race, already_active = True, False
+            elif self._ffmpeg_proc is not None:
+                lost_race, already_active = True, True
+            else:
+                self._ffmpeg_proc = ffmpeg_proc
+                self._write_queue = write_queue
+                self._writer_thread = writer_thread
+                lost_race = False
+
+        if not lost_race:
+            _log(f"[scrcpy] video started serial={self.serial} -> {self.rtsp_url}")
+            return True
+
+        # Discard: this call's ffmpeg_proc/write_queue never got committed, so
+        # nothing else will ever clean them up -- do it here. Closing the
+        # queue unblocks the writer thread (it returns on the None sentinel);
+        # the idr thread is already identity-guarded on `ffmpeg_proc` (see
+        # _idr_heartbeat) and will exit on its own next tick since
+        # self._ffmpeg_proc was never set to it.
+        write_queue.close()
+        try:
+            ffmpeg_proc.stdin.close()
+        except Exception:
+            pass
+        try:
+            ffmpeg_proc.kill()
+        except Exception:
+            pass
+        if already_active:
+            _log(f"[scrcpy] start_video: lost race to a concurrent call serial={self.serial}")
+            return True
+        _log(f"[scrcpy] start_video: persistent half gone during spawn serial={self.serial}")
+        return False
 
     def stop_video(self) -> None:
         """Stop the on-demand half. No-op if not currently active.

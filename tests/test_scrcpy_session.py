@@ -384,6 +384,89 @@ def test_stop_video_noop_when_not_active():
     assert s.video_active is False
 
 
+def test_start_video_concurrent_calls_dont_double_spawn(monkeypatch):
+    # Two concurrent start_video() calls (e.g. mediamtx's runOnDemand "no one
+    # publishing yet" window firing twice in quick succession) both pass the
+    # entry check before either has committed, both spawn a full ffmpeg
+    # process + writer thread, and race to commit. Exactly one must survive;
+    # the loser's ffmpeg_proc must be killed and its write_queue closed, not
+    # leaked (orphaned writer thread blocked forever on q.get()).
+    import server.scrcpy_session as mod
+    import threading
+
+    created = []
+    # Barrier forces both threads to finish constructing their ffmpeg stand-in
+    # before either proceeds to the final atomic commit/re-check below --
+    # without this, the race window is too small to hit reliably.
+    barrier = threading.Barrier(2, timeout=5)
+
+    class _SlowFakeProc(_FakeFfmpegProc):
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k)
+            created.append(self)
+            barrier.wait()
+
+    monkeypatch.setattr(mod.subprocess, "Popen", _SlowFakeProc)
+    monkeypatch.setattr(mod, "_get_ffmpeg", lambda: "ffmpeg")
+
+    s = ScrcpySession("emulator-5554", 0, "rtsp://localhost:8554/instance0", 720, 1280)
+    s._running = True
+    s._video_sock = object()
+
+    results = []
+
+    def call():
+        results.append(s.start_video())
+
+    t1 = threading.Thread(target=call)
+    t2 = threading.Thread(target=call)
+    t1.start()
+    t2.start()
+    t1.join(timeout=5)
+    t2.join(timeout=5)
+
+    assert len(created) == 2
+    assert results == [True, True]  # winner started it; loser sees it's active
+    assert s.video_active is True
+    alive = [p for p in created if not p._killed]
+    killed = [p for p in created if p._killed]
+    assert len(alive) == 1  # exactly one ffmpeg survives
+    assert len(killed) == 1  # the loser was killed, not leaked
+    assert s._ffmpeg_proc is alive[0]
+
+
+def test_start_video_resurrection_after_teardown_is_prevented(monkeypatch):
+    # A start_video() call already past its entry check must not resurrect
+    # on-demand state after a concurrent stop() tears the persistent half
+    # down -- otherwise nothing is left to ever clean the committed ffmpeg
+    # process up (the persistent loop that would call stop_video() again has
+    # already exited).
+    import server.scrcpy_session as mod
+
+    monkeypatch.setattr(mod.subprocess, "Popen", _FakeFfmpegProc)
+    monkeypatch.setattr(mod, "_get_ffmpeg", lambda: "ffmpeg")
+
+    s = ScrcpySession("emulator-5554", 0, "rtsp://localhost:8554/instance0", 720, 1280)
+    s._running = True
+    s._video_sock = object()
+
+    # Simulate stop() having landed between the entry check and the final
+    # commit by tearing down persistent-half state right before start_video()
+    # re-checks it. We do this by monkeypatching subprocess.Popen to flip the
+    # state as a side effect of being called -- standing in for a concurrent
+    # stop() that ran in the window while ffmpeg was being spawned.
+    def _popen_then_stop(*a, **k):
+        proc = _FakeFfmpegProc(*a, **k)
+        s._running = False
+        s._video_sock = None
+        return proc
+    monkeypatch.setattr(mod.subprocess, "Popen", _popen_then_stop)
+
+    assert s.start_video() is False
+    assert s.video_active is False
+    assert s._ffmpeg_proc is None
+
+
 def test_idr_heartbeat_steady_state_interval_is_8s():
     import inspect
     from server.scrcpy_session import ScrcpySession
