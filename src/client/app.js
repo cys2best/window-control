@@ -451,6 +451,7 @@ async function initWebRTC(windowId, whepUrl, stunUrl, serial) {
     _pc = new RTCPeerConnection({
       iceServers: _stunUrl ? [{ urls: _stunUrl }] : [],
     });
+    _idrPrev = { pli: 0, freeze: 0, dropped: 0 };
 
     const video = document.getElementById('stream-video');
     const img   = document.getElementById('stream-img');
@@ -608,6 +609,7 @@ async function initWebRTCPublic(windowId, signalingUrl, instanceName, serial, ic
       // PC's LAN/Tailscale). _iceServers comes from the server's
       // get_ice_servers() (STUN always, TURN when TURN_HOST is configured).
       _pc = new RTCPeerConnection({ iceServers: _iceServers });
+      _idrPrev = { pli: 0, freeze: 0, dropped: 0 };
       const thisPc = _pc;
 
       const video = document.getElementById('stream-video');
