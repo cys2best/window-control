@@ -295,6 +295,95 @@ def test_nalu_write_queue_close_when_full_doesnt_crash():
     assert q.get() is not None  # First get() returns a frame
 
 
+class _FakeFfmpegProc:
+    """Stand-in for subprocess.Popen(ffmpeg) — records stdin writes, never
+    actually runs a process. Constructor signature intentionally ignores its
+    args so it can be swapped in via monkeypatch for subprocess.Popen."""
+    def __init__(self, *a, **k):
+        self.stdin = type("Stdin", (), {
+            "write": lambda self, data: None,
+            "flush": lambda self: None,
+            "close": lambda self: None,
+        })()
+        self.stdout = None
+        self.stderr = type("Stderr", (), {"read": lambda self: b""})()
+        self._killed = False
+
+    def poll(self):
+        return None if not self._killed else 0
+
+    def kill(self):
+        self._killed = True
+
+
+def test_video_active_false_before_start_video():
+    s = ScrcpySession("emulator-5554", 0, "rtsp://localhost:8554/instance0", 720, 1280)
+    assert s.video_active is False
+
+
+def test_start_video_refuses_when_persistent_half_not_up():
+    # start_video() must not spawn ffmpeg for a session whose scrcpy-server
+    # video socket was never connected -- there is nothing for ffmpeg to
+    # read from yet, and mediamtx's runOnDemandStartTimeout would just burn
+    # its whole window waiting on a stream that can never arrive.
+    s = ScrcpySession("emulator-5554", 0, "rtsp://localhost:8554/instance0", 720, 1280)
+    assert s.start_video() is False
+    assert s.video_active is False
+
+
+def test_start_video_spawns_ffmpeg_when_persistent_half_up(monkeypatch):
+    import server.scrcpy_session as mod
+    monkeypatch.setattr(mod.subprocess, "Popen", _FakeFfmpegProc)
+    monkeypatch.setattr(mod, "_get_ffmpeg", lambda: "ffmpeg")
+
+    s = ScrcpySession("emulator-5554", 0, "rtsp://localhost:8554/instance0", 720, 1280)
+    # Simulate the persistent half already being up (Task's _persistent_loop
+    # sets these once the scrcpy-server handshake completes).
+    s._running = True
+    s._video_sock = object()
+
+    assert s.start_video() is True
+    assert s.video_active is True
+
+
+def test_start_video_idempotent_when_already_active(monkeypatch):
+    import server.scrcpy_session as mod
+    monkeypatch.setattr(mod.subprocess, "Popen", _FakeFfmpegProc)
+    monkeypatch.setattr(mod, "_get_ffmpeg", lambda: "ffmpeg")
+
+    s = ScrcpySession("emulator-5554", 0, "rtsp://localhost:8554/instance0", 720, 1280)
+    s._running = True
+    s._video_sock = object()
+    assert s.start_video() is True
+    first_proc = s._ffmpeg_proc
+    assert s.start_video() is True  # second call is a no-op, not a second spawn
+    assert s._ffmpeg_proc is first_proc
+
+
+def test_stop_video_tears_down_ffmpeg_and_write_queue(monkeypatch):
+    import server.scrcpy_session as mod
+    monkeypatch.setattr(mod.subprocess, "Popen", _FakeFfmpegProc)
+    monkeypatch.setattr(mod, "_get_ffmpeg", lambda: "ffmpeg")
+
+    s = ScrcpySession("emulator-5554", 0, "rtsp://localhost:8554/instance0", 720, 1280)
+    s._running = True
+    s._video_sock = object()
+    s.start_video()
+    assert s.video_active is True
+
+    s.stop_video()
+
+    assert s.video_active is False
+    assert s._write_queue is None
+    assert s._writer_thread is None
+
+
+def test_stop_video_noop_when_not_active():
+    s = ScrcpySession("emulator-5554", 0, "rtsp://localhost:8554/instance0", 720, 1280)
+    s.stop_video()  # must not raise
+    assert s.video_active is False
+
+
 def test_idr_heartbeat_steady_state_interval_is_8s():
     import inspect
     from server.scrcpy_session import ScrcpySession

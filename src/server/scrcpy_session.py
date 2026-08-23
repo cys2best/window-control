@@ -741,6 +741,100 @@ class ScrcpySession:
         self.control.close()
         _log(f"[scrcpy] stopped serial={self.serial}")
 
+    def start_video(self) -> bool:
+        """Start the on-demand half: ffmpeg + write queue + writer + IDR heartbeat.
+
+        Requires the persistent half (scrcpy-server, video socket, handshake)
+        to already be up -- called by InstanceManager.start_video() in
+        response to mediamtx's runOnDemand hook, which only fires once a
+        WHEP client actually requests the path, by which point discovery has
+        long since brought the persistent half up. A no-op (returns True) if
+        video is already active, so a duplicate runOnDemand call (e.g. two
+        readers joining close together) can't double-spawn ffmpeg.
+        """
+        with self._lock:
+            if not self._running or self._video_sock is None:
+                return False
+            if self._ffmpeg_proc is not None:
+                return True
+        ffmpeg_exe = _get_ffmpeg()
+        if not ffmpeg_exe:
+            _log(f"[scrcpy] start_video: ffmpeg not found serial={self.serial}")
+            return False
+        ffmpeg_proc = subprocess.Popen(
+            build_ffmpeg_args(ffmpeg_exe, self.rtsp_url, self.tier),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            **_no_window_flags(),
+        )
+        write_queue = _NaluWriteQueue()
+
+        def _writer_loop(proc=ffmpeg_proc, q=write_queue):
+            while True:
+                nalu = q.get()
+                if nalu is None:
+                    return
+                try:
+                    proc.stdin.write(nalu)
+                    proc.stdin.flush()
+                except Exception:
+                    return
+
+        writer_thread = threading.Thread(target=_writer_loop, daemon=True)
+        writer_thread.start()
+        idr_thread = threading.Thread(
+            target=self._idr_heartbeat, args=(ffmpeg_proc,), daemon=True
+        )
+        idr_thread.start()
+        self.control.request_idr()
+        with self._lock:
+            self._ffmpeg_proc = ffmpeg_proc
+            self._write_queue = write_queue
+            self._writer_thread = writer_thread
+        _log(f"[scrcpy] video started serial={self.serial} -> {self.rtsp_url}")
+        return True
+
+    def stop_video(self) -> None:
+        """Stop the on-demand half. No-op if not currently active.
+
+        Called by InstanceManager.stop_video() in response to mediamtx's
+        runOnUnDemand hook (fires runOnDemandCloseAfter seconds after the
+        last reader disconnects). The persistent half (scrcpy-server, video
+        socket, drain loop, control socket) is untouched -- input to this
+        instance keeps working after this call.
+        """
+        with self._lock:
+            ffmpeg_proc = self._ffmpeg_proc
+            write_queue = self._write_queue
+            self._ffmpeg_proc = None
+            self._write_queue = None
+            self._writer_thread = None
+        if write_queue is not None:
+            write_queue.close()
+        if ffmpeg_proc is not None:
+            try:
+                ffmpeg_proc.stdin.close()
+            except Exception:
+                pass
+            try:
+                ffmpeg_proc.kill()
+            except Exception:
+                pass
+            try:
+                stderr_bytes = ffmpeg_proc.stderr.read()
+                if stderr_bytes:
+                    _log(f"[scrcpy] ffmpeg stderr serial={self.serial}: "
+                         f"{stderr_bytes.decode('utf-8', errors='replace')[:600]}")
+            except Exception:
+                pass
+        _log(f"[scrcpy] video stopped serial={self.serial}")
+
+    @property
+    def video_active(self) -> bool:
+        with self._lock:
+            return self._ffmpeg_proc is not None
+
     @property
     def alive(self) -> bool:
         with self._lock:
