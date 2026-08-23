@@ -758,6 +758,16 @@ class ScrcpySession:
             if self._last_frame_ts and \
                     time.monotonic() - self._last_frame_ts > _STALL_TIMEOUT:
                 return False
+            # The writer thread can die (e.g. ffmpeg's stdin pipe breaks) while
+            # ffmpeg_proc itself lingers and the video-read loop keeps stamping
+            # _last_frame_ts from the still-healthy device socket -- that read
+            # heartbeat alone can't see a dead writer. Without this check,
+            # `alive` would report True forever while frames silently drop
+            # into a full, unconsumed queue and mediamtx sees "no one is
+            # publishing".
+            writer = self._writer_thread
+            if writer is not None and not writer.is_alive():
+                return False
             return True
 
     def restart_if_dead(self) -> bool:

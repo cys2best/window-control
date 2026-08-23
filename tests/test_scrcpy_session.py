@@ -180,6 +180,29 @@ def test_alive_true_when_frames_fresh():
     assert s.alive
 
 
+def test_alive_false_when_writer_thread_dead():
+    # The writer thread can die silently (e.g. ffmpeg's stdin pipe breaks)
+    # while ffmpeg_proc itself lingers (poll() still None) and the video-read
+    # loop keeps stamping _last_frame_ts from the still-healthy device socket.
+    # Without checking the writer thread's liveness, `alive` reports True
+    # forever while every frame silently drops into a full, unconsumed queue
+    # and mediamtx sees "no one is publishing" -- the exact zombie-publisher
+    # failure class this property exists to catch (see
+    # test_alive_false_when_frames_stalled), just via a different dead path.
+    from server.scrcpy_session import ScrcpySession
+    import threading
+    s = ScrcpySession("emulator-5554", 0, "rtsp://localhost:8554/instance0", 720, 1280)
+    _force_alive(s)
+
+    dead_thread = threading.Thread(target=lambda: None)
+    dead_thread.start()
+    dead_thread.join()
+    assert not dead_thread.is_alive()
+    s._writer_thread = dead_thread
+
+    assert not s.alive
+
+
 def test_set_tier_rejects_unknown():
     from server.scrcpy_session import ScrcpySession
     s = ScrcpySession("emulator-5554", 0, "rtsp://localhost:8554/instance0", 720, 1280)
