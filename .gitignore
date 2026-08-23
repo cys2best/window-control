@@ -25,3 +25,9 @@ service_crash.log
 
 # Local secrets (PUBLIC_UI_URL/TUNNEL_SECRET/AUTH_TOKEN/VPS_SIGNALING_URL etc.)
 .env
+
+# Terraform staging/state
+.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
