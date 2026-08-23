@@ -84,6 +84,25 @@ def test_generate_config_wires_on_demand_hooks():
     assert "stop" in cfg
 
 
+def test_generate_config_produces_valid_yaml():
+    import yaml
+    cfg = _generate_config(["instance0"])
+    parsed = yaml.safe_load(cfg)
+    assert isinstance(parsed["pathDefaults"]["runOnDemand"], str)
+    assert parsed["pathDefaults"]["runOnDemand"]
+    assert isinstance(parsed["pathDefaults"]["runOnUnDemand"], str)
+    assert parsed["pathDefaults"]["runOnUnDemand"]
+
+
+def test_generate_config_valid_yaml_in_frozen_build(monkeypatch):
+    import sys, yaml
+    monkeypatch.setattr(sys, "_MEIPASS", "/fake/meipass", raising=False)
+    cfg = _generate_config(["instance0"])
+    parsed = yaml.safe_load(cfg)
+    assert "EncodedCommand" in parsed["pathDefaults"]["runOnDemand"]
+    monkeypatch.delattr(sys, "_MEIPASS", raising=False)
+
+
 def test_no_set_active_source_method():
     # The mux-repoint API is gone; switching is a direct WHEP to instanceN.
     m = MediamtxManager()

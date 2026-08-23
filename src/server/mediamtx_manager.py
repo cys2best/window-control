@@ -6,6 +6,7 @@ LDPlayer instance. mediamtx auto-converts RTSP → WebRTC/WHEP so the iPhone
 can connect directly to http://tailscale-ip:8889/instanceN.
 """
 
+import base64
 import os
 import subprocess
 import sys
@@ -22,15 +23,38 @@ _API_BASE = "http://127.0.0.1:9997"
 
 def _publish_hook_command(action: str) -> str:
     """Build the shell command mediamtx runs for runOnDemand ('start') or
-    runOnUnDemand ('stop'). Uses sys.executable (this process's own
-    interpreter) rather than a bare 'python' so it works regardless of
-    what's on PATH for whatever shell mediamtx spawns the command through --
-    publish_hook.py itself is stdlib-only, so any interpreter that can run
-    it at all is fine, but sys.executable is guaranteed to exist and be a
-    real Python.
+    runOnUnDemand ('stop').
+
+    Frozen (PyInstaller) build: sys.executable is this app's own exe, and
+    publish_hook.py isn't bundled as a data file -- booting the exe with
+    args would re-run the entire PyQt5/uvicorn stack (main.py's heavy
+    imports happen at module scope, before any argv dispatch), far too
+    slow/heavy to spawn per on-demand trigger. PowerShell ships on every
+    supported Windows version and can do the POST in milliseconds with no
+    interpreter resolution or file bundling needed. -EncodedCommand takes
+    base64(UTF-16LE), so the payload needs zero escaping at any shell layer
+    (mediamtx's own command-line parsing, then PowerShell's) -- this
+    sidesteps what would otherwise be a fragile nested-quoting problem
+    across two shells this environment can't verify against a live host.
+
+    Non-frozen (dev/uv/CI): sys.executable is a real Python interpreter and
+    publish_hook.py exists on disk next to this file -- use it directly.
     """
+    from config import PORT
+    if hasattr(sys, "_MEIPASS"):
+        script = (
+            'try { Invoke-WebRequest -Uri '
+            f'"http://127.0.0.1:{PORT}/internal/instances/$env:MTX_PATH/publish/{action}" '
+            '-Method POST -TimeoutSec 5 -UseBasicParsing } catch {}'
+        )
+        encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+        return f"powershell -NoProfile -NonInteractive -EncodedCommand {encoded}"
     hook_path = os.path.join(os.path.dirname(__file__), "publish_hook.py")
     return f'"{sys.executable}" "{hook_path}" {action}'
+
+
+def _yaml_single_quote(s: str) -> str:
+    return "'" + s.replace("'", "''") + "'"
 
 
 def _log(msg: str):
@@ -140,11 +164,11 @@ webrtcICEServers2:
 # closeAfter is deliberately generous: keeps A<->B<->A instance switching
 # warm at zero ffmpeg-process cost. Do not lower it to chase faster teardown.
 pathDefaults:
-  runOnDemand: {start_cmd}
+  runOnDemand: {_yaml_single_quote(start_cmd)}
   runOnDemandRestart: no
   runOnDemandStartTimeout: 6s
   runOnDemandCloseAfter: 45s
-  runOnUnDemand: {stop_cmd}
+  runOnUnDemand: {_yaml_single_quote(stop_cmd)}
 
 paths:
 {paths_config}
