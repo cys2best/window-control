@@ -55,6 +55,22 @@ def test_generate_config_api_enabled():
     assert "apiAddress: 127.0.0.1:9997" in cfg
 
 
+def test_generate_config_short_webrtc_handshake_timeout():
+    # A negotiation abandoned before connecting (rapid instance switching,
+    # a losing race-probe candidate) has no way to signal mediamtx that it's
+    # been given up on -- an established ICE/DTLS session can signal its own
+    # teardown when closed, but one that never got that far can't. WHEP's
+    # own DELETE was tried as a fix but this mediamtx setup doesn't reliably
+    # honor it (confirmed live: sessions kept lingering to the full timeout
+    # regardless), so the real fix is keeping this timeout itself short --
+    # confirmed live that real connections establish within ~1-5s, so 10s
+    # leaves comfortable margin while cutting abandoned-session lingering
+    # from the previous 30s default.
+    cfg = _generate_config(["instance0"])
+    assert "webrtcHandshakeTimeout: 10s" in cfg
+    assert "webrtcHandshakeTimeout: 30s" not in cfg
+
+
 def test_no_set_active_source_method():
     # The mux-repoint API is gone; switching is a direct WHEP to instanceN.
     m = MediamtxManager()

@@ -102,7 +102,13 @@ webrtcAddress: :{WHEP_PORT}
 webrtcLocalUDPAddress: :{WEBRTC_UDP_PORT}
 api: yes
 apiAddress: 127.0.0.1:9997
-webrtcHandshakeTimeout: 30s
+# Real connections establish in ~1-5s (confirmed live). A negotiation
+# abandoned before connecting (rapid instance switching, a losing race-probe
+# candidate) has no way to signal mediamtx it's been given up on -- WHEP's
+# own DELETE was tried but this mediamtx setup doesn't reliably honor it, so
+# keeping this timeout itself short is what actually bounds how long an
+# abandoned session lingers. Down from the 30s default.
+webrtcHandshakeTimeout: 10s
 webrtcICEServers2:
   - url: stun:stun.l.google.com:19302
 {nat_lines}
