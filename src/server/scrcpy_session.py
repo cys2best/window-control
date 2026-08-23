@@ -148,20 +148,11 @@ def build_scrcpy_args(tier: str, scid: int) -> list[str]:
 
 
 def build_ffmpeg_args(ffmpeg_exe: str, rtsp_url: str, tier: str = DEFAULT_TIER) -> list[str]:
-    """Build ffmpeg arguments to mux scrcpy H.264 → RTSP with NO re-encode.
+    """Build ffmpeg arguments to mux scrcpy H.264 -> RTSP with NO re-encode.
 
     Copy-mux (`-c:v copy`): the device already emits H.264 at the tier's
-    bitrate/fps, so re-encoding with libx264 only burned CPU (full decode+encode
-    per frame, per active instance) and added ~1 frame of latency. Dropping it is
-    the streaming-perf win.
-
-    The historical reason re-encode existed — copy-mux inherited the device
-    encoder's rare-IDR behavior (~20-30s to first keyframe → 20-30s WebRTC black
-    screen on first connect and every switch) — is now handled at the SOURCE:
-    ScrcpyControl.request_idr() sends TYPE_RESET_VIDEO to force an IDR on demand.
-    The stream loop requests one on connect and on a ~2s heartbeat, so copy-mux
-    gets the same fast keyframe cadence the forced ffmpeg GOP used to provide,
-    without the transcode.
+    bitrate/fps, so re-encoding with libx264 only burned CPU and added ~1
+    frame of latency.
 
     `-use_wallclock_as_timestamps 1` is mandatory and must stay: raw H.264 from
     scrcpy carries no container timestamps, so without it ffmpeg guesses 25fps,
@@ -172,7 +163,7 @@ def build_ffmpeg_args(ffmpeg_exe: str, rtsp_url: str, tier: str = DEFAULT_TIER) 
     Args:
         ffmpeg_exe: Path to ffmpeg executable.
         rtsp_url: RTSP destination URL.
-        tier: Quality tier — accepted for signature compatibility; copy-mux
+        tier: Quality tier -- accepted for signature compatibility; copy-mux
             carries whatever bitrate/fps the device already encoded.
 
     Returns:
@@ -180,22 +171,26 @@ def build_ffmpeg_args(ffmpeg_exe: str, rtsp_url: str, tier: str = DEFAULT_TIER) 
     """
     return [
         ffmpeg_exe,
+        "-hide_banner",
         "-loglevel", "warning",
-        # NOTE: do NOT add -probesize 32 / -analyzeduration 0 / -fflags nobuffer
-        # here. They starve ffmpeg's h264 demuxer of the bytes it needs to parse
-        # SPS/PPS, so it never emits a valid stream — mediamtx sees the publish
-        # stall and times it out after ~10s ('i/o timeout'), dropping every
-        # instance. Input-side buffering is negligible latency anyway.
-        # Raw H.264 from scrcpy carries no container timestamps; stamp by arrival
-        # so DTS is monotonic. Mandatory for copy-mux (see docstring).
+        # NOTE: do NOT add -probesize 32 / -analyzeduration 0 / -fflags
+        # nobuffer / -flags low_delay here. They starve ffmpeg's h264
+        # demuxer of the bytes it needs to parse SPS/PPS, so it never emits
+        # a valid stream -- mediamtx sees the publish stall and times it out
+        # after ~10s ('i/o timeout'), dropping every instance. This was
+        # tried and reverted; a later optimization pass suggested them again
+        # from an external spec that did not know about this incident --
+        # see docs/scrcpy-whep-optimization-spec.md's Task 1.1 and this
+        # plan's "Deviations from the spec" section.
         "-use_wallclock_as_timestamps", "1",
         "-f", "h264",
         "-i", "pipe:0",
         "-c:v", "copy",
-        # Never emit negative timestamps to the RTSP muxer.
         "-avoid_negative_ts", "make_zero",
         "-f", "rtsp",
         "-rtsp_transport", "tcp",
+        "-muxdelay", "0",
+        "-muxpreload", "0",
         rtsp_url,
     ]
 

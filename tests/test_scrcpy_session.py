@@ -207,3 +207,23 @@ def test_set_tier_returns_false_when_restart_fails():
     # Make the restart's start() fail transiently.
     s.start = lambda: False
     assert s.set_tier("1080") is False
+
+
+def test_build_ffmpeg_args_safe_flags_only():
+    from server.scrcpy_session import build_ffmpeg_args
+    args = build_ffmpeg_args("ffmpeg", "rtsp://localhost:8554/instance0")
+    joined = " ".join(args)
+    assert "-hide_banner" in joined
+    assert "-muxdelay 0" in joined
+    assert "-muxpreload 0" in joined
+    # Mandatory -- do not remove (see docstring: first copy-mux failure,
+    # commit 15a2d4e, was caused by removing this).
+    assert "-use_wallclock_as_timestamps 1" in joined
+    assert "-avoid_negative_ts make_zero" in joined
+    # These starve the H.264 demuxer of SPS/PPS bytes and cause mediamtx to
+    # time out the publish after ~10s -- confirmed by a real incident. Must
+    # never be reintroduced regardless of what the optimization spec suggests.
+    assert "-probesize" not in joined
+    assert "-analyzeduration" not in joined
+    assert "nobuffer" not in joined
+    assert "low_delay" not in joined
