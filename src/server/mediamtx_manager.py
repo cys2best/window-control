@@ -6,14 +6,55 @@ LDPlayer instance. mediamtx auto-converts RTSP → WebRTC/WHEP so the iPhone
 can connect directly to http://tailscale-ip:8889/instanceN.
 """
 
+import base64
 import os
 import subprocess
 import sys
 import tempfile
 import threading
 import traceback
+import urllib.error
+import urllib.request
 
 from config import ASSETS_DIR, MEDIAMTX_PORT, WHEP_PORT, RTMP_PORT, WEBRTC_UDP_PORT
+
+_API_BASE = "http://127.0.0.1:9997"
+
+
+def _publish_hook_command(action: str) -> str:
+    """Build the shell command mediamtx runs for runOnDemand ('start') or
+    runOnUnDemand ('stop').
+
+    Frozen (PyInstaller) build: sys.executable is this app's own exe, and
+    publish_hook.py isn't bundled as a data file -- booting the exe with
+    args would re-run the entire PyQt5/uvicorn stack (main.py's heavy
+    imports happen at module scope, before any argv dispatch), far too
+    slow/heavy to spawn per on-demand trigger. PowerShell ships on every
+    supported Windows version and can do the POST in milliseconds with no
+    interpreter resolution or file bundling needed. -EncodedCommand takes
+    base64(UTF-16LE), so the payload needs zero escaping at any shell layer
+    (mediamtx's own command-line parsing, then PowerShell's) -- this
+    sidesteps what would otherwise be a fragile nested-quoting problem
+    across two shells this environment can't verify against a live host.
+
+    Non-frozen (dev/uv/CI): sys.executable is a real Python interpreter and
+    publish_hook.py exists on disk next to this file -- use it directly.
+    """
+    from config import PORT
+    if hasattr(sys, "_MEIPASS"):
+        script = (
+            'try { Invoke-WebRequest -Uri '
+            f'"http://127.0.0.1:{PORT}/internal/instances/$env:MTX_PATH/publish/{action}" '
+            '-Method POST -TimeoutSec 5 -UseBasicParsing } catch {}'
+        )
+        encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+        return f"powershell -NoProfile -NonInteractive -EncodedCommand {encoded}"
+    hook_path = os.path.join(os.path.dirname(__file__), "publish_hook.py")
+    return f'"{sys.executable}" "{hook_path}" {action}'
+
+
+def _yaml_single_quote(s: str) -> str:
+    return "'" + s.replace("'", "''") + "'"
 
 
 def _log(msg: str):
@@ -87,6 +128,8 @@ def _generate_config(instance_names: list[str], tailscale_ip: str | None = None)
     paths_config = "\n".join(
         f"  {name}:" for name in instance_names
     )
+    start_cmd = _publish_hook_command("start")
+    stop_cmd = _publish_hook_command("stop")
     return f"""\
 logLevel: info
 logDestinations: [stdout]
@@ -98,10 +141,34 @@ webrtcAddress: :{WHEP_PORT}
 webrtcLocalUDPAddress: :{WEBRTC_UDP_PORT}
 api: yes
 apiAddress: 127.0.0.1:9997
-webrtcHandshakeTimeout: 30s
+# Real connections establish in ~1-5s (confirmed live). A negotiation
+# abandoned before connecting (rapid instance switching, a losing race-probe
+# candidate) has no way to signal mediamtx it's been given up on -- WHEP's
+# own DELETE was tried but this mediamtx setup doesn't reliably honor it, so
+# keeping this timeout itself short is what actually bounds how long an
+# abandoned session lingers. Down from the 30s default.
+webrtcHandshakeTimeout: 10s
 webrtcICEServers2:
   - url: stun:stun.l.google.com:19302
 {nat_lines}
+
+# On-demand ingest: mediamtx runs `start_cmd` the first time a WHEP client
+# requests a path with no publisher, and `stop_cmd` runOnDemandCloseAfter
+# seconds after the last reader disconnects. Both are thin scripts
+# (publish_hook.py) that POST to this app's own /internal/instances/{{name}}/
+# publish/{{start,stop}} and exit immediately -- the actual ffmpeg process
+# they trigger is a separate, independently-tracked child of THIS Python
+# process, not of mediamtx's spawned command, so runOnDemandRestart: no is
+# correct here (there is nothing useful for mediamtx to restart -- the
+# script's job is already done by the time it would exit).
+# closeAfter is deliberately generous: keeps A<->B<->A instance switching
+# warm at zero ffmpeg-process cost. Do not lower it to chase faster teardown.
+pathDefaults:
+  runOnDemand: {_yaml_single_quote(start_cmd)}
+  runOnDemandRestart: no
+  runOnDemandStartTimeout: 6s
+  runOnDemandCloseAfter: 45s
+  runOnUnDemand: {_yaml_single_quote(stop_cmd)}
 
 paths:
 {paths_config}
@@ -118,6 +185,7 @@ class MediamtxManager:
         # Last start() args, so the watchdog can relaunch with the same paths if
         # mediamtx.exe dies on its own.
         self._last_args: tuple | None = None
+        self._live_paths: set[str] = set()
         self._stopping = False  # set during an intentional stop() so the watchdog
                                 # doesn't fight it
         self._watchdog_thread = threading.Thread(target=self._watchdog, daemon=True)
@@ -127,6 +195,7 @@ class MediamtxManager:
         """Start (or restart) mediamtx with one path per instance."""
         with self._lock:
             self._last_args = (list(instance_names), tailscale_ip)
+            self._live_paths = set(instance_names)
             self._stopping = False
             self._stop_locked()
             _reap_orphan_mediamtx()
@@ -172,7 +241,8 @@ class MediamtxManager:
             return
         try:
             for line in proc.stdout:
-                _log(f"[mediamtx] {line.decode('utf-8', errors='replace').rstrip()}")
+                text = line.decode("utf-8", errors="replace").rstrip()
+                _log(f"[mediamtx] {text}")
         except Exception:
             pass
 
@@ -180,6 +250,61 @@ class MediamtxManager:
         with self._lock:
             self._stopping = True
             self._stop_locked()
+
+    def add_path(self, name: str) -> bool:
+        """Add a live path to the running instance without restarting it.
+
+        A full restart tears down every other instance's live WHEP stream, so
+        this patches the running mediamtx via its config API instead. Falls
+        back to a full restart if the API call fails, so this is never worse
+        than the old always-restart behavior.
+        """
+        with self._lock:
+            if self._proc is None or self._proc.poll() is not None:
+                return False
+            if name in self._live_paths:
+                return True
+            tailscale_ip = self._last_args[1] if self._last_args else None
+        if self._api_call("POST", f"/v3/config/paths/add/{name}", b"{}"):
+            with self._lock:
+                self._live_paths.add(name)
+                self._last_args = (list(self._live_paths), tailscale_ip)
+            return True
+        _log(f"[mediamtx] add_path {name} via API failed, falling back to full restart")
+        with self._lock:
+            names = list(self._live_paths) + [name]
+        self.start(names, tailscale_ip)
+        return True
+
+    def remove_path(self, name: str) -> bool:
+        """Remove a live path from the running instance without restarting it."""
+        with self._lock:
+            if self._proc is None or self._proc.poll() is not None:
+                return False
+            if name not in self._live_paths:
+                return True
+            tailscale_ip = self._last_args[1] if self._last_args else None
+        ok = self._api_call("DELETE", f"/v3/config/paths/delete/{name}", None)
+        with self._lock:
+            self._live_paths.discard(name)
+            self._last_args = (list(self._live_paths), tailscale_ip)
+        if not ok:
+            _log(f"[mediamtx] remove_path {name} via API failed (path left stale until next restart)")
+        return ok
+
+    def _api_call(self, method: str, path: str, body: bytes | None) -> bool:
+        req = urllib.request.Request(
+            f"{_API_BASE}{path}",
+            data=body,
+            method=method,
+            headers={"Content-Type": "application/json"} if body is not None else {},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                return 200 <= resp.status < 300
+        except Exception:
+            _log(f"[mediamtx] api {method} {path} failed: {traceback.format_exc()[:200]}")
+            return False
 
     def _watchdog(self):
         """Relaunch mediamtx.exe if it dies on its own.

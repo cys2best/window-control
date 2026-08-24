@@ -7,7 +7,55 @@ on:
   workflow_dispatch:
 
 jobs:
+  build-engine:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore vcpkg cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            C:\vcpkg\installed
+            C:\vcpkg\buildtrees
+            C:\vcpkg\downloads
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('engine/vcpkg.json') }}
+          restore-keys: |
+            vcpkg-${{ runner.os }}-
+
+      - name: Configure (CMake + vcpkg manifest install)
+        run: |
+          cmake -S engine -B engine\build `
+            -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake `
+            -DVCPKG_TARGET_TRIPLET=x64-windows
+        shell: pwsh
+
+      - name: Build
+        run: cmake --build engine\build --config Release
+        shell: pwsh
+
+      - name: Run engine_tests (excludes SignalingClient — no server available in CI)
+        run: |
+          engine\build\Release\engine_tests.exe --gtest_filter=-SignalingClient.*
+        shell: pwsh
+
+      - name: Stage engine.exe + runtime DLLs (flat)
+        run: |
+          New-Item -ItemType Directory -Force -Path engine\dist | Out-Null
+          Copy-Item engine\build\Release\engine.exe engine\dist\
+          Copy-Item engine\build\Release\*.dll engine\dist\
+        shell: pwsh
+
+      - name: Upload engine.exe artifact (with runtime DLLs)
+        uses: actions/upload-artifact@v4
+        with:
+          name: engine-windows
+          path: engine\dist\*
+          retention-days: 30
+
   build:
+    needs: build-engine
     runs-on: windows-latest
     permissions:
       contents: write
@@ -32,6 +80,12 @@ jobs:
       - name: Download scrcpy/mediamtx binaries
         run: uv run python scripts/download_assets.py
         shell: cmd
+
+      - name: Download engine.exe artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: engine-windows
+          path: src\assets\engine
 
       - name: Build EXE with PyInstaller
         run: uv run pyinstaller build/window_control.spec --distpath dist --workpath build/work --noconfirm

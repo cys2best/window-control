@@ -1,6 +1,7 @@
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
+import time
 from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
@@ -18,7 +19,12 @@ def _make_client(instances=None):
     im.refresh.return_value = None
     with patch("server.app.get_best_ip", return_value="127.0.0.1"):
         app = create_app(state, fq, im)
-    return TestClient(app), im
+    # TestClient's ASGI transport defaults scope["client"] to
+    # ("testclient", 50000) rather than a loopback address, which would
+    # otherwise trip the new /internal/ localhost-only guard for every
+    # legitimate in-process test call. Pin it to loopback so those tests
+    # exercise the "called from localhost" path the guard is meant to allow.
+    return TestClient(app, client=("127.0.0.1", 12345)), im
 
 
 def test_get_instances_empty():
@@ -103,6 +109,106 @@ def test_select_returns_instance_whep():
         assert r.json()["whep_url"].endswith("/instance0/whep")
 
 
+def test_select_instance_includes_signaling_url_when_configured():
+    inst = MagicMock()
+    inst.serial = "emulator-5554"
+    inst.id = "adb:emulator-5554"
+    inst.name = "instance0"
+    inst.w = 720
+    inst.h = 1280
+    inst.ldplayer_index = 0
+    client, im = _make_client()
+    im.select.return_value = True
+    im.active = inst
+
+    bridge_calls = []
+
+    async def fake_bridge(*args, **kwargs):
+        bridge_calls.append(args)
+
+    with patch("config.VPS_SIGNALING_URL", "ws://vps.example.test:8443"), \
+         patch("server.app.VPS_SIGNALING_URL", "ws://vps.example.test:8443"), \
+         patch("server.app.run_bridge_with_reconnect", fake_bridge), \
+         patch("server.app.adb_manager") as mock_adb:
+        mock_session = MagicMock()
+        mock_session.start.return_value = True
+        mock_adb.AdbSession.return_value = mock_session
+        r = client.post("/instances/emulator-5554/select")
+    assert r.status_code == 200
+    assert r.json()["signaling_url"] == "ws://vps.example.test:8443"
+    # The bridge's rendezvous key must match the just-selected instance's
+    # name -- findings 1-2 (reconnect + client WS close) depend on this.
+    assert bridge_calls and bridge_calls[0][0] == "instance0"
+
+
+def test_select_instance_omits_signaling_url_when_not_configured():
+    inst = MagicMock()
+    inst.serial = "emulator-5554"
+    inst.id = "adb:emulator-5554"
+    inst.name = "instance0"
+    inst.w = 720
+    inst.h = 1280
+    inst.ldplayer_index = 0
+    client, im = _make_client()
+    im.select.return_value = True
+    im.active = inst
+
+    with patch("server.app.VPS_SIGNALING_URL", None), \
+         patch("server.app.adb_manager") as mock_adb:
+        mock_session = MagicMock()
+        mock_session.start.return_value = True
+        mock_adb.AdbSession.return_value = mock_session
+        r = client.post("/instances/emulator-5554/select")
+    assert r.status_code == 200
+    assert r.json()["signaling_url"] is None
+
+
+def test_legacy_select_includes_name():
+    # Legacy /select must stay in sync with /instances/{id}/select -- both
+    # already agree on whep_url/stun_url; "name" was missing here, which
+    # breaks any caller reusing the public-path wiring against this endpoint
+    # (session=undefined on the VPS signaling relay).
+    inst = MagicMock()
+    inst.serial = "emulator-5554"
+    inst.id = "adb:emulator-5554"
+    inst.name = "instance0"
+    inst.w = 720
+    inst.h = 1280
+    inst.ldplayer_index = 0
+    client, im = _make_client()
+    im.select.return_value = True
+    im.active = inst
+
+    with patch("server.app.adb_manager") as mock_adb:
+        mock_session = MagicMock()
+        mock_session.start.return_value = True
+        mock_adb.AdbSession.return_value = mock_session
+        r = client.post("/select", json={"id": "adb:emulator-5554"})
+    assert r.status_code == 200
+    assert r.json()["name"] == "instance0"
+
+
+def test_keyframe_requests_idr_on_instance():
+    # Switch prefetch: POST /keyframe forces a source-side IDR so a fresh WHEP
+    # paints instantly under copy-mux (no ffmpeg GOP).
+    inst = MagicMock()
+    client, im = _make_client()
+    im.get.return_value = inst
+    r = client.post("/instances/emulator-5554/keyframe")
+    assert r.status_code == 200
+    assert r.json()["ok"] is True
+    inst.session.control.request_idr.assert_called_once()
+
+
+def test_keyframe_unknown_instance_is_noop_ok():
+    # Unknown instance must not error — prefetch is best-effort fire-and-forget.
+    client, im = _make_client()
+    im.get.return_value = None
+    r = client.post("/instances/emulator-9999/keyframe")
+    assert r.status_code == 200
+    assert r.json()["ok"] is True
+
+
 def test_get_windows_alias():
     """GET /windows should return same as /instances."""
     instances = [{"id": "adb:emulator-5554", "serial": "emulator-5554",
@@ -132,3 +238,78 @@ def test_quality_endpoint_rejects_bad_tier(client=None):
         client, _ = _make_client()
     r = client.post("/instances/emulator-5554/quality", json={"tier": "9000"})
     assert r.status_code == 400
+
+
+def test_input_ws_idr_message_triggers_request_idr():
+    inst = MagicMock()
+    client, im = _make_client()
+    im.active = inst
+
+    with client.websocket_connect("/input") as ws:
+        ws.send_json({"type": "idr"})
+        ws.send_json({"type": "idr"})  # immediately after -- rate-limited, must not call again
+        time.sleep(0.6)                # past the 500ms rate-limit window
+        ws.send_json({"type": "idr"})
+        ws.close()
+
+    assert inst.session.control.request_idr.call_count == 2  # first call + the one after the window
+
+
+def test_input_ws_idr_message_noop_when_no_active_instance():
+    client, im = _make_client()
+    im.active = None
+
+    with client.websocket_connect("/input") as ws:
+        ws.send_json({"type": "idr"})  # must not raise
+        ws.close()
+
+
+def test_internal_publish_start_calls_instance_manager():
+    client, im = _make_client()
+    im.start_video.return_value = True
+
+    r = client.post("/internal/instances/instance0/publish/start")
+
+    assert r.status_code == 200
+    assert r.json() == {"ok": True}
+    im.start_video.assert_called_once_with("instance0")
+
+
+def test_internal_publish_start_returns_ok_false_for_unknown_instance():
+    client, im = _make_client()
+    im.start_video.return_value = False
+
+    r = client.post("/internal/instances/instance99/publish/start")
+
+    assert r.status_code == 200
+    assert r.json() == {"ok": False}
+
+
+def test_internal_publish_stop_calls_instance_manager():
+    client, im = _make_client()
+
+    r = client.post("/internal/instances/instance0/publish/stop")
+
+    assert r.status_code == 200
+    assert r.json() == {"ok": True}
+    im.stop_video.assert_called_once_with("instance0")
+
+
+def test_internal_publish_start_refused_from_non_localhost():
+    # mediamtx spawns publish_hook.py locally, so these endpoints must never
+    # be reachable except from 127.0.0.1/::1 -- the public HTTP tunnel proxies
+    # arbitrary paths through 127.0.0.1 itself (see http_tunnel.py's
+    # _forward_http_request), so Task 5's tunnel-side block is the primary
+    # defense; this is defense-in-depth for any other exposure path.
+    client, im = _make_client()
+    r = client.post(
+        "/internal/instances/instance0/publish/start",
+        headers={"X-Forwarded-For": "1.2.3.4"},
+    )
+    # TestClient's request.client.host is always 127.0.0.1 for in-process
+    # requests regardless of X-Forwarded-For (there's no real socket peer to
+    # spoof), so this test instead directly exercises the guard function.
+    from server.app import _is_localhost
+    assert _is_localhost("127.0.0.1") is True
+    assert _is_localhost("::1") is True
+    assert _is_localhost("100.85.142.52") is False

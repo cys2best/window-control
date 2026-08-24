@@ -1,19 +1,39 @@
+import asyncio
 import io
+import logging
 import os
 import subprocess
+import time
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, Response, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Literal
 
-from config import CLIENT_DIR, QUALITY_MAP, WHEP_PORT, STUN_PORT, TIER_ORDER
+from config import CLIENT_DIR, COOKIE_SECURE, QUALITY_MAP, WHEP_PORT, STUN_PORT, TIER_ORDER, VPS_SIGNALING_URL
 from server.stream import CaptureState, FrameQueue, mjpeg_generator
 from server import adb_manager
+from server import auth
+from server.ice_config import get_ice_servers
 from server.instance_manager import InstanceManager
+from server.http_tunnel import run_tunnel_with_reconnect
+from server.signaling_bridge import run_bridge_with_reconnect
 from server.tailscale import get_best_ip
+
+log = logging.getLogger(__name__)
+
+_bridge_task: "asyncio.Task | None" = None
+_tunnel_task: "asyncio.Task | None" = None
+
+# Routes reachable without a session cookie even when AUTH_TOKEN is set —
+# just enough to load the login gate and let it authenticate.
+_AUTH_EXEMPT_PATHS = {"/", "/login"}
+
+
+def _is_localhost(host: str | None) -> bool:
+    return host in ("127.0.0.1", "::1")
 
 
 def _log(msg: str):
@@ -37,6 +57,10 @@ class QualityRequest(BaseModel):
 
 class QualityTierRequest(BaseModel):
     tier: str
+
+
+class LoginRequest(BaseModel):
+    token: str
 
 
 def _make_exception_handler(default_handler):
@@ -99,9 +123,9 @@ async def _capture_preview(serial: str) -> Response:
             timeout=5, **nw,
         )
         img = Image.open(io.BytesIO(png))
-        img.thumbnail((200, 120))
+        img.thumbnail((640, 384))
         buf = io.BytesIO()
-        img.convert("RGB").save(buf, format="JPEG", quality=60)
+        img.convert("RGB").save(buf, format="JPEG", quality=85)
         return buf.getvalue()
 
     try:
@@ -111,10 +135,59 @@ async def _capture_preview(serial: str) -> Response:
     return Response(content=data, media_type="image/jpeg")
 
 
+def _restart_bridge_task(instance_name: str) -> None:
+    """(Re)start the public signaling bridge for the newly-selected instance.
+
+    Cancels any bridge task already running for a previously-selected
+    instance, then starts a fresh one for `instance_name` if a public
+    signaling VPS is configured. No-ops (leaving `_bridge_task` as None)
+    when VPS_SIGNALING_URL is unset.
+    """
+    global _bridge_task
+    if _bridge_task is not None and not _bridge_task.done():
+        log.info("bridge: cancelling existing task for switch to %s", instance_name)
+        _bridge_task.cancel()
+    if VPS_SIGNALING_URL:
+        log.info("bridge: starting task for %s", instance_name)
+        _bridge_task = asyncio.create_task(
+            run_bridge_with_reconnect(instance_name, VPS_SIGNALING_URL, WHEP_PORT)
+        )
+    else:
+        _bridge_task = None
+
+
 def create_app(state: CaptureState, frame_queue: FrameQueue,
                instance_manager: InstanceManager) -> FastAPI:
     import asyncio
+    from config import PUBLIC_UI_URL, TUNNEL_SECRET
+    if PUBLIC_UI_URL and not auth.auth_enabled():
+        raise RuntimeError("PUBLIC_UI_URL requires AUTH_TOKEN to be set")
+    if PUBLIC_UI_URL and not TUNNEL_SECRET:
+        raise RuntimeError("PUBLIC_UI_URL requires TUNNEL_SECRET to be set")
     app = FastAPI()
+
+    @app.middleware("http")
+    async def _auth_gate(request: Request, call_next):
+        if request.url.path.startswith("/internal/"):
+            if not _is_localhost(request.client.host if request.client else None):
+                return JSONResponse({"detail": "Not found"}, status_code=404)
+            return await call_next(request)
+        if auth.auth_enabled() and request.url.path not in _AUTH_EXEMPT_PATHS \
+                and not request.url.path.startswith("/static/"):
+            if not auth.verify_session_cookie(request.cookies.get(auth.COOKIE_NAME)):
+                return JSONResponse({"detail": "Not authenticated"}, status_code=401)
+        return await call_next(request)
+
+    @app.post("/login")
+    async def login(req: LoginRequest, response: Response):
+        if not auth.check_token(req.token):
+            raise HTTPException(status_code=401, detail="Invalid token")
+        response.set_cookie(
+            auth.COOKIE_NAME, auth.make_session_cookie(),
+            max_age=auth.SESSION_MAX_AGE_SECONDS, httponly=True, samesite="lax",
+            secure=COOKIE_SECURE,
+        )
+        return {"ok": True}
 
     @app.on_event("startup")
     async def _startup():
@@ -123,6 +196,35 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
         # Discover LDPlayer instances on startup
         import threading
         threading.Thread(target=instance_manager.refresh, daemon=True).start()
+
+        global _tunnel_task
+        if PUBLIC_UI_URL:
+            log.info("tunnel: starting task for %s", PUBLIC_UI_URL)
+            _tunnel_task = asyncio.create_task(
+                run_tunnel_with_reconnect(PUBLIC_UI_URL, TUNNEL_SECRET))
+
+    @app.on_event("shutdown")
+    async def _shutdown():
+        # The public signaling bridge task (if any) is otherwise left
+        # dangling on app shutdown -- only the switch case (cancel-then-
+        # restart in _restart_bridge_task) tore it down before.
+        global _bridge_task
+        if _bridge_task is not None and not _bridge_task.done():
+            log.info("bridge: cancelling task on shutdown")
+            _bridge_task.cancel()
+            try:
+                await _bridge_task
+            except asyncio.CancelledError:
+                pass
+
+        global _tunnel_task
+        if _tunnel_task is not None and not _tunnel_task.done():
+            log.info("tunnel: cancelling task on shutdown")
+            _tunnel_task.cancel()
+            try:
+                await _tunnel_task
+            except asyncio.CancelledError:
+                pass
 
     # ── Static / index ───────────────────────────────────────────────────────
 
@@ -163,6 +265,8 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
         if inst is None:
             raise HTTPException(status_code=404, detail="Instance disappeared")
 
+        _restart_bridge_task(inst.name)
+
         host = get_best_ip() or request.client.host
         # WHEP straight to this instance's own always-live path (no 'active' mux).
         whep_url = f"http://{host}:{WHEP_PORT}/{inst.name}/whep"
@@ -175,7 +279,50 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
             "h": inst.h,
             "whep_url": whep_url,
             "stun_url": f"stun:{host}:{STUN_PORT}",
+            "signaling_url": VPS_SIGNALING_URL,
+            "ice_servers": get_ice_servers(),
         }
+
+    @app.post("/internal/instances/{name}/publish/start")
+    async def internal_publish_start(name: str):
+        """mediamtx's runOnDemand hook (via publish_hook.py) calls this when
+        a WHEP client requests a path with no one publishing yet. Starts
+        just the on-demand video half -- the persistent half (control
+        socket, input) is already up from discovery, regardless of viewers.
+        """
+        ok = await asyncio.to_thread(instance_manager.start_video, name)
+        return {"ok": ok}
+
+    @app.post("/internal/instances/{name}/publish/stop")
+    async def internal_publish_stop(name: str):
+        """mediamtx's runOnUnDemand hook calls this runOnDemandCloseAfter
+        seconds after the last reader disconnects. Always returns ok:true
+        (mediamtx doesn't wait on or retry this the way it does the start
+        hook's timeout) -- an unknown/already-gone instance is a no-op in
+        InstanceManager.stop_video, not an error.
+        """
+        await asyncio.to_thread(instance_manager.stop_video, name)
+        return {"ok": True}
+
+    @app.post("/instances/{instance_id}/keyframe")
+    async def request_keyframe(instance_id: str):
+        """Ask an instance's encoder to emit an IDR now (switch prefetch).
+
+        The list page fires this on touchstart/hover of a tile — before the user
+        even releases the tap — so by the time the switch's WHEP negotiates, a
+        fresh keyframe is already in flight and the new stream paints instantly.
+        Copy-mux has no ffmpeg GOP, so this source-side IDR is what makes a switch
+        fast. Best-effort and fire-and-forget: unknown instance or an unconnected
+        control socket is a silent no-op (the 2s heartbeat and select()'s own
+        request_idr still cover it).
+        """
+        inst = instance_manager.get(instance_id)
+        if inst is not None:
+            try:
+                inst.session.control.request_idr()
+            except Exception:
+                pass
+        return {"ok": True}
 
     @app.post("/instances/{instance_id}/quality")
     async def set_instance_quality(instance_id: str, req: QualityTierRequest):
@@ -215,11 +362,15 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
         if inst is None:
             raise HTTPException(status_code=404, detail="Instance disappeared")
 
+        _restart_bridge_task(inst.name)
+
         host = get_best_ip() or request.client.host
         whep_url = f"http://{host}:{WHEP_PORT}/{inst.name}/whep"
-        return {"ok": True, "id": req.id, "w": inst.w, "h": inst.h,
+        return {"ok": True, "id": req.id, "name": inst.name, "w": inst.w, "h": inst.h,
                 "whep_url": whep_url,
-                "stun_url": f"stun:{host}:{STUN_PORT}"}
+                "stun_url": f"stun:{host}:{STUN_PORT}",
+                "signaling_url": VPS_SIGNALING_URL,
+                "ice_servers": get_ice_servers()}
 
     # ── MJPEG fallback stream ────────────────────────────────────────────────
 
@@ -265,6 +416,10 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
 
     @app.websocket("/input")
     async def ws_input(websocket: WebSocket):
+        if auth.auth_enabled() and not auth.verify_session_cookie(
+                websocket.cookies.get(auth.COOKIE_NAME)):
+            await websocket.close(code=1008)  # policy violation
+            return
         await websocket.accept()
         import asyncio as _asyncio
         from server.scrcpy_session import ScrcpyControl
@@ -281,6 +436,7 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
         drag_pos: tuple | None = None
         drag_start_pos: tuple | None = None
         finger_down = False  # track whether touch DOWN was sent (to pair with UP)
+        _last_idr_request = 0.0
         try:
             while True:
                 data = await websocket.receive_json()
@@ -294,6 +450,20 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
                         )
                     except Exception:
                         pass
+                    continue
+                if data.get("type") == "idr":
+                    now = time.monotonic()
+                    if now - _last_idr_request >= 0.5:
+                        _last_idr_request = now
+                        active = instance_manager.active
+                        if active is not None:
+                            try:
+                                active.session.control.request_idr()
+                                _log(f"[input] idr requested serial={active.session.serial}")
+                            except Exception as exc:
+                                _log(f"[input] idr request failed: {exc!r}")
+                        else:
+                            _log("[input] idr requested but no active instance")
                     continue
                 inst = instance_manager.active
                 if inst is None:

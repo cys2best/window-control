@@ -7,7 +7,7 @@ requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.110.0",
     "uvicorn[standard]>=0.29.0",
-    "websockets>=12.0",
+    "websockets>=14.0",  # >=14: asyncio client `additional_headers` (http_tunnel)
     "Pillow>=10.0.0",
     "qrcode[pil]>=7.4.2",
     "pystray>=0.19.5",
@@ -15,12 +15,16 @@ dependencies = [
     "psutil>=5.9.0",
     "httpx>=0.27.0",
     "imageio-ffmpeg>=0.4.9",
+    "aiortc>=1.15.0",
+    "python-dotenv>=1.0.0",
 ]
 
 [dependency-groups]
 dev = [
     "pytest>=8.0.0",
+    "pytest-asyncio>=0.21.0",
     "pyinstaller>=6.6.0",
+    "pytest-asyncio>=0.24.0",
 ]
 
 [tool.uv]
@@ -33,3 +37,4 @@ required-environments = [
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
+asyncio_mode = "auto"

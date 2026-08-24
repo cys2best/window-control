@@ -1,0 +1,11 @@
+{
+  "name": "window-control-engine",
+  "version": "0.1.0",
+  "dependencies": [
+    { "name": "libdatachannel", "features": ["srtp"] },
+    "gtest",
+    "websocketpp",
+    { "name": "asio", "features": [] },
+    "nlohmann-json"
+  ]
+}

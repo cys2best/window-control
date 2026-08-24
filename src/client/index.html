@@ -11,6 +11,16 @@
 </head>
 <body>
 
+  <!-- Auth gate: shown when the server returns 401 (AUTH_TOKEN is set) -->
+  <div id="login-overlay" style="display:none">
+    <form id="login-form">
+      <div id="login-title">WindowControl</div>
+      <input id="login-token" type="password" placeholder="Access token" autocomplete="current-password" autocapitalize="off" autocorrect="off">
+      <button type="submit">Unlock</button>
+      <div id="login-error" style="display:none">Invalid token</div>
+    </form>
+  </div>
+
   <!-- SCREEN 1: Window list -->
   <div id="screen-list" class="screen active">
     <div id="list-header">
@@ -106,6 +116,7 @@
 
   </div>
 
+  <script src="/static/auth_gate.js"></script>
   <script src="/static/windows_panel.js"></script>
   <script src="/static/app.js"></script>
 </body>

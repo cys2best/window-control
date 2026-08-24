@@ -2,9 +2,51 @@
 let _windows = [];
 let _activeId = null;
 
+// Switch prefetch: request a keyframe for an instance the user is about to
+// switch to (touchstart / hover), so the IDR is already in flight before the
+// select's WHEP negotiates. Throttled per serial so touchstart + mouseenter (or
+// a jittery hover) don't spam the encoder with reset requests.
+const _kfPrefetchAt = {};
+function prefetchKeyframe(serial) {
+  if (!serial) return;
+  const now = Date.now();
+  if (now - (_kfPrefetchAt[serial] || 0) < 1500) return;
+  _kfPrefetchAt[serial] = now;
+  fetch(`/instances/${serial}/keyframe`, { method: 'POST' }).catch(() => {});
+}
+
 function showScreen(id) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   document.getElementById(id).classList.add('active');
+}
+
+// Mirrors mobile's landscape-lock-on-enter behavior: browsers require a
+// user gesture to grant fullscreen, and every caller here (card click,
+// drawer row click, prev/next) is already gesture-triggered. Safari <16.4
+// has no Fullscreen API for arbitrary elements -- that's fine, #screen-stream
+// is `position: fixed; inset: 0` regardless, so the stream still fills the
+// viewport without it.
+function enterFullscreen(el) {
+  const req = el.requestFullscreen || el.webkitRequestFullscreen;
+  if (!req) return;
+  const p = req.call(el);
+  // Orientation lock requires an active fullscreen context on the browsers
+  // that support it at all (Android Chrome) -- iOS Safari has no Screen
+  // Orientation lock, forced-landscape there falls to the CSS rule in
+  // style.css instead, which only fires while physically portrait.
+  (p && p.then ? p : Promise.resolve())
+    .then(() => screen.orientation && screen.orientation.lock('landscape'))
+    .catch(() => {});
+}
+
+function exitFullscreen() {
+  if (screen.orientation && screen.orientation.unlock) {
+    try { screen.orientation.unlock(); } catch (_) {}
+  }
+  const exit = document.exitFullscreen || document.webkitExitFullscreen;
+  if (exit && (document.fullscreenElement || document.webkitFullscreenElement)) {
+    exit.call(document).catch(() => {});
+  }
 }
 
 // ── Window grid rendering ────────────────────────────────────────
@@ -49,6 +91,13 @@ function renderWindowsGrid() {
     card.appendChild(thumb);
     card.appendChild(title);
     card.addEventListener('click', () => selectWindow(w.id, w.serial));
+    // Switch prefetch: kick a keyframe the instant the user shows intent
+    // (finger down / pointer over the tile), before the click's select() even
+    // fires. Copy-mux has no ffmpeg GOP, so this source-side IDR is what a fresh
+    // WHEP needs to paint — doing it now hides the IDR+encode time behind the
+    // tap gesture, so the switch feels instant.
+    card.addEventListener('touchstart', () => prefetchKeyframe(serial), { passive: true });
+    card.addEventListener('mouseenter', () => prefetchKeyframe(serial));
     grid.appendChild(card);
   });
 }
@@ -70,6 +119,7 @@ async function selectWindow(id, serial) {
   const titleEl = document.getElementById('stream-title');
   if (titleEl && w) titleEl.textContent = w.title;
   showScreen('screen-stream');
+  enterFullscreen(document.getElementById('screen-stream'));
   try {
     const r = await fetch(`/instances/${_serial}/select`, { method: 'POST' });
     const data = await r.json();
@@ -79,7 +129,19 @@ async function selectWindow(id, serial) {
     // the new instance. No shared mux, no server-side repoint, no reader
     // teardown to wait out.
     setAdaptiveSerial(_serial);
-    initWebRTC(id, data.whep_url, data.stun_url, _serial);
+    if (data.signaling_url && data.whep_url) {
+      // Both paths available (e.g. on Tailscale/LAN while public is also
+      // configured) -- race them so LAN gets its low-latency path with no
+      // added delay off-network, instead of always preferring one.
+      initWebRTCRace(id, data.whep_url, data.stun_url, data.signaling_url, data.name, _serial, data.ice_servers);
+    } else if (data.signaling_url) {
+      const ok = await initWebRTCPublic(id, data.signaling_url, data.name, _serial, data.ice_servers);
+      if (!ok) {
+        initWebRTC(id, data.whep_url, data.stun_url, _serial);
+      }
+    } else {
+      initWebRTC(id, data.whep_url, data.stun_url, _serial);
+    }
   } catch (_) {}
 }
 
@@ -153,12 +215,16 @@ function renderSwitchList() {
       closeSwitchDrawer();
       if (w.id !== _activeId) selectWindow(w.id, w.serial);
     });
+    // Prefetch a keyframe on intent so the drawer switch paints instantly.
+    row.addEventListener('touchstart', () => prefetchKeyframe(w.serial), { passive: true });
+    row.addEventListener('mouseenter', () => prefetchKeyframe(w.serial));
     list.appendChild(row);
   });
 }
 
 function initDrawer() {
   document.getElementById('back-btn').addEventListener('click', () => {
+    exitFullscreen();
     showScreen('screen-list');
     fetchWindows();
   });
