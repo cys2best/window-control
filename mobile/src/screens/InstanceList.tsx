@@ -94,8 +94,7 @@ export function InstanceList({ navigation }: { navigation: any }) {
       )}
       <BottomNav active="windows"
         onWindows={() => {}}
-        onStream={() => { if (items[0]) open(items[0]); }}
-        onSetup={() => navigation.navigate("ServerSetup")} />
+        onStream={() => { if (items[0]) open(items[0]); }} />
     </View>
   );
 }

@@ -45,10 +45,10 @@ npx expo start --dev-client
 
 This starts the JavaScript bundle server. Connect your physical device or simulator running the dev-client app to the server:
 - Launch the dev-client app on your device
-- On first launch, enter your **Tailscale server base URL**: `http://100.x.x.x:8080` (replace with your actual IP)
-- The URL persists in AsyncStorage, so you won't need to re-enter it on subsequent runs
+- On first launch, the app auto-discovers the server: it asks the baked-in public URL (`app.json`'s `extra.publicUrl`) for the host's current Tailscale/LAN IP via `/server-info`, then connects to whichever of the two answers first
+- The resolved base URL persists in AsyncStorage, so subsequent launches skip straight to it
 
-You should see the app load and display the server setup screen.
+You should see the app load and display the "Looking for your server…" connecting screen, then the instance list.
 
 ## Running Tests
 

@@ -50,6 +50,7 @@
       "expo-font"
     ],
     "extra": {
+      "publicUrl": "https://tunnel.koeeru.com",
       "eas": {
         "projectId": "23e3e374-cc0f-43e7-9d8f-02eb6cb7c1f5"
       }

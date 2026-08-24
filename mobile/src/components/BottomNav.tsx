@@ -5,15 +5,17 @@ import { theme } from "../theme/tokens";
 
 type Tab = { key: string; label: string; path: string; hero?: boolean; disabled?: boolean; onPress?: () => void };
 
-export function BottomNav({ active, onWindows, onStream, onSetup }:
+export function BottomNav({ active, onWindows, onStream }:
   { active: "windows" | "stats" | "server" | "setup";
-    onWindows: () => void; onStream: () => void; onSetup: () => void }) {
+    onWindows: () => void; onStream: () => void }) {
   const tabs: Tab[] = [
     { key: "windows", label: "Windows", path: "M4 5h16v11H4zM9 20h6", onPress: onWindows },
     { key: "stats", label: "Stats", path: "M5 20V10M12 20V4M19 20v-7", disabled: true },
     { key: "stream", label: "Stream", path: "M9 7l9 5-9 5z", hero: true, onPress: onStream },
     { key: "server", label: "Server", path: "M4 5h16v6H4zM4 13h16v6H4M8 8h.01M8 16h.01", disabled: true },
-    { key: "setup", label: "Setup", path: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6M4 12h2M18 12h2M12 4v2M12 18v2", onPress: onSetup },
+    // Manual server entry is gone (auto-discovery only); this tab has no
+    // destination screen any more until a real settings screen exists.
+    { key: "setup", label: "Setup", path: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6M4 12h2M18 12h2M12 4v2M12 18v2", disabled: true },
   ];
   return (
     <View style={{ position: "absolute", left: 20, right: 20, bottom: 20, height: 74, flexDirection: "row",

@@ -1336,6 +1336,13 @@
   dependencies:
     merge-options "^3.0.4"
 
+"@react-native-cookies/cookies@^6.2.1":
+  version "6.2.1"
+  resolved "https://registry.yarnpkg.com/@react-native-cookies/cookies/-/cookies-6.2.1.tgz#54d50b9496400bbdc19e43c155f70f8f918999e3"
+  integrity sha512-D17wCA0DXJkGJIxkL74Qs9sZ3sA+c+kCoGmXVknW7bVw/W+Vv1m/7mWTNi9DLBZSRddhzYw8SU0aJapIaM/g5w==
+  dependencies:
+    invariant "^2.2.4"
+
 "@react-native/assets-registry@0.86.2":
   version "0.86.2"
   resolved "https://registry.yarnpkg.com/@react-native/assets-registry/-/assets-registry-0.86.2.tgz#5cd139857b5d8285f90e217c27bfa48d8158e538"
@@ -2770,6 +2777,13 @@ expo-constants@~57.0.10:
   version "57.0.10"
   resolved "https://registry.yarnpkg.com/expo-constants/-/expo-constants-57.0.10.tgz#97ca58cf0eb30f39fb28c2da9a74fc83d4fe42e3"
   integrity sha512-GCDXYEsloBfouMdT3BzoGhAkcLnYxEFNLQoSbNKIvIrD9FY5MmSeWuvRSveJdOiuydwQY2iH6hy020vTaQflCQ==
+  dependencies:
+    "@expo/env" "~2.4.2"
+
+expo-constants@~57.0.14:
+  version "57.0.14"
+  resolved "https://registry.yarnpkg.com/expo-constants/-/expo-constants-57.0.14.tgz#f7ddde89923a88f3b53f192b9b282957c4d19e5b"
+  integrity sha512-c9WlP18GqXRm/Kaa7rALRbpFvWiuijrXu3C/38iYdHt9lscA8deJhfK7TURRApWLacdzre5mnNmHdEthNeCEjg==
   dependencies:
     "@expo/env" "~2.4.2"
 

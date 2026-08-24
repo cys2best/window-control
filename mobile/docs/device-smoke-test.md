@@ -2,11 +2,18 @@
 
 Run this checklist on a real device over Tailscale with a running server and at least two scrcpy instances.
 
-## Server Setup
+## Server Discovery & Login
 
-- [ ] **ServerSetup: bad URL shows inline error** — Enter an invalid URL (e.g., `http://invalid`) and verify the error appears inline on the screen without crashing.
-- [ ] **ServerSetup: valid URL persists and advances** — Enter a valid Tailscale URL (e.g., `http://100.x.x.x:8080`) and verify it's saved to AsyncStorage and navigates to the InstanceList screen.
-- [ ] **ServerSetup: unreachable host shows "Can't reach server"** — Enter a syntactically valid but unreachable IP (e.g., `http://100.64.0.1:8080`) and verify the "Can't reach server" error overlay appears.
+There is no manual server entry any more — the Connecting screen resolves the server on its own.
+
+- [ ] **Connecting: cold launch on Tailscale finds the local IP via /server-info** — Fresh install (no cached base), Tailscale connected, server running. Launch the app; verify it shows the "Looking for your server…" spinner briefly, then lands on InstanceList without any prompt, and that the "Server" row on InstanceList shows the local Tailscale IP (not the public tunnel host).
+- [ ] **Connecting: falls through to public-only with Tailscale off** — Disable Tailscale on the device (server still reachable only via the public tunnel). Launch the app; verify it still reaches InstanceList (via the public URL) after the bootstrap step, and the "Server" row shows the public tunnel host.
+- [ ] **Connecting: "Can't find server" with the public URL itself unreachable** — Disconnect the device from all networks (or block both Tailscale and internet). Launch the app; verify the "Can't find server" message appears with a Retry button, and no crash occurs.
+- [ ] **Connecting: Retry re-runs discovery** — From the "Can't find server" state above, restore connectivity and tap Retry; verify the spinner reappears and the app proceeds to InstanceList (or Login) without a restart.
+- [ ] **Connecting: cached base fast path on a warm launch** — After a successful launch, force-quit and relaunch the app with the server still reachable at the same address; verify it reaches InstanceList quickly without visibly re-running the public-URL bootstrap step (should feel near-instant).
+- [ ] **Login: AUTH_TOKEN set on the server routes to the Login screen** — With `AUTH_TOKEN` set on the server, launch the app; verify discovery lands on the Login screen (not InstanceList) and entering the correct token advances to InstanceList.
+- [ ] **Login: wrong token shows inline error** — On the Login screen, enter an incorrect token; verify an inline "Invalid token" error appears without crashing and the screen stays put.
+- [ ] **Cookie jar: switching to a different host clears the old session** — With `AUTH_TOKEN` set and a valid login session against one server, point the device at a different server host (e.g., a second PC) so discovery resolves to a new host; verify the app does not silently reuse the old session (Login screen appears again for the new host) rather than leaking the prior cookie.
 
 ## Instance List
 
