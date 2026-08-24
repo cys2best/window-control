@@ -2,17 +2,86 @@
 let _windows = [];
 let _activeId = null;
 
-// Switch prefetch: request a keyframe for an instance the user is about to
-// switch to (touchstart / hover), so the IDR is already in flight before the
-// select's WHEP negotiates. Throttled per serial so touchstart + mouseenter (or
-// a jittery hover) don't spam the encoder with reset requests.
-const _kfPrefetchAt = {};
-function prefetchKeyframe(serial) {
-  if (!serial) return;
-  const now = Date.now();
-  if (now - (_kfPrefetchAt[serial] || 0) < 1500) return;
-  _kfPrefetchAt[serial] = now;
-  fetch(`/instances/${serial}/keyframe`, { method: 'POST' }).catch(() => {});
+// Hover prewarm: a WHEP subscription IS mediamtx's runOnDemand trigger (see
+// the on-demand-ingest plan), so warming a path before the user commits
+// means opening a real (never-attached) RTCPeerConnection against it — a
+// plain IDR nudge does nothing once ffmpeg isn't running yet. Capped at one
+// live prewarm at a time, replaced (not stacked) on the next hover, and
+// auto-evicted after PREWARM_IDLE_MS if nothing selects it — the touch path
+// (finger down, then dragged away without a click) has no DOM event this
+// file listens for that would otherwise signal "cancelled".
+const PREWARM_DEBOUNCE_MS = 150;
+const PREWARM_IDLE_MS = 8000;
+let _prewarmPc = null;
+let _prewarmSerial = null;
+let _prewarmTimer = null;
+
+function _prewarmEvict() {
+  if (_prewarmTimer) { clearTimeout(_prewarmTimer); _prewarmTimer = null; }
+  if (_prewarmPc) { try { _prewarmPc.close(); } catch (_) {} _prewarmPc = null; }
+  _prewarmSerial = null;
+}
+
+async function _prewarmStart(serial) {
+  if (!serial || serial === _prewarmSerial) return;
+  _prewarmEvict();
+  _prewarmSerial = serial;
+  try {
+    const r = await fetch(`/instances/${serial}/whep-url`);
+    if (!r.ok) { if (_prewarmSerial === serial) _prewarmSerial = null; return; }
+    const { whep_url, stun_url } = await r.json();
+    if (_prewarmSerial !== serial) return; // superseded while awaiting fetch
+
+    const pc = new RTCPeerConnection({ iceServers: stun_url ? [{ urls: stun_url }] : [] });
+    _prewarmPc = pc;
+    pc.addTransceiver('video', { direction: 'recvonly' });
+
+    const offer = await pc.createOffer();
+    if (_prewarmPc !== pc) return;
+    await pc.setLocalDescription(offer);
+    if (_prewarmPc !== pc) return;
+
+    await new Promise(resolve => {
+      if (pc.iceGatheringState === 'complete') { resolve(); return; }
+      const check = () => {
+        if (pc.iceGatheringState === 'complete') {
+          pc.removeEventListener('icegatheringstatechange', check);
+          resolve();
+        }
+      };
+      pc.addEventListener('icegatheringstatechange', check);
+      setTimeout(resolve, 4000);
+    });
+    if (_prewarmPc !== pc) return;
+
+    const resp = await fetch(whep_url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/sdp' },
+      body: pc.localDescription.sdp,
+    });
+    if (_prewarmPc !== pc) return;
+    if (!resp.ok) { pc.close(); if (_prewarmPc === pc) { _prewarmPc = null; _prewarmSerial = null; } return; }
+
+    const answerSdp = await resp.text();
+    if (_prewarmPc !== pc) return;
+    await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
+    // Never attached to a <video> element -- its only job is being a real
+    // WHEP reader so mediamtx's runOnDemand has already fired by the time
+    // the user actually taps this tile. selectWindow() always does its own
+    // full negotiation via the existing initWebRTC/initWebRTCRace on top of
+    // this; see _prewarmEvict() call at the top of selectWindow.
+    if (_prewarmPc === pc) {
+      _prewarmTimer = setTimeout(() => { if (_prewarmSerial === serial) _prewarmEvict(); }, PREWARM_IDLE_MS);
+    }
+  } catch (_) {
+    if (_prewarmSerial === serial) _prewarmEvict();
+  }
+}
+
+function prewarmHover(serial) {
+  if (!serial || serial === _prewarmSerial) return;
+  if (_prewarmTimer) clearTimeout(_prewarmTimer);
+  _prewarmTimer = setTimeout(() => _prewarmStart(serial), PREWARM_DEBOUNCE_MS);
 }
 
 function showScreen(id) {
@@ -91,13 +160,13 @@ function renderWindowsGrid() {
     card.appendChild(thumb);
     card.appendChild(title);
     card.addEventListener('click', () => selectWindow(w.id, w.serial));
-    // Switch prefetch: kick a keyframe the instant the user shows intent
-    // (finger down / pointer over the tile), before the click's select() even
-    // fires. Copy-mux has no ffmpeg GOP, so this source-side IDR is what a fresh
-    // WHEP needs to paint — doing it now hides the IDR+encode time behind the
-    // tap gesture, so the switch feels instant.
-    card.addEventListener('touchstart', () => prefetchKeyframe(serial), { passive: true });
-    card.addEventListener('mouseenter', () => prefetchKeyframe(serial));
+    // Hover prewarm: open a real (never-attached) WHEP subscription the
+    // instant the user shows intent (finger down / pointer over the tile),
+    // before the click's select() even fires — mediamtx's runOnDemand needs
+    // a real subscriber, not just an IDR nudge, to start booting the pipeline.
+    card.addEventListener('touchstart', () => prewarmHover(serial), { passive: true });
+    card.addEventListener('mouseenter', () => prewarmHover(serial));
+    card.addEventListener('mouseleave', () => { if (_prewarmSerial === serial) _prewarmEvict(); });
     grid.appendChild(card);
   });
 }
@@ -113,6 +182,7 @@ async function fetchWindows() {
 async function selectWindow(id, serial) {
   const _serial = serial || (id.startsWith('adb:') ? id.slice(4) : id);
   if (id === _activeId) return;                 // no-op switch
+  _prewarmEvict();                               // a real negotiation is about to happen
   // Navigate immediately — don't block on server round-trip
   _activeId = id;
   const w = _windows.find(w => w.id === id);
@@ -215,9 +285,10 @@ function renderSwitchList() {
       closeSwitchDrawer();
       if (w.id !== _activeId) selectWindow(w.id, w.serial);
     });
-    // Prefetch a keyframe on intent so the drawer switch paints instantly.
-    row.addEventListener('touchstart', () => prefetchKeyframe(w.serial), { passive: true });
-    row.addEventListener('mouseenter', () => prefetchKeyframe(w.serial));
+    // Prewarm on intent so the drawer switch's pipeline is already booting.
+    row.addEventListener('touchstart', () => prewarmHover(w.serial), { passive: true });
+    row.addEventListener('mouseenter', () => prewarmHover(w.serial));
+    row.addEventListener('mouseleave', () => { if (_prewarmSerial === w.serial) _prewarmEvict(); });
     list.appendChild(row);
   });
 }
