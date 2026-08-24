@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Literal
 
-from config import CLIENT_DIR, COOKIE_SECURE, QUALITY_MAP, WHEP_PORT, STUN_PORT, TIER_ORDER, VPS_SIGNALING_URL
+from config import CLIENT_DIR, COOKIE_SECURE, PORT, QUALITY_MAP, WHEP_PORT, STUN_PORT, TIER_ORDER, VPS_SIGNALING_URL
 from server.stream import CaptureState, FrameQueue, mjpeg_generator
 from server import adb_manager
 from server import auth
@@ -30,7 +30,7 @@ _tunnel_task: "asyncio.Task | None" = None
 
 # Routes reachable without a session cookie even when AUTH_TOKEN is set —
 # just enough to load the login gate and let it authenticate.
-_AUTH_EXEMPT_PATHS = {"/", "/login"}
+_AUTH_EXEMPT_PATHS = {"/", "/login", "/server-info"}
 
 
 def _is_localhost(host: str | None) -> bool:
@@ -239,6 +239,18 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
             secure=COOKIE_SECURE,
         )
         return {"ok": True}
+
+    @app.get("/server-info")
+    async def server_info(request: Request):
+        """Unauthenticated bootstrap endpoint: mobile has no session yet when
+        it calls this, so it must stay exempt from the auth gate (see
+        _AUTH_EXEMPT_PATHS above). Reports the server's *current* local
+        IP -- unlike a value baked into the mobile app at build time, this
+        is answered live, so it's never stale after the host's Tailscale/LAN
+        IP changes.
+        """
+        host = get_best_ip() or request.client.host
+        return {"local_url": f"http://{host}:{PORT}"}
 
     @app.on_event("startup")
     async def _startup():

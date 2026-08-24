@@ -65,6 +65,29 @@ def test_index_cache_busts_static_assets():
         assert "no-cache" in r.headers.get("cache-control", "")
 
 
+def test_server_info_returns_local_url():
+    client, _ = _make_client()
+    with patch("server.app.get_best_ip", return_value="127.0.0.1"):
+        r = client.get("/server-info")
+    assert r.status_code == 200
+    assert r.json() == {"local_url": "http://127.0.0.1:8080"}
+
+
+def test_server_info_exempt_from_auth_gate():
+    # Mobile has no session cookie yet when it calls this -- it must stay
+    # reachable even with AUTH_TOKEN set and no cookie sent, or discovery
+    # can never get far enough to reach the login screen.
+    client, _ = _make_client()
+    with patch("server.auth.config.AUTH_TOKEN", "secret"), \
+            patch("server.app.get_best_ip", return_value="127.0.0.1"):
+        r = client.get("/server-info")
+        assert r.status_code == 200
+        assert r.json() == {"local_url": "http://127.0.0.1:8080"}
+        # Sanity check the gate is actually active for this request.
+        r2 = client.get("/instances")
+        assert r2.status_code == 401
+
+
 def test_get_instances_with_data():
     instances = [{"id": "adb:emulator-5554", "serial": "emulator-5554",
                   "title": "LDPlayer #0", "name": "instance0",
