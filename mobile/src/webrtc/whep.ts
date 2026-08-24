@@ -1,6 +1,15 @@
 import { RTCPeerConnection as RN_RTC } from "react-native-webrtc";
 
-export function waitForIceGatheringComplete(pc: any, capMs = 4000): Promise<void> {
+// Fast path: as soon as a candidate of fastPathType is in, we can send the
+// offer. 'srflx' (default) fires fast for the local/Tailscale path -- but
+// for the public path (connectPublicWhep), a relay (TURN) candidate is the
+// load-bearing one: it typically arrives AFTER the srflx candidate (TURN
+// allocation is a slower round-trip than a plain STUN query), so resolving
+// on srflx there would send the offer before the one candidate type that
+// can actually reach a NAT'd PC ever gets gathered. signaling_bridge.py's
+// protocol is non-trickle (single recv/send), so a candidate missing from
+// the offer is gone for good -- see publicWhep.ts, which passes 'relay'.
+export function waitForIceGatheringComplete(pc: any, capMs = 4000, fastPathType = "srflx"): Promise<void> {
   if (pc.iceGatheringState === "complete") return Promise.resolve();
   return new Promise((resolve) => {
     let done = false;
@@ -9,15 +18,16 @@ export function waitForIceGatheringComplete(pc: any, capMs = 4000): Promise<void
       done = true;
       pc.removeEventListener("icegatheringstatechange", check);
       pc.removeEventListener("icecandidate", onCand);
+      clearTimeout(capTimer);
       resolve();
     };
     const check = () => { if (pc.iceGatheringState === "complete") finish(); };
     const onCand = (e: any) => {
-      if (e.candidate && e.candidate.candidate && e.candidate.candidate.includes("typ srflx")) finish();
+      if (e.candidate && e.candidate.candidate && e.candidate.candidate.includes(`typ ${fastPathType}`)) finish();
     };
     pc.addEventListener("icegatheringstatechange", check);
     pc.addEventListener("icecandidate", onCand);
-    setTimeout(finish, capMs);
+    const capTimer = setTimeout(finish, capMs);
   });
 }
 

@@ -45,7 +45,13 @@ export function connectPublicWhep(opts: PublicOpts) {
       pc.addTransceiver("video", { direction: "recvonly" });
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
-      await waitForIceGatheringComplete(pc, 4000);
+      // 'relay' (not the default 'srflx'): over the public/TURN path the
+      // relay candidate is the load-bearing one and typically arrives after
+      // srflx (TURN allocation is a slower round-trip) -- resolving on
+      // srflx here would send the offer before the candidate that can
+      // actually reach a NAT'd PC over signaling_bridge.py's non-trickle
+      // protocol ever gets gathered. See whep.ts's waitForIceGatheringComplete.
+      await waitForIceGatheringComplete(pc, 4000, "relay");
       if (closed) return;
       ws.send(pc.localDescription.sdp);
     } catch (err) {

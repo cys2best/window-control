@@ -1,9 +1,9 @@
 import { connectPublicWhep } from "./publicWhep";
 
-function fakePc() {
+function fakePc(iceGatheringState: string = "complete") {
   const listeners: Record<string, Function[]> = {};
   return {
-    iceGatheringState: "complete",
+    iceGatheringState,
     iceConnectionState: "new",
     localDescription: { sdp: "OFFER" },
     addEventListener: (k: string, f: Function) => { (listeners[k] ||= []).push(f); },
@@ -15,6 +15,10 @@ function fakePc() {
     close: jest.fn(),
     _fire: (k: string, e: any) => (listeners[k] || []).forEach((f) => f(e)),
   } as any;
+}
+
+function candidateEvent(typ: string) {
+  return { candidate: { candidate: `candidate:1 1 udp 1 1.2.3.4 1234 typ ${typ}` } };
 }
 
 function fakeWs() {
@@ -54,6 +58,42 @@ test("sends the offer SDP over the socket after ICE gathering settles, then appl
 
   await ws.onmessage({ data: "ANSWER" });
   expect(pc.setRemoteDescription).toHaveBeenCalledWith({ type: "answer", sdp: "ANSWER" });
+});
+
+test("waits for a relay candidate (not merely srflx) before sending the offer over the public path", async () => {
+  // TURN allocation is a slower round-trip than a plain STUN query, so the
+  // relay candidate typically lands AFTER srflx. signaling_bridge.py is
+  // non-trickle (one recv, one send) -- if the offer went out as soon as
+  // srflx arrived, the one candidate type that can reach a NAT'd viewer
+  // would be gathered too late and lost for the session. Start gathering
+  // "incomplete" so the fast path actually has to wait on candidate events
+  // instead of short-circuiting immediately.
+  const pc = fakePc("gathering");
+  let ws: any;
+  const WsImpl = function (this: any, _url: string) {
+    ws = fakeWs();
+    return ws;
+  } as any;
+
+  connectPublicWhep({
+    signalingUrl: "wss://relay.example", instanceName: "inst-1", iceServers: [],
+    onStream: () => {}, onState: () => {},
+    RTCImpl: function () { return pc; } as any, WsImpl,
+  });
+
+  await new Promise((r) => setTimeout(r, 0));
+  ws.onopen(); // don't await -- it's pending on ICE gathering below
+  await new Promise((r) => setTimeout(r, 0));
+
+  // A srflx candidate alone must NOT resolve the wait for the public path.
+  pc._fire("icecandidate", candidateEvent("srflx"));
+  await new Promise((r) => setTimeout(r, 0));
+  expect(ws.send).not.toHaveBeenCalled();
+
+  // The relay candidate is the one that unblocks sending the offer.
+  pc._fire("icecandidate", candidateEvent("relay"));
+  await new Promise((r) => setTimeout(r, 0));
+  expect(ws.send).toHaveBeenCalledWith("OFFER");
 });
 
 test("builds the signaling URL with session + role query params", async () => {
