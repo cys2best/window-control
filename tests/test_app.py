@@ -1,6 +1,8 @@
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
+import io
+import struct
 import time
 from unittest.mock import MagicMock, patch
 import pytest
@@ -25,6 +27,22 @@ def _make_client(instances=None):
     # legitimate in-process test call. Pin it to loopback so those tests
     # exercise the "called from localhost" path the guard is meant to allow.
     return TestClient(app, client=("127.0.0.1", 12345)), im
+
+
+def _raw_screencap_bytes(w, h, header_len=16, fmt=1, fill=0x80):
+    if header_len == 16:
+        header = struct.pack("<IIII", w, h, fmt, 0)
+    else:
+        header = struct.pack("<III", w, h, fmt)
+    return header + bytes([fill]) * (w * h * 4)
+
+
+def _fake_png_bytes():
+    from PIL import Image
+    img = Image.new("RGB", (4, 4), color=(10, 20, 30))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
 
 
 def test_get_instances_empty():
@@ -336,3 +354,46 @@ def test_internal_publish_start_refused_from_non_localhost():
     assert _is_localhost("127.0.0.1") is True
     assert _is_localhost("::1") is True
     assert _is_localhost("100.85.142.52") is False
+
+
+def test_capture_preview_decodes_raw_screencap():
+    client, _ = _make_client()
+    raw = _raw_screencap_bytes(4, 4)
+    with patch("server.app.adb_manager._find_adb", return_value="adb"), \
+         patch("server.app.adb_manager._no_window_flags", return_value={}), \
+         patch("server.app.subprocess.check_output", return_value=raw) as mock_run:
+        r = client.get("/instances/emulator-5554/preview")
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "image/jpeg"
+    assert mock_run.call_count == 1  # raw path succeeded -- no PNG fallback call
+    args = mock_run.call_args[0][0]
+    assert "screencap -p" not in " ".join(args)
+
+
+def test_capture_preview_falls_back_to_png_on_unrecognized_raw_header():
+    client, _ = _make_client()
+    bad_raw = b"\x00" * 20  # too short / not a real header -- decode returns None
+    png_bytes = _fake_png_bytes()
+    with patch("server.app.adb_manager._find_adb", return_value="adb"), \
+         patch("server.app.adb_manager._no_window_flags", return_value={}), \
+         patch("server.app.subprocess.check_output", side_effect=[bad_raw, png_bytes]) as mock_run:
+        r = client.get("/instances/emulator-5554/preview")
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "image/jpeg"
+    assert mock_run.call_count == 2
+    second_call_args = mock_run.call_args_list[1][0][0]
+    assert "screencap -p" in " ".join(second_call_args)
+
+
+def test_decode_raw_screencap_rejects_unknown_pixel_format():
+    from server.app import _decode_raw_screencap
+    raw = _raw_screencap_bytes(4, 4, fmt=99)  # format code this helper doesn't handle
+    assert _decode_raw_screencap(raw) is None
+
+
+def test_decode_raw_screencap_accepts_12_byte_header():
+    from server.app import _decode_raw_screencap
+    raw = _raw_screencap_bytes(4, 4, header_len=12)
+    img = _decode_raw_screencap(raw)
+    assert img is not None
+    assert img.size == (4, 4)

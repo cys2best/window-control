@@ -2,6 +2,7 @@ import asyncio
 import io
 import logging
 import os
+import struct
 import subprocess
 import time
 from pathlib import Path
@@ -101,13 +102,51 @@ def _dispatch_key_control(ctrl, key: str):
         ctrl.send_keycode(kc)
 
 
+def _decode_raw_screencap(raw: bytes):
+    """Parse Android's raw `screencap` (no -p) framebuffer dump.
+
+    Format (frameworks/base cmds/screencap): 4-byte LE width, 4-byte LE
+    height, 4-byte LE PixelFormat, optionally a 4-byte LE dataSpace field
+    added in later Android versions -- so the header is either 12 or 16
+    bytes -- followed by width*height*4 raw pixel bytes. Only PixelFormat 1
+    (RGBA_8888) and 4 (RGBX_8888) are handled; both are 4 bytes/pixel and
+    the 4th byte is discarded on JPEG conversion either way, so they're
+    treated identically. Returns None (caller falls back to `-p`/PNG) for
+    any header/format this doesn't recognize -- there's no device in CI to
+    verify every Android build's exact layout against, so an unrecognized
+    header must degrade, not crash or produce a corrupt image.
+    """
+    from PIL import Image
+
+    for header_len in (16, 12):
+        if len(raw) <= header_len:
+            continue
+        w, h, fmt = struct.unpack_from("<III", raw, 0)
+        if fmt not in (1, 4) or w <= 0 or h <= 0:
+            continue
+        if len(raw) - header_len != w * h * 4:
+            continue
+        return Image.frombuffer("RGBA", (w, h), raw[header_len:], "raw", "RGBA", 0, 1)
+    return None
+
+
 async def _capture_preview(serial: str) -> Response:
     """Grab a device screenshot and return a small JPEG thumbnail.
 
-    `screencap -p` is a blocking subprocess up to ~5s; run it (and the PIL
-    encode) off the event loop so a preview fetch never freezes concurrent
-    requests — including the /input WebSocket, which would otherwise stall taps
-    while a thumbnail loads.
+    Prefers raw (no `-p`) screencap: `-p` makes the LDPlayer host do a
+    device-side lossless PNG encode for a thumbnail that gets re-encoded to
+    JPEG a moment later anyway. Raw capture ships the uncompressed
+    framebuffer instead, decoded here with PIL.frombuffer (no
+    decompression needed) and JPEG-encoded with Pillow's own
+    libjpeg-turbo-backed encoder. Falls back to the old `-p` PNG path
+    whenever the raw header doesn't parse (see _decode_raw_screencap) --
+    this preview is best-effort, not load-bearing, so a decode miss should
+    degrade, not fail the request.
+
+    Both the adb subprocess (up to ~5s) and the PIL encode run off the
+    event loop so a preview fetch never freezes concurrent requests --
+    including the /input WebSocket, which would otherwise stall taps while
+    a thumbnail loads.
     """
     import asyncio as _asyncio
     from PIL import Image
@@ -117,19 +156,31 @@ async def _capture_preview(serial: str) -> Response:
         raise HTTPException(status_code=503, detail="adb not found")
     nw = adb_manager._no_window_flags()
 
-    def _grab() -> bytes:
-        png = subprocess.check_output(
-            [adb, "-s", serial, "exec-out", "screencap -p"],
-            timeout=5, **nw,
-        )
-        img = Image.open(io.BytesIO(png))
+    def _encode(img) -> bytes:
         img.thumbnail((640, 384))
         buf = io.BytesIO()
         img.convert("RGB").save(buf, format="JPEG", quality=85)
         return buf.getvalue()
 
+    def _grab_raw():
+        raw = subprocess.check_output(
+            [adb, "-s", serial, "exec-out", "screencap"],
+            timeout=5, **nw,
+        )
+        img = _decode_raw_screencap(raw)
+        return _encode(img) if img is not None else None
+
+    def _grab_png() -> bytes:
+        png = subprocess.check_output(
+            [adb, "-s", serial, "exec-out", "screencap -p"],
+            timeout=5, **nw,
+        )
+        return _encode(Image.open(io.BytesIO(png)))
+
     try:
-        data = await _asyncio.to_thread(_grab)
+        data = await _asyncio.to_thread(_grab_raw)
+        if data is None:
+            data = await _asyncio.to_thread(_grab_png)
     except Exception:
         raise HTTPException(status_code=503, detail="Preview capture failed")
     return Response(content=data, media_type="image/jpeg")
