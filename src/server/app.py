@@ -283,6 +283,24 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
             "ice_servers": get_ice_servers(),
         }
 
+    @app.get("/instances/{instance_id}/whep-url")
+    async def instance_whep_url(instance_id: str, request: Request):
+        """Read-only WHEP URL lookup -- unlike /select, never touches
+        instance_manager's active-instance state or the VPS signaling
+        bridge. Used by the grid's hover prewarm (windows_panel.js) to open
+        a throwaway WHEP RTCPeerConnection against a path the user hasn't
+        chosen yet, so mediamtx's runOnDemand fires (and ffmpeg boots)
+        while they're still hovering.
+        """
+        inst = instance_manager.get(instance_id)
+        if inst is None:
+            raise HTTPException(status_code=404, detail="Instance not found")
+        host = get_best_ip() or request.client.host
+        return {
+            "whep_url": f"http://{host}:{WHEP_PORT}/{inst.name}/whep",
+            "stun_url": f"stun:{host}:{STUN_PORT}",
+        }
+
     @app.post("/internal/instances/{name}/publish/start")
     async def internal_publish_start(name: str):
         """mediamtx's runOnDemand hook (via publish_hook.py) calls this when

@@ -109,6 +109,29 @@ def test_select_returns_instance_whep():
         assert r.json()["whep_url"].endswith("/instance0/whep")
 
 
+def test_whep_url_unknown_instance_404():
+    client, im = _make_client()
+    im.get.return_value = None
+    r = client.get("/instances/emulator-9999/whep-url")
+    assert r.status_code == 404
+
+
+def test_whep_url_returns_url_without_side_effects():
+    inst = MagicMock()
+    inst.name = "instance0"
+    client, im = _make_client()
+    im.get.return_value = inst
+
+    r = client.get("/instances/emulator-5554/whep-url")
+
+    assert r.status_code == 200
+    data = r.json()
+    assert data["whep_url"].endswith("/instance0/whep")
+    assert "stun_url" in data
+    im.select.assert_not_called()
+    assert im.active is None  # confirms no active-instance switch happened
+
+
 def test_select_instance_includes_signaling_url_when_configured():
     inst = MagicMock()
     inst.serial = "emulator-5554"
