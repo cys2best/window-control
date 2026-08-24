@@ -21,6 +21,9 @@ import os
 import sys
 import urllib.request
 
+# Hand-copied duplicate of config.PORT -- deliberately NOT imported, since
+# this script must stay stdlib-only (mediamtx spawns it with whatever python
+# is on PATH, outside this project's venv/sys.path). Change both together.
 APP_PORT = 8080
 
 

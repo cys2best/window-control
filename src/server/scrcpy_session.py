@@ -457,6 +457,15 @@ class ScrcpySession:
         self._stream_thread: threading.Thread | None = None
         self._video_sock: socket.socket | None = None
         self._running = False
+        # Bumped by every start(). The _persistent_loop thread it spawns
+        # carries its own generation token; a superseded (older) loop thread
+        # must not tear down or flag-clobber the session that replaced it.
+        # start() sets _running=True and only THEN joins the outgoing thread,
+        # so without this counter the old thread's finally block routinely
+        # ran during that join and reset the brand-new session's _running
+        # back to False -- making every watchdog/tier-change restart produce
+        # a session that instantly looked dead again.
+        self._generation = 0
         # Monotonic timestamp of the last frame written to ffmpeg. Drives the
         # stall detection in `alive` (see _STALL_TIMEOUT). 0.0 until first frame.
         self._last_frame_ts = 0.0
@@ -492,6 +501,12 @@ class ScrcpySession:
             with self._lock:
                 self._stop_locked()
                 self._running = True
+                # Claim a new generation BEFORE the join below. The outgoing
+                # thread's finally block compares against this and skips its
+                # own teardown/_running reset once it sees it has been
+                # superseded.
+                self._generation += 1
+                my_gen = self._generation
                 old_thread = self._stream_thread
 
             # Wait for the PREVIOUS stream thread to fully exit before launching a
@@ -513,12 +528,14 @@ class ScrcpySession:
             # on ECONNREFUSED until the server is actually accepting (see
             # _persistent_loop). A fixed sleep(1.0) both wasted time on fast devices
             # and was too short on slow ones; connect-retry is right either way.
-            self._stream_thread = threading.Thread(target=self._persistent_loop, daemon=True)
+            self._stream_thread = threading.Thread(
+                target=self._persistent_loop, args=(my_gen,), daemon=True
+            )
             self._stream_thread.start()
             _log(f"[scrcpy] started serial={self.serial} port={self._tcp_port}")
             return True
 
-    def _persistent_loop(self):
+    def _persistent_loop(self, my_gen: int):
         """Persistent half: scrcpy-server handshake, control socket, and a
         drain loop that always reads frames off the device socket -- even
         when no viewer is watching -- so the scrcpy-server side never sees
@@ -532,6 +549,11 @@ class ScrcpySession:
         happens exactly once here -- there is no way to "re-open" just the
         video half later, which is why on-demand toggling happens at the
         ffmpeg layer, not by reconnecting this socket.
+
+        `my_gen` is this thread's generation token (see __init__._generation).
+        start() bumps the counter before joining the outgoing thread, so this
+        thread's finally block can tell whether it is still the current
+        persistent half or has already been superseded.
         """
         video_sock: socket.socket | None = None
         try:
@@ -596,6 +618,20 @@ class ScrcpySession:
             self._last_frame_ts = time.monotonic()
             _log(f"[scrcpy] persistent half up serial={self.serial}")
 
+            # Keep the device encoder emitting even with NO viewer attached.
+            # Android's encoder sends nothing on a static, unchanged screen,
+            # but the drain loop above still runs under a _STALL_TIMEOUT
+            # socket timeout and `alive` still fails a session whose
+            # _last_frame_ts goes stale -- so an unwatched instance sitting on
+            # a static screen would time out and restart every ~15-25s,
+            # defeating the whole point of an always-on persistent half. The
+            # video-only _idr_heartbeat can't cover this: it's scoped to
+            # ffmpeg's lifetime, which is exactly the window this needs to
+            # survive outside of.
+            threading.Thread(
+                target=self._persistent_heartbeat, args=(my_gen,), daemon=True
+            ).start()
+
             while self._running:
                 header = _recvall(video_sock, 12)
                 if len(header) < 12:
@@ -614,6 +650,11 @@ class ScrcpySession:
             _log(f"[scrcpy] persistent_loop error serial={self.serial}: {traceback.format_exc()[:400]}")
         finally:
             with self._lock:
+                # A newer start() already claimed the session. Everything from
+                # here on belongs to THAT generation, not this one.
+                stale = self._generation != my_gen
+                # Identity-safe regardless of generation: a newer generation's
+                # socket object could never be this same object.
                 if self._video_sock is video_sock:
                     self._video_sock = None
             if video_sock:
@@ -621,10 +662,38 @@ class ScrcpySession:
                     video_sock.close()
                 except Exception:
                     pass
-            self.stop_video()
+            if not stale:
+                # Only the CURRENT generation may tear down video or declare
+                # the session stopped -- an outgoing thread doing either would
+                # kill the replacement session's ffmpeg and clobber its
+                # freshly-set _running flag (start() sets _running=True before
+                # it joins this thread).
+                self.stop_video()
+                with self._lock:
+                    self._running = False
+            _log(f"[scrcpy] persistent_loop exited serial={self.serial} "
+                 f"gen={my_gen} stale={stale}")
+
+    def _persistent_heartbeat(self, my_gen: int):
+        """Keep frames flowing for the PERSISTENT half's whole lifetime.
+
+        Independent of whether video is active: Android's MediaCodec emits
+        nothing while the screen is unchanged, but the drain loop reads under
+        a _STALL_TIMEOUT socket timeout and `alive` fails on a stale
+        _last_frame_ts, so an idle, unwatched instance would otherwise
+        self-terminate and restart every ~15-25s.
+
+        Generation-guarded (not ffmpeg-identity-guarded like _idr_heartbeat):
+        the lifetime this must match is the persistent loop's, not ffmpeg's.
+        While video IS active both heartbeats run; the overlap costs only an
+        occasional redundant 1-byte control write.
+        """
+        while True:
+            time.sleep(8.0)
             with self._lock:
-                self._running = False
-            _log(f"[scrcpy] persistent_loop exited serial={self.serial}")
+                if self._generation != my_gen or not self._running:
+                    return
+            self.control.request_idr()
 
     def _idr_heartbeat(self, ffmpeg_proc):
         """Request an IDR on a fast burst early, then settle to every ~8s.
@@ -683,8 +752,19 @@ class ScrcpySession:
         with self._lock:
             if not self._running or self._video_sock is None:
                 return False
-            if self._ffmpeg_proc is not None:
+            proc = self._ffmpeg_proc
+            # A non-None but already-exited ffmpeg is NOT "active" -- reporting
+            # True here would leave mediamtx waiting on a publisher that will
+            # never come back. Reap it below and respawn instead.
+            dead_proc = proc is not None and proc.poll() is not None
+            if proc is not None and not dead_proc:
                 return True
+        if dead_proc:
+            _log(f"[scrcpy] start_video: reaping dead ffmpeg serial={self.serial}")
+            # Clears _ffmpeg_proc/_write_queue/_writer_thread (and unblocks the
+            # orphaned writer thread) so the commit re-check below sees a clean
+            # slate rather than treating the corpse as a live winner.
+            self.stop_video()
         ffmpeg_exe = _get_ffmpeg()
         if not ffmpeg_exe:
             _log(f"[scrcpy] start_video: ffmpeg not found serial={self.serial}")
@@ -797,8 +877,39 @@ class ScrcpySession:
 
     @property
     def video_active(self) -> bool:
+        """Whether a viewer's video pipeline is currently attached.
+
+        Deliberately identity-only (no ffmpeg_proc.poll() check, unlike
+        start_video's idempotency guard): nothing reports this as a status
+        field, and its one real consumer is the restart path's
+        "was someone watching before this restart?" question. A silently
+        crashed ffmpeg should still answer YES there so the restart restores
+        video, rather than being treated as "nobody was watching".
+        """
         with self._lock:
             return self._ffmpeg_proc is not None
+
+    def _restore_video_after_restart(self) -> None:
+        """Best-effort: re-activate video after a self-initiated persistent-half
+        restart, if a viewer was watching before the restart.
+
+        Before this plan's split, ffmpeg lived in the same loop as the
+        persistent connection, so any restart restored video for free. Now
+        _persistent_loop's finally calls stop_video() and nothing brings it
+        back -- mediamtx only re-fires runOnDemand for a reader count going
+        0 -> 1, not for a reader already attached whose publisher vanished.
+
+        Polls briefly because start() returns as soon as the loop thread is
+        spawned, before the handshake actually sets self._video_sock -- an
+        immediate start_video() call would see the persistent half not ready
+        yet and return False.
+        """
+        deadline = time.monotonic() + 8.0
+        while time.monotonic() < deadline:
+            if self.start_video():
+                return
+            time.sleep(0.1)
+        _log(f"[scrcpy] restore video after restart timed out serial={self.serial}")
 
     @property
     def alive(self) -> bool:
@@ -836,8 +947,15 @@ class ScrcpySession:
             if self.alive:
                 return True
             _log(f"[scrcpy] watchdog restart (dead) serial={self.serial}")
+            # Capture BEFORE stop(): the persistent loop's finally calls
+            # stop_video(), so by the time start() returns this is always
+            # False and a viewer that was watching would lose video for good.
+            was_video_active = self.video_active
             self.stop()
-            return self.start()
+            ok = self.start()
+            if ok and was_video_active:
+                self._restore_video_after_restart()
+            return ok
 
     def set_tier(self, tier: str) -> bool:
         """Update quality tier. Restarts capture if running.
@@ -859,10 +977,20 @@ class ScrcpySession:
         with self._restart_lock:
             self.tier = tier
             with self._lock:
-                was_running = self._running and self._ffmpeg_proc is not None
+                # Persistent-half state ONLY. Post-split, `_ffmpeg_proc is not
+                # None` means "a viewer is watching right now" -- gating on it
+                # would silently skip the scrcpy-server relaunch for an
+                # unwatched instance, leaving the device encoding at the OLD
+                # resolution/bitrate while still reporting success.
+                was_running = self._running
+                was_video_active = self._ffmpeg_proc is not None
             if was_running:
                 self.stop()
                 if not self.start():
                     _log(f"[scrcpy] set_tier restart failed serial={self.serial} tier={tier}")
                     return False
+                if was_video_active:
+                    # The relaunched scrcpy-server encodes at the new tier;
+                    # bring the viewer's ffmpeg pipeline back up on it.
+                    self._restore_video_after_restart()
         return True

@@ -154,8 +154,19 @@ def main():
         )
         _capture_thread.start()
         # Fresh uvicorn Server each restart (uvicorn cannot be re-run after exit)
+        # proxy_headers=False is load-bearing, not a default restated:
+        # uvicorn defaults it to True and trusts 127.0.0.1 as a forwarding
+        # proxy, so its ProxyHeadersMiddleware would rewrite
+        # request.client.host from an attacker-supplied X-Forwarded-For on any
+        # request whose direct peer is loopback. The public HTTP tunnel relays
+        # requests through a local httpx client (loopback from this app's
+        # perspective) and does not strip x-forwarded-for -- which would make
+        # app.py's localhost-only guard on /internal/ spoofable. The tunnel
+        # already refuses to forward /internal/ at all; this keeps the
+        # app-level guard actually meaning what it documents.
         config = uvicorn.Config(fastapi_app, host="0.0.0.0", port=PORT,
-                                log_level="warning", log_config=None)
+                                log_level="warning", log_config=None,
+                                proxy_headers=False)
         server = uvicorn.Server(config)
 
         def _serve():
