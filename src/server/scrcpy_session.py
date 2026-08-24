@@ -895,9 +895,16 @@ class ScrcpySession:
 
         Before this plan's split, ffmpeg lived in the same loop as the
         persistent connection, so any restart restored video for free. Now
-        _persistent_loop's finally calls stop_video() and nothing brings it
-        back -- mediamtx only re-fires runOnDemand for a reader count going
-        0 -> 1, not for a reader already attached whose publisher vanished.
+        a restart's own generation guard leaves the outgoing loop's
+        `stop_video()` call skipped (it's stale by the time it would run --
+        see _persistent_loop's finally), so the OLD ffmpeg process usually
+        survives the restart untouched and this call's start_video() is a
+        same-process no-op that just confirms it's still there. The one
+        real gap this guards against: if that ffmpeg is gone or dead (e.g.
+        it crashed, or the session was fully stopped and cold-started),
+        start_video() actually (re)spawns it. Either way, mediamtx never
+        re-fires runOnDemand for a reader count that's already nonzero, so
+        nothing else would recover a genuinely-dead publisher here.
 
         Polls briefly because start() returns as soon as the loop thread is
         spawned, before the handshake actually sets self._video_sock -- an
@@ -947,9 +954,13 @@ class ScrcpySession:
             if self.alive:
                 return True
             _log(f"[scrcpy] watchdog restart (dead) serial={self.serial}")
-            # Capture BEFORE stop(): the persistent loop's finally calls
-            # stop_video(), so by the time start() returns this is always
-            # False and a viewer that was watching would lose video for good.
+            # Capture BEFORE stop(): whether the old ffmpeg process survives
+            # the restart (the generation guard usually leaves it running,
+            # untouched, fed by the new persistent loop) or doesn't (it
+            # crashed, or a full stop tore it down), this is the one signal
+            # for "should there be video after this restart" that's correct
+            # either way -- video_active read AFTER the restart would miss a
+            # viewer whose ffmpeg genuinely didn't survive.
             was_video_active = self.video_active
             self.stop()
             ok = self.start()
