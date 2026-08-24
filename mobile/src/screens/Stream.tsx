@@ -7,6 +7,7 @@ import { runOnJS } from "react-native-reanimated";
 import { useServer } from "../api/ServerContext";
 import { theme } from "../theme/tokens";
 import { connectWhep } from "../webrtc/whep";
+import { connectPublicWhep } from "../webrtc/publicWhep";
 import { makeInputSocket, clickMsg, dragStartMsg, dragMoveMsg, dragEndMsg, scrollMsg, keyMsg } from "../input/inputSocket";
 import { normalizeCoords } from "../input/coords";
 import { makeAdaptive } from "../quality/adaptive";
@@ -60,20 +61,88 @@ export function Stream({ route, navigation }: { route: any; navigation: any }) {
       content.current = { w: sel.w, h: sel.h };
       session.current?.close();
       let firstFrameSeen = false;
-      const s = connectWhep({
+
+      // Wires whichever session (direct or public-fallback) ends up being
+      // the one we're using into session.current/adaptive quality — shared
+      // so both paths below finalize the same way.
+      const wireSession = (s: any) => {
+        // The connect call is already in flight and will create a session
+        // server-side regardless of whether we win the race. If a newer
+        // switch supersedes us before it resolves (or even right after),
+        // `s` never gets stored and would otherwise be leaked — close it
+        // explicitly the moment we notice we lost.
+        if (gen !== startGen.current) { s.close(); return; }
+        session.current = s;
+        adaptive.current?.stop();
+        adaptive.current = makeAdaptive({
+          serial,
+          onApply: (t) => client.setQuality(serial, t),
+          // Decoder stopped producing new frames while the connection still
+          // claims to be "connected" (the mediamtx write-queue-stuck class of
+          // bug) — silently reopen the session rather than surface the manual
+          // ErrorOverlay for something the app can recover from on its own.
+          onStall: () => { if (gen === startGen.current) start(); },
+        });
+        adaptive.current.start(session.current.pc);
+      };
+
+      let directConnected = false;
+      let fallbackStarted = false;
+      let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
+      const direct = connectWhep({
         whepUrl: sel.whep_url, stunUrl: sel.stun_url,
         onStream: (stream) => {
-          if (gen !== startGen.current) return;
+          if (gen !== startGen.current || fallbackStarted) return;
           firstFrameSeen = true;
           console.log(`[stream] first track/frame +${Date.now() - t0}ms`);
           setStreamUrl(stream.toURL());
         },
         onState: (st) => {
-          if (gen !== startGen.current) return;
+          if (gen !== startGen.current || fallbackStarted) return;
+          if (st === "connected") {
+            directConnected = true;
+            if (fallbackTimer) { clearTimeout(fallbackTimer); fallbackTimer = null; }
+          }
           setNet(st === "connected" ? "connected" : st === "failed" ? "disconnected" : "connecting");
           if (st === "failed") setFailed(true);
         },
       });
+
+      // Direct WHEP is unreachable off-Tailscale (a local IP the phone can't
+      // route to), so bound how long we wait for it before trying the public
+      // signaling path instead. On Tailscale/LAN this timer just loses the
+      // race to onState('connected') above and is cleared — no added delay
+      // to the already-working local case.
+      fallbackTimer = setTimeout(() => {
+        fallbackTimer = null;
+        if (gen !== startGen.current || directConnected) return;
+        fallbackStarted = true;
+        direct.close();
+        if (!sel.signaling_url) {
+          // Nothing to fall back to — surface the same "Disconnected" state
+          // a hard failure would, rather than hanging forever.
+          setFailed(true);
+          setNet("disconnected");
+          return;
+        }
+        console.log(`[stream] direct WHEP timed out +${Date.now() - t0}ms, trying public path`);
+        const pub = connectPublicWhep({
+          signalingUrl: sel.signaling_url, instanceName: sel.name, iceServers: sel.ice_servers,
+          onStream: (stream) => {
+            if (gen !== startGen.current) return;
+            firstFrameSeen = true;
+            console.log(`[stream] first track/frame (public) +${Date.now() - t0}ms`);
+            setStreamUrl(stream.toURL());
+          },
+          onState: (st) => {
+            if (gen !== startGen.current) return;
+            setNet(st === "connected" ? "connected" : st === "failed" ? "disconnected" : "connecting");
+            if (st === "failed") setFailed(true);
+          },
+        });
+        wireSession(pub);
+      }, 2500);
+
       // A session that never sends any video (the mediamtx write-queue-stuck
       // case: created server-side but peerConnectionEstablished never true,
       // bytesSent stays 0) never fires onStream/onTrack at all, so it never
@@ -88,24 +157,12 @@ export function Stream({ route, navigation }: { route: any; navigation: any }) {
           start();
         }
       }, 10000);
-      // The WHEP POST inside connectWhep() is already in flight and will
-      // create a session server-side regardless of whether we win the race.
-      // If a newer switch supersedes us before that POST resolves (or even
-      // right after), `s` never gets stored below and would otherwise be
-      // leaked — DELETE it explicitly the moment we notice we lost.
-      if (gen !== startGen.current) { s.close(); return; }
-      session.current = s;
-      adaptive.current?.stop();
-      adaptive.current = makeAdaptive({
-        serial,
-        onApply: (t) => client.setQuality(serial, t),
-        // Decoder stopped producing new frames while the connection still
-        // claims to be "connected" (the mediamtx write-queue-stuck class of
-        // bug) — silently reopen the session rather than surface the manual
-        // ErrorOverlay for something the app can recover from on its own.
-        onStall: () => { if (gen === startGen.current) start(); },
-      });
-      adaptive.current.start(session.current.pc);
+
+      // fallbackStarted can't be true here yet — the fallback timer above is
+      // asynchronous and hasn't had a chance to fire during this synchronous
+      // block — so this always wires the direct session, same as before the
+      // fallback was added.
+      wireSession(direct);
     } catch { if (gen === startGen.current) { setFailed(true); setNet("disconnected"); } }
   }, [client, serial]);
 
