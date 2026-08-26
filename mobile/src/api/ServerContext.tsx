@@ -38,33 +38,64 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
 
   const runDiscovery = useCallback(async () => {
     setDiscovering(true);
-    const cachedBase = await AsyncStorage.getItem(KEY);
-    // Unblock App.tsx's Gate here, before the network probes below -- the
-    // Connecting screen owns the "discovery in flight" spinner from this
-    // point on, so nothing is gained by holding Gate's blank screen up
-    // for the full (up to several seconds) discovery round-trip.
-    setReady(true);
-    const publicUrl: string | undefined = Constants.expoConfig?.extra?.publicUrl;
-    const result = publicUrl ? await discoverServer(publicUrl, { cachedBase }) : null;
+    try {
+      const cachedBase = await AsyncStorage.getItem(KEY);
+      // Unblock App.tsx's Gate here, before the network probes below -- the
+      // Connecting screen owns the "discovery in flight" spinner from this
+      // point on, so nothing is gained by holding Gate's blank screen up
+      // for the full (up to several seconds) discovery round-trip.
+      setReady(true);
+      const publicUrl: string | undefined = Constants.expoConfig?.extra?.publicUrl;
+      const result = publicUrl ? await discoverServer(publicUrl, { cachedBase }) : null;
 
-    if (result) {
-      if (cachedBase && hostOf(cachedBase) !== hostOf(result.base)) {
-        // Resolved base points at a different host than last time -- a
-        // session cookie for the old host must not leak into the new one.
-        try { await CookieManager.clearAll(); } catch {}
-      }
-      if (result.base !== cachedBase) {
-        await setBase(result.base);
+      if (result) {
+        if (cachedBase && hostOf(cachedBase) !== hostOf(result.base)) {
+          // The same physical server presents as two different "hosts"
+          // depending on which network resolved it (the Tailscale IP vs.
+          // the public tunnel hostname) -- that's the normal, expected
+          // outcome of this discovery design, not an edge case. clearAll()
+          // would nuke cookies for BOTH hosts, forcing a re-login every
+          // single network switch (in both directions) even though it's
+          // the identical server both times. Scope the clear to only the
+          // host actually being left: enumerate its cookies via get() and
+          // remove them individually with clearByName() (both are
+          // supported cross-platform despite the upstream typings'
+          // "iOS only" comment on clearByName -- confirmed against the
+          // Android native module source, which implements it too).
+          try {
+            const leaving = await CookieManager.get(cachedBase);
+            await Promise.all(
+              Object.keys(leaving).map((name) => CookieManager.clearByName(cachedBase, name))
+            );
+          } catch {}
+        }
+        if (result.base !== cachedBase) {
+          await setBase(result.base);
+        } else {
+          setBaseState(result.base);
+        }
+        setServerFound(true);
+        setNeedsLogin(result.status === 401);
       } else {
-        setBaseState(result.base);
+        setServerFound(false);
+        setNeedsLogin(false);
       }
-      setServerFound(true);
-      setNeedsLogin(result.status === 401);
-    } else {
+    } catch {
+      // Any unexpected throw here (AsyncStorage rejecting, a malformed
+      // /server-info response tripping normalizeBase(), etc.) must not
+      // leave `discovering` stuck true forever -- Connecting's Retry
+      // button only shows in the !discovering branch, and this function is
+      // invoked bare (not awaited) from a mount effect and from Retry's
+      // onPress, so an uncaught throw here is also an unhandled rejection.
+      // Treat it the same as "nothing reachable", and make sure Gate isn't
+      // blocked either, in case the throw happened before the early
+      // setReady(true) above ran.
+      setReady(true);
       setServerFound(false);
       setNeedsLogin(false);
+    } finally {
+      setDiscovering(false);
     }
-    setDiscovering(false);
   }, [setBase]);
 
   useEffect(() => {

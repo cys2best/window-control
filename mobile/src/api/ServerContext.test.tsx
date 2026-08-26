@@ -31,6 +31,9 @@ function Probe() {
 beforeEach(async () => {
   mockDiscoverServer.mockReset();
   (CookieManager.clearAll as jest.Mock).mockClear();
+  (CookieManager.get as jest.Mock).mockClear();
+  (CookieManager.get as jest.Mock).mockResolvedValue({});
+  (CookieManager.clearByName as jest.Mock).mockClear();
   await AsyncStorage.clear();
 });
 
@@ -55,12 +58,20 @@ test("reflects nothing-reachable as serverFound: false", async () => {
   await waitFor(() => getByText(/ready:settled:none:notfound/));
 });
 
-test("clears cookies when the resolved base points at a different host than the cached one", async () => {
+test("clears cookies scoped to the old host only, via get()+clearByName(), when the resolved base points at a different host than the cached one (finding #4)", async () => {
+  // The same physical server can present as two different hosts (Tailscale
+  // IP vs. public tunnel hostname) across ordinary network switches --
+  // clearAll() would nuke cookies for BOTH hosts and force a re-login on
+  // every switch. Only the host actually being left should be cleared, and
+  // only via get()+clearByName() (never clearAll()).
   await AsyncStorage.setItem("wc_base", "http://old-host:8080");
+  (CookieManager.get as jest.Mock).mockResolvedValue({ session: { value: "abc" } });
   mockDiscoverServer.mockResolvedValue({ base: "http://new-host:8080", status: 200 });
   const { getByText } = await render(<ServerProvider><Probe /></ServerProvider>);
   await waitFor(() => getByText(/http:\/\/new-host:8080/));
-  expect(CookieManager.clearAll).toHaveBeenCalled();
+  expect(CookieManager.clearAll).not.toHaveBeenCalled();
+  expect(CookieManager.get).toHaveBeenCalledWith("http://old-host:8080");
+  expect(CookieManager.clearByName).toHaveBeenCalledWith("http://old-host:8080", "session");
 });
 
 test("does not clear cookies when the resolved base matches the cached host", async () => {
@@ -69,6 +80,8 @@ test("does not clear cookies when the resolved base matches the cached host", as
   const { getByText } = await render(<ServerProvider><Probe /></ServerProvider>);
   await waitFor(() => getByText(/http:\/\/same-host:8080/));
   expect(CookieManager.clearAll).not.toHaveBeenCalled();
+  expect(CookieManager.get).not.toHaveBeenCalled();
+  expect(CookieManager.clearByName).not.toHaveBeenCalled();
 });
 
 test("does not clear cookies on first-ever launch (no cached host to compare against)", async () => {
@@ -76,4 +89,12 @@ test("does not clear cookies on first-ever launch (no cached host to compare aga
   const { getByText } = await render(<ServerProvider><Probe /></ServerProvider>);
   await waitFor(() => getByText(/http:\/\/new-host:8080/));
   expect(CookieManager.clearAll).not.toHaveBeenCalled();
+  expect(CookieManager.get).not.toHaveBeenCalled();
+  expect(CookieManager.clearByName).not.toHaveBeenCalled();
+});
+
+test("a throw inside discovery still settles discovering:false and serverFound:false instead of hanging (finding #3)", async () => {
+  mockDiscoverServer.mockRejectedValue(new Error("boom"));
+  const { getByText } = await render(<ServerProvider><Probe /></ServerProvider>);
+  await waitFor(() => getByText(/ready:settled:none:notfound:noauth/));
 });

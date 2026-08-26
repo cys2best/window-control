@@ -23,6 +23,18 @@ export function connectPublicWhep(opts: PublicOpts) {
   const Ws = opts.WsImpl || WebSocket;
   const pc: any = new RTC({ iceServers: opts.iceServers });
   let closed = false;
+  // True once ICE has connected/completed at least once -- mirrors app.js's
+  // initWebRTCPublic `settled` flag. Once negotiation has actually
+  // succeeded, the signaling WebSocket's job is done (it's closed below,
+  // matching app.js's finish() closing `ws` on every terminal path) and any
+  // LATER ws.onerror/onclose (a relay restart, the VPS's one-role-slot
+  // kicking this connection for a new one, a transient blip on the
+  // signaling channel alone -- including the close we ourselves just
+  // triggered) must be a no-op. Per signaling_bridge.py's own docstring,
+  // media leaves the relay/signaling path entirely once negotiation is
+  // done, so a socket-only event past this point does not mean the stream
+  // died.
+  let negotiated = false;
   const onState = (s: "connecting" | "connected" | "failed") => { if (!closed) opts.onState(s); };
   onState("connecting");
 
@@ -30,7 +42,16 @@ export function connectPublicWhep(opts: PublicOpts) {
   const onIceChange = () => {
     const s = pc.iceConnectionState;
     if (s === "failed" || s === "closed") onState("failed");
-    else if (s === "connected" || s === "completed") onState("connected");
+    else if (s === "connected" || s === "completed") {
+      if (!negotiated) {
+        negotiated = true;
+        // Negotiation is done -- stop occupying the VPS's one-role-slot
+        // for the rest of the session instead of holding the socket open
+        // the whole time.
+        try { ws.close(); } catch {}
+      }
+      onState("connected");
+    }
   };
   pc.addEventListener?.("track", onTrack);
   pc.ontrack = onTrack;
@@ -70,8 +91,8 @@ export function connectPublicWhep(opts: PublicOpts) {
     }
   };
 
-  ws.onerror = () => { onState("failed"); };
-  ws.onclose = () => { onState("failed"); };
+  ws.onerror = () => { if (!negotiated) onState("failed"); };
+  ws.onclose = () => { if (!negotiated) onState("failed"); };
 
   return {
     pc,

@@ -158,6 +158,46 @@ test("onState('failed') fires on iceConnectionState failed/closed", async () => 
   expect(states).toEqual(["connecting", "failed"]);
 });
 
+test("once ICE reports connected, the signaling socket is closed and a later onclose/onerror is a no-op (finding #2)", async () => {
+  // Mirrors app.js's `settled` flag: once negotiation has actually
+  // succeeded, the WS has done its job (and is closed here, freeing the
+  // VPS's one-role-slot) -- a LATER ws.onclose/onerror (including the one
+  // we just triggered ourselves by calling ws.close()) must not be
+  // mistaken for the stream dying.
+  const pc = fakePc();
+  let ws: any;
+  const WsImpl = function (this: any, _url: string) {
+    ws = fakeWs();
+    return ws;
+  } as any;
+  const states: string[] = [];
+
+  connectPublicWhep({
+    signalingUrl: "wss://relay.example", instanceName: "inst-1", iceServers: [],
+    onStream: () => {}, onState: (s) => states.push(s),
+    RTCImpl: function () { return pc; } as any, WsImpl,
+  });
+
+  await new Promise((r) => setTimeout(r, 0));
+  await ws.onopen();
+  await new Promise((r) => setTimeout(r, 0));
+  await ws.onmessage({ data: "ANSWER" });
+
+  pc.iceConnectionState = "connected";
+  pc._fire("iceconnectionstatechange", {});
+
+  expect(states).toEqual(["connecting", "connected"]);
+  // Negotiation succeeded -- the signaling socket is no longer needed.
+  expect(ws.close).toHaveBeenCalledTimes(1);
+
+  // A later close/error on the (now-closed) socket must not be reported as
+  // a stream failure -- media has already moved off the signaling path.
+  ws.onclose();
+  ws.onerror();
+
+  expect(states).toEqual(["connecting", "connected"]);
+});
+
 test("close() closes both the socket and the peer connection, and suppresses further state callbacks", async () => {
   const pc = fakePc();
   let ws: any;

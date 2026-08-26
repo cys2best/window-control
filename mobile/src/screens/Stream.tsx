@@ -89,6 +89,60 @@ export function Stream({ route, navigation }: { route: any; navigation: any }) {
       let directConnected = false;
       let fallbackStarted = false;
       let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
+
+      // Shared by the timeout below AND by the direct onState('failed')
+      // handler just below it — off-Tailscale, direct WHEP typically fails
+      // in milliseconds (an unreachable CGNAT/local address), so reacting
+      // immediately to that definitive answer avoids sitting out the rest
+      // of the ~2.5s timer before even starting the fallback (finding #5).
+      // The timer stays as the backstop for the genuinely slow/hung case
+      // (deviation #2) — a failure with no fallback available still needs
+      // it not to double-fire, hence the fallbackStarted guard.
+      const startFallback = () => {
+        if (gen !== startGen.current || directConnected || fallbackStarted) return;
+        fallbackStarted = true;
+        if (fallbackTimer) { clearTimeout(fallbackTimer); fallbackTimer = null; }
+        direct.close();
+        if (!sel.signaling_url) {
+          // Nothing to fall back to — surface the same "Disconnected" state
+          // a hard failure would, rather than hanging forever. The direct
+          // attempt's adaptive poller must still be torn down here: it was
+          // wired to `direct.pc` at the bottom of start(), and that pc is
+          // now closed — left running, its 5s getStats() tick would keep
+          // firing against a closed connection until unmount (finding #10).
+          adaptive.current?.stop();
+          setFailed(true);
+          setNet("disconnected");
+          return;
+        }
+        console.log(`[stream] trying public path +${Date.now() - t0}ms`);
+        // Clear any failure state left over from the direct attempt before
+        // the public path even reports in — otherwise a fast direct-WHEP
+        // failure (typical off-Tailscale) leaves the opaque, full-screen
+        // ErrorOverlay up forever even once the public path connects
+        // successfully underneath it (finding #1: setFailed(false) only
+        // ran once, at the very top of start()).
+        setFailed(false);
+        const pub = connectPublicWhep({
+          signalingUrl: sel.signaling_url, instanceName: sel.name, iceServers: sel.ice_servers,
+          onStream: (stream) => {
+            if (gen !== startGen.current) return;
+            firstFrameSeen = true;
+            console.log(`[stream] first track/frame (public) +${Date.now() - t0}ms`);
+            setStreamUrl(stream.toURL());
+          },
+          onState: (st) => {
+            if (gen !== startGen.current) return;
+            setNet(st === "connected" ? "connected" : st === "failed" ? "disconnected" : "connecting");
+            // Mirrors the direct path below: clear the overlay the moment
+            // the public path is connecting/connected, only show it again
+            // on an actual failure (finding #1).
+            setFailed(st === "failed");
+          },
+        });
+        wireSession(pub);
+      };
+
       const direct = connectWhep({
         whepUrl: sel.whep_url, stunUrl: sel.stun_url,
         onStream: (stream) => {
@@ -104,7 +158,10 @@ export function Stream({ route, navigation }: { route: any; navigation: any }) {
             if (fallbackTimer) { clearTimeout(fallbackTimer); fallbackTimer = null; }
           }
           setNet(st === "connected" ? "connected" : st === "failed" ? "disconnected" : "connecting");
-          if (st === "failed") setFailed(true);
+          if (st === "failed") {
+            setFailed(true);
+            startFallback();
+          }
         },
       });
 
@@ -112,36 +169,9 @@ export function Stream({ route, navigation }: { route: any; navigation: any }) {
       // route to), so bound how long we wait for it before trying the public
       // signaling path instead. On Tailscale/LAN this timer just loses the
       // race to onState('connected') above and is cleared — no added delay
-      // to the already-working local case.
-      fallbackTimer = setTimeout(() => {
-        fallbackTimer = null;
-        if (gen !== startGen.current || directConnected) return;
-        fallbackStarted = true;
-        direct.close();
-        if (!sel.signaling_url) {
-          // Nothing to fall back to — surface the same "Disconnected" state
-          // a hard failure would, rather than hanging forever.
-          setFailed(true);
-          setNet("disconnected");
-          return;
-        }
-        console.log(`[stream] direct WHEP timed out +${Date.now() - t0}ms, trying public path`);
-        const pub = connectPublicWhep({
-          signalingUrl: sel.signaling_url, instanceName: sel.name, iceServers: sel.ice_servers,
-          onStream: (stream) => {
-            if (gen !== startGen.current) return;
-            firstFrameSeen = true;
-            console.log(`[stream] first track/frame (public) +${Date.now() - t0}ms`);
-            setStreamUrl(stream.toURL());
-          },
-          onState: (st) => {
-            if (gen !== startGen.current) return;
-            setNet(st === "connected" ? "connected" : st === "failed" ? "disconnected" : "connecting");
-            if (st === "failed") setFailed(true);
-          },
-        });
-        wireSession(pub);
-      }, 2500);
+      // to the already-working local case. This is also the backstop for a
+      // hung/slow direct attempt that never reports 'failed' at all.
+      fallbackTimer = setTimeout(startFallback, 2500);
 
       // A session that never sends any video (the mediamtx write-queue-stuck
       // case: created server-side but peerConnectionEstablished never true,

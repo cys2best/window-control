@@ -15,6 +15,17 @@ There is no manual server entry any more — the Connecting screen resolves the 
 - [ ] **Login: wrong token shows inline error** — On the Login screen, enter an incorrect token; verify an inline "Invalid token" error appears without crashing and the screen stays put.
 - [ ] **Cookie jar: switching to a different host clears the old session** — With `AUTH_TOKEN` set and a valid login session against one server, point the device at a different server host (e.g., a second PC) so discovery resolves to a new host; verify the app does not silently reuse the old session (Login screen appears again for the new host) rather than leaking the prior cookie.
 
+## Public WebRTC Fallback
+
+Requires a server configured with `PUBLIC_UI_URL`, `AUTH_TOKEN`, and `TURN_HOST` (so `ice_servers` actually includes a TURN entry), plus a phone that can be taken off Tailscale (cellular data, not the same Wi-Fi as the dev machine).
+
+- [ ] **Off-Tailscale/cellular: fallback actually connects** — Disable Tailscale on the device (or switch to cellular data), select an instance. Verify direct WHEP fails/times out quickly and the public signaling path (`connectPublicWhep`) takes over, video plays within a few seconds — not hung indefinitely, and the stream is NOT hidden behind the ErrorOverlay once it connects.
+- [ ] **On-Tailscale: direct path still wins with no added latency** — With Tailscale/Wi-Fi connected, select an instance. Verify direct WHEP connects and the video paints with no perceptible extra delay versus before this feature existed — the ~2.5s fallback timer must not be felt on the working local case.
+- [ ] **Exactly one connection ends up active after fallback (no leftover direct attempt)** — After an off-Tailscale fallback connects, check the toolbar's net indicator settles on a single steady "LIVE" state (no flicker between two competing sessions), and confirm server-side (`/instances` or logs) that the abandoned direct WHEP session was actually torn down (DELETEd), not left as a zombie writing into a full queue.
+- [ ] **Real interop check against `signaling_bridge.py`** — On the same server/network, compare the mobile public path's connection against the web client's (`app.js`'s `initWebRTCPublic`) on the same instance: both should negotiate through the VPS relay the same way (WS handshake, raw SDP offer/answer, ICE via the configured TURN server) and both should end up with a playable stream. This is the one check that actually proves the mobile port interops with the real relay, not just a mock.
+- [ ] **Fast direct-WHEP failure triggers immediate fallback, not the full timer** — Off-Tailscale, where direct WHEP typically fails within milliseconds (unreachable CGNAT/local address), verify (via device logs, `[stream] trying public path +Nms`) that the fallback starts close to 0ms after `select()`, not after waiting out the full ~2.5s timer.
+- [ ] **No signaling_url configured: clean "Disconnected" state, not a hang** — Against a server with no `VPS_SIGNALING_URL` set, force a direct-WHEP failure (e.g. Tailscale off). Verify the app settles on the ErrorOverlay/"Disconnected" state rather than spinning forever, and that reconnect/back both still work normally.
+
 ## Instance List
 
 - [ ] **InstanceList: cards render with live 16:9 previews** — On the InstanceList screen, verify each instance card displays a preview thumbnail in 16:9 aspect ratio that updates periodically.

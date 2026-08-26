@@ -2,6 +2,10 @@ import { fetchServerInfo } from "./client";
 
 export type Probe = { base: string; status: number }; // status: 200 (reachable, no/valid auth) or 401 (reachable, needs login)
 
+function hostOf(url: string): string | null {
+  try { return new URL(url).host; } catch { return null; }
+}
+
 /**
  * Resolve the server base URL without any manual entry:
  *  1. Fast path -- try the last-known-good base alone (works most launches,
@@ -34,7 +38,21 @@ export async function discoverServer(
     }
   };
 
-  if (opts.cachedBase) {
+  // A cache hit on a LOCAL cached base short-circuits immediately -- that's
+  // already the fastest possible path, nothing worth re-checking. A cache
+  // hit on the PUBLIC url is different: it means `base` resolved to the
+  // slower relay path at some point in the past, and `base` drives
+  // everything (not just video -- /instances polling, /select, and the
+  // latency-sensitive /input WebSocket too). Short-circuiting on it here
+  // would keep that traffic pinned to the VPS relay forever, even after
+  // the phone comes back onto the same Tailscale network as the server. So
+  // a cached base that IS the public URL falls through to the bootstrap +
+  // race below instead of returning early -- the race still probes
+  // publicUrl itself as one of its candidates (so this doesn't regress the
+  // cached-public case), it just also gives local_url a chance to win
+  // first if it answers.
+  const cachedIsPublicUrl = !!opts.cachedBase && hostOf(opts.cachedBase) === hostOf(publicUrl);
+  if (opts.cachedBase && !cachedIsPublicUrl) {
     const hit = await probe(opts.cachedBase);
     if (hit) return hit;
   }

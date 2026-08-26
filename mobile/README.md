@@ -37,6 +37,8 @@ npx eas build --profile development --platform android
 
 Once the build completes, install the development client app on your device (iOS via TestFlight or download link; Android via direct install or scan QR code).
 
+> **If you already have a dev-client installed from before this branch:** it must be rebuilt (repeat this step), not just re-bundled via `npx expo start --dev-client`. This branch adds a native module, `@react-native-cookies/cookies`, imported at module scope by `src/api/ServerContext.tsx`. Native modules are compiled into the dev-client binary itself -- an older binary that predates this dependency will hard-crash at startup (before any JS error boundary can catch it) once it loads a bundle that imports it, since re-bundling alone can't add a native module to an already-built binary.
+
 ### Step 3: Run the Dev Server
 Start the development server with the dev-client profile:
 ```bash
