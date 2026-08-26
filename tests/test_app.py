@@ -73,6 +73,19 @@ def test_server_info_returns_local_url():
     assert r.json() == {"local_url": "http://127.0.0.1:8080"}
 
 
+def test_server_info_returns_null_local_url_when_best_ip_unavailable():
+    # get_best_ip() returning falsy must NOT fall back to
+    # request.client.host -- reached through the public tunnel, that's the
+    # tunnel's own loopback address server-side, not anything the mobile
+    # client could usefully connect to. The response shape must stay
+    # stable/cacheable regardless of who's calling.
+    client, _ = _make_client()
+    with patch("server.app.get_best_ip", return_value=None):
+        r = client.get("/server-info")
+    assert r.status_code == 200
+    assert r.json() == {"local_url": None}
+
+
 def test_server_info_exempt_from_auth_gate():
     # Mobile has no session cookie yet when it calls this -- it must stay
     # reachable even with AUTH_TOKEN set and no cookie sent, or discovery

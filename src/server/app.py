@@ -241,16 +241,25 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
         return {"ok": True}
 
     @app.get("/server-info")
-    async def server_info(request: Request):
+    async def server_info():
         """Unauthenticated bootstrap endpoint: mobile has no session yet when
         it calls this, so it must stay exempt from the auth gate (see
         _AUTH_EXEMPT_PATHS above). Reports the server's *current* local
         IP -- unlike a value baked into the mobile app at build time, this
         is answered live, so it's never stale after the host's Tailscale/LAN
         IP changes.
+
+        No `request.client.host` fallback: called through the public tunnel,
+        that's the tunnel's own loopback address server-side, not anything
+        the mobile client could usefully connect to -- caller-dependent and
+        useless either way. This response's shape should be stable and
+        cacheable regardless of how it was reached, so an absent local IP is
+        reported as `None` (mirrors `signaling_url`'s null-when-unset
+        convention on `/select` below), same as any other "not configured"
+        value elsewhere in this file.
         """
-        host = get_best_ip() or request.client.host
-        return {"local_url": f"http://{host}:{PORT}"}
+        host = get_best_ip()
+        return {"local_url": f"http://{host}:{PORT}" if host else None}
 
     @app.on_event("startup")
     async def _startup():
