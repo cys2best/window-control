@@ -105,8 +105,16 @@ class InstanceManager:
         _ip = get_best_ip()
         self._ensure_stun(_ip)
 
-        if self._webrtc is None:
+        if self._webrtc is None and self._mediamtx is not None:
             # mediamtx backend: one always-live RTSP/WHEP path per instance.
+            # The self._mediamtx is not None guard is defensive, not the fix
+            # for the real bug: app.py's _startup() ordering is what
+            # guarantees set_webrtc_manager() runs before refresh() can ever
+            # execute under WEBRTC_BACKEND=="aiortc" (main.py constructs this
+            # manager with mediamtx=None in that mode). This just means a
+            # future ordering mistake degrades to a skipped mediamtx-path
+            # setup instead of crashing this call's background thread with
+            # AttributeError: 'NoneType' object has no attribute 'running'.
             if not self._mediamtx.running:
                 _log(f"[mediamtx] booting mediamtx, advertising IP for ICE: {_ip}")
                 self._mediamtx.start(all_names, tailscale_ip=_ip)

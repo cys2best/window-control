@@ -247,16 +247,17 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
     async def _startup():
         loop = asyncio.get_event_loop()
         loop.set_exception_handler(_make_exception_handler(loop.get_exception_handler()))
-        # Discover LDPlayer instances on startup
-        import threading
-        threading.Thread(target=instance_manager.refresh, daemon=True).start()
 
-        global _tunnel_task
-        if PUBLIC_UI_URL:
-            log.info("tunnel: starting task for %s", PUBLIC_UI_URL)
-            _tunnel_task = asyncio.create_task(
-                run_tunnel_with_reconnect(PUBLIC_UI_URL, TUNNEL_SECRET))
-
+        # Must run BEFORE the instance_manager.refresh() thread below is
+        # started, not after: refresh() branches on `self._webrtc is None`
+        # to decide mediamtx vs aiortc, and under WEBRTC_BACKEND=="aiortc"
+        # main.py constructs InstanceManager with mediamtx=None too -- so a
+        # refresh() that runs before set_webrtc_manager() lands would take
+        # the mediamtx branch with self._mediamtx also None and crash with
+        # AttributeError on that background thread (silently -- instance
+        # discovery would then only recover once /select re-triggers
+        # refresh() later). Previously this block ran AFTER the thread was
+        # started, which raced exactly that window.
         global _whep_server_task
         if WEBRTC_BACKEND == "aiortc":
             webrtc = WebrtcManager(loop)
@@ -270,6 +271,16 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
             whep_server = uvicorn.Server(whep_config)
             log.info("whep: starting aiortc WHEP server on port %s", WHEP_PORT)
             _whep_server_task = asyncio.create_task(whep_server.serve())
+
+        # Discover LDPlayer instances on startup
+        import threading
+        threading.Thread(target=instance_manager.refresh, daemon=True).start()
+
+        global _tunnel_task
+        if PUBLIC_UI_URL:
+            log.info("tunnel: starting task for %s", PUBLIC_UI_URL)
+            _tunnel_task = asyncio.create_task(
+                run_tunnel_with_reconnect(PUBLIC_UI_URL, TUNNEL_SECRET))
 
     @app.on_event("shutdown")
     async def _shutdown():
