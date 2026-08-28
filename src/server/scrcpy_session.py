@@ -846,7 +846,7 @@ class ScrcpySession:
         _log(f"[scrcpy] start_video: persistent half gone during spawn serial={self.serial}")
         return False
 
-    def start_video_aiortc(self, on_frame) -> bool:
+    def start_video_aiortc(self, on_frame: "Callable[[bytes], None]") -> bool:
         """Start the on-demand half using an aiortc frame sink instead of
         ffmpeg. `on_frame` is called once per NAL unit, from a dedicated
         writer thread (this method's own, not the persistent-loop thread) --
