@@ -1038,13 +1038,16 @@ class ScrcpySession:
         with self._restart_lock:
             self.tier = tier
             with self._lock:
-                # Persistent-half state ONLY. Post-split, `_ffmpeg_proc is not
-                # None` means "a viewer is watching right now" -- gating on it
-                # would silently skip the scrcpy-server relaunch for an
-                # unwatched instance, leaving the device encoding at the OLD
-                # resolution/bitrate while still reporting success.
+                # Persistent-half state ONLY. Post-split, `_write_queue is not
+                # None` means "a viewer is watching right now" (either backend
+                # -- see video_active) -- gating on it would silently skip the
+                # scrcpy-server relaunch for an unwatched instance, leaving the
+                # device encoding at the OLD resolution/bitrate while still
+                # reporting success. Checked inline rather than via the
+                # video_active property: self._lock is a plain (non-reentrant)
+                # Lock, and this runs already inside `with self._lock:`.
                 was_running = self._running
-                was_video_active = self._ffmpeg_proc is not None
+                was_video_active = self._write_queue is not None
             if was_running:
                 self.stop()
                 if not self.start():

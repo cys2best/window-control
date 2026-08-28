@@ -688,7 +688,10 @@ def test_set_tier_restarts_even_with_no_viewer_watching():
 def test_set_tier_restores_video_when_a_viewer_was_watching():
     s = ScrcpySession("emulator-5554", 0, "rtsp://localhost:8554/instance0", 720, 1280)
     s._running = True
-    s._ffmpeg_proc = _FakeFfmpegProc()
+    # was_video_active (read by set_tier below) is backend-agnostic and
+    # checks _write_queue, not _ffmpeg_proc -- set it directly to simulate
+    # "a viewer is watching" without depending on which backend they're on.
+    s._write_queue = object()
     calls = {"start": 0, "restore": 0}
     s.stop = lambda: None
     s.start = lambda: calls.__setitem__("start", calls["start"] + 1) or True
@@ -696,6 +699,30 @@ def test_set_tier_restores_video_when_a_viewer_was_watching():
 
     assert s.set_tier("1080") is True
     assert calls == {"start": 1, "restore": 1}
+
+
+def test_set_tier_restores_video_via_aiortc_when_an_aiortc_viewer_was_watching():
+    # video_active's underlying field (_write_queue) is backend-agnostic, but
+    # set_tier's restore path delegates to _restore_video_after_restart --
+    # this confirms an aiortc viewer's video comes back via
+    # start_video_aiortc (not start_video, the ffmpeg entry point) after a
+    # tier-change restart. Runs the real _restore_video_after_restart (not
+    # mocked away, unlike the sibling test above) so this exercises the
+    # actual on_frame dispatch, not just that "some restore" happened.
+    s = ScrcpySession("emulator-5554", 0, "rtsp://localhost:8554/instance0", 720, 1280)
+    s._running = True
+    s._write_queue = object()          # an aiortc viewer is watching
+    s._aiortc_on_frame = lambda nalu: None
+    calls = {"start": 0, "start_video": 0, "start_video_aiortc": 0}
+    s.stop = lambda: None
+    s.start = lambda: calls.__setitem__("start", calls["start"] + 1) or True
+    s.start_video = lambda: calls.__setitem__("start_video", calls["start_video"] + 1) or True
+    s.start_video_aiortc = lambda on_frame: (
+        calls.__setitem__("start_video_aiortc", calls["start_video_aiortc"] + 1) or True
+    )
+
+    assert s.set_tier("1080") is True
+    assert calls == {"start": 1, "start_video": 0, "start_video_aiortc": 1}
 
 
 def test_idr_heartbeat_steady_state_interval_is_8s():
