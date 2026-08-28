@@ -275,6 +275,18 @@ def test_video_active_false_before_start_video():
     assert s.video_active is False
 
 
+def test_video_active_true_for_aiortc_backed_session_with_no_ffmpeg():
+    session = ScrcpySession("emulator-5554", 0, "rtsp://unused", 100, 200)
+    session._running = True
+    session._video_sock = object()  # truthy stand-in; start_video_aiortc only checks not-None
+    ok = session.start_video_aiortc(on_frame=lambda nalu: None)
+    assert ok is True
+    assert session.video_active is True
+    assert session._ffmpeg_proc is None  # confirms no ffmpeg was spawned
+    session.stop_video_aiortc()
+    assert session.video_active is False
+
+
 def test_start_video_refuses_when_persistent_half_not_up():
     # start_video() must not spawn ffmpeg for a session whose scrcpy-server
     # video socket was never connected -- there is nothing for ffmpeg to
@@ -630,7 +642,10 @@ def test_restart_if_dead_restores_video_when_a_viewer_was_watching():
     # runOnDemand for a reader count going 0->1 -- so without this the viewer
     # watching a watchdog-restarted instance loses video permanently.
     s = ScrcpySession("emulator-5554", 0, "rtsp://localhost:8554/instance0", 720, 1280)
-    s._ffmpeg_proc = _FakeFfmpegProc()   # a viewer is watching
+    # video_active (read by restart_if_dead below) is backend-agnostic and
+    # checks _write_queue, not _ffmpeg_proc -- set it directly to simulate
+    # "a viewer is watching" without depending on which backend they're on.
+    s._write_queue = object()
     s._video_sock = None                 # ...but the persistent half is dead
     calls = {"start": 0, "restore": 0}
     s.stop = lambda: None

@@ -53,6 +53,7 @@ import sys
 import threading
 import time
 import traceback
+from typing import Callable
 
 from config import ASSETS_DIR, QUALITY_TIERS, DEFAULT_TIER
 
@@ -475,6 +476,11 @@ class ScrcpySession:
         # None when no viewer is watching (video not active).
         self._write_queue: _NaluWriteQueue | None = None
         self._writer_thread: threading.Thread | None = None
+        # Set by start_video_aiortc(), survives a persistent-half restart (it
+        # is not cleared by _stop_locked or the persistent loop's teardown --
+        # only stop_video_aiortc() clears it). _restore_video_after_restart
+        # reads it to tell which backend was active before the restart.
+        self._aiortc_on_frame: "Callable[[bytes], None] | None" = None
         # Serializes a full stop→start cycle so a tier-change restart and the
         # watchdog's dead-session restart can't interleave. Without it, two
         # start() calls race two _persistent_loop threads onto the same scrcpy TCP
@@ -840,6 +846,61 @@ class ScrcpySession:
         _log(f"[scrcpy] start_video: persistent half gone during spawn serial={self.serial}")
         return False
 
+    def start_video_aiortc(self, on_frame) -> bool:
+        """Start the on-demand half using an aiortc frame sink instead of
+        ffmpeg. `on_frame` is called once per NAL unit, from a dedicated
+        writer thread (this method's own, not the persistent-loop thread) --
+        the same threading contract start_video()'s ffmpeg writer thread
+        already had. This method knows nothing about asyncio; the caller
+        (WebrtcManager.push_nalu_threadsafe) is responsible for getting back
+        onto the event loop.
+
+        Mutually exclusive with start_video() (ffmpeg): both set
+        self._write_queue, and this entry check treats either as "already
+        active", matching start_video()'s own idempotency guard.
+        """
+        with self._lock:
+            if not self._running or self._video_sock is None:
+                return False
+            if self._write_queue is not None:
+                return True
+        write_queue = _NaluWriteQueue()
+
+        def _writer_loop(q=write_queue, cb=on_frame):
+            while True:
+                nalu = q.get()
+                if nalu is None:
+                    return
+                cb(nalu)
+
+        writer_thread = threading.Thread(target=_writer_loop, daemon=True)
+        writer_thread.start()
+
+        with self._lock:
+            if not self._running or self._video_sock is None:
+                write_queue.close()
+                return False
+            if self._write_queue is not None:
+                write_queue.close()
+                return True
+            self._write_queue = write_queue
+            self._writer_thread = writer_thread
+            self._aiortc_on_frame = on_frame
+        self.control.request_idr()
+        _log(f"[scrcpy] aiortc video started serial={self.serial}")
+        return True
+
+    def stop_video_aiortc(self) -> None:
+        """Stop the on-demand aiortc video half. Delegates to stop_video():
+        that method's ffmpeg-specific cleanup (self._ffmpeg_proc) is already
+        a no-op when nothing set it, which is always true on this path --
+        only self._write_queue/self._writer_thread need tearing down here,
+        and stop_video() already does exactly that.
+        """
+        with self._lock:
+            self._aiortc_on_frame = None
+        self.stop_video()
+
     def stop_video(self) -> None:
         """Stop the on-demand half. No-op if not currently active.
 
@@ -877,43 +938,32 @@ class ScrcpySession:
 
     @property
     def video_active(self) -> bool:
-        """Whether a viewer's video pipeline is currently attached.
-
-        Deliberately identity-only (no ffmpeg_proc.poll() check, unlike
-        start_video's idempotency guard): nothing reports this as a status
-        field, and its one real consumer is the restart path's
-        "was someone watching before this restart?" question. A silently
-        crashed ffmpeg should still answer YES there so the restart restores
-        video, rather than being treated as "nobody was watching".
+        """Whether a viewer's video pipeline is currently attached, for
+        EITHER backend (ffmpeg or aiortc) -- both set self._write_queue when
+        active, so checking that instead of self._ffmpeg_proc (which stays
+        None on the aiortc path) makes this backend-agnostic. Deliberately
+        identity-only (no liveness poll), unlike start_video's idempotency
+        guard: nothing reports this as a status field, and its one real
+        consumer is the restart path's "was someone watching before this
+        restart?" question.
         """
         with self._lock:
-            return self._ffmpeg_proc is not None
+            return self._write_queue is not None
 
     def _restore_video_after_restart(self) -> None:
         """Best-effort: re-activate video after a self-initiated persistent-half
-        restart, if a viewer was watching before the restart.
-
-        Before this plan's split, ffmpeg lived in the same loop as the
-        persistent connection, so any restart restored video for free. Now
-        a restart's own generation guard leaves the outgoing loop's
-        `stop_video()` call skipped (it's stale by the time it would run --
-        see _persistent_loop's finally), so the OLD ffmpeg process usually
-        survives the restart untouched and this call's start_video() is a
-        same-process no-op that just confirms it's still there. The one
-        real gap this guards against: if that ffmpeg is gone or dead (e.g.
-        it crashed, or the session was fully stopped and cold-started),
-        start_video() actually (re)spawns it. Either way, mediamtx never
-        re-fires runOnDemand for a reader count that's already nonzero, so
-        nothing else would recover a genuinely-dead publisher here.
-
-        Polls briefly because start() returns as soon as the loop thread is
-        spawned, before the handshake actually sets self._video_sock -- an
-        immediate start_video() call would see the persistent half not ready
-        yet and return False.
+        restart, if a viewer was watching before the restart. Restores
+        whichever backend was active -- self._aiortc_on_frame survives a
+        restart (it's not cleared by _stop_locked/the persistent loop's
+        teardown, only by stop_video_aiortc()), so its presence says which
+        start_video* to call.
         """
         deadline = time.monotonic() + 8.0
         while time.monotonic() < deadline:
-            if self.start_video():
+            with self._lock:
+                on_frame = self._aiortc_on_frame
+            started = self.start_video_aiortc(on_frame) if on_frame is not None else self.start_video()
+            if started:
                 return
             time.sleep(0.1)
         _log(f"[scrcpy] restore video after restart timed out serial={self.serial}")
