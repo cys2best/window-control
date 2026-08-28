@@ -156,6 +156,70 @@ class ScrcpyVideoClient:
             self.control_sock.close()
 
 
+_NAL_TYPE_SLICE_NON_IDR = 1
+_NAL_TYPE_SLICE_IDR = 5
+
+
+def _nal_types_in_chunk(chunk: bytes) -> list[int]:
+    """Every NAL unit type present in one scrcpy wire-frame payload.
+
+    A wire frame may concatenate multiple Annex-B NAL units rather than
+    carrying exactly one -- confirmed via live capture during this
+    investigation (a repeated SPS bundled with the PPS in a single wire
+    frame). Scans every 3- or 4-byte start code in the chunk.
+    """
+    types = []
+    i = 0
+    n = len(chunk)
+    while i < n - 3:
+        if chunk[i] == 0 and chunk[i + 1] == 0:
+            if chunk[i + 2] == 1:
+                start = i + 3
+            elif i < n - 4 and chunk[i + 2] == 0 and chunk[i + 3] == 1:
+                start = i + 4
+            else:
+                i += 1
+                continue
+            if start < n:
+                types.append(chunk[start] & 0x1F)
+            i = start
+        else:
+            i += 1
+    return types
+
+
+async def group_into_access_units(chunks: AsyncIterator[bytes]) -> AsyncIterator[bytes]:
+    """Buffer raw scrcpy wire-frame chunks until a VCL NAL (slice, type 1 or
+    5) appears, then yield the whole accumulated concatenation as one H264
+    access unit.
+
+    Root-cause fix for the black-frame bug confirmed during this
+    investigation (see
+    docs/superpowers/plans/2026-08-28-mediamtx-aiortc-migration.md's Task 1
+    result): aiortc's RTCRtpSender calls track.recv() once per RTP "frame"
+    and assigns that single call one RTP timestamp, with the marker bit set
+    only on its last payload (rtcrtpsender.py's _next_encoded_frame/
+    _run_rtp). Pushing SPS/PPS and the slice that uses them as SEPARATE
+    av.Packets -- which is what scrcpy's own wire framing sometimes does --
+    gives them different RTP timestamps and puts the marker bit on the
+    wrong (non-VCL) packet, violating RFC 6184's requirement that all NAL
+    units of one access unit share a single RTP timestamp. Grouping here
+    restores one recv() == one access unit, matching what a normal (non-
+    passthrough) H264Encoder.encode() call already produces per frame.
+
+    A parameter-set-only trailer with no following slice (e.g. stream ends
+    mid-access-unit) is buffered and never flushed -- there is no complete
+    access unit to emit, so it's dropped rather than sent malformed.
+    """
+    buffer = bytearray()
+    async for chunk in chunks:
+        buffer += chunk
+        types = _nal_types_in_chunk(chunk)
+        if _NAL_TYPE_SLICE_NON_IDR in types or _NAL_TYPE_SLICE_IDR in types:
+            yield bytes(buffer)
+            buffer = bytearray()
+
+
 class PassthroughH264Track(MediaStreamTrack):
     """Wraps already-encoded Annex-B H264 NALUs as av.Packet so aiortc's
     Encoder.pack() path repacketizes them into RTP with no decode/re-encode
@@ -543,13 +607,18 @@ async def run_engine(scrcpy_port: int, signaling_url: str, session_id: str, ice_
                         await pc.addIceCandidate(cand)
 
     async def video_pump_loop():
-        # Push the SPS NALU already consumed above (to derive
-        # profile_level_id) first -- it's still needed by the decoder --
-        # then resume iterating the SAME async generator, which correctly
-        # continues from the second frame onward.
-        track.push_nalu(first_frame)
-        async for nalu in frames:
-            track.push_nalu(nalu)
+        # Re-chain the SPS NALU already consumed above (to derive
+        # profile_level_id) in front of the rest of the stream, then group
+        # by access unit before pushing -- see group_into_access_units()'s
+        # docstring for why this is required for aiortc's passthrough RTP
+        # sender to produce a decodable stream, not just an optimization.
+        async def _chunks():
+            yield first_frame
+            async for nalu in frames:
+                yield nalu
+
+        async for access_unit in group_into_access_units(_chunks()):
+            track.push_nalu(access_unit)
 
     async def idr_heartbeat_loop():
         await peer_connected.wait()

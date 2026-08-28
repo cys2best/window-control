@@ -641,3 +641,57 @@ async def test_offer_sdp_constrained_to_h264_only_with_dynamic_profile():
         assert "42001f" not in sdp, f"42001f profile leaked into offer SDP: {sdp}"
     finally:
         await pc.close()
+
+
+async def _to_async_iter(items):
+    for item in items:
+        yield item
+
+
+async def test_group_into_access_units_combines_params_split_across_chunks_with_slice():
+    """Root-cause fix for the black-frame bug: scrcpy sometimes emits SPS/PPS
+    in separate wire chunks from the slice that uses them (confirmed via live
+    capture during the aiortc migration's Phase 0 investigation -- see
+    docs/superpowers/plans/2026-08-28-mediamtx-aiortc-migration.md). Pushed
+    as separate av.Packets, aiortc's RTCRtpSender gives each its own RTP
+    timestamp and marker bit (rtcrtpsender.py's _next_encoded_frame/_run_rtp
+    call track.recv() once per RTP "frame"), breaking RFC 6184 access-unit
+    grouping. This groups them back into one access unit per slice.
+    """
+    from server.rtc_engine import group_into_access_units
+
+    sps = b"\x00\x00\x00\x01\x67sps-bytes"
+    pps_with_repeated_sps = b"\x00\x00\x00\x01\x67sps-again\x00\x00\x00\x01\x68pps-bytes"
+    idr_slice = b"\x00\x00\x00\x01\x65idr-slice-bytes"
+
+    chunks = _to_async_iter([sps, pps_with_repeated_sps, idr_slice])
+    access_units = [au async for au in group_into_access_units(chunks)]
+
+    assert access_units == [sps + pps_with_repeated_sps + idr_slice]
+
+
+async def test_group_into_access_units_yields_slice_only_chunk_immediately():
+    from server.rtc_engine import group_into_access_units
+
+    idr_slice = b"\x00\x00\x00\x01\x65idr-slice-bytes"
+    non_idr_slice = b"\x00\x00\x00\x01\x61p-slice-bytes"
+
+    chunks = _to_async_iter([idr_slice, non_idr_slice])
+    access_units = [au async for au in group_into_access_units(chunks)]
+
+    assert access_units == [idr_slice, non_idr_slice]
+
+
+async def test_group_into_access_units_drops_trailing_params_with_no_slice():
+    """A parameter-set chunk with no following slice (e.g. stream ends mid-
+    access-unit) is buffered and never flushed -- matching the existing
+    drop-on-shutdown behavior elsewhere in this codebase (_NaluWriteQueue's
+    close() sentinel) rather than emitting an incomplete access unit.
+    """
+    from server.rtc_engine import group_into_access_units
+
+    sps = b"\x00\x00\x00\x01\x67sps-bytes"
+    chunks = _to_async_iter([sps])
+    access_units = [au async for au in group_into_access_units(chunks)]
+
+    assert access_units == []
