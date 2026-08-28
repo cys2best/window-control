@@ -174,16 +174,19 @@ def test_lan_ice_servers_uses_tailscale_stun_not_public(monkeypatch):
     # fail, 403 Forbidden IP) to allocate a TURN channel through the public
     # coturn instance.
     monkeypatch.setattr(whep_app_module, "STUN_PORT", 3478)
-    servers = whep_app_module._lan_ice_servers("100.64.1.2", include_turn=True)
-    assert servers[0] == {"urls": "stun:100.64.1.2:3478"}
-    assert not any(s["urls"] == "stun:stun.l.google.com:19302" for s in servers)
+    servers = whep_app_module._lan_ice_servers("100.64.1.2", is_public_path=False)
+    assert servers == [{"urls": "stun:100.64.1.2:3478"}]
 
 
-def test_lan_ice_servers_keeps_turn_fallback_only_when_requested(monkeypatch):
-    # TURN must only be offered on the loopback/public path (see
-    # _lan_ice_servers' docstring) -- a direct LAN/Tailscale client whose
-    # PC tries to allocate a TURN channel through the public coturn
-    # instance gets "403 Forbidden IP" (confirmed live).
+def test_lan_ice_servers_uses_public_list_untouched_for_public_path(monkeypatch):
+    # Public path (signaling_bridge.py's loopback POST) must get
+    # get_ice_servers() untouched, not a Tailscale-STUN hybrid: mixing in
+    # the Tailscale-bound STUN entry there makes this PC's own host
+    # candidate its Tailscale IP (100.64.0.0/10, CGNAT space), and coturn
+    # denies relaying to any peer address in that range by default --
+    # confirmed live as a second, distinct "403 Forbidden IP" even after
+    # gating TURN off for direct LAN clients. Direct LAN/Tailscale peers
+    # must never get TURN at all (same live 403).
     monkeypatch.setattr(whep_app_module, "STUN_PORT", 3478)
     monkeypatch.setattr(
         whep_app_module, "get_ice_servers",
@@ -192,13 +195,13 @@ def test_lan_ice_servers_keeps_turn_fallback_only_when_requested(monkeypatch):
             {"urls": "turn:turn.example.com:3478", "username": "u", "credential": "p"},
         ],
     )
-    servers = whep_app_module._lan_ice_servers("100.64.1.2", include_turn=True)
-    assert servers == [
-        {"urls": "stun:100.64.1.2:3478"},
+    public_servers = whep_app_module._lan_ice_servers("100.64.1.2", is_public_path=True)
+    assert public_servers == [
+        {"urls": "stun:stun.l.google.com:19302"},
         {"urls": "turn:turn.example.com:3478", "username": "u", "credential": "p"},
     ]
 
-    lan_servers = whep_app_module._lan_ice_servers("100.64.1.2", include_turn=False)
+    lan_servers = whep_app_module._lan_ice_servers("100.64.1.2", is_public_path=False)
     assert lan_servers == [{"urls": "stun:100.64.1.2:3478"}]
 
 

@@ -27,7 +27,7 @@ log = logging.getLogger(__name__)
 _CLOSE_GRACE_SECONDS = 45.0  # matches mediamtx's runOnDemandCloseAfter today
 
 
-def _lan_ice_servers(host: str, include_turn: bool) -> list[dict]:
+def _lan_ice_servers(host: str, is_public_path: bool) -> list[dict]:
     """Build the ICE server list for the Python-side aiortc RTCPeerConnection
     this endpoint negotiates -- NOT the same list app.py's /select hands the
     browser client (that one is deliberately the public list; the browser
@@ -36,30 +36,30 @@ def _lan_ice_servers(host: str, include_turn: bool) -> list[dict]:
     This endpoint serves both a direct LAN/Tailscale client (this
     migration's actual Phase 1 scope) and the public path via
     signaling_bridge.py, which always POSTs from 127.0.0.1 (see Finding #6).
-    Passing get_ice_servers()'s public TURN-inclusive list wholesale as this
-    PC's OWN ice_servers was wrong for the LAN case: confirmed live, a LAN
-    client's negotiation made this process's own RTCPeerConnection try to
-    allocate a TURN channel through the public coturn instance, which
-    rejected it with "403 Forbidden IP" (coturn's peer-IP policy disallows
-    relaying to a private/Tailscale address) -- an unhandled
-    aioice.stun.TransactionFailed logged as noise. Re-review confirmed this
-    reproduces even with the public STUN entry dropped, since TURN was still
-    unconditionally included -- so TURN must only be offered on the
-    loopback/public path, never for a direct LAN/Tailscale peer.
+    These two cases need genuinely different ice_servers, not a merged
+    list -- an earlier attempt at merging (Tailscale STUN as primary, with
+    TURN layered on top for the loopback case) still reproduced coturn's
+    "403 Forbidden IP" live: this PC's own host candidate ends up being its
+    Tailscale IP (100.64.0.0/10, RFC 6598 CGNAT space) either way once that
+    STUN entry is present, and coturn denies relaying to any peer address in
+    that range by default (it's the same policy that blocks relaying to
+    127.0.0.0/8, 169.254.0.0/16, 192.168.0.0/16, etc. -- a built-in
+    SSRF-style guard, not something misconfigured on the VPS). So:
 
-    ice_config.py's own docstring is explicit that its public STUN entry is
-    for the public path specifically, and that "the local/Tailscale path
-    keeps using the embedded STUN_PORT server (stun_server.py, bound to the
-    Tailscale IP) unchanged" -- exactly the server app.py's /select endpoint
-    already points the browser at via `stun_url: f"stun:{host}:{STUN_PORT}"`.
-    Mirror that here as the primary entry always, and layer in TURN (if
-    configured) only when this request came from signaling_bridge.py's own
-    loopback POST -- never for a direct LAN/Tailscale peer.
+    - Public path (signaling_bridge.py's loopback POST): use
+      get_ice_servers() untouched -- the real public STUN discovers this
+      PC's actual internet-facing srflx candidate (not its Tailscale IP),
+      and TURN is a legitimate relay fallback for genuinely NAT'd public
+      peers, matching ice_config.py's own stated scope.
+    - Direct LAN/Tailscale peer: Tailscale-bound STUN only
+      (stun_server.py via STUN_PORT, matching what app.py's /select already
+      hands the browser as stun_url), no TURN -- a same-Tailnet peer never
+      needs a relay, and offering TURN here is what produced the 403 in the
+      first place.
     """
-    servers = [{"urls": f"stun:{host}:{STUN_PORT}"}]
-    if include_turn:
-        servers.extend(s for s in get_ice_servers() if s["urls"].startswith("turn:"))
-    return servers
+    if is_public_path:
+        return get_ice_servers()
+    return [{"urls": f"stun:{host}:{STUN_PORT}"}]
 
 
 def create_whep_app(instance_manager: InstanceManager, webrtc: WebrtcManager) -> FastAPI:
@@ -163,7 +163,7 @@ def create_whep_app(instance_manager: InstanceManager, webrtc: WebrtcManager) ->
         # POST (see _lan_ice_servers' docstring) -- the only path that
         # should ever get TURN offered to this process's own PC.
         offer_sdp = (await request.body()).decode("utf-8")
-        is_loopback = request.client is not None and request.client.host in ("127.0.0.1", "::1")
+        is_public_path = request.client is not None and request.client.host in ("127.0.0.1", "::1")
         host = await asyncio.to_thread(get_best_ip) or (request.client.host if request.client else "")
 
         # Held across the whole start_video decision AND create_session
@@ -190,7 +190,7 @@ def create_whep_app(instance_manager: InstanceManager, webrtc: WebrtcManager) ->
                 # up to 8s of black screen.
                 session_id, answer_sdp = await webrtc.create_session(
                     instance_name, offer_sdp, AIORTC_PROFILE_LEVEL_ID,
-                    _lan_ice_servers(host, include_turn=is_loopback),
+                    _lan_ice_servers(host, is_public_path=is_public_path),
                     on_connected=inst.session.control.request_idr,
                     on_disconnected=lambda n=instance_name: _schedule_grace_if_idle(n),
                 )
