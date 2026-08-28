@@ -68,6 +68,13 @@ class InstanceManager:
         )
         self._watchdog_thread.start()
 
+    def set_webrtc_manager(self, webrtc: "WebrtcManager") -> None:
+        """Late-bind the WebrtcManager once an event loop exists (called
+        from app.py's startup handler) -- WebrtcManager itself requires a
+        running loop, which main.py's construction point predates.
+        """
+        self._webrtc = webrtc
+
     # ── Discovery ────────────────────────────────────────────────────────────
 
     def refresh(self):

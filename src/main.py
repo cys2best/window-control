@@ -137,8 +137,13 @@ def main():
     state.set_quality(QUALITY_MAP[DEFAULT_QUALITY])
     frame_queue = FrameQueue()
 
-    mediamtx = MediamtxManager()
-    instance_manager = InstanceManager(mediamtx)
+    from config import WEBRTC_BACKEND
+    if WEBRTC_BACKEND == "aiortc":
+        mediamtx = None
+        instance_manager = InstanceManager(mediamtx=None)  # webrtc set once the event loop exists — see app.py's _startup()
+    else:
+        mediamtx = MediamtxManager()
+        instance_manager = InstanceManager(mediamtx)
 
     fastapi_app = create_app(state, frame_queue, instance_manager)
 

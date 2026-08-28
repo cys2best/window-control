@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Literal
 
-from config import CLIENT_DIR, COOKIE_SECURE, QUALITY_MAP, WHEP_PORT, STUN_PORT, TIER_ORDER, VPS_SIGNALING_URL
+from config import CLIENT_DIR, COOKIE_SECURE, QUALITY_MAP, WHEP_PORT, STUN_PORT, TIER_ORDER, VPS_SIGNALING_URL, WEBRTC_BACKEND
 from server.stream import CaptureState, FrameQueue, mjpeg_generator
 from server import adb_manager
 from server import auth
@@ -22,11 +22,14 @@ from server.instance_manager import InstanceManager
 from server.http_tunnel import run_tunnel_with_reconnect
 from server.signaling_bridge import run_bridge_with_reconnect
 from server.tailscale import get_best_ip
+from server.webrtc_manager import WebrtcManager
+from server.whep_app import create_whep_app
 
 log = logging.getLogger(__name__)
 
 _bridge_task: "asyncio.Task | None" = None
 _tunnel_task: "asyncio.Task | None" = None
+_whep_server_task: "asyncio.Task | None" = None
 
 # Routes reachable without a session cookie even when AUTH_TOKEN is set —
 # just enough to load the login gate and let it authenticate.
@@ -254,6 +257,20 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
             _tunnel_task = asyncio.create_task(
                 run_tunnel_with_reconnect(PUBLIC_UI_URL, TUNNEL_SECRET))
 
+        global _whep_server_task
+        if WEBRTC_BACKEND == "aiortc":
+            webrtc = WebrtcManager(loop)
+            instance_manager.set_webrtc_manager(webrtc)
+            whep_app = create_whep_app(instance_manager, webrtc)
+            import uvicorn
+            whep_config = uvicorn.Config(
+                whep_app, host="0.0.0.0", port=WHEP_PORT,
+                log_level="warning", log_config=None, proxy_headers=False,
+            )
+            whep_server = uvicorn.Server(whep_config)
+            log.info("whep: starting aiortc WHEP server on port %s", WHEP_PORT)
+            _whep_server_task = asyncio.create_task(whep_server.serve())
+
     @app.on_event("shutdown")
     async def _shutdown():
         # The public signaling bridge task (if any) is otherwise left
@@ -274,6 +291,15 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
             _tunnel_task.cancel()
             try:
                 await _tunnel_task
+            except asyncio.CancelledError:
+                pass
+
+        global _whep_server_task
+        if _whep_server_task is not None and not _whep_server_task.done():
+            log.info("whep: cancelling task on shutdown")
+            _whep_server_task.cancel()
+            try:
+                await _whep_server_task
             except asyncio.CancelledError:
                 pass
 
