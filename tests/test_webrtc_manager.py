@@ -75,3 +75,20 @@ async def test_push_nalu_threadsafe_fans_out_to_all_viewers():
     # queue.put_nowait is itself fire-and-forget, so there's nothing further
     # to assert on the track without draining recv(), which isn't needed to
     # prove the thread-safety contract this test targets.
+
+
+@pytest.mark.asyncio
+async def test_create_session_cleans_up_peer_connection_on_negotiation_failure():
+    loop = asyncio.get_event_loop()
+    manager = WebrtcManager(loop)
+
+    # Attempt negotiation with malformed offer_sdp to trigger setRemoteDescription failure
+    with pytest.raises(Exception):
+        await manager.create_session(
+            "instance0", "", "42e01f", [],
+        )
+
+    # Verify peer connection was not registered in _pcs dict
+    # (since negotiation failed before session_id was assigned)
+    assert len(manager._pcs) == 0
+    assert manager.viewer_count("instance0") == 0

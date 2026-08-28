@@ -61,9 +61,13 @@ class WebrtcManager:
         transceiver = pc.addTransceiver(track, direction="sendonly")
         transceiver.setCodecPreferences(_h264_codec_for_profile(profile_level_id))
 
-        await pc.setRemoteDescription(RTCSessionDescription(sdp=offer_sdp, type="offer"))
-        answer = await pc.createAnswer()
-        await pc.setLocalDescription(answer)
+        try:
+            await pc.setRemoteDescription(RTCSessionDescription(sdp=offer_sdp, type="offer"))
+            answer = await pc.createAnswer()
+            await pc.setLocalDescription(answer)
+        except Exception:
+            await pc.close()
+            raise
 
         session_id = uuid.uuid4().hex
         self._tracks.setdefault(instance_name, {})[session_id] = track
