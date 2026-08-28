@@ -27,36 +27,38 @@ log = logging.getLogger(__name__)
 _CLOSE_GRACE_SECONDS = 45.0  # matches mediamtx's runOnDemandCloseAfter today
 
 
-def _lan_ice_servers(host: str) -> list[dict]:
+def _lan_ice_servers(host: str, include_turn: bool) -> list[dict]:
     """Build the ICE server list for the Python-side aiortc RTCPeerConnection
     this endpoint negotiates -- NOT the same list app.py's /select hands the
     browser client (that one is deliberately the public list; the browser
     itself decides which candidates to try).
 
-    This endpoint currently serves LAN/Tailscale clients directly (this
-    migration's actual Phase 1 scope) and, incidentally, the public path too
-    via signaling_bridge.py (see Important Finding #6 -- not re-architected
-    here). Passing get_ice_servers()'s public TURN-inclusive list wholesale
-    as this PC's OWN ice_servers was wrong for the LAN case: confirmed live,
-    a LAN client's negotiation made this process's own RTCPeerConnection try
-    to allocate a TURN channel through the public coturn instance, which
+    This endpoint serves both a direct LAN/Tailscale client (this
+    migration's actual Phase 1 scope) and the public path via
+    signaling_bridge.py, which always POSTs from 127.0.0.1 (see Finding #6).
+    Passing get_ice_servers()'s public TURN-inclusive list wholesale as this
+    PC's OWN ice_servers was wrong for the LAN case: confirmed live, a LAN
+    client's negotiation made this process's own RTCPeerConnection try to
+    allocate a TURN channel through the public coturn instance, which
     rejected it with "403 Forbidden IP" (coturn's peer-IP policy disallows
     relaying to a private/Tailscale address) -- an unhandled
-    aioice.stun.TransactionFailed logged as noise, and wasted gathering work
-    (not fatal on its own: host/srflx candidates could still succeed
-    independently).
+    aioice.stun.TransactionFailed logged as noise. Re-review confirmed this
+    reproduces even with the public STUN entry dropped, since TURN was still
+    unconditionally included -- so TURN must only be offered on the
+    loopback/public path, never for a direct LAN/Tailscale peer.
 
     ice_config.py's own docstring is explicit that its public STUN entry is
     for the public path specifically, and that "the local/Tailscale path
     keeps using the embedded STUN_PORT server (stun_server.py, bound to the
     Tailscale IP) unchanged" -- exactly the server app.py's /select endpoint
     already points the browser at via `stun_url: f"stun:{host}:{STUN_PORT}"`.
-    Mirror that here as the primary entry, and layer in TURN (if configured)
-    as an additional fallback candidate only -- never swap the Tailscale
-    STUN entry out for the public one.
+    Mirror that here as the primary entry always, and layer in TURN (if
+    configured) only when this request came from signaling_bridge.py's own
+    loopback POST -- never for a direct LAN/Tailscale peer.
     """
     servers = [{"urls": f"stun:{host}:{STUN_PORT}"}]
-    servers.extend(s for s in get_ice_servers() if s["urls"].startswith("turn:"))
+    if include_turn:
+        servers.extend(s for s in get_ice_servers() if s["urls"].startswith("turn:"))
     return servers
 
 
@@ -153,6 +155,17 @@ def create_whep_app(instance_manager: InstanceManager, webrtc: WebrtcManager) ->
 
         _cancel_pending_grace(instance_name)
 
+        # Read outside the lock: request.body() can stall arbitrarily long
+        # on a slow/stalled client, and get_best_ip() shells out
+        # (server/tailscale.py's ipconfig call) -- neither belongs on the
+        # media event loop, let alone serializing every other viewer's
+        # join/teardown behind it. Loopback means signaling_bridge.py's own
+        # POST (see _lan_ice_servers' docstring) -- the only path that
+        # should ever get TURN offered to this process's own PC.
+        offer_sdp = (await request.body()).decode("utf-8")
+        is_loopback = request.client is not None and request.client.host in ("127.0.0.1", "::1")
+        host = await asyncio.to_thread(get_best_ip) or (request.client.host if request.client else "")
+
         # Held across the whole start_video decision AND create_session
         # negotiation (not just the start_video dispatch) -- viewer_count()
         # only becomes accurate once create_session registers the new
@@ -167,8 +180,6 @@ def create_whep_app(instance_manager: InstanceManager, webrtc: WebrtcManager) ->
                     if not started:
                         raise HTTPException(status_code=503, detail="Could not start video")
 
-                offer_sdp = (await request.body()).decode("utf-8")
-                host = get_best_ip() or request.client.host
                 # request_idr() is threaded through as on_connected rather
                 # than called here: start_video's own IDR request
                 # (scrcpy_session.py's start_video_aiortc) fires before this
@@ -178,7 +189,8 @@ def create_whep_app(instance_manager: InstanceManager, webrtc: WebrtcManager) ->
                 # second viewer joining an already-active instance) can see
                 # up to 8s of black screen.
                 session_id, answer_sdp = await webrtc.create_session(
-                    instance_name, offer_sdp, AIORTC_PROFILE_LEVEL_ID, _lan_ice_servers(host),
+                    instance_name, offer_sdp, AIORTC_PROFILE_LEVEL_ID,
+                    _lan_ice_servers(host, include_turn=is_loopback),
                     on_connected=inst.session.control.request_idr,
                     on_disconnected=lambda n=instance_name: _schedule_grace_if_idle(n),
                 )

@@ -201,8 +201,10 @@ async def test_handshake_deadline_closes_pc_that_never_connects(monkeypatch):
     offer = await browser_pc.createOffer()
     await browser_pc.setLocalDescription(offer)
 
+    disconnected = []
     session_id, _ = await manager.create_session(
         "instance0", browser_pc.localDescription.sdp, "42e01f", [],
+        on_disconnected=lambda: disconnected.append(True),
     )
     assert manager.viewer_count("instance0") == 1
 
@@ -213,5 +215,12 @@ async def test_handshake_deadline_closes_pc_that_never_connects(monkeypatch):
 
     assert manager.viewer_count("instance0") == 0
     assert session_id not in manager._pcs
+    # The handshake-deadline task IS the task stored under its own
+    # session_id -- it must not cancel itself out from under its own
+    # close_session() call (that would abort cleanup mid-`await
+    # pc.close()` and silently drop on_disconnected, re-opening "on-demand
+    # video never stops").
+    assert disconnected == [True]
+    assert manager._pcs.get(session_id) is None
 
     await browser_pc.close()

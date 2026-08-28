@@ -174,12 +174,16 @@ def test_lan_ice_servers_uses_tailscale_stun_not_public(monkeypatch):
     # fail, 403 Forbidden IP) to allocate a TURN channel through the public
     # coturn instance.
     monkeypatch.setattr(whep_app_module, "STUN_PORT", 3478)
-    servers = whep_app_module._lan_ice_servers("100.64.1.2")
+    servers = whep_app_module._lan_ice_servers("100.64.1.2", include_turn=True)
     assert servers[0] == {"urls": "stun:100.64.1.2:3478"}
     assert not any(s["urls"] == "stun:stun.l.google.com:19302" for s in servers)
 
 
-def test_lan_ice_servers_keeps_turn_fallback(monkeypatch):
+def test_lan_ice_servers_keeps_turn_fallback_only_when_requested(monkeypatch):
+    # TURN must only be offered on the loopback/public path (see
+    # _lan_ice_servers' docstring) -- a direct LAN/Tailscale client whose
+    # PC tries to allocate a TURN channel through the public coturn
+    # instance gets "403 Forbidden IP" (confirmed live).
     monkeypatch.setattr(whep_app_module, "STUN_PORT", 3478)
     monkeypatch.setattr(
         whep_app_module, "get_ice_servers",
@@ -188,11 +192,14 @@ def test_lan_ice_servers_keeps_turn_fallback(monkeypatch):
             {"urls": "turn:turn.example.com:3478", "username": "u", "credential": "p"},
         ],
     )
-    servers = whep_app_module._lan_ice_servers("100.64.1.2")
+    servers = whep_app_module._lan_ice_servers("100.64.1.2", include_turn=True)
     assert servers == [
         {"urls": "stun:100.64.1.2:3478"},
         {"urls": "turn:turn.example.com:3478", "username": "u", "credential": "p"},
     ]
+
+    lan_servers = whep_app_module._lan_ice_servers("100.64.1.2", include_turn=False)
+    assert lan_servers == [{"urls": "stun:100.64.1.2:3478"}]
 
 
 def test_whep_post_negotiation_failure_reschedules_grace_timer(monkeypatch):

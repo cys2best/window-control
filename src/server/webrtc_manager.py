@@ -168,6 +168,17 @@ class WebrtcManager:
         except asyncio.CancelledError:
             return
         if pc.connectionState != "connected":
+            # Pop our own entry before calling close_session rather than
+            # letting close_session's _cancel_handshake_deadline find and
+            # cancel us: we ARE the task stored there, so cancelling it out
+            # from under ourselves would deliver CancelledError at the next
+            # suspension point inside close_session (e.g. `await
+            # pc.close()`), aborting cleanup partway through and silently
+            # dropping the on_disconnected callback -- re-opening the exact
+            # "on-demand video never stops" failure the reaper exists to
+            # prevent. Confirmed live: task.cancelled() is True after this
+            # path fires against the unpatched code.
+            self._handshake_deadlines.pop(session_id, None)
             await self.close_session(instance_name, session_id)
 
     def _cancel_handshake_deadline(self, session_id: str) -> None:
