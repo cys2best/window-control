@@ -23,6 +23,19 @@ import websockets
 
 log = logging.getLogger(__name__)
 
+# httpx's default timeout is 5s on everything, which is too short for a WHEP
+# POST: aiortc's setLocalDescription() awaits full ICE gathering before
+# returning the answer, including a TURN allocation round-trip to the VPS --
+# on a slow link (or one hitting coturn's default deny-list on a candidate,
+# see whep_app.py's _lan_ice_servers) that alone can approach or exceed 5s.
+# A tripped ReadTimeout here doesn't just log a warning: relay_one_instance()
+# has already sent the offer and is waiting on the one response for it, so
+# this exception ends that WS session and forces a full reconnect, discarding
+# a negotiation that may well have still been about to succeed. Matches
+# http_tunnel.py's TUNNEL_HTTP_TIMEOUT budget for the same kind of local
+# slow-negotiation call.
+_WHEP_HTTP_TIMEOUT = httpx.Timeout(60.0, connect=5.0)
+
 
 async def relay_one_instance(
     instance_name: str,
@@ -44,7 +57,7 @@ async def relay_one_instance(
     unreachable) — reconnect/backoff is the caller's responsibility, not
     this function's.
     """
-    client = http_client or httpx.AsyncClient()
+    client = http_client or httpx.AsyncClient(timeout=_WHEP_HTTP_TIMEOUT)
     url = f"{signaling_url}/?session={instance_name}&role=engine"
     whep_url = f"http://127.0.0.1:{whep_port}/{instance_name}/whep"
 
@@ -106,5 +119,5 @@ async def run_bridge_with_reconnect(
     if http_client is not None:
         await _loop(http_client)
     else:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=_WHEP_HTTP_TIMEOUT) as client:
             await _loop(client)
