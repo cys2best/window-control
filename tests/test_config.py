@@ -36,3 +36,26 @@ def test_quality_tiers_monotonic():
     from config import QUALITY_TIERS, TIER_ORDER
     sizes = [QUALITY_TIERS[t]["max_size"] for t in TIER_ORDER]
     assert sizes == sorted(sizes)
+
+
+def test_webrtc_backend_defaults_to_mediamtx(monkeypatch):
+    monkeypatch.delenv("WEBRTC_BACKEND", raising=False)
+    import importlib
+    import config
+    importlib.reload(config)
+    assert config.WEBRTC_BACKEND == "mediamtx"
+
+
+def test_webrtc_backend_reads_env(monkeypatch):
+    monkeypatch.setenv("WEBRTC_BACKEND", "aiortc")
+    import importlib
+    import config
+    importlib.reload(config)
+    assert config.WEBRTC_BACKEND == "aiortc"
+    monkeypatch.delenv("WEBRTC_BACKEND", raising=False)
+    importlib.reload(config)
+
+
+def test_aiortc_profile_level_id_is_fixed():
+    import config
+    assert config.AIORTC_PROFILE_LEVEL_ID == "42e01f"

@@ -37,6 +37,18 @@ RTMP_PORT = 1935       # mediamtx RTMP (unused by us, kept for mediamtx default 
 WEBRTC_UDP_PORT = 8288 # WebRTC ICE UDP mux (mediamtx default 8000 collided)
 STUN_PORT = 3478       # embedded STUN server, bound to Tailscale IP (see stun_server.py)
 VPS_SIGNALING_URL = os.environ.get("VPS_SIGNALING_URL")  # e.g. "ws://VPS_IP:8443"; None disables the public bridge path
+# In-process aiortc WHEP backend, replacing mediamtx (see
+# docs/superpowers/specs/2026-08-28-mediamtx-aiortc-migration-design.md).
+# "mediamtx" (default) keeps today's mediamtx+ffmpeg pipeline untouched;
+# "aiortc" runs the new in-process WHEP server instead. Both are mutually
+# exclusive per InstanceManager instance -- there is no per-instance mixing.
+WEBRTC_BACKEND = os.environ.get("WEBRTC_BACKEND", "mediamtx")
+# Fixed H264 profile-level-id used by the aiortc backend's WHEP offers.
+# Deliberately NOT derived from the live SPS -- rtc_engine.py's run_engine()
+# already found live-SPS-derived values insufficient for real decoding in
+# E2E testing; this is one of the two exact values Chrome/Brave's H264
+# decoder capability list advertises.
+AIORTC_PROFILE_LEVEL_ID = "42e01f"
 # TURN (+ a public STUN fallback) for the *public* WebRTC path specifically
 # (initWebRTCPublic() in the client) -- the local/Tailscale path above keeps
 # using the embedded STUN_PORT server unchanged. A NAT'd PC has no publicly
