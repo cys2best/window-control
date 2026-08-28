@@ -213,3 +213,41 @@ def test_stop_video_by_name_delegates_to_session():
 def test_stop_video_unknown_name_is_noop():
     im = InstanceManager(MediamtxManager())
     im.stop_video("instance99")  # must not raise
+
+
+def test_start_video_routes_to_aiortc_when_webrtc_manager_present():
+    from server.instance_manager import Instance
+
+    calls = []
+
+    class FakeWebrtcManager:
+        def push_nalu_threadsafe(self, name, nalu):
+            pass
+
+    class FakeSession:
+        alive = True
+
+        class control:
+            @staticmethod
+            def request_idr():
+                pass
+
+        def start_video_aiortc(self, on_frame):
+            calls.append("aiortc")
+            return True
+
+        def start_video(self):
+            calls.append("ffmpeg")
+            return True
+
+    webrtc = FakeWebrtcManager()
+    im = InstanceManager(mediamtx=None, webrtc=webrtc)
+    inst = Instance(
+        {"id": "adb:emulator-5554", "title": "t", "ldplayer_index": 0},
+        FakeSession(), 100, 200,
+    )
+    im._instances["emulator-5554"] = inst
+
+    ok = im.start_video(inst.name)
+    assert ok is True
+    assert calls == ["aiortc"]

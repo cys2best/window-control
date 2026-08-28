@@ -14,6 +14,7 @@ from config import DEFAULT_TIER
 from server import adb_manager
 from server.scrcpy_session import ScrcpySession
 from server.mediamtx_manager import MediamtxManager
+from server.webrtc_manager import WebrtcManager
 from server.stun_server import StunServer
 
 
@@ -54,8 +55,9 @@ class Instance:
 
 
 class InstanceManager:
-    def __init__(self, mediamtx: MediamtxManager):
+    def __init__(self, mediamtx: "MediamtxManager | None", webrtc: "WebrtcManager | None" = None):
         self._mediamtx = mediamtx
+        self._webrtc = webrtc
         self._instances: dict[str, Instance] = {}  # serial → Instance
         self._active_serial: str | None = None
         self._stun: StunServer | None = None
@@ -95,26 +97,30 @@ class InstanceManager:
         from server.tailscale import get_best_ip
         _ip = get_best_ip()
         self._ensure_stun(_ip)
-        # One always-live path per instance; the browser WHEPs directly to the
-        # selected instance's path. No shared 'active' mux to seed or repoint.
-        if not self._mediamtx.running:
-            _log(f"[mediamtx] booting mediamtx, advertising IP for ICE: {_ip}")
-            self._mediamtx.start(all_names, tailscale_ip=_ip)
-        else:
-            # Patch the running instance's path list via its config API instead
-            # of restarting the whole process — a restart tears down every
-            # other instance's live WHEP stream, not just the one that changed.
-            for name in gone_names:
-                self._mediamtx.remove_path(name)
-            for name in new_names:
-                self._mediamtx.add_path(name)
+
+        if self._webrtc is None:
+            # mediamtx backend: one always-live RTSP/WHEP path per instance.
+            if not self._mediamtx.running:
+                _log(f"[mediamtx] booting mediamtx, advertising IP for ICE: {_ip}")
+                self._mediamtx.start(all_names, tailscale_ip=_ip)
+            else:
+                # Patch the running instance's path list via its config API
+                # instead of restarting the whole process — a restart tears
+                # down every other instance's live WHEP stream, not just the
+                # one that changed.
+                for name in gone_names:
+                    self._mediamtx.remove_path(name)
+                for name in new_names:
+                    self._mediamtx.add_path(name)
+        # aiortc backend: no per-path setup needed -- WebrtcManager tracks
+        # viewers per instance name lazily, on first WHEP POST.
 
         # Start scrcpy sessions for new devices
         for vm in new_vms:
             serial = vm["id"][4:]
             w, h = adb_manager.get_screen_size(serial)
             name = instance_name(serial)
-            rtsp_url = self._mediamtx.rtsp_url(name)
+            rtsp_url = self._mediamtx.rtsp_url(name) if self._mediamtx is not None else ""
             idx = vm["ldplayer_index"]
             session = ScrcpySession(serial, idx, rtsp_url, w, h)
             ok = session.start()
@@ -195,26 +201,29 @@ class InstanceManager:
             return None
 
     def start_video(self, name: str) -> bool:
-        """Start the on-demand video half for the instance at mediamtx path
-        `name`. Called by the internal /internal/instances/{name}/publish/start
-        endpoint, itself triggered by mediamtx's runOnDemand hook.
+        """Start the on-demand video half for the instance at path `name`.
+        Routes to the aiortc backend if a WebrtcManager is configured,
+        otherwise to the mediamtx/ffmpeg backend -- the two are mutually
+        exclusive per InstanceManager instance (see config.WEBRTC_BACKEND).
         """
         inst = self.get_by_name(name)
         if inst is None:
             return False
+        if self._webrtc is not None:
+            return inst.session.start_video_aiortc(
+                on_frame=lambda nalu, n=name: self._webrtc.push_nalu_threadsafe(n, nalu)
+            )
         return inst.session.start_video()
 
     def stop_video(self, name: str) -> None:
-        """Stop the on-demand video half for the instance at mediamtx path
-        `name`. Called by the internal /internal/instances/{name}/publish/stop
-        endpoint, itself triggered by mediamtx's runOnUnDemand hook. A no-op
-        for an unknown name -- the instance may have disconnected between
-        mediamtx firing the hook and the script's request landing.
-        """
+        """Stop the on-demand video half for the instance at path `name`."""
         inst = self.get_by_name(name)
         if inst is None:
             return
-        inst.session.stop_video()
+        if self._webrtc is not None:
+            inst.session.stop_video_aiortc()
+        else:
+            inst.session.stop_video()
 
     @property
     def active(self) -> Instance | None:
@@ -305,4 +314,5 @@ class InstanceManager:
                 inst.session.stop()
             self._instances.clear()
             self._active_serial = None
-        self._mediamtx.stop()
+        if self._mediamtx is not None:
+            self._mediamtx.stop()
