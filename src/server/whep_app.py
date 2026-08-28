@@ -50,15 +50,28 @@ def create_whep_app(instance_manager: InstanceManager, webrtc: WebrtcManager) ->
 
         _cancel_pending_grace(instance_name)
 
-        if not inst.session.video_active:
-            started = await asyncio.to_thread(instance_manager.start_video, instance_name)
-            if not started:
-                raise HTTPException(status_code=503, detail="Could not start video")
+        try:
+            if not inst.session.video_active:
+                started = await asyncio.to_thread(instance_manager.start_video, instance_name)
+                if not started:
+                    raise HTTPException(status_code=503, detail="Could not start video")
 
-        offer_sdp = (await request.body()).decode("utf-8")
-        session_id, answer_sdp = await webrtc.create_session(
-            instance_name, offer_sdp, AIORTC_PROFILE_LEVEL_ID, get_ice_servers(),
-        )
+            offer_sdp = (await request.body()).decode("utf-8")
+            session_id, answer_sdp = await webrtc.create_session(
+                instance_name, offer_sdp, AIORTC_PROFILE_LEVEL_ID, get_ice_servers(),
+            )
+        except Exception:
+            # The grace timer we just cancelled above was covering this
+            # instance's zero-viewer video; if start_video/create_session
+            # then fails, that cancellation must not stand uncorrected --
+            # otherwise on-demand video is orphaned running with no viewer
+            # and no timer left to ever stop it.
+            if webrtc.viewer_count(instance_name) == 0:
+                _grace_tasks[instance_name] = asyncio.create_task(
+                    _close_after_grace(instance_name)
+                )
+            raise
+
         return Response(
             content=answer_sdp,
             media_type="application/sdp",

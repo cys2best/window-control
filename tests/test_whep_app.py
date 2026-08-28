@@ -2,10 +2,13 @@ import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 import asyncio
+import time
+
 import pytest
 from aiortc import RTCPeerConnection
 from fastapi.testclient import TestClient
 
+import server.whep_app as whep_app_module
 from server.whep_app import create_whep_app
 from server.webrtc_manager import WebrtcManager
 from server.instance_manager import Instance
@@ -124,3 +127,55 @@ def test_whep_delete_closes_session(app_and_manager):
 
     assert del_resp.status_code == 200
     assert webrtc.viewer_count(im._inst.name) == 0
+
+
+def test_whep_post_negotiation_failure_reschedules_grace_timer(monkeypatch):
+    # Regression test: _cancel_pending_grace() runs before start_video/
+    # create_session are confirmed to succeed. Reproduces the realistic
+    # leak case -- start_video succeeds (so video is now actively running)
+    # but negotiation then fails on a malformed offer -- and checks the fix
+    # still schedules a fresh grace timer for this now-live, zero-viewer
+    # video. Without the fix, nothing would ever call stop_video for it
+    # again.
+    monkeypatch.setattr(whep_app_module, "_CLOSE_GRACE_SECONDS", 0.05)
+
+    class TrackingInstanceManager:
+        def __init__(self):
+            self._inst = Instance(
+                {"id": "adb:emulator-5554", "title": "t", "ldplayer_index": 0},
+                FakeSession(), 100, 200,
+            )
+            self._inst.session.video_active = False
+            self.stop_video_calls = []
+
+        def get_by_name(self, name):
+            return self._inst if name == self._inst.name else None
+
+        def start_video(self, name):
+            return True  # succeeds -- video is now actively running
+
+        def stop_video(self, name):
+            self.stop_video_calls.append(name)
+
+    loop = _get_or_create_event_loop()
+    webrtc = WebrtcManager(loop)
+    im = TrackingInstanceManager()
+    app = whep_app_module.create_whep_app(im, webrtc)
+
+    # raise_server_exceptions=False so create_session's negotiation failure
+    # (empty/malformed offer SDP, same technique as
+    # test_webrtc_manager.py::test_create_session_cleans_up_peer_connection_on_negotiation_failure)
+    # comes back as a real 500 response instead of propagating into the test.
+    with TestClient(app, raise_server_exceptions=False) as client:
+        resp = client.post(
+            f"/{im._inst.name}/whep", content="",
+            headers={"Content-Type": "application/sdp"},
+        )
+        assert resp.status_code == 500
+        assert webrtc.viewer_count(im._inst.name) == 0
+
+        # If the failure rescheduled the grace timer, stop_video fires once
+        # the (monkeypatched, short) grace period elapses.
+        time.sleep(0.3)
+
+    assert im.stop_video_calls == [im._inst.name]
