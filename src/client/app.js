@@ -850,8 +850,18 @@ function _probePublicSignaling(signalingUrl, instanceName, iceServers, myGen) {
     const supersededCheck = setInterval(() => {
       if (myGen !== _raceGen) finish(false);
     }, 250);
+    // Temporary debug visibility: this probe's 8s black-box timeout was
+    // firing with no signal on WHERE ICE got stuck (no candidate pairs at
+    // all vs. stuck in "checking" vs. actually reaching "connected" too
+    // late). Remove once the public-path connectivity issue is diagnosed.
+    console.debug('[whep-public] gathering own candidates...');
+    pc.onicecandidate = e => {
+      if (e.candidate) console.debug('[whep-public] local candidate:', e.candidate.candidate);
+      else console.debug('[whep-public] local gathering complete');
+    };
     pc.oniceconnectionstatechange = () => {
       const s = pc.iceConnectionState;
+      console.debug('[whep-public] iceConnectionState ->', s);
       if (s === 'connected' || s === 'completed') finish(true);
       else if (s === 'failed' || s === 'closed') finish(false);
     };
