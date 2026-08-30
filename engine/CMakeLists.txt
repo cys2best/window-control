@@ -32,6 +32,7 @@ add_library(engine_core
   src/scrcpy_control.cpp
   src/signaling_client.cpp
   src/peer.cpp
+  src/peer_session.cpp
   src/h264_nalu.cpp
   src/http_server.cpp
   src/ready_record.cpp
@@ -56,6 +57,7 @@ add_executable(engine_tests
   test/test_signaling_client.cpp
   test/test_h264_nalu.cpp
   test/test_http_server.cpp
+  test/test_peer_session.cpp
 )
 target_link_libraries(engine_tests PRIVATE engine_core GTest::gtest GTest::gtest_main)
 add_test(NAME engine_tests COMMAND engine_tests)
