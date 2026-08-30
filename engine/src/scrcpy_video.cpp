@@ -136,6 +136,8 @@ void ScrcpyVideoClient::ReadHandshake() {
     // per the launch args `_start_server` passes — see scrcpy_session.py).
     impl_->width = static_cast<int>(ReadU32BE(meta + 4));
     impl_->height = static_cast<int>(ReadU32BE(meta + 8));
+    std::cerr << "[debug] video: handshake complete, dimensions="
+              << impl_->width << "x" << impl_->height << std::endl;
 }
 
 void ScrcpyVideoClient::StartReading(NaluCallback onNalu) {
@@ -197,9 +199,16 @@ void ScrcpyVideoClient::Stop() {
     impl_->stopRequested.store(true);
     impl_->running.store(false);
     if (impl_->sock != INVALID_SOCKET) {
-        shutdown(impl_->sock, SD_BOTH); // unblocks the read thread's recv()
+        // On Windows, shutdown() alone does not reliably cancel a recv()
+        // already blocked on another thread. Close the handle before joining
+        // so the pending read is forced to complete. Keep the member value
+        // unchanged until after join: the reader may still load it, and a
+        // concurrent plain write here would be a C++ data race.
+        shutdown(impl_->sock, SD_BOTH);
+        closesocket(impl_->sock);
     }
     if (impl_->readThread.joinable()) impl_->readThread.join();
+    impl_->sock = INVALID_SOCKET;
 }
 
 std::string ScrcpyVideoClient::DeviceName() const { return impl_->deviceName; }
