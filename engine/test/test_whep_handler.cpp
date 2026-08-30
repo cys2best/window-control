@@ -24,9 +24,11 @@ std::string GatheredOffer() {
     std::string offer;
     {
         rtc::PeerConnection pc;
-        pc.addTransceiver(rtc::Description::Media::Kind::Video,
-                          rtc::Description::Direction::RecvOnly);
-        pc.createDataChannel("input");
+        rtc::Description::Video video(
+            "video", rtc::Description::Direction::RecvOnly);
+        video.addH264Codec(96);
+        auto videoTrack = pc.addTrack(video);
+        auto inputChannel = pc.createDataChannel("input");
 
         pc.onGatheringStateChange([&](rtc::PeerConnection::GatheringState state) {
             if (state == rtc::PeerConnection::GatheringState::Complete) {
@@ -46,6 +48,8 @@ std::string GatheredOffer() {
             throw std::runtime_error("WHEP test offer has no local description");
         }
         offer = std::string(*description);
+        EXPECT_TRUE(videoTrack);
+        EXPECT_TRUE(inputChannel);
     }
     return offer;
 }

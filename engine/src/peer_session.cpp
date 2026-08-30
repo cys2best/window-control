@@ -3,6 +3,29 @@
 #include <condition_variable>
 #include <mutex>
 #include <stdexcept>
+#include <utility>
+
+namespace {
+
+int SelectOfferedH264PayloadType(const rtc::Description::Media& media) {
+    int fallback = -1;
+    for (int payloadType : media.payloadTypes()) {
+        const auto* rtpMap = media.rtpMap(payloadType);
+        if (!rtpMap || rtpMap->format != "H264") continue;
+        if (fallback < 0) fallback = payloadType;
+
+        // Prefer non-interleaved mode: the H264 RTP packetizer fragments large
+        // NAL units with FU-A, which requires packetization-mode=1.
+        for (const auto& parameter : rtpMap->fmtps) {
+            if (parameter.find("packetization-mode=1") != std::string::npos) {
+                return payloadType;
+            }
+        }
+    }
+    return fallback;
+}
+
+}  // namespace
 
 struct PeerSession::Impl {
     std::string id;
@@ -16,6 +39,9 @@ struct PeerSession::Impl {
     std::chrono::steady_clock::time_point streamStart;
 
     std::mutex callbackMutex;
+    std::mutex mediaMutex;
+    std::condition_variable mediaCv;
+    std::string mediaError;
     std::mutex gatherMutex;
     std::condition_variable gatherCv;
     bool gatheringComplete = false;
@@ -60,6 +86,47 @@ PeerSession::PeerSession(std::string id, const std::vector<std::string>& iceServ
             if (callback) callback(std::get<std::string>(data));
         });
     });
+
+    // A browser offer owns the media-section order, MID, and payload types.
+    // Configure the offered track in place; adding a new hard-coded track while
+    // answering produces an SDP that Chromium correctly rejects.
+    impl_->pc->onTrack([this](std::shared_ptr<rtc::Track> track) {
+        try {
+            auto description = track->description();
+            if (description.type() != "video") return;
+
+            const int payloadType = SelectOfferedH264PayloadType(description);
+            if (payloadType < 0) {
+                throw std::runtime_error("browser offer has no H264 video payload type");
+            }
+
+            description.setBitrate(8000);
+            description.addSSRC(/*ssrc=*/1, /*cname=*/"engine-video");
+            track->setDescription(std::move(description));
+
+            auto rtpConfig = std::make_shared<rtc::RtpPacketizationConfig>(
+                /*ssrc=*/1, /*cname=*/"engine-video", payloadType,
+                rtc::H264RtpPacketizer::defaultClockRate);
+            auto packetizer = std::make_shared<rtc::H264RtpPacketizer>(
+                rtc::NalUnit::Separator::StartSequence, rtpConfig);
+            auto srReporter = std::make_shared<rtc::RtcpSrReporter>(rtpConfig);
+            packetizer->addToChain(srReporter);
+            auto nackResponder = std::make_shared<rtc::RtcpNackResponder>();
+            packetizer->addToChain(nackResponder);
+            track->setMediaHandler(packetizer);
+
+            {
+                std::lock_guard<std::mutex> lock(impl_->mediaMutex);
+                impl_->videoTrack = std::move(track);
+                impl_->rtpConfig = std::move(rtpConfig);
+                impl_->packetizer = std::move(packetizer);
+            }
+        } catch (const std::exception& e) {
+            std::lock_guard<std::mutex> lock(impl_->mediaMutex);
+            impl_->mediaError = e.what();
+        }
+        impl_->mediaCv.notify_all();
+    });
 }
 
 PeerSession::~PeerSession() { Close(); }
@@ -69,29 +136,28 @@ std::string PeerSession::AnswerOffer(
     impl_->streamStart = std::chrono::steady_clock::now();
 
     try {
-        // setRemoteDescription must be called before addTrack/setLocalDescription
-        // so that libdatachannel generates an answer SDP (matching the offer) rather
-        // than creating a fresh offer itself.
+        // libdatachannel creates the reciprocal offered tracks while building
+        // the local answer. Its synchronous onTrack callback above configures
+        // the video track before that media section is serialized, preserving
+        // the browser's m-line order, MID, and H264 payload type.
         impl_->pc->setRemoteDescription(rtc::Description(remoteSdpOffer, "offer"));
-
-        rtc::Description::Video media("video", rtc::Description::Direction::SendOnly);
-        media.addH264Codec(96);
-        media.setBitrate(8000);
-        impl_->videoTrack = impl_->pc->addTrack(media);
-
-        impl_->rtpConfig = std::make_shared<rtc::RtpPacketizationConfig>(
-            /*ssrc=*/1, /*cname=*/"engine-video", /*payloadType=*/96,
-            rtc::H264RtpPacketizer::defaultClockRate);
-        impl_->packetizer = std::make_shared<rtc::H264RtpPacketizer>(
-            rtc::NalUnit::Separator::StartSequence, impl_->rtpConfig);
-        auto srReporter = std::make_shared<rtc::RtcpSrReporter>(impl_->rtpConfig);
-        impl_->packetizer->addToChain(srReporter);
-        auto nackResponder = std::make_shared<rtc::RtcpNackResponder>();
-        impl_->packetizer->addToChain(nackResponder);
-        impl_->videoTrack->setMediaHandler(impl_->packetizer);
-
         impl_->pc->setLocalDescription();
+
+        std::string mediaError;
+        {
+            std::unique_lock<std::mutex> lock(impl_->mediaMutex);
+            impl_->mediaCv.wait_for(lock, std::chrono::seconds(1), [this] {
+                return impl_->videoTrack || !impl_->mediaError.empty();
+            });
+            if (!impl_->mediaError.empty()) {
+                mediaError = impl_->mediaError;
+            } else if (!impl_->videoTrack) {
+                mediaError = "browser offer has no usable video media section";
+            }
+        }
+        if (!mediaError.empty()) throw std::runtime_error(mediaError);
     } catch (const std::exception& e) {
+        impl_->pc->close();
         throw std::runtime_error(std::string("PeerSession: failed to answer offer: ") + e.what());
     }
 
@@ -107,14 +173,21 @@ std::string PeerSession::AnswerOffer(
 }
 
 void PeerSession::SendVideoNalu(const uint8_t* data, size_t size) {
-    if (!impl_->videoTrack || !impl_->videoTrack->isOpen()) return;
+    std::shared_ptr<rtc::Track> videoTrack;
+    std::shared_ptr<rtc::RtpPacketizationConfig> rtpConfig;
+    {
+        std::lock_guard<std::mutex> lock(impl_->mediaMutex);
+        videoTrack = impl_->videoTrack;
+        rtpConfig = impl_->rtpConfig;
+    }
+    if (!videoTrack || !rtpConfig || !videoTrack->isOpen()) return;
 
     auto elapsed = std::chrono::steady_clock::now() - impl_->streamStart;
     double elapsedSeconds = std::chrono::duration<double>(elapsed).count();
-    impl_->rtpConfig->timestamp = impl_->rtpConfig->startTimestamp +
-        impl_->rtpConfig->secondsToTimestamp(elapsedSeconds);
+    rtpConfig->timestamp = rtpConfig->startTimestamp +
+        rtpConfig->secondsToTimestamp(elapsedSeconds);
 
-    impl_->videoTrack->send(reinterpret_cast<const std::byte*>(data), size);
+    videoTrack->send(reinterpret_cast<const std::byte*>(data), size);
 }
 
 void PeerSession::SendInputMessage(const std::string& jsonMessage) {

@@ -93,15 +93,19 @@ private:
 
 std::string GatheredOffer() {
     rtc::PeerConnection pc;
-    pc.addTransceiver(rtc::Description::Media::Kind::Video,
-                       rtc::Description::Direction::RecvOnly);
-    pc.createDataChannel("input");
+    rtc::Description::Video video(
+        "video", rtc::Description::Direction::RecvOnly);
+    video.addH264Codec(96);
+    auto videoTrack = pc.addTrack(video);
+    auto inputChannel = pc.createDataChannel("input");
     std::atomic<bool> gathered{false};
     pc.onGatheringStateChange([&](rtc::PeerConnection::GatheringState s) {
         if (s == rtc::PeerConnection::GatheringState::Complete) gathered = true;
     });
     pc.setLocalDescription();
     for (int i = 0; i < 200 && !gathered; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    EXPECT_TRUE(videoTrack);
+    EXPECT_TRUE(inputChannel);
     return std::string(*pc.localDescription());
 }
 }

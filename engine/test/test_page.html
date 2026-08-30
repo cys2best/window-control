@@ -44,6 +44,10 @@
       inputChannel.send(JSON.stringify({ type: 'click', x: nx, y: ny }));
     });
 
+    // Create video first so the offer's media order is video, application.
+    // The answerer must preserve this order and the numeric MIDs.
+    pc.addTransceiver('video', { direction: 'recvonly' });
+
     // Viewer creates the input DataChannel and sends messages to engine.
     inputChannel = pc.createDataChannel('input');
     inputChannel.onopen = () => {
@@ -57,8 +61,8 @@
       try {
         statusEl.textContent = 'connecting...';
 
-        // Viewer is offerer: add recvonly video transceiver and create offer.
-        pc.addTransceiver('video', { direction: 'recvonly' });
+        // Viewer is offerer; the transceiver and DataChannel are already set up
+        // above in the required media-section order.
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
 
