@@ -40,7 +40,6 @@ struct PeerSession::Impl {
 
     std::mutex callbackMutex;
     std::mutex mediaMutex;
-    std::condition_variable mediaCv;
     std::string mediaError;
     std::mutex gatherMutex;
     std::condition_variable gatherCv;
@@ -53,6 +52,11 @@ PeerSession::PeerSession(std::string id, const std::vector<std::string>& iceServ
 
     rtc::Configuration config;
     for (const auto& url : iceServers) config.iceServers.emplace_back(url);
+    // PeerSession is always the answerer. Automatic negotiation would create
+    // the answer inside setRemoteDescription(), before AnswerOffer can validate
+    // and observe the configured track, then the later explicit call would
+    // create a second local offer with setup:actpass.
+    config.disableAutoNegotiation = true;
     impl_->pc = std::make_shared<rtc::PeerConnection>(config);
 
     impl_->pc->onGatheringStateChange([this](rtc::PeerConnection::GatheringState state) {
@@ -125,7 +129,6 @@ PeerSession::PeerSession(std::string id, const std::vector<std::string>& iceServ
             std::lock_guard<std::mutex> lock(impl_->mediaMutex);
             impl_->mediaError = e.what();
         }
-        impl_->mediaCv.notify_all();
     });
 }
 
@@ -141,14 +144,11 @@ std::string PeerSession::AnswerOffer(
         // the video track before that media section is serialized, preserving
         // the browser's m-line order, MID, and H264 payload type.
         impl_->pc->setRemoteDescription(rtc::Description(remoteSdpOffer, "offer"));
-        impl_->pc->setLocalDescription();
+        impl_->pc->setLocalDescription(rtc::Description::Type::Answer);
 
         std::string mediaError;
         {
-            std::unique_lock<std::mutex> lock(impl_->mediaMutex);
-            impl_->mediaCv.wait_for(lock, std::chrono::seconds(1), [this] {
-                return impl_->videoTrack || !impl_->mediaError.empty();
-            });
+            std::lock_guard<std::mutex> lock(impl_->mediaMutex);
             if (!impl_->mediaError.empty()) {
                 mediaError = impl_->mediaError;
             } else if (!impl_->videoTrack) {

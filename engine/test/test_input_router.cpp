@@ -12,6 +12,12 @@
 
 namespace {
 
+rtc::Configuration ManualNegotiationConfig() {
+    rtc::Configuration config;
+    config.disableAutoNegotiation = true;
+    return config;
+}
+
 std::shared_ptr<rtc::Track> AddRecvOnlyH264Video(rtc::PeerConnection& pc) {
     rtc::Description::Video video(
         "video", rtc::Description::Direction::RecvOnly);
@@ -47,7 +53,7 @@ std::vector<TouchEvent> DecodeTouchEvents(const std::vector<std::uint8_t>& bytes
 class NegotiatedInputPeer {
 public:
     NegotiatedInputPeer()
-        : source(registry), router(source) {}
+        : source(registry), router(source), viewerPc(ManualNegotiationConfig()) {}
 
     ~NegotiatedInputPeer() {
         if (session) registry.Remove(session->Id());
@@ -59,8 +65,8 @@ public:
         fake.Serve();
         source.ConnectInitial(fake.Port());
 
-        inputChannel = viewerPc.createDataChannel("input");
         videoTrack = AddRecvOnlyH264Video(viewerPc);
+        inputChannel = viewerPc.createDataChannel("input");
         gathered = false;
         viewerPc.onGatheringStateChange([this](rtc::PeerConnection::GatheringState state) {
             if (state == rtc::PeerConnection::GatheringState::Complete) gathered = true;
@@ -112,9 +118,9 @@ TEST(InputRouter, ClickSendsDownThenUpTouchPair) {
 
     InputRouter router(source);
 
-    rtc::PeerConnection viewerPc;
-    auto inputChannel = viewerPc.createDataChannel("input");
+    rtc::PeerConnection viewerPc(ManualNegotiationConfig());
     auto videoTrack = AddRecvOnlyH264Video(viewerPc);
+    auto inputChannel = viewerPc.createDataChannel("input");
     std::atomic<bool> gathered{false};
     viewerPc.onGatheringStateChange([&](rtc::PeerConnection::GatheringState s) {
         if (s == rtc::PeerConnection::GatheringState::Complete) gathered = true;
@@ -221,9 +227,9 @@ TEST(InputRouter, EchoIsReflectedVerbatimOnSamePeer) {
     source.ConnectInitial(fake.Port());
     InputRouter router(source);
 
-    rtc::PeerConnection viewerPc;
-    auto inputChannel = viewerPc.createDataChannel("input");
+    rtc::PeerConnection viewerPc(ManualNegotiationConfig());
     auto videoTrack = AddRecvOnlyH264Video(viewerPc);
+    auto inputChannel = viewerPc.createDataChannel("input");
     std::atomic<bool> gathered{false};
     viewerPc.onGatheringStateChange([&](rtc::PeerConnection::GatheringState s) {
         if (s == rtc::PeerConnection::GatheringState::Complete) gathered = true;

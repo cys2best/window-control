@@ -92,7 +92,9 @@ private:
 };
 
 std::string GatheredOffer() {
-    rtc::PeerConnection pc;
+    rtc::Configuration config;
+    config.disableAutoNegotiation = true;
+    rtc::PeerConnection pc(config);
     rtc::Description::Video video(
         "video", rtc::Description::Direction::RecvOnly);
     video.addH264Codec(96);

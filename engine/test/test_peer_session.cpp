@@ -10,6 +10,12 @@
 
 namespace {
 
+rtc::Configuration ManualNegotiationConfig() {
+    rtc::Configuration config;
+    config.disableAutoNegotiation = true;
+    return config;
+}
+
 struct OfferChannels {
     std::shared_ptr<rtc::Track> video;
     std::shared_ptr<rtc::DataChannel> input;
@@ -87,7 +93,7 @@ std::vector<std::string> MediaSectionOrder(const std::string& sdp) {
 } // namespace
 
 TEST(PeerSession, BrowserOfferPreservesMLineOrderAndOfferedH264PayloadType) {
-    rtc::PeerConnection viewerPc;
+    rtc::PeerConnection viewerPc(ManualNegotiationConfig());
     OfferChannels channels;
     const std::string offer = CreateBrowserShapedOffer(viewerPc, channels);
     ASSERT_EQ(MediaSectionOrder(offer),
@@ -106,7 +112,7 @@ TEST(PeerSession, BrowserOfferPreservesMLineOrderAndOfferedH264PayloadType) {
 }
 
 TEST(PeerSession, RejectsBrowserOfferWithoutH264) {
-    rtc::PeerConnection viewerPc;
+    rtc::PeerConnection viewerPc(ManualNegotiationConfig());
     rtc::Description::Video video("0", rtc::Description::Direction::RecvOnly);
     video.addVP8Codec(96);
     auto videoTrack = viewerPc.addTrack(video);
@@ -128,7 +134,7 @@ TEST(PeerSession, RejectsBrowserOfferWithoutH264) {
 }
 
 TEST(PeerSession, AnswersOfferAndReachesConnected) {
-    rtc::Configuration viewerConfig;
+    rtc::Configuration viewerConfig = ManualNegotiationConfig();
     rtc::PeerConnection viewerPc(viewerConfig);
     OfferChannels channels;
     std::string offer = CreateGatheredOffer(viewerPc, channels);
@@ -154,13 +160,13 @@ TEST(PeerSession, AnswersOfferAndReachesConnected) {
 }
 
 TEST(PeerSession, InvokesInputCallbackOnViewerDataChannelMessage) {
-    rtc::Configuration viewerConfig;
+    rtc::Configuration viewerConfig = ManualNegotiationConfig();
     rtc::PeerConnection viewerPc(viewerConfig);
-    auto inputChannel = viewerPc.createDataChannel("input");
 
     // Keep the returned track alive through negotiation: v0.22.4 stores it
     // weakly and marks an expired offered media section as removed.
     auto videoTrack = AddRecvOnlyH264Video(viewerPc);
+    auto inputChannel = viewerPc.createDataChannel("input");
     std::atomic<bool> gathered{false};
     viewerPc.onGatheringStateChange([&](rtc::PeerConnection::GatheringState s) {
         if (s == rtc::PeerConnection::GatheringState::Complete) gathered = true;
@@ -200,9 +206,9 @@ TEST(PeerSession, InvokesInputCallbackOnViewerDataChannelMessage) {
 }
 
 TEST(PeerSession, ConcurrentInputCallbackReplacementAndDispatchRemainSafe) {
-    rtc::PeerConnection viewerPc;
-    auto inputChannel = viewerPc.createDataChannel("input");
+    rtc::PeerConnection viewerPc(ManualNegotiationConfig());
     auto videoTrack = AddRecvOnlyH264Video(viewerPc);
+    auto inputChannel = viewerPc.createDataChannel("input");
     std::atomic<bool> gathered{false};
     viewerPc.onGatheringStateChange([&](rtc::PeerConnection::GatheringState state) {
         if (state == rtc::PeerConnection::GatheringState::Complete) gathered = true;
