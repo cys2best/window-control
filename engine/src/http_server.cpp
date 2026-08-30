@@ -18,6 +18,11 @@ void EngineHttpServer::Start() {
     }
     port_.store(bound);
     serveThread_ = std::thread([this]() { server_.listen_after_bind(); });
+    // cpp-httplib 0.19.0's stop() only closes the listening socket after
+    // listen_after_bind() has set is_running_. Without this barrier, an
+    // immediate Stop() can observe false, do nothing, and then wait forever
+    // while the server thread enters its accept loop.
+    server_.wait_until_ready();
 }
 
 void EngineHttpServer::Stop() {
