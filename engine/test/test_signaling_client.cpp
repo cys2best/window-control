@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include "signaling_client.h"
+#include "signaling_test_utils.h"
 #include <thread>
 #include <chrono>
 #include <atomic>
@@ -10,8 +11,9 @@
 // test/README.md for how to start one for local test runs.
 
 TEST(SignalingClient, ConnectsAndExchangesMessages) {
-    SignalingClient engineSide("ws://localhost:8443", "test-session-1", "engine", "");
-    SignalingClient viewerSide("ws://localhost:8443", "test-session-1", "viewer", "");
+    const auto session = signaling_test::UniqueSession("exchange");
+    SignalingClient engineSide("ws://localhost:8443", session, "engine", "");
+    SignalingClient viewerSide("ws://localhost:8443", session, "viewer", "");
 
     std::atomic<bool> received{false};
     std::string receivedMsg;
@@ -22,18 +24,17 @@ TEST(SignalingClient, ConnectsAndExchangesMessages) {
     });
     engineSide.Connect([](const std::string&) {});
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
-    EXPECT_TRUE(engineSide.IsConnected());
-    EXPECT_TRUE(viewerSide.IsConnected());
+    ASSERT_TRUE(signaling_test::WaitUntil([&]() {
+        return engineSide.IsConnected() && viewerSide.IsConnected();
+    }, std::chrono::seconds(5))) << "session=" << session;
 
     engineSide.Send(R"({"type":"offer","sdp":"test-sdp-content"})");
 
-    for (int i = 0; i < 50 && !received; ++i) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    }
-
-    EXPECT_TRUE(received);
-    EXPECT_NE(receivedMsg.find("test-sdp-content"), std::string::npos);
+    ASSERT_TRUE(signaling_test::WaitUntil(
+        [&]() { return received.load(); }, std::chrono::seconds(5)))
+        << "session=" << session;
+    EXPECT_NE(receivedMsg.find("test-sdp-content"), std::string::npos)
+        << "session=" << session << " payload=" << receivedMsg;
 }
 
 // Regression test for the offer-lost-to-a-connect-race bug: WebRtcPeer calls
@@ -42,8 +43,9 @@ TEST(SignalingClient, ConnectsAndExchangesMessages) {
 // server completes on SignalingClient's ioThread. A Send() that silently
 // drops on a not-yet-open connection loses the offer for good.
 TEST(SignalingClient, SendImmediatelyAfterConnectIsNotLost) {
-    SignalingClient engineSide("ws://localhost:8443", "test-session-2", "engine", "");
-    SignalingClient viewerSide("ws://localhost:8443", "test-session-2", "viewer", "");
+    const auto session = signaling_test::UniqueSession("connect-race");
+    SignalingClient engineSide("ws://localhost:8443", session, "engine", "");
+    SignalingClient viewerSide("ws://localhost:8443", session, "viewer", "");
 
     std::atomic<bool> received{false};
     std::string receivedMsg;
@@ -52,24 +54,26 @@ TEST(SignalingClient, SendImmediatelyAfterConnectIsNotLost) {
         receivedMsg = msg;
         received = true;
     });
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    ASSERT_TRUE(signaling_test::WaitUntil(
+        [&]() { return viewerSide.IsConnected(); }, std::chrono::seconds(5)))
+        << "session=" << session;
 
     engineSide.Connect([](const std::string&) {});
     // No settling sleep here — Send() races Connect()'s WS handshake on
     // purpose, matching how WebRtcPeer actually calls it in StartAsOfferer().
     engineSide.Send(R"({"type":"offer","sdp":"race-condition-sdp"})");
 
-    for (int i = 0; i < 50 && !received; ++i) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    }
-
-    EXPECT_TRUE(received);
-    EXPECT_NE(receivedMsg.find("race-condition-sdp"), std::string::npos);
+    ASSERT_TRUE(signaling_test::WaitUntil(
+        [&]() { return received.load(); }, std::chrono::seconds(5)))
+        << "session=" << session;
+    EXPECT_NE(receivedMsg.find("race-condition-sdp"), std::string::npos)
+        << "session=" << session << " payload=" << receivedMsg;
 }
 
 TEST(SignalingClient, DisconnectWaitsForCallbackAndSuppressesLaterMessages) {
-    SignalingClient engineSide("ws://localhost:8443", "test-session-disconnect", "engine", "");
-    SignalingClient viewerSide("ws://localhost:8443", "test-session-disconnect", "viewer", "");
+    const auto session = signaling_test::UniqueSession("disconnect");
+    SignalingClient engineSide("ws://localhost:8443", session, "engine", "");
+    SignalingClient viewerSide("ws://localhost:8443", session, "viewer", "");
 
     std::atomic<int> callbackCount{0};
     std::atomic<bool> callbackEntered{false};
@@ -80,19 +84,15 @@ TEST(SignalingClient, DisconnectWaitsForCallbackAndSuppressesLaterMessages) {
         while (!releaseCallback.load()) std::this_thread::yield();
     });
     viewerSide.Connect([](const std::string&) {});
-    for (int i = 0; i < 100 &&
-         (!engineSide.IsConnected() || !viewerSide.IsConnected()); ++i) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    }
-    ASSERT_TRUE(engineSide.IsConnected());
-    ASSERT_TRUE(viewerSide.IsConnected());
+    ASSERT_TRUE(signaling_test::WaitUntil([&]() {
+        return engineSide.IsConnected() && viewerSide.IsConnected();
+    }, std::chrono::seconds(5))) << "session=" << session;
 
     viewerSide.Send("hold-callback");
-    for (int i = 0; i < 100 && !callbackEntered; ++i) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    }
-    if (!callbackEntered.load()) releaseCallback = true;
-    ASSERT_TRUE(callbackEntered);
+    const bool entered = signaling_test::WaitUntil(
+        [&]() { return callbackEntered.load(); }, std::chrono::seconds(5));
+    if (!entered) releaseCallback = true;
+    ASSERT_TRUE(entered) << "session=" << session;
 
     std::atomic<bool> disconnectReturned{false};
     std::thread disconnectThread([&]() {

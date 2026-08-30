@@ -4,6 +4,7 @@
 #include "peer_registry.h"
 #include "scrcpy_source.h"
 #include "signaling_client.h"
+#include "signaling_test_utils.h"
 #include "fake_scrcpy_server.h"
 #include <rtc/rtc.hpp>
 #include <atomic>
@@ -113,8 +114,9 @@ std::string GatheredOffer() {
 }
 
 TEST(PublicSignalingBridge, AnswersRawSdpOfferWithRawSdpAnswer) {
-    SignalingClient engineSide("ws://localhost:8443", "test-public-1", "engine", "");
-    SignalingClient viewerSide("ws://localhost:8443", "test-public-1", "viewer", "");
+    const auto session = signaling_test::UniqueSession("public-answer");
+    SignalingClient engineSide("ws://localhost:8443", session, "engine", "");
+    SignalingClient viewerSide("ws://localhost:8443", session, "viewer", "");
 
     FakeScrcpyServer fake;
     fake.Serve();
@@ -133,13 +135,15 @@ TEST(PublicSignalingBridge, AnswersRawSdpOfferWithRawSdpAnswer) {
         gotAnswer = true;
     });
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
-    ASSERT_TRUE(viewerSide.IsConnected());
+    ASSERT_TRUE(signaling_test::WaitUntil([&]() {
+        return engineSide.IsConnected() && viewerSide.IsConnected();
+    }, std::chrono::seconds(5))) << "session=" << session;
 
     viewerSide.Send(GatheredOffer());
 
-    for (int i = 0; i < 400 && !gotAnswer; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(25));
-    ASSERT_TRUE(gotAnswer);
+    ASSERT_TRUE(signaling_test::WaitUntil(
+        [&]() { return gotAnswer.load(); }, std::chrono::seconds(10)))
+        << "session=" << session;
     EXPECT_NE(answerSdp.find("v=0"), std::string::npos);
     EXPECT_EQ(answerSdp.find('{'), std::string::npos); // raw SDP, not JSON-wrapped
     EXPECT_TRUE(registry.HasPublicPeer());
@@ -148,8 +152,9 @@ TEST(PublicSignalingBridge, AnswersRawSdpOfferWithRawSdpAnswer) {
 }
 
 TEST(PublicSignalingBridge, SecondOfferReplacesFirstPublicPeer) {
-    SignalingClient engineSide("ws://localhost:8443", "test-public-2", "engine", "");
-    SignalingClient viewerSide("ws://localhost:8443", "test-public-2", "viewer", "");
+    const auto session = signaling_test::UniqueSession("public-replace");
+    SignalingClient engineSide("ws://localhost:8443", session, "engine", "");
+    SignalingClient viewerSide("ws://localhost:8443", session, "viewer", "");
 
     FakeScrcpyServer fake;
     fake.Serve();
@@ -161,18 +166,24 @@ TEST(PublicSignalingBridge, SecondOfferReplacesFirstPublicPeer) {
     PublicSignalingBridge bridge(engineSide, registry, {}, inputRouter);
     bridge.Start();
 
-    int answerCount = 0;
+    std::atomic<int> answerCount{0};
     viewerSide.Connect([&](const std::string&) { ++answerCount; });
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    ASSERT_TRUE(signaling_test::WaitUntil([&]() {
+        return engineSide.IsConnected() && viewerSide.IsConnected();
+    }, std::chrono::seconds(5))) << "session=" << session;
 
     viewerSide.Send(GatheredOffer());
-    for (int i = 0; i < 200 && answerCount < 1; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(25));
-    ASSERT_EQ(answerCount, 1);
+    ASSERT_TRUE(signaling_test::WaitUntil(
+        [&]() { return answerCount.load() >= 1; }, std::chrono::seconds(10)))
+        << "session=" << session;
+    ASSERT_EQ(answerCount.load(), 1);
     ASSERT_TRUE(registry.HasPublicPeer());
 
     viewerSide.Send(GatheredOffer());
-    for (int i = 0; i < 200 && answerCount < 2; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(25));
-    EXPECT_EQ(answerCount, 2);
+    ASSERT_TRUE(signaling_test::WaitUntil(
+        [&]() { return answerCount.load() >= 2; }, std::chrono::seconds(10)))
+        << "session=" << session;
+    EXPECT_EQ(answerCount.load(), 2);
     EXPECT_TRUE(registry.HasPublicPeer());
 
     fake.Stop();
@@ -180,8 +191,9 @@ TEST(PublicSignalingBridge, SecondOfferReplacesFirstPublicPeer) {
 
 TEST(PublicSignalingBridge, MalformedOfferPreservesExistingPublicPeer) {
     std::atomic<int> answerCount{0};
-    SignalingClient engineSide("ws://localhost:8443", "test-public-malformed", "engine", "");
-    SignalingClient viewerSide("ws://localhost:8443", "test-public-malformed", "viewer", "");
+    const auto session = signaling_test::UniqueSession("public-malformed");
+    SignalingClient engineSide("ws://localhost:8443", session, "engine", "");
+    SignalingClient viewerSide("ws://localhost:8443", session, "viewer", "");
     ThreadSafeDiagnosticCapture diagnostic(std::cerr);
 
     FakeScrcpyServer fake;
@@ -196,12 +208,14 @@ TEST(PublicSignalingBridge, MalformedOfferPreservesExistingPublicPeer) {
     SignalingDisconnectGuard disconnectGuard(viewerSide, engineSide);
 
     viewerSide.Connect([&](const std::string&) { ++answerCount; });
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    ASSERT_TRUE(signaling_test::WaitUntil([&]() {
+        return engineSide.IsConnected() && viewerSide.IsConnected();
+    }, std::chrono::seconds(5))) << "session=" << session;
 
     viewerSide.Send(GatheredOffer());
-    for (int i = 0; i < 200 && answerCount.load() < 1; ++i) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(25));
-    }
+    ASSERT_TRUE(signaling_test::WaitUntil(
+        [&]() { return answerCount.load() >= 1; }, std::chrono::seconds(10)))
+        << "session=" << session;
     ASSERT_EQ(answerCount.load(), 1);
     auto existing = registry.Find("public-1");
     ASSERT_NE(existing, nullptr);
