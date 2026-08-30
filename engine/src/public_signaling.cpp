@@ -10,18 +10,20 @@ PublicSignalingBridge::PublicSignalingBridge(
 void PublicSignalingBridge::Start() {
     signaling_.Connect([this](const std::string& rawSdpOffer) {
         std::string id = "public-" + std::to_string(++nextPublicSeq_);
-        auto session = registry_.Create(PeerKind::Public, id, iceServers_);
-        if (!session) {
-            std::cerr << "[public_signaling] failed to create public peer slot" << std::endl;
-            return;
-        }
+        auto session = std::make_shared<PeerSession>(id, iceServers_);
         inputRouter_.AttachToPeer(*session);
+        std::string answer;
         try {
-            std::string answer = session->AnswerOffer(rawSdpOffer);
-            signaling_.Send(answer);
+            answer = session->AnswerOffer(rawSdpOffer);
         } catch (const std::exception& e) {
             std::cerr << "[public_signaling] AnswerOffer failed, dropping: " << e.what() << std::endl;
-            registry_.Remove(id);
+            return;
         }
+        if (!registry_.Adopt(PeerKind::Public, id, session)) {
+            std::cerr << "[public_signaling] failed to adopt public peer id=" << id << std::endl;
+            return;
+        }
+        signaling_.Send(answer);
+        std::cerr << "[public_signaling] public peer ready id=" << id << std::endl;
     });
 }

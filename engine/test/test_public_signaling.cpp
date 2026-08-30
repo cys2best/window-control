@@ -91,3 +91,38 @@ TEST(PublicSignalingBridge, SecondOfferReplacesFirstPublicPeer) {
 
     fake.Stop();
 }
+
+TEST(PublicSignalingBridge, MalformedOfferPreservesExistingPublicPeer) {
+    SignalingClient engineSide("ws://localhost:8443", "test-public-malformed", "engine", "");
+    SignalingClient viewerSide("ws://localhost:8443", "test-public-malformed", "viewer", "");
+
+    FakeScrcpyServer fake;
+    fake.Serve();
+    PeerRegistry registry;
+    ScrcpySource source(registry);
+    source.ConnectInitial(fake.Port());
+    InputRouter inputRouter(source);
+
+    PublicSignalingBridge bridge(engineSide, registry, {}, inputRouter);
+    bridge.Start();
+
+    std::atomic<int> answerCount{0};
+    viewerSide.Connect([&](const std::string&) { ++answerCount; });
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    viewerSide.Send(GatheredOffer());
+    for (int i = 0; i < 200 && answerCount.load() < 1; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    }
+    ASSERT_EQ(answerCount.load(), 1);
+    auto existing = registry.Find("public-1");
+    ASSERT_NE(existing, nullptr);
+
+    viewerSide.Send("not-an-sdp-offer");
+    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+
+    EXPECT_EQ(registry.Find("public-1"), existing);
+    EXPECT_EQ(answerCount.load(), 1);
+
+    fake.Stop();
+}

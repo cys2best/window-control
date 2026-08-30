@@ -71,3 +71,28 @@ TEST(PeerRegistry, MarkFailedDefersRemovalUntilReap) {
 
     EXPECT_EQ(registry.Find("failed-send"), nullptr);
 }
+
+TEST(PeerRegistry, DuplicateLocalIdReplacesSessionWithoutConsumingCapacity) {
+    PeerRegistry registry(/*localCapacity=*/1);
+    auto first = registry.Create(PeerKind::Local, "duplicate", {});
+    ASSERT_NE(first, nullptr);
+
+    auto replacement = registry.Create(PeerKind::Local, "duplicate", {});
+
+    ASSERT_NE(replacement, nullptr);
+    EXPECT_NE(replacement, first);
+    EXPECT_EQ(registry.Find("duplicate"), replacement);
+    EXPECT_EQ(registry.LocalCount(), 1u);
+}
+
+TEST(PeerRegistry, AdoptedPublicPeerReplacesExistingSession) {
+    PeerRegistry registry;
+    auto first = registry.Create(PeerKind::Public, "public-old", {});
+    ASSERT_NE(first, nullptr);
+    auto replacement = std::make_shared<PeerSession>("public-new", std::vector<std::string>{});
+
+    ASSERT_TRUE(registry.Adopt(PeerKind::Public, "public-new", replacement));
+
+    EXPECT_EQ(registry.Find("public-old"), nullptr);
+    EXPECT_EQ(registry.Find("public-new"), replacement);
+}

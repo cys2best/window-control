@@ -3,6 +3,42 @@
 PeerRegistry::PeerRegistry(int localCapacity, std::chrono::milliseconds handshakeTimeout)
     : localCapacity_(localCapacity), handshakeTimeout_(handshakeTimeout) {}
 
+bool PeerRegistry::CanInsertLocked(PeerKind kind, const std::string& id) const {
+    if (kind != PeerKind::Local) return true;
+
+    size_t localCount = 0;
+    for (const auto& [existingId, entry] : peers_) {
+        if (entry.kind == PeerKind::Local && existingId != id) ++localCount;
+    }
+    return localCount < static_cast<size_t>(localCapacity_);
+}
+
+void PeerRegistry::InsertLocked(
+    PeerKind kind,
+    const std::string& id,
+    const std::shared_ptr<PeerSession>& session,
+    std::vector<std::shared_ptr<PeerSession>>& victims) {
+    auto duplicate = peers_.find(id);
+    if (duplicate != peers_.end()) {
+        victims.push_back(duplicate->second.session);
+        peers_.erase(duplicate);
+    }
+
+    if (kind == PeerKind::Public) {
+        for (auto it = peers_.begin(); it != peers_.end();) {
+            if (it->second.kind == PeerKind::Public) {
+                victims.push_back(it->second.session);
+                it = peers_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+
+    peers_.emplace(
+        id, Entry{session, kind, std::chrono::steady_clock::now()});
+}
+
 std::shared_ptr<PeerSession> PeerRegistry::Create(
     PeerKind kind, const std::string& id, const std::vector<std::string>& iceServers) {
     std::vector<std::shared_ptr<PeerSession>> victims;
@@ -10,32 +46,33 @@ std::shared_ptr<PeerSession> PeerRegistry::Create(
 
     {
         std::lock_guard<std::mutex> lock(mutex_);
-
-        if (kind == PeerKind::Local) {
-            size_t localCount = 0;
-            for (const auto& [_, entry] : peers_) {
-                if (entry.kind == PeerKind::Local) ++localCount;
-            }
-            if (localCount >= static_cast<size_t>(localCapacity_)) return nullptr;
-        } else {
-            // At most one public peer: drop the previous one before adding
-            // its replacement, then close it outside the registry lock.
-            for (auto it = peers_.begin(); it != peers_.end();) {
-                if (it->second.kind == PeerKind::Public) {
-                    victims.push_back(it->second.session);
-                    it = peers_.erase(it);
-                } else {
-                    ++it;
-                }
-            }
-        }
+        if (!CanInsertLocked(kind, id)) return nullptr;
 
         session = std::make_shared<PeerSession>(id, iceServers);
-        peers_[id] = Entry{session, kind, std::chrono::steady_clock::now()};
+        InsertLocked(kind, id, session, victims);
     }
 
     for (const auto& victim : victims) victim->Close();
     return session;
+}
+
+bool PeerRegistry::Adopt(
+    PeerKind kind,
+    const std::string& id,
+    std::shared_ptr<PeerSession> session) {
+    if (!session || session->Id() != id) return false;
+
+    std::vector<std::shared_ptr<PeerSession>> victims;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!CanInsertLocked(kind, id)) return false;
+        InsertLocked(kind, id, session, victims);
+    }
+
+    for (const auto& victim : victims) {
+        if (victim != session) victim->Close();
+    }
+    return true;
 }
 
 bool PeerRegistry::Remove(const std::string& id) {

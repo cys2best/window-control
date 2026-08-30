@@ -21,6 +21,10 @@ public:
     std::shared_ptr<PeerSession> Create(
         PeerKind kind, const std::string& id,
         const std::vector<std::string>& iceServers);
+    // Commits an already-negotiated session. Returns false only when a Local
+    // adoption would exceed capacity or the supplied session/id is invalid.
+    bool Adopt(PeerKind kind, const std::string& id,
+               std::shared_ptr<PeerSession> session);
 
     bool Remove(const std::string& id);
     // Records a send failure without closing the peer. The housekeeping
@@ -48,6 +52,13 @@ private:
         std::chrono::steady_clock::time_point createdAt;
         bool failed = false;
     };
+
+    bool CanInsertLocked(PeerKind kind, const std::string& id) const;
+    void InsertLocked(
+        PeerKind kind,
+        const std::string& id,
+        const std::shared_ptr<PeerSession>& session,
+        std::vector<std::shared_ptr<PeerSession>>& victims);
 
     mutable std::mutex mutex_;
     std::map<std::string, Entry> peers_;
