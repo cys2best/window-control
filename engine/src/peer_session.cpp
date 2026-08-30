@@ -39,7 +39,7 @@ PeerSession::PeerSession(std::string id, const std::vector<std::string>& iceServ
         if (impl_->onStateChange) impl_->onStateChange(state);
     });
 
-    // The viewer creates "input" (see peer_session_test.cpp); this side only
+    // The viewer creates "input" (see engine/test/test_peer_session.cpp); this side only
     // observes it arriving.
     impl_->pc->onDataChannel([this](std::shared_ptr<rtc::DataChannel> dc) {
         if (dc->label() != "input") return;
@@ -58,30 +58,41 @@ PeerSession::~PeerSession() { Close(); }
 std::string PeerSession::AnswerOffer(
     const std::string& remoteSdpOffer, std::chrono::milliseconds gatherTimeout) {
     impl_->streamStart = std::chrono::steady_clock::now();
-    impl_->pc->setRemoteDescription(rtc::Description(remoteSdpOffer, "offer"));
 
-    rtc::Description::Video media("video", rtc::Description::Direction::SendOnly);
-    media.addH264Codec(96);
-    media.setBitrate(8000);
-    impl_->videoTrack = impl_->pc->addTrack(media);
+    try {
+        // setRemoteDescription must be called before addTrack/setLocalDescription
+        // so that libdatachannel generates an answer SDP (matching the offer) rather
+        // than creating a fresh offer itself.
+        impl_->pc->setRemoteDescription(rtc::Description(remoteSdpOffer, "offer"));
 
-    impl_->rtpConfig = std::make_shared<rtc::RtpPacketizationConfig>(
-        /*ssrc=*/1, /*cname=*/"engine-video", /*payloadType=*/96,
-        rtc::H264RtpPacketizer::defaultClockRate);
-    impl_->packetizer = std::make_shared<rtc::H264RtpPacketizer>(
-        rtc::NalUnit::Separator::StartSequence, impl_->rtpConfig);
-    auto srReporter = std::make_shared<rtc::RtcpSrReporter>(impl_->rtpConfig);
-    impl_->packetizer->addToChain(srReporter);
-    auto nackResponder = std::make_shared<rtc::RtcpNackResponder>();
-    impl_->packetizer->addToChain(nackResponder);
-    impl_->videoTrack->setMediaHandler(impl_->packetizer);
+        rtc::Description::Video media("video", rtc::Description::Direction::SendOnly);
+        media.addH264Codec(96);
+        media.setBitrate(8000);
+        impl_->videoTrack = impl_->pc->addTrack(media);
 
-    impl_->pc->setLocalDescription();
+        impl_->rtpConfig = std::make_shared<rtc::RtpPacketizationConfig>(
+            /*ssrc=*/1, /*cname=*/"engine-video", /*payloadType=*/96,
+            rtc::H264RtpPacketizer::defaultClockRate);
+        impl_->packetizer = std::make_shared<rtc::H264RtpPacketizer>(
+            rtc::NalUnit::Separator::StartSequence, impl_->rtpConfig);
+        auto srReporter = std::make_shared<rtc::RtcpSrReporter>(impl_->rtpConfig);
+        impl_->packetizer->addToChain(srReporter);
+        auto nackResponder = std::make_shared<rtc::RtcpNackResponder>();
+        impl_->packetizer->addToChain(nackResponder);
+        impl_->videoTrack->setMediaHandler(impl_->packetizer);
+
+        impl_->pc->setLocalDescription();
+    } catch (const std::exception& e) {
+        throw std::runtime_error(std::string("PeerSession: failed to answer offer: ") + e.what());
+    }
 
     std::unique_lock<std::mutex> lock(impl_->gatherMutex);
     bool ok = impl_->gatherCv.wait_for(lock, gatherTimeout,
         [this] { return impl_->gatheringComplete; });
-    if (!ok) throw std::runtime_error("PeerSession: ICE gathering timed out");
+    if (!ok) {
+        impl_->pc->close();
+        throw std::runtime_error("PeerSession: ICE gathering timed out");
+    }
 
     return std::string(*impl_->pc->localDescription());
 }
