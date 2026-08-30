@@ -33,8 +33,9 @@ Plan/task identifiers belong here and in workflow state, not in commit subjects.
 - Windows verification: human-reported rebuilt `SignalingClient.*:PublicSignalingBridge.*` live-relay suite passes in full against the Python relay after commits 0a76922 and 7ca12a6
 - Documentation finding/fix: the offline GTest filter had a second leading minus, which GTest treats as part of the second negative pattern rather than another separator; commit e968d46 uses `-SignalingClient.*:PublicSignalingBridge.*` so both live suites are actually excluded
 - Windows finding/fix: the corrected offline suite hung at `EngineHttpServer.LoopbackBindRefusesNonLoopbackByAddressChoice`; pinned cpp-httplib 0.19.0 makes `stop()` a no-op before `listen_after_bind()` sets its running flag, so immediate `Start()`/`Stop()` could miss shutdown and join forever; commit dfa93b6 waits on the library readiness barrier before returning from `Start()`
+- Windows finding/fix: after the HTTP fix, the offline suite reached the complete fake scrcpy handshake and hung in `ScrcpySource.ConnectInitialSucceedsAndReportsDimensions`; `ScrcpyVideoClient::Stop()` only shut down the socket before joining a reader blocked in `recv()`; commit 1ee0c50 closes the Windows socket before the join (without writing the shared handle until the reader exits) and adds a completed-handshake diagnostic; Windows focused rerun pending
 - Finished: expanded `engine/test/README_e2e.md` into the Windows real-device operator runbook
-- Next: rebuild on Windows and rerun the corrected full offline suite, then finalize completion through the Superpowers workflow
+- Next: rebuild on Windows, rerun the focused `ScrcpySource.ConnectInitialSucceedsAndReportsDimensions`, then rerun the corrected full offline suite and finalize through the Superpowers workflow
 - Blockers: manual E2E and live signaling are complete; Windows full offline-suite evidence and workflow-owned completion state remain outstanding
 
 ### 2026-08-31 00:30 — codex
