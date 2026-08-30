@@ -26,10 +26,11 @@ Plan/task identifiers belong here and in workflow state, not in commit subjects.
 - Windows finding/fix: manual launcher run exposed Windows PowerShell 5 turning merged native stderr into terminating `NativeCommandError`; commit bf29108 makes engine diagnostics non-terminating, removes `2>&1` from the runbook, and prints the separate static-page server URL
 - Windows finding/fix: reconnect instructions assumed window-local variables survived; empty serial/port/scid/tier produced Python syntax failure and a rejected null-port JSON request without changing generation 0; commit dbc059f makes the block self-contained, typed, and passes values as Python argv
 - Windows finding/correction: cleanup commands failed because `$serial` and `$scid` were unset in that PowerShell window, shifting `adb -s` arguments so `--remove`, `pkill`, and `--list` appeared to be unsupported commands; commit 6441eb6 replaces the earlier vendor-ADB diagnosis in 35ebc34 with a self-contained, validated cleanup block
-- Manual gate progress: human reports the first peer has visible live video, non-zero `framesDecoded`, open input DataChannel, and working click; two independent tabs render live; generation reconnect returned `accepted: true` with the original tab open
+- Manual gate progress: human reports the first peer has visible live video, non-zero `framesDecoded`, open input DataChannel, and working click; two independent tabs render live; reconnect is not yet verified because `engine.exe` was stopped with `Ctrl+C`, changing the WHEP port and requiring a reload even though a later reconnect request returned `accepted: true`
+- Windows finding/fix: generation reconnect ordering was not explicit enough; commit 4ff209f now states that window A and its WHEP/admin ports must remain alive while only the scrcpy server is replaced, and that an engine restart is a new run rather than reconnect evidence
 - Finished: expanded `engine/test/README_e2e.md` into the Windows real-device operator runbook
-- Next: run the corrected clean-shutdown block, confirm engine `Stopped.`, and retain the listed evidence
-- Blockers: only clean-shutdown confirmation/evidence remains for the manual browser/device E2E gate
+- Next: repeat the first-peer checkpoint, perform generation reconnect without stopping/reloading the engine or tab, then run clean shutdown and retain the listed evidence
+- Blockers: generation reconnect continuity and final clean-shutdown confirmation/evidence remain for the manual browser/device E2E gate
 
 ### 2026-08-31 00:30 — codex
 - Claiming: 2026-08-30-engine-core-rewrite/final-whole-branch-review-fix
