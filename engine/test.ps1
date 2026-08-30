@@ -11,7 +11,6 @@ param(
     [int]$Scid = 1,
     [string]$Tier = "720",
     [string]$InstanceName = "poc-instance",
-    [string]$WhepPort = "8000",
     [switch]$SkipStartServer,
     [switch]$SkipBuild
 )
@@ -58,7 +57,8 @@ if (-not (Test-Path $exe)) {
 }
 
 Write-Host "[test.ps1] launching engine.exe..." -ForegroundColor Cyan
-Write-Host "[test.ps1] Once ready record prints, open test_page.html:" -ForegroundColor Yellow
-Write-Host "[test.ps1] http://localhost:$WhepPort/test_page.html?whep=http://localhost:$WhepPort/whep" -ForegroundColor Yellow
+Write-Host "[test.ps1] Once the ready record JSON prints to stdout, extract whep_port from it." -ForegroundColor Yellow
+Write-Host "[test.ps1] Then open test_page.html in a browser:" -ForegroundColor Yellow
+Write-Host "[test.ps1] http://localhost:<whep_port>/test_page.html?whep=http://localhost:<whep_port>/whep" -ForegroundColor Yellow
 
 & $exe $InstanceName $Port
