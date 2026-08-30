@@ -22,10 +22,10 @@ Plan/task identifiers belong here and in workflow state, not in commit subjects.
 ### 2026-08-31 02:16 — codex
 - Claiming: 2026-08-30-engine-core-rewrite/task-10-browser-sdp-interoperability-fix (authorized from the live manual gate)
 - Finished: browser SDP interoperability implementation (commits b0f31b3, 18e910d) — answerer now preserves offered m-line/MID order, selects an offered H264 payload type, uses the offered track, and explicitly sequences the v0.22.4 answer instead of triggering a second `actpass` offer; browser-shaped regression added; all engine C++ offer fixtures now use pinned-version APIs and manual negotiation
-- Windows finding/fix: first focused run reached 19 tests but exposed `Illegal role actpass in remote answer description` plus offer fixtures negotiated before adding video; commit 18e910d fixes both; rerun pending
+- Windows finding/fix: first focused run reached 19 tests but exposed `Illegal role actpass in remote answer description` plus offer fixtures negotiated before adding video; commit 18e910d fixes both; human-reported Windows rerun passed all focused `PeerSession.*:WhepHandler.*:InputRouter.*` tests
 - Finished: expanded `engine/test/README_e2e.md` into the Windows real-device operator runbook
-- Next: on the Windows Host PC, rebuild and run `PeerSession.*:WhepHandler.*:InputRouter.*`, then restart the manual gate from the first-browser checkpoint
-- Blockers: Windows executable build/test and resumed browser/device gate are awaiting Host PC execution
+- Next: resume Task 10's manual real-device gate from the first-browser checkpoint, then verify touch, second peer, reconnect, and clean shutdown
+- Blockers: manual browser/device E2E completion remains pending
 
 ### 2026-08-31 00:30 — codex
 - Claiming: 2026-08-30-engine-core-rewrite/final-whole-branch-review-fix
