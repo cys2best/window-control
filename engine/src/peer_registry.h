@@ -29,7 +29,11 @@ public:
     bool Remove(const std::string& id);
     // Records a send failure without closing the peer. The housekeeping
     // reaper performs the potentially blocking teardown off the media thread.
-    bool MarkFailed(const std::string& id);
+    // The expected session prevents a stale snapshot from marking a same-id
+    // replacement that was installed while the send was in progress.
+    bool MarkFailed(
+        const std::string& id,
+        const std::shared_ptr<PeerSession>& expectedSession);
     std::shared_ptr<PeerSession> Find(const std::string& id) const;
 
     // Snapshot for the source's fan-out loop — never call SendVideoNalu

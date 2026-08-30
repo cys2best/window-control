@@ -64,7 +64,7 @@ TEST(PeerRegistry, MarkFailedDefersRemovalUntilReap) {
     auto peer = registry.Create(PeerKind::Local, "failed-send", {});
     ASSERT_NE(peer, nullptr);
 
-    EXPECT_TRUE(registry.MarkFailed("failed-send"));
+    EXPECT_TRUE(registry.MarkFailed("failed-send", peer));
     EXPECT_EQ(registry.Find("failed-send"), peer);
 
     registry.ReapDeadAndStalePeers();
@@ -95,4 +95,18 @@ TEST(PeerRegistry, AdoptedPublicPeerReplacesExistingSession) {
 
     EXPECT_EQ(registry.Find("public-old"), nullptr);
     EXPECT_EQ(registry.Find("public-new"), replacement);
+}
+
+TEST(PeerRegistry, OldSameIdSessionCannotMarkReplacementFailed) {
+    PeerRegistry registry;
+    auto original = registry.Create(PeerKind::Local, "same-id", {});
+    ASSERT_NE(original, nullptr);
+    auto replacement = registry.Create(PeerKind::Local, "same-id", {});
+    ASSERT_NE(replacement, nullptr);
+
+    EXPECT_FALSE(registry.MarkFailed("same-id", original));
+
+    registry.ReapDeadAndStalePeers();
+
+    EXPECT_EQ(registry.Find("same-id"), replacement);
 }

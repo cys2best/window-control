@@ -32,6 +32,7 @@ private:
 struct SourceVideoPeerTarget {
     std::string id;
     std::function<void(const std::uint8_t*, std::size_t)> send;
+    std::function<void()> markFailed = {};
 };
 
 // Owns the per-access-unit ordering contract: observe the source-global
@@ -39,20 +40,17 @@ struct SourceVideoPeerTarget {
 class SourceVideoFanout {
 public:
     using SnapshotProvider = std::function<std::vector<SourceVideoPeerTarget>()>;
-    using MarkPeerFailed = std::function<void(const std::string&)>;
 
     SourceVideoFanout(
         SourceAccessUnitPreparer& preparer,
-        SnapshotProvider snapshotProvider,
-        MarkPeerFailed markPeerFailed);
+        SnapshotProvider snapshotProvider);
 
     void BeginGeneration();
     void SendAccessUnit(const std::uint8_t* data, std::size_t size);
 
 private:
-    void MarkFailedPeer(const std::string& id);
+    void MarkFailedPeer(const SourceVideoPeerTarget& peer);
 
     SourceAccessUnitPreparer& preparer_;
     SnapshotProvider snapshotProvider_;
-    MarkPeerFailed markPeerFailed_;
 };

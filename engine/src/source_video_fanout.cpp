@@ -17,11 +17,9 @@ void H264SourceAccessUnitPreparer::Reset() {
 
 SourceVideoFanout::SourceVideoFanout(
     SourceAccessUnitPreparer& preparer,
-    SnapshotProvider snapshotProvider,
-    MarkPeerFailed markPeerFailed)
+    SnapshotProvider snapshotProvider)
     : preparer_(preparer),
-      snapshotProvider_(std::move(snapshotProvider)),
-      markPeerFailed_(std::move(markPeerFailed)) {}
+      snapshotProvider_(std::move(snapshotProvider)) {}
 
 void SourceVideoFanout::BeginGeneration() {
     preparer_.Reset();
@@ -39,32 +37,33 @@ void SourceVideoFanout::SendAccessUnit(
     }
 
     auto peers = snapshotProvider_();
-    std::vector<std::string> failedPeerIds;
+    std::vector<const SourceVideoPeerTarget*> failedPeers;
     for (const auto& peer : peers) {
         try {
             peer.send(sendData, sendSize);
         } catch (const std::exception& error) {
             std::cerr << "[peer] video send failed id=" << peer.id
                       << ": " << error.what() << std::endl;
-            failedPeerIds.push_back(peer.id);
+            failedPeers.push_back(&peer);
         } catch (...) {
             std::cerr << "[peer] video send failed id=" << peer.id
                       << ": unknown exception" << std::endl;
-            failedPeerIds.push_back(peer.id);
+            failedPeers.push_back(&peer);
         }
     }
 
-    for (const auto& id : failedPeerIds) MarkFailedPeer(id);
+    for (const auto* peer : failedPeers) MarkFailedPeer(*peer);
 }
 
-void SourceVideoFanout::MarkFailedPeer(const std::string& id) {
+void SourceVideoFanout::MarkFailedPeer(const SourceVideoPeerTarget& peer) {
+    if (!peer.markFailed) return;
     try {
-        markPeerFailed_(id);
+        peer.markFailed();
     } catch (const std::exception& error) {
-        std::cerr << "[peer] failed to mark video-send peer id=" << id
+        std::cerr << "[peer] failed to mark video-send peer id=" << peer.id
                   << ": " << error.what() << std::endl;
     } catch (...) {
-        std::cerr << "[peer] failed to mark video-send peer id=" << id
+        std::cerr << "[peer] failed to mark video-send peer id=" << peer.id
                   << ": unknown exception" << std::endl;
     }
 }

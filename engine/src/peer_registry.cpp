@@ -88,10 +88,12 @@ bool PeerRegistry::Remove(const std::string& id) {
     return true;
 }
 
-bool PeerRegistry::MarkFailed(const std::string& id) {
+bool PeerRegistry::MarkFailed(
+    const std::string& id,
+    const std::shared_ptr<PeerSession>& expectedSession) {
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = peers_.find(id);
-    if (it == peers_.end()) return false;
+    if (it == peers_.end() || it->second.session != expectedSession) return false;
     it->second.failed = true;
     return true;
 }

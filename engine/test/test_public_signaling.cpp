@@ -8,9 +8,89 @@
 #include <rtc/rtc.hpp>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
+#include <iostream>
+#include <mutex>
+#include <streambuf>
+#include <string>
 #include <thread>
 
 namespace {
+class ThreadSafeDiagnosticCapture final : public std::streambuf {
+public:
+    explicit ThreadSafeDiagnosticCapture(std::ostream& stream)
+        : stream_(stream), original_(stream.rdbuf()) {
+        stream_.rdbuf(this);
+    }
+
+    ~ThreadSafeDiagnosticCapture() override {
+        stream_.rdbuf(original_);
+    }
+
+    bool WaitFor(
+        const std::string& text,
+        std::chrono::milliseconds timeout) {
+        std::unique_lock<std::mutex> lock(mutex_);
+        return changed_.wait_for(lock, timeout, [&]() {
+            return captured_.find(text) != std::string::npos;
+        });
+    }
+
+protected:
+    int_type overflow(int_type character) override {
+        if (traits_type::eq_int_type(character, traits_type::eof())) {
+            return traits_type::not_eof(character);
+        }
+
+        const char value = traits_type::to_char_type(character);
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            captured_.push_back(value);
+        }
+        changed_.notify_all();
+        return original_->sputc(value);
+    }
+
+    std::streamsize xsputn(
+        const char* text,
+        std::streamsize count) override {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            captured_.append(text, static_cast<std::size_t>(count));
+        }
+        changed_.notify_all();
+        return original_->sputn(text, count);
+    }
+
+    int sync() override {
+        return original_->pubsync();
+    }
+
+private:
+    std::ostream& stream_;
+    std::streambuf* original_;
+    std::mutex mutex_;
+    std::condition_variable changed_;
+    std::string captured_;
+};
+
+class SignalingDisconnectGuard final {
+public:
+    SignalingDisconnectGuard(
+        SignalingClient& viewerSide,
+        SignalingClient& engineSide)
+        : viewerSide_(viewerSide), engineSide_(engineSide) {}
+
+    ~SignalingDisconnectGuard() {
+        viewerSide_.Disconnect();
+        engineSide_.Disconnect();
+    }
+
+private:
+    SignalingClient& viewerSide_;
+    SignalingClient& engineSide_;
+};
+
 std::string GatheredOffer() {
     rtc::PeerConnection pc;
     pc.addTransceiver(rtc::Description::Media::Kind::Video,
@@ -93,8 +173,10 @@ TEST(PublicSignalingBridge, SecondOfferReplacesFirstPublicPeer) {
 }
 
 TEST(PublicSignalingBridge, MalformedOfferPreservesExistingPublicPeer) {
+    std::atomic<int> answerCount{0};
     SignalingClient engineSide("ws://localhost:8443", "test-public-malformed", "engine", "");
     SignalingClient viewerSide("ws://localhost:8443", "test-public-malformed", "viewer", "");
+    ThreadSafeDiagnosticCapture diagnostic(std::cerr);
 
     FakeScrcpyServer fake;
     fake.Serve();
@@ -105,8 +187,8 @@ TEST(PublicSignalingBridge, MalformedOfferPreservesExistingPublicPeer) {
 
     PublicSignalingBridge bridge(engineSide, registry, {}, inputRouter);
     bridge.Start();
+    SignalingDisconnectGuard disconnectGuard(viewerSide, engineSide);
 
-    std::atomic<int> answerCount{0};
     viewerSide.Connect([&](const std::string&) { ++answerCount; });
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
@@ -119,7 +201,11 @@ TEST(PublicSignalingBridge, MalformedOfferPreservesExistingPublicPeer) {
     ASSERT_NE(existing, nullptr);
 
     viewerSide.Send("not-an-sdp-offer");
-    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    ASSERT_TRUE(diagnostic.WaitFor(
+        "[public_signaling] AnswerOffer failed, dropping:",
+        std::chrono::seconds(10)));
+    viewerSide.Disconnect();
+    engineSide.Disconnect();
 
     EXPECT_EQ(registry.Find("public-1"), existing);
     EXPECT_EQ(answerCount.load(), 1);

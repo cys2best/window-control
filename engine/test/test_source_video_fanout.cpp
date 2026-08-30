@@ -72,8 +72,7 @@ TEST(SourceVideoFanout, PreparesOnceBeforeSnapshotAndDeliversOnePreparedUnitToEv
                     secondReceived.assign(data, data + size);
                 }},
             };
-        },
-        [](const std::string&) {});
+        });
     const std::vector<std::uint8_t> input = {0x01, 0x02};
 
     fanout.SendAccessUnit(input.data(), input.size());
@@ -96,8 +95,7 @@ TEST(SourceVideoFanout, PrependsCachedSpsAndPpsToIdr) {
                     received.emplace_back(data, data + size);
                 }},
             };
-        },
-        [](const std::string&) {});
+        });
     auto sps = Nalu(0x67, {0x42, 0xC0, 0x29});
     auto pps = Nalu(0x68, {0xCE, 0x3C, 0x80});
     auto idr = Nalu(0x65, {0xAA, 0xBB});
@@ -121,8 +119,7 @@ TEST(SourceVideoFanout, BeginGenerationClearsCachedSpsAndPps) {
                     received.emplace_back(data, data + size);
                 }},
             };
-        },
-        [](const std::string&) {});
+        });
     auto config = Join({
         Nalu(0x67, {0x42, 0xC0, 0x29}),
         Nalu(0x68, {0xCE, 0x3C, 0x80}),
@@ -145,15 +142,16 @@ TEST(SourceVideoFanout, RemovesThrowingPeerAndContinuesWithLaterPeers) {
         preparer,
         [&]() {
             return std::vector<SourceVideoPeerTarget>{
-                {"broken", [](const std::uint8_t*, std::size_t) {
-                    throw std::runtime_error("send failed");
-                }},
+                {"broken",
+                 [](const std::uint8_t*, std::size_t) {
+                     throw std::runtime_error("send failed");
+                 },
+                 [&]() { removed.push_back("broken"); }},
                 {"healthy", [&](const std::uint8_t* data, std::size_t size) {
                     received.assign(data, data + size);
                 }},
             };
-        },
-        [&](const std::string& id) { removed.push_back(id); });
+        });
     auto idr = Nalu(0x65, {0x30});
 
     testing::internal::CaptureStderr();
@@ -173,15 +171,16 @@ TEST(SourceVideoFanout, DeliversToHealthyPeersBeforeMarkingFailures) {
         preparer,
         [&]() {
             return std::vector<SourceVideoPeerTarget>{
-                {"broken", [](const std::uint8_t*, std::size_t) {
-                    throw std::runtime_error("send failed");
-                }},
+                {"broken",
+                 [](const std::uint8_t*, std::size_t) {
+                     throw std::runtime_error("send failed");
+                 },
+                 [&]() { events.push_back("mark:broken"); }},
                 {"healthy", [&](const std::uint8_t*, std::size_t) {
                     events.push_back("healthy");
                 }},
             };
-        },
-        [&](const std::string& id) { events.push_back("mark:" + id); });
+        });
     auto idr = Nalu(0x65, {0x40});
 
     testing::internal::CaptureStderr();
@@ -189,4 +188,33 @@ TEST(SourceVideoFanout, DeliversToHealthyPeersBeforeMarkingFailures) {
     testing::internal::GetCapturedStderr();
 
     EXPECT_EQ(events, (std::vector<std::string>{"healthy", "mark:broken"}));
+}
+
+TEST(SourceVideoFanout, FailureMarkerRetainsCapturedTargetIdentity) {
+    H264SourceAccessUnitPreparer preparer;
+    int currentGeneration = 1;
+    std::vector<int> markedGenerations;
+    SourceVideoFanout fanout(
+        preparer,
+        [&]() {
+            const int capturedGeneration = currentGeneration;
+            return std::vector<SourceVideoPeerTarget>{
+                {"same-id",
+                 [&](const std::uint8_t*, std::size_t) {
+                     currentGeneration = 2;
+                     throw std::runtime_error("send failed");
+                 },
+                 [&, capturedGeneration]() {
+                     markedGenerations.push_back(capturedGeneration);
+                 }},
+            };
+        });
+    auto idr = Nalu(0x65, {0x50});
+
+    testing::internal::CaptureStderr();
+    fanout.SendAccessUnit(idr.data(), idr.size());
+    testing::internal::GetCapturedStderr();
+
+    EXPECT_EQ(currentGeneration, 2);
+    EXPECT_EQ(markedGenerations, (std::vector<int>{1}));
 }

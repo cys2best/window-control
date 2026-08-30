@@ -34,11 +34,13 @@ ScrcpySource::ScrcpySource(
                       [peer](const std::uint8_t* data, std::size_t size) {
                           peer->SendVideoNalu(data, size);
                       },
+                      [this, peer]() {
+                          registry_.MarkFailed(peer->Id(), peer);
+                      },
                   });
               }
               return targets;
-          },
-          [this](const std::string& id) { registry_.MarkFailed(id); }),
+          }),
       lastFrameAt_(std::chrono::steady_clock::now()) {}
 
 ScrcpySource::~ScrcpySource() {
