@@ -1,5 +1,6 @@
 // engine/src/peer.cpp
 #include "peer.h"
+#include "h264_nalu.h"
 #include <rtc/rtc.hpp>
 #include <nlohmann/json.hpp>
 #include <iostream>
@@ -17,6 +18,7 @@ struct WebRtcPeer::Impl {
     InputCallback onInput;
     std::function<void()> onConnected;
     std::chrono::steady_clock::time_point streamStart;
+    h264::SpsPpsCache spsPpsCache;
 
     explicit Impl(SignalingClient& s) : signaling(s) {}
 };
@@ -128,6 +130,11 @@ void WebRtcPeer::StartAsOfferer() {
 void WebRtcPeer::SendVideoNalu(const uint8_t* data, size_t size) {
     static int callCount = 0;
     static int droppedCount = 0;
+
+    // Parameter sets commonly arrive before DTLS opens the media track. The
+    // transmission may be dropped below, but the configuration state cannot be.
+    auto prepared = impl_->spsPpsCache.ObserveAndPrepare(data, size);
+
     bool trackOpen = impl_->videoTrack && impl_->videoTrack->isOpen();
     if (callCount < 5 || callCount % 60 == 0) {
         std::cout << "[debug] SendVideoNalu call #" << callCount << " size=" << size
@@ -136,16 +143,23 @@ void WebRtcPeer::SendVideoNalu(const uint8_t* data, size_t size) {
     ++callCount;
     if (!trackOpen) { ++droppedCount; return; }
 
-    // Advance the RTP timestamp based on elapsed wallclock time since
-    // StartAsOfferer(), matching libdatachannel's streamer example — the
-    // timestamp must not stay pinned to its construction-time value.
     auto elapsed = std::chrono::steady_clock::now() - impl_->streamStart;
     double elapsedSeconds = std::chrono::duration<double>(elapsed).count();
     impl_->rtpConfig->timestamp = impl_->rtpConfig->startTimestamp +
         impl_->rtpConfig->secondsToTimestamp(elapsedSeconds);
 
+    const uint8_t* sendData = data;
+    size_t sendSize = size;
+    if (prepared.has_value()) {
+        sendData = prepared->data();
+        sendSize = prepared->size();
+    }
+
     try {
-        impl_->videoTrack->send(reinterpret_cast<const std::byte*>(data), size);
+        // One packetizer input represents one H264 access unit. Sending config
+        // and IDR separately would create two RTP marker boundaries.
+        impl_->videoTrack->send(
+            reinterpret_cast<const std::byte*>(sendData), sendSize);
     } catch (const std::exception& e) {
         std::cerr << "[debug] videoTrack->send threw: " << e.what() << std::endl;
         throw;
