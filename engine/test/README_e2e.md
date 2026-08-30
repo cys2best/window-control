@@ -49,7 +49,7 @@ In window B, run the plan's Windows build and offline suite first:
 
 ```powershell
 cmake --build engine\build --config Release
-.\engine\build\Release\engine_tests.exe --gtest_filter=-SignalingClient.*:-PublicSignalingBridge.*
+.\engine\build\Release\engine_tests.exe --gtest_filter=-SignalingClient.*:PublicSignalingBridge.*
 ```
 
 The filtered executable command is the offline check. The CTest registration
