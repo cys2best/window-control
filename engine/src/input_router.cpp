@@ -106,8 +106,11 @@ void InputRouter::HandleMessage(PeerSession* peer, const std::string& jsonMessag
         if (keycode != 0) control->SendKeycode(keycode);
     } else if (type == "idr") {
         auto now = std::chrono::steady_clock::now();
-        if (now - lastIdrRequest_ < idrRateLimit_) return;
-        lastIdrRequest_ = now;
+        {
+            std::lock_guard<std::mutex> lock(idrMutex_);
+            if (now - lastIdrRequest_ < idrRateLimit_) return;
+            lastIdrRequest_ = now;
+        }
         control->RequestIdr();
     }
 }

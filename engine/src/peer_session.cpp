@@ -15,6 +15,7 @@ struct PeerSession::Impl {
     StateCallback onStateChange;
     std::chrono::steady_clock::time_point streamStart;
 
+    std::mutex callbackMutex;
     std::mutex gatherMutex;
     std::condition_variable gatherCv;
     bool gatheringComplete = false;
@@ -36,7 +37,12 @@ PeerSession::PeerSession(std::string id, const std::vector<std::string>& iceServ
     });
 
     impl_->pc->onStateChange([this](rtc::PeerConnection::State state) {
-        if (impl_->onStateChange) impl_->onStateChange(state);
+        StateCallback callback;
+        {
+            std::lock_guard<std::mutex> lock(impl_->callbackMutex);
+            callback = impl_->onStateChange;
+        }
+        if (callback) callback(state);
     });
 
     // The viewer creates "input" (see engine/test/test_peer_session.cpp); this side only
@@ -45,10 +51,13 @@ PeerSession::PeerSession(std::string id, const std::vector<std::string>& iceServ
         if (dc->label() != "input") return;
         impl_->inputChannel = dc;
         impl_->inputChannel->onMessage([this](rtc::message_variant data) {
-            if (!impl_->onInput) return;
-            if (std::holds_alternative<std::string>(data)) {
-                impl_->onInput(std::get<std::string>(data));
+            if (!std::holds_alternative<std::string>(data)) return;
+            InputCallback callback;
+            {
+                std::lock_guard<std::mutex> lock(impl_->callbackMutex);
+                callback = impl_->onInput;
             }
+            if (callback) callback(std::get<std::string>(data));
         });
     });
 }
@@ -115,10 +124,12 @@ void PeerSession::SendInputMessage(const std::string& jsonMessage) {
 }
 
 void PeerSession::SetInputCallback(InputCallback onInput) {
+    std::lock_guard<std::mutex> lock(impl_->callbackMutex);
     impl_->onInput = std::move(onInput);
 }
 
 void PeerSession::SetOnStateChange(StateCallback onStateChange) {
+    std::lock_guard<std::mutex> lock(impl_->callbackMutex);
     impl_->onStateChange = std::move(onStateChange);
 }
 

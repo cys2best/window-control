@@ -100,3 +100,55 @@ TEST(PeerSession, InvokesInputCallbackOnViewerDataChannelMessage) {
 
     session.Close();
 }
+
+TEST(PeerSession, ConcurrentInputCallbackReplacementAndDispatchRemainSafe) {
+    rtc::PeerConnection viewerPc;
+    auto inputChannel = viewerPc.createDataChannel("input");
+    viewerPc.addTransceiver(rtc::Description::Media::Kind::Video,
+                             rtc::Description::Direction::RecvOnly);
+    std::atomic<bool> gathered{false};
+    viewerPc.onGatheringStateChange([&](rtc::PeerConnection::GatheringState state) {
+        if (state == rtc::PeerConnection::GatheringState::Complete) gathered = true;
+    });
+    viewerPc.setLocalDescription();
+    for (int i = 0; i < 200 && !gathered; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    }
+    std::string offer(*viewerPc.localDescription());
+
+    PeerSession session("test-peer-callback-race", {});
+    std::atomic<int> delivered{0};
+    session.SetInputCallback([&](const std::string&) { ++delivered; });
+
+    std::string answer = session.AnswerOffer(offer);
+    viewerPc.setRemoteDescription(rtc::Description(answer, "answer"));
+
+    std::atomic<bool> dcOpen{false};
+    inputChannel->onOpen([&]() { dcOpen = true; });
+    for (int i = 0; i < 200 && !dcOpen; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    }
+    ASSERT_TRUE(dcOpen);
+
+    std::thread replacer([&]() {
+        for (int i = 0; i < 2000; ++i) {
+            session.SetInputCallback([&](const std::string&) { ++delivered; });
+        }
+    });
+    for (int i = 0; i < 2000; ++i) {
+        inputChannel->send(std::string(R"({"type":"echo","t":1})"));
+    }
+    replacer.join();
+
+    std::atomic<bool> gotSentinel{false};
+    session.SetInputCallback([&](const std::string& message) {
+        if (message == "sentinel") gotSentinel = true;
+    });
+    inputChannel->send(std::string("sentinel"));
+    for (int i = 0; i < 200 && !gotSentinel; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    }
+
+    EXPECT_TRUE(gotSentinel);
+    session.Close();
+}

@@ -5,8 +5,10 @@
 #include "fake_scrcpy_server.h"
 #include <rtc/rtc.hpp>
 #include <atomic>
+#include <barrier>
 #include <chrono>
 #include <thread>
+#include <vector>
 
 TEST(InputRouter, ClickSendsDownThenUpTouchPair) {
     FakeScrcpyServer fake;
@@ -89,6 +91,32 @@ TEST(InputRouter, RateLimitsRapidIdrRequests) {
     router.HandleMessageForTest(R"({"type":"idr"})");
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     EXPECT_EQ(fake.ControlBytesReceived(), 2u);
+
+    fake.Stop();
+}
+
+TEST(InputRouter, ConcurrentIdrRequestsShareOneRateLimitGate) {
+    FakeScrcpyServer fake;
+    fake.Serve();
+    PeerRegistry registry;
+    ScrcpySource source(registry);
+    source.ConnectInitial(fake.Port());
+    InputRouter router(source, /*idrRateLimit=*/std::chrono::seconds(5));
+
+    constexpr int senderCount = 32;
+    std::barrier startGate(senderCount);
+    std::vector<std::thread> senders;
+    senders.reserve(senderCount);
+    for (int i = 0; i < senderCount; ++i) {
+        senders.emplace_back([&]() {
+            startGate.arrive_and_wait();
+            router.HandleMessageForTest(R"({"type":"idr"})");
+        });
+    }
+    for (auto& sender : senders) sender.join();
+
+    ASSERT_TRUE(PollUntil([&]() { return fake.ControlBytesReceived() >= 1u; }));
+    EXPECT_EQ(fake.ControlBytesReceived(), 1u);
 
     fake.Stop();
 }

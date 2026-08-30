@@ -32,6 +32,7 @@ private:
     ScrcpySource& source_;
     std::chrono::milliseconds idrRateLimit_;
     std::chrono::steady_clock::time_point lastIdrRequest_{};
+    std::mutex idrMutex_;
     std::mutex fingerMutex_;
     std::map<PeerSession*, FingerState> fingerStates_;
 };
