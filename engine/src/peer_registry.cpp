@@ -13,10 +13,9 @@ bool PeerRegistry::CanInsertLocked(PeerKind kind, const std::string& id) const {
     return localCount < static_cast<size_t>(localCapacity_);
 }
 
-void PeerRegistry::InsertLocked(
+void PeerRegistry::EvictConflictsLocked(
     PeerKind kind,
     const std::string& id,
-    const std::shared_ptr<PeerSession>& session,
     std::vector<std::shared_ptr<PeerSession>>& victims) {
     auto duplicate = peers_.find(id);
     if (duplicate != peers_.end()) {
@@ -34,9 +33,6 @@ void PeerRegistry::InsertLocked(
             }
         }
     }
-
-    peers_.emplace(
-        id, Entry{session, kind, std::chrono::steady_clock::now()});
 }
 
 std::shared_ptr<PeerSession> PeerRegistry::Create(
@@ -48,8 +44,10 @@ std::shared_ptr<PeerSession> PeerRegistry::Create(
         std::lock_guard<std::mutex> lock(mutex_);
         if (!CanInsertLocked(kind, id)) return nullptr;
 
+        EvictConflictsLocked(kind, id, victims);
         session = std::make_shared<PeerSession>(id, iceServers);
-        InsertLocked(kind, id, session, victims);
+        peers_.emplace(
+            id, Entry{session, kind, std::chrono::steady_clock::now()});
     }
 
     for (const auto& victim : victims) victim->Close();
@@ -66,7 +64,9 @@ bool PeerRegistry::Adopt(
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (!CanInsertLocked(kind, id)) return false;
-        InsertLocked(kind, id, session, victims);
+        EvictConflictsLocked(kind, id, victims);
+        peers_.emplace(
+            id, Entry{session, kind, std::chrono::steady_clock::now()});
     }
 
     for (const auto& victim : victims) {

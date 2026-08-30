@@ -54,10 +54,9 @@ private:
     };
 
     bool CanInsertLocked(PeerKind kind, const std::string& id) const;
-    void InsertLocked(
+    void EvictConflictsLocked(
         PeerKind kind,
         const std::string& id,
-        const std::shared_ptr<PeerSession>& session,
         std::vector<std::shared_ptr<PeerSession>>& victims);
 
     mutable std::mutex mutex_;
