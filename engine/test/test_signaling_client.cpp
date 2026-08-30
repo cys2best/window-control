@@ -91,6 +91,7 @@ TEST(SignalingClient, DisconnectWaitsForCallbackAndSuppressesLaterMessages) {
     for (int i = 0; i < 100 && !callbackEntered; ++i) {
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
+    if (!callbackEntered.load()) releaseCallback = true;
     ASSERT_TRUE(callbackEntered);
 
     std::atomic<bool> disconnectReturned{false};

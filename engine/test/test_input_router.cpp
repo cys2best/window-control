@@ -55,8 +55,8 @@ public:
         inputChannel = viewerPc.createDataChannel("input");
         viewerPc.addTransceiver(rtc::Description::Media::Kind::Video,
                                  rtc::Description::Direction::RecvOnly);
-        std::atomic<bool> gathered{false};
-        viewerPc.onGatheringStateChange([&](rtc::PeerConnection::GatheringState state) {
+        gathered = false;
+        viewerPc.onGatheringStateChange([this](rtc::PeerConnection::GatheringState state) {
             if (state == rtc::PeerConnection::GatheringState::Complete) gathered = true;
         });
         viewerPc.setLocalDescription();
@@ -71,8 +71,8 @@ public:
         std::string answer = session->AnswerOffer(std::string(*viewerPc.localDescription()));
         viewerPc.setRemoteDescription(rtc::Description(answer, "answer"));
 
-        std::atomic<bool> dcOpen{false};
-        inputChannel->onOpen([&]() { dcOpen = true; });
+        dcOpen = false;
+        inputChannel->onOpen([this]() { dcOpen = true; });
         for (int i = 0; i < 200 && !dcOpen; ++i) {
             std::this_thread::sleep_for(std::chrono::milliseconds(25));
         }
@@ -87,6 +87,8 @@ public:
     PeerRegistry registry;
     ScrcpySource source;
     InputRouter router;
+    std::atomic<bool> gathered{false};
+    std::atomic<bool> dcOpen{false};
     rtc::PeerConnection viewerPc;
     std::shared_ptr<rtc::DataChannel> inputChannel;
     std::shared_ptr<PeerSession> session;
