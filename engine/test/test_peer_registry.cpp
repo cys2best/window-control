@@ -58,3 +58,16 @@ TEST(PeerRegistry, SnapshotReflectsCurrentPeers) {
     auto snap = registry.Snapshot();
     EXPECT_EQ(snap.size(), 2u);
 }
+
+TEST(PeerRegistry, MarkFailedDefersRemovalUntilReap) {
+    PeerRegistry registry;
+    auto peer = registry.Create(PeerKind::Local, "failed-send", {});
+    ASSERT_NE(peer, nullptr);
+
+    EXPECT_TRUE(registry.MarkFailed("failed-send"));
+    EXPECT_EQ(registry.Find("failed-send"), peer);
+
+    registry.ReapDeadAndStalePeers();
+
+    EXPECT_EQ(registry.Find("failed-send"), nullptr);
+}

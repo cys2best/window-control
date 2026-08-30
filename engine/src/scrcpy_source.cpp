@@ -38,7 +38,7 @@ ScrcpySource::ScrcpySource(
               }
               return targets;
           },
-          [this](const std::string& id) { registry_.Remove(id); }),
+          [this](const std::string& id) { registry_.MarkFailed(id); }),
       lastFrameAt_(std::chrono::steady_clock::now()) {}
 
 ScrcpySource::~ScrcpySource() {

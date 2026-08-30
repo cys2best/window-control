@@ -165,3 +165,28 @@ TEST(SourceVideoFanout, RemovesThrowingPeerAndContinuesWithLaterPeers) {
     EXPECT_NE(diagnostic.find("[peer] video send failed id=broken: send failed"),
               std::string::npos);
 }
+
+TEST(SourceVideoFanout, DeliversToHealthyPeersBeforeMarkingFailures) {
+    H264SourceAccessUnitPreparer preparer;
+    std::vector<std::string> events;
+    SourceVideoFanout fanout(
+        preparer,
+        [&]() {
+            return std::vector<SourceVideoPeerTarget>{
+                {"broken", [](const std::uint8_t*, std::size_t) {
+                    throw std::runtime_error("send failed");
+                }},
+                {"healthy", [&](const std::uint8_t*, std::size_t) {
+                    events.push_back("healthy");
+                }},
+            };
+        },
+        [&](const std::string& id) { events.push_back("mark:" + id); });
+    auto idr = Nalu(0x65, {0x40});
+
+    testing::internal::CaptureStderr();
+    fanout.SendAccessUnit(idr.data(), idr.size());
+    testing::internal::GetCapturedStderr();
+
+    EXPECT_EQ(events, (std::vector<std::string>{"healthy", "mark:broken"}));
+}

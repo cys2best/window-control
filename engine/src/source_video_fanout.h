@@ -39,20 +39,20 @@ struct SourceVideoPeerTarget {
 class SourceVideoFanout {
 public:
     using SnapshotProvider = std::function<std::vector<SourceVideoPeerTarget>()>;
-    using RemovePeer = std::function<void(const std::string&)>;
+    using MarkPeerFailed = std::function<void(const std::string&)>;
 
     SourceVideoFanout(
         SourceAccessUnitPreparer& preparer,
         SnapshotProvider snapshotProvider,
-        RemovePeer removePeer);
+        MarkPeerFailed markPeerFailed);
 
     void BeginGeneration();
     void SendAccessUnit(const std::uint8_t* data, std::size_t size);
 
 private:
-    void RemoveFailedPeer(const std::string& id);
+    void MarkFailedPeer(const std::string& id);
 
     SourceAccessUnitPreparer& preparer_;
     SnapshotProvider snapshotProvider_;
-    RemovePeer removePeer_;
+    MarkPeerFailed markPeerFailed_;
 };

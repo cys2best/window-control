@@ -51,6 +51,14 @@ bool PeerRegistry::Remove(const std::string& id) {
     return true;
 }
 
+bool PeerRegistry::MarkFailed(const std::string& id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = peers_.find(id);
+    if (it == peers_.end()) return false;
+    it->second.failed = true;
+    return true;
+}
+
 std::shared_ptr<PeerSession> PeerRegistry::Find(const std::string& id) const {
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = peers_.find(id);
@@ -72,7 +80,8 @@ void PeerRegistry::ReapDeadAndStalePeers() {
         auto now = std::chrono::steady_clock::now();
         for (auto it = peers_.begin(); it != peers_.end();) {
             auto state = it->second.session->State();
-            bool dead = state == rtc::PeerConnection::State::Failed ||
+            bool dead = it->second.failed ||
+                        state == rtc::PeerConnection::State::Failed ||
                         state == rtc::PeerConnection::State::Closed ||
                         state == rtc::PeerConnection::State::Disconnected;
             bool staleHandshake = state != rtc::PeerConnection::State::Connected &&

@@ -23,6 +23,9 @@ public:
         const std::vector<std::string>& iceServers);
 
     bool Remove(const std::string& id);
+    // Records a send failure without closing the peer. The housekeeping
+    // reaper performs the potentially blocking teardown off the media thread.
+    bool MarkFailed(const std::string& id);
     std::shared_ptr<PeerSession> Find(const std::string& id) const;
 
     // Snapshot for the source's fan-out loop — never call SendVideoNalu
@@ -43,6 +46,7 @@ private:
         std::shared_ptr<PeerSession> session;
         PeerKind kind;
         std::chrono::steady_clock::time_point createdAt;
+        bool failed = false;
     };
 
     mutable std::mutex mutex_;
