@@ -271,14 +271,32 @@ continue; note any deviation as a failure.
 
 Close both browser peers, then stop window A with `Ctrl+C` and require its
 `Stopped.` line. Stop the static server in window C with `Ctrl+C`. Finally
-remove both test forwards and stop the test scrcpy server:
+stop the test scrcpy server and inspect the remaining forwards:
+
+```powershell
+$scidHex = $scid.ToString("x")
+& $adb -s $serial shell "pkill -f 'scrcpy-server.*scid=$scidHex'"
+& $adb -s $serial forward --list
+```
+
+Current Android platform-tools supports removing one forward at a time. Treat
+that cleanup as best-effort because some emulator-vendor `adb.exe` builds
+reject `forward --remove` with `unknown command --remove`:
 
 ```powershell
 & $adb -s $serial forward --remove "tcp:$scrcpyPort"
-& $adb -s $serial forward --remove "tcp:$reconnectPort"
-$scidHex = $scid.ToString("x")
-& $adb -s $serial shell "pkill -f 'scrcpy-server.*scid=$scidHex'"
+if ($LASTEXITCODE -eq 0) {
+  & $adb -s $serial forward --remove "tcp:$reconnectPort"
+} else {
+  Write-Warning "This adb build cannot remove individual forwards; leaving them in place."
+}
 ```
+
+That warning does not fail the E2E gate: the engine and test scrcpy process
+have already stopped. On a dedicated test device only, after confirming the
+forward listing contains no unrelated mappings, `adb forward --remove-all`
+may be used instead. Do not use `adb kill-server`; it disrupts every device
+and ADB user sharing that server.
 
 Retain this evidence with the result:
 
