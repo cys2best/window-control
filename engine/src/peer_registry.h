@@ -15,13 +15,24 @@ public:
                            std::chrono::milliseconds handshakeTimeout =
                                std::chrono::milliseconds(15000));
 
+    // Returns nullptr (caller returns 503) if kind==Local and the local
+    // capacity is already full. A new Public peer always replaces and
+    // closes any existing public peer first — at most one exists.
     std::shared_ptr<PeerSession> Create(
         PeerKind kind, const std::string& id,
         const std::vector<std::string>& iceServers);
 
     bool Remove(const std::string& id);
     std::shared_ptr<PeerSession> Find(const std::string& id) const;
+
+    // Snapshot for the source's fan-out loop — never call SendVideoNalu
+    // while holding the registry's internal lock (a slow/blocked peer
+    // send must not stall peer add/remove for every other peer).
     std::vector<std::shared_ptr<PeerSession>> Snapshot() const;
+
+    // Removes any peer whose State() is Failed/Closed/Disconnected, or
+    // whose handshake has exceeded handshakeTimeout without reaching
+    // Connected. Call periodically from a housekeeping loop.
     void ReapDeadAndStalePeers();
 
     size_t LocalCount() const;
