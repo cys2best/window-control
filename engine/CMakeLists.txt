@@ -21,6 +21,7 @@ find_package(libdatachannel CONFIG REQUIRED)
 find_package(websocketpp CONFIG REQUIRED)
 find_package(asio CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
+find_package(httplib CONFIG REQUIRED)
 find_package(OpenSSL REQUIRED)
 
 enable_testing()
@@ -32,6 +33,8 @@ add_library(engine_core
   src/signaling_client.cpp
   src/peer.cpp
   src/h264_nalu.cpp
+  src/http_server.cpp
+  src/ready_record.cpp
 )
 target_include_directories(engine_core PUBLIC src)
 target_compile_definitions(engine_core PUBLIC ASIO_STANDALONE)
@@ -40,6 +43,7 @@ target_link_libraries(engine_core PUBLIC
   websocketpp::websocketpp
   asio::asio
   nlohmann_json::nlohmann_json
+  httplib::httplib
   OpenSSL::SSL
   OpenSSL::Crypto
   ws2_32.lib
@@ -51,6 +55,7 @@ add_executable(engine_tests
   test/test_scrcpy_control.cpp
   test/test_signaling_client.cpp
   test/test_h264_nalu.cpp
+  test/test_http_server.cpp
 )
 target_link_libraries(engine_tests PRIVATE engine_core GTest::gtest GTest::gtest_main)
 add_test(NAME engine_tests COMMAND engine_tests)

@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "dependencies": [
     { "name": "libdatachannel", "features": ["srtp"] },
+    "cpp-httplib",
     "gtest",
     "websocketpp",
     { "name": "asio", "features": [] },
