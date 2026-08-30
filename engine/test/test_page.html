@@ -9,30 +9,14 @@
   <video id="video" autoplay playsinline muted style="width: 720px; background: #000;"></video>
   <script>
     const params = new URLSearchParams(window.location.search);
-    const signalingUrl = params.get('signaling') || 'ws://localhost:8443';
-    const sessionId = params.get('session') || 'poc-session-1';
-    const token = params.get('token') || '';
-    const stunTurnUrl = params.get('ice') || 'stun:stun.l.google.com:19302';
-
-    // Browsers require TURN credentials as separate username/credential
-    // fields — a "turn:user:pass@host:port" URI (valid for libdatachannel's
-    // engine-side config) throws InvalidAccessError if passed as-is to
-    // RTCPeerConnection. Split it apart here.
-    function parseIceServer(url) {
-      const match = url.match(/^(turns?):([^:]+):([^@]+)@(.+)$/);
-      if (match) {
-        const [, scheme, username, credential, hostPart] = match;
-        return { urls: `${scheme}:${hostPart}`, username, credential };
-      }
-      return { urls: url };
-    }
-    const iceServer = parseIceServer(stunTurnUrl);
+    const whepUrl = params.get('whep') || 'http://localhost:8000/whep';
 
     const statusEl = document.getElementById('status');
     const videoEl = document.getElementById('video');
 
-    const pc = new RTCPeerConnection({ iceServers: [iceServer] });
+    const pc = new RTCPeerConnection();
     let inputChannel = null;
+    let resourceUrl = null; // For later DELETE
 
     pc.ontrack = (event) => {
       console.log('ontrack fired, streams:', event.streams.length, 'track:', event.track.kind, event.track.readyState);
@@ -42,15 +26,10 @@
       videoEl.srcObject = event.streams[0] || new MediaStream([event.track]);
       statusEl.textContent = 'receiving video';
     };
+
     pc.oniceconnectionstatechange = () => {
       statusEl.textContent = 'ICE: ' + pc.iceConnectionState;
       console.log('ICE state:', pc.iceConnectionState);
-    };
-    // Engine is the offerer and creates the DataChannel — this side
-    // receives it via ondatachannel rather than calling createDataChannel.
-    pc.ondatachannel = (event) => {
-      inputChannel = event.channel;
-      inputChannel.onopen = () => console.log('input channel open');
     };
 
     videoEl.addEventListener('click', (event) => {
@@ -61,54 +40,73 @@
       const rect = videoEl.getBoundingClientRect();
       const nx = (event.clientX - rect.left) / rect.width;
       const ny = (event.clientY - rect.top) / rect.height;
-      // Send a down+up pair to simulate a tap, matching the
-      // ScrcpyControlClient::SendTouch action semantics in Task 6/8.
-      inputChannel.send(JSON.stringify({ type: 'tap', action: 'down', nx, ny }));
-      inputChannel.send(JSON.stringify({ type: 'tap', action: 'up', nx, ny }));
+      // Send canonical click message with normalized coordinates.
+      inputChannel.send(JSON.stringify({ type: 'click', x: nx, y: ny }));
     });
 
-    let wsUrl = `${signalingUrl}/?session=${sessionId}&role=viewer`;
-    if (token) wsUrl += `&token=${token}`;
-    const ws = new WebSocket(wsUrl);
+    // Viewer creates the input DataChannel and sends messages to engine.
+    inputChannel = pc.createDataChannel('input');
+    inputChannel.onopen = () => {
+      console.log('input channel open');
+      statusEl.textContent = statusEl.textContent + ' (input ready)';
+    };
+    inputChannel.onclose = () => console.log('input channel closed');
+    inputChannel.onerror = (event) => console.error('input channel error:', event);
 
-    ws.onopen = () => { statusEl.textContent = 'signaling connected, waiting for offer'; };
+    async function connect() {
+      try {
+        statusEl.textContent = 'connecting...';
 
-    ws.onmessage = async (event) => {
-      const msg = JSON.parse(event.data);
-      if (msg.type === 'offer') {
-        console.log('received offer SDP:\n' + msg.sdp);
-        try {
-          await pc.setRemoteDescription({ type: 'offer', sdp: msg.sdp });
-        } catch (e) {
-          console.error('setRemoteDescription(offer) failed', e);
+        // Viewer is offerer: add recvonly video transceiver and create offer.
+        pc.addTransceiver('video', { direction: 'recvonly' });
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+
+        // Wait for ICE gathering to complete.
+        if (pc.iceGatheringState !== 'complete') {
+          await new Promise((resolve) => {
+            const handler = () => {
+              if (pc.iceGatheringState === 'complete') {
+                pc.removeEventListener('icegatheringstatechange', handler);
+                resolve();
+              }
+            };
+            pc.addEventListener('icegatheringstatechange', handler);
+          });
+        }
+
+        console.log('Sending offer SDP:\n' + pc.localDescription.sdp);
+
+        // POST offer to WHEP endpoint.
+        const response = await fetch(whepUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/sdp' },
+          body: pc.localDescription.sdp,
+        });
+
+        if (!response.ok) {
+          statusEl.textContent = `WHEP error: ${response.status}`;
+          console.error('WHEP POST failed:', response.status, response.statusText);
           return;
         }
-        console.log('transceivers after SRD:', pc.getTransceivers().map(t => ({
-          mid: t.mid, direction: t.direction, currentDirection: t.currentDirection,
-          receiverTrack: t.receiver && t.receiver.track && t.receiver.track.kind,
-          receiverTrackState: t.receiver && t.receiver.track && t.receiver.track.readyState,
-        })));
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        ws.send(JSON.stringify({ type: 'answer', sdp: pc.localDescription.sdp }));
-      } else if (msg.type === 'candidate') {
-        try {
-          await pc.addIceCandidate({ candidate: msg.candidate, sdpMid: msg.mid });
-        } catch (e) {
-          console.warn('addIceCandidate failed', e);
-        }
-      }
-    };
 
-    pc.onicecandidate = (event) => {
-      if (event.candidate) {
-        ws.send(JSON.stringify({
-          type: 'candidate',
-          candidate: event.candidate.candidate,
-          mid: event.candidate.sdpMid,
-        }));
+        // Capture Location header for later DELETE.
+        resourceUrl = response.headers.get('Location');
+        console.log('WHEP Location:', resourceUrl);
+
+        // Read answer SDP from response body.
+        const answerSdp = await response.text();
+        console.log('Received answer SDP:\n' + answerSdp);
+
+        await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
+        statusEl.textContent = 'connected, waiting for video...';
+      } catch (error) {
+        statusEl.textContent = 'connection error';
+        console.error('Connection failed:', error);
       }
-    };
+    }
+
+    connect();
   </script>
 </body>
 </html>

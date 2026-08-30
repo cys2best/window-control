@@ -1,5 +1,5 @@
 # engine/test.ps1
-# Rebuild engine.exe and run it against the live scrcpy forward + VPS signaling.
+# Rebuild engine.exe and run it against the live scrcpy forward + WHEP.
 # Usage (from repo root, in a shell with cmake/cl on PATH):
 #   .\engine\test.ps1
 #   .\engine\test.ps1 -Serial emulator-5556 -Port 27184 -Scid 2
@@ -10,9 +10,8 @@ param(
     [int]$Port = 27183,
     [int]$Scid = 1,
     [string]$Tier = "720",
-    [string]$SignalingUrl = "ws://13.214.163.82:8443",
-    [string]$SessionId = "poc-session-1",
-    [string]$IceUrl = "turn:poc-user:poc-secret-change-me@13.214.163.82:3478",
+    [string]$InstanceName = "poc-instance",
+    [string]$WhepPort = "8000",
     [switch]$SkipStartServer,
     [switch]$SkipBuild
 )
@@ -59,6 +58,7 @@ if (-not (Test-Path $exe)) {
 }
 
 Write-Host "[test.ps1] launching engine.exe..." -ForegroundColor Cyan
-Write-Host "[test.ps1] test_page.html query: ?signaling=$SignalingUrl&session=$SessionId&ice=$IceUrl" -ForegroundColor Yellow
+Write-Host "[test.ps1] Once ready record prints, open test_page.html:" -ForegroundColor Yellow
+Write-Host "[test.ps1] http://localhost:$WhepPort/test_page.html?whep=http://localhost:$WhepPort/whep" -ForegroundColor Yellow
 
-& $exe $Port $SignalingUrl $SessionId $IceUrl
+& $exe $InstanceName $Port

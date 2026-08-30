@@ -31,7 +31,6 @@ add_library(engine_core
   src/scrcpy_video.cpp
   src/scrcpy_control.cpp
   src/signaling_client.cpp
-  src/peer.cpp
   src/peer_session.cpp
   src/peer_registry.cpp
   src/h264_nalu.cpp

@@ -3,9 +3,7 @@
 ## Manual end-to-end validation (Phase 0+1 done when this passes)
 
 Prerequisites:
-- Signaling server deployed on VPS (Task 4) and running.
-- coturn deployed on VPS (Task 1) and running.
-- `engine.exe` built on the Host PC (Task 8).
+- `engine.exe` built on the Host PC (Task 10).
 - A scrcpy-server running against a real Android emulator (e.g. LDPlayer)
   or physical device, started manually for this plan's scope — the Python
   control-plane doesn't automate this yet (that's Phase 3). Use
@@ -24,23 +22,44 @@ Prerequisites:
   tcp:27183 localabstract:scrcpy_00000001`. Confirm with `adb -s
   <device-serial> forward --list` that the forward is active.
 
+Engine invocation (dev mode, no auth):
+
+```powershell
+$env:ENGINE_WHEP_CAPABILITY_SECRET = ""  # unset or empty = WHEP auth disabled
+engine.exe my-instance 27183
+```
+
+This prints a ready record JSON line to stdout containing `whep_port` (e.g., 8000).
+
+Required/optional environment variables (if needed for your network):
+
+```
+ENGINE_WHEP_CAPABILITY_SECRET   (unset = WHEP auth disabled, dev-only)
+ENGINE_LOCAL_ICE_SERVERS        (comma-separated, may be empty for pure-LAN)
+ENGINE_SIGNALING_URL            (unset = public/VPS path disabled)
+ENGINE_SIGNALING_TOKEN          (JWT, only used if ENGINE_SIGNALING_URL is set)
+ENGINE_PUBLIC_ICE_SERVERS       (comma-separated, only used if signaling enabled)
+```
+
 Steps:
 
-1. On the VPS, confirm both services are up:
+1. Start a fresh scrcpy-server on a forwarded port (see Prerequisites above).
 
-       sudo systemctl status webrtc-signaling coturn
+2. On the Host PC, run the engine:
 
-2. On any machine with a browser, open `engine/test/test_page.html`
-   (via `file://` or a simple `python -m http.server` in `engine/test/`)
-   with query params pointing at the VPS:
+       engine.exe my-instance 27183
 
-       test_page.html?signaling=ws://VPS_IP:8443&session=poc-session-1&ice=turn:poc-user:poc-secret-change-me@VPS_IP:3478
+   Expected: Engine console prints a JSON ready record line like:
+   ```json
+   {"instance_name":"my-instance","pid":1234,"whep_port":8000,"admin_port":8001,"generation":1,"width":720,"height":1280}
+   ```
 
-   Page shows "signaling connected, waiting for offer".
+3. On any machine with a browser, open `test_page.html` with the WHEP URL
+   as a query param (from the ready record's `whep_port` above):
 
-3. On the Host PC, run the engine against the forwarded scrcpy port:
+       http://localhost:8000/test_page.html?whep=http://localhost:8000/whep
 
-       engine.exe 27183 ws://VPS_IP:8443 poc-session-1 "turn:poc-user:poc-secret-change-me@VPS_IP:3478"
+   Page shows "connected, waiting for video..." then "ICE: connected/completed" then "receiving video".
 
 4. Expected within a few seconds:
    - Engine console prints `scrcpy handshake: device=... <W>x<H>`, then
@@ -52,9 +71,7 @@ Steps:
 5. Check the browser's `chrome://webrtc-internals` (or Firefox's
    `about:webrtc`) to confirm the active candidate pair — note whether it's
    `host`/`host` (same-network P2P), `srflx`/`srflx` (STUN-assisted P2P), or
-   `relay`/`relay` (TURN fallback). All three are valid PoC-pass outcomes;
-   `relay` specifically confirms Task 1's coturn is functioning correctly as
-   the fallback path.
+   `relay`/`relay` (TURN fallback). All three are valid PoC-pass outcomes.
 
 6. Click on the video in the browser. Expected: the emulator/device
    registers a tap at the corresponding screen location (visible in the
@@ -65,6 +82,6 @@ Steps:
 7. Stop the engine with Ctrl+C — confirm the browser's video freezes/ends
    and `pc.iceConnectionState` transitions away from `connected`.
 
-If any step fails, the relevant earlier task's automated tests (Tasks 1-8)
+If any step fails, the relevant earlier task's automated tests (Tasks 1-9)
 should be re-checked first — this end-to-end pass is the integration
 capstone, not a substitute for the unit-level tests.
