@@ -223,10 +223,18 @@ with an appropriate firewall rule. Keep the admin calls on the Host PC.
 ## Generation-based reconnect with the original tab left open
 
 Keep the original tab open and do not reload it or create a new WHEP offer.
-Record its current WebRTC stats. Then, in window B, get the authoritative
-generation, relaunch the same scrcpy connection ID on a **different** local
-port, and submit exactly generation + 1. The helper kills the prior server for
-that `scid`, launches a fresh one, and adds the new forward.
+Record its current WebRTC stats. **Do not press `Ctrl+C` in window A:** the
+same `engine.exe` process must remain running so its WHEP/admin ports and peer
+connections remain unchanged. Then, in window B, get the authoritative
+generation, relaunch only the scrcpy server with the same connection ID on a
+**different** local port, and submit exactly generation + 1. The helper kills
+the prior scrcpy server for that `scid`, launches a fresh one, and adds the new
+forward.
+
+If window A stops, the browser connection is necessarily lost and a newly
+launched engine may receive different listener ports. That is a new run, not a
+generation reconnect; restart from the first-peer checkpoint rather than
+changing the existing tab's URL or reloading it.
 
 ```powershell
 # Re-establish these values in window B; PowerShell variables are window-local.
