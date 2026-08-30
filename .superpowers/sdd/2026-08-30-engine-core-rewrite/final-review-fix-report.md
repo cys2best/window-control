@@ -313,3 +313,128 @@ then stop with Ctrl+C and confirm browser peer shutdown.
   require the Windows dependency stack and have not executed here.
 - The full engine rewrite still needs the plan-wide Windows build/full suite
   and real-device manual e2e gate; portable GREEN is not a substitute.
+
+## Residual Fix Wave (human-authorized)
+
+This wave was explicitly authorized after the normal final-review cap. It is
+based on `440d705474755a60e4118dc62827f9e6471dbb8a` and changes only the two
+confirmed residual Important findings.
+
+### Stable identity for deferred send failures
+
+The failed-target path no longer reduces a source snapshot to a peer ID:
+
+- `SourceVideoPeerTarget` now owns a target-specific `markFailed` callback.
+  The portable fan-out continues every send first, retains pointers into its
+  immutable target snapshot for failed sends, and invokes those markers only
+  after all sends have completed.
+- `ScrcpySource` captures the snapshot's typed `shared_ptr<PeerSession>` in
+  that target callback and calls `PeerRegistry::MarkFailed(peer->Id(), peer)`.
+- `PeerRegistry::MarkFailed` compares the expected `shared_ptr` with the
+  current entry while holding the registry mutex. A removed or same-ID
+  replacement returns `false` and is not marked. A matching current entry has
+  only its `failed` flag set; `Close()` remains exclusively in the periodic
+  housekeeping reaper and remains outside the registry lock.
+
+`FailureMarkerRetainsCapturedTargetIdentity` covers the portable boundary by
+simulating a replacement during the failing send and proving that the deferred
+marker retains generation 1 rather than looking up generation 2.
+`OldSameIdSessionCannotMarkReplacementFailed` covers the registry boundary:
+an old same-ID `shared_ptr` cannot mark the replacement, and a subsequent reap
+leaves the replacement installed. Existing assertions were not changed.
+
+Files:
+
+- `engine/src/source_video_fanout.h`
+- `engine/src/source_video_fanout.cpp`
+- `engine/src/scrcpy_source.cpp`
+- `engine/src/peer_registry.h`
+- `engine/src/peer_registry.cpp`
+- `engine/test/test_source_video_fanout.cpp`
+- `engine/test/test_peer_registry.cpp`
+
+### Deterministic malformed-offer regression lifetime
+
+`MalformedOfferPreservesExistingPublicPeer` no longer treats a 250 ms delay as
+proof that the malformed offer ran. A thread-safe test-only `std::cerr` buffer
+waits for the existing production `AnswerOffer failed, dropping` diagnostic.
+The test fails on timeout if the malformed message was dropped or never
+processed. It then explicitly calls `Disconnect()` on both viewer and engine;
+the engine disconnect joins/quiesces the callback thread before registry and
+answer-count assertions run.
+
+An RAII disconnect guard covers every earlier `ASSERT_*` return. Declaration
+order keeps the diagnostic buffer, both clients, the bridge, router, registry,
+source, and captured atomic alive until that guard has quiesced both signaling
+clients. The diagnostic capture itself outlives the source/bridge teardown, so
+no asynchronous logger can retain its temporary stream buffer. No production
+test hook was added. The other async regressions were not changed.
+
+File: `engine/test/test_public_signaling.cpp`.
+
+### TDD evidence and verification
+
+The two new regressions were added before production changes. The portable RED
+command was:
+
+```sh
+clang++ -std=c++20 -Wall -Wextra -Werror \
+  -Iengine/src -I/opt/homebrew/opt/googletest/include \
+  engine/src/h264_nalu.cpp engine/src/source_video_fanout.cpp \
+  engine/test/test_source_video_fanout.cpp \
+  -L/opt/homebrew/opt/googletest/lib -lgtest -lgtest_main -pthread \
+  -o /private/tmp/window-control-residual-fanout-red
+```
+
+Observed exit 1: the desired three-field target had no matching initializer,
+and `SourceVideoFanout` had no two-argument constructor. This directly exposed
+the old global ID-only marker API.
+
+The required prior 15-test portable subset plus the new fan-out regression was
+then rebuilt and run fresh:
+
+```sh
+clang++ -std=c++20 -Wall -Wextra -Werror \
+  -Iengine/src -I/opt/homebrew/opt/googletest/include \
+  engine/src/h264_nalu.cpp engine/src/source_video_fanout.cpp \
+  engine/test/test_h264_nalu.cpp engine/test/test_source_video_fanout.cpp \
+  -L/opt/homebrew/opt/googletest/lib -lgtest -lgtest_main -pthread \
+  -o /private/tmp/window-control-residual-portable-tests && \
+/private/tmp/window-control-residual-portable-tests
+```
+
+Observed exit 0: 16 tests from 3 suites passed. `-Wall -Wextra -Werror`
+reported no compiler warnings. The linker emitted only the already-known
+Homebrew GTest/newer-macOS deployment warning. `git diff --check` also exited
+0.
+
+No Windows/libdatachannel/websocketpp compilation or live-signaling execution
+is claimed. From a VS2022 developer shell, run:
+
+```powershell
+cmake -S engine -B engine\build `
+  -DCMAKE_TOOLCHAIN_FILE=<path-to-vcpkg>\scripts\buildsystems\vcpkg.cmake `
+  -DVCPKG_TARGET_TRIPLET=x64-windows
+cmake --build engine\build --config Release
+.\engine\build\Release\engine_tests.exe --gtest_filter="SourceVideoFanout.*:PeerRegistry.*"
+```
+
+With the auth-disabled relay running as documented in the earlier deferred
+verification section, run the live regression and then the full suite:
+
+```powershell
+.\engine\build\Release\engine_tests.exe --gtest_filter="PublicSignalingBridge.MalformedOfferPreservesExistingPublicPeer"
+.\engine\build\Release\engine_tests.exe
+```
+
+### Commit and concerns
+
+- `de833209e69d1d1ac9bbb5d943f408e8f4bec038` - retain stable peer identity
+  through deferred failure marking and make malformed-offer completion and
+  teardown deterministic.
+
+The registry and live-signaling regressions remain Windows-deferred because
+this macOS environment cannot build the libdatachannel/Winsock/websocketpp
+engine target. The existing plan-wide Windows build, full suite, and real-device
+manual e2e gate therefore remain required. No other residual concern was found
+in the scoped source/interface/lock/lifetime trace.
