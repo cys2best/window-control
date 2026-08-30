@@ -32,8 +32,9 @@ Plan/task identifiers belong here and in workflow state, not in commit subjects.
 - Windows environment fix: Host PC has no Node/npm; commit 7ca12a6 adds an auth-free, loopback-only Python signaling relay using the repository's existing `websockets` dependency, plus Windows instructions and 3/3 passing relay contract tests; the unrelated full Python suite still has its pre-existing collection errors for removed `auto_unlock`, `input_handler`, and `window_manager` APIs
 - Windows verification: human-reported rebuilt `SignalingClient.*:PublicSignalingBridge.*` live-relay suite passes in full against the Python relay after commits 0a76922 and 7ca12a6
 - Documentation finding/fix: the offline GTest filter had a second leading minus, which GTest treats as part of the second negative pattern rather than another separator; commit e968d46 uses `-SignalingClient.*:PublicSignalingBridge.*` so both live suites are actually excluded
+- Windows finding/fix: the corrected offline suite hung at `EngineHttpServer.LoopbackBindRefusesNonLoopbackByAddressChoice`; pinned cpp-httplib 0.19.0 makes `stop()` a no-op before `listen_after_bind()` sets its running flag, so immediate `Start()`/`Stop()` could miss shutdown and join forever; commit dfa93b6 waits on the library readiness barrier before returning from `Start()`
 - Finished: expanded `engine/test/README_e2e.md` into the Windows real-device operator runbook
-- Next: run or record the corrected full offline suite, then finalize completion through the Superpowers workflow
+- Next: rebuild on Windows and rerun the corrected full offline suite, then finalize completion through the Superpowers workflow
 - Blockers: manual E2E and live signaling are complete; Windows full offline-suite evidence and workflow-owned completion state remain outstanding
 
 ### 2026-08-31 00:30 — codex
