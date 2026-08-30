@@ -1,4 +1,5 @@
 #include "admin_handler.h"
+#include <iostream>
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
@@ -33,10 +34,36 @@ void AdminHandler::RegisterRoutes(httplib::Server& server) {
             res.status = 400;
             return;
         }
-        int port = body["scrcpy_port"].get<int>();
-        std::uint64_t generation = body["generation"].get<std::uint64_t>();
+        int port;
+        std::uint64_t generation;
+        try {
+            port = body["scrcpy_port"].get<int>();
+            generation = body["generation"].get<std::uint64_t>();
+        } catch (const json::exception& e) {
+            std::cerr << "[admin] invalid reconnect request: " << e.what() << std::endl;
+            res.status = 400;
+            res.set_content(
+                json{{"accepted", false}, {"error", "invalid reconnect field types"}}.dump(),
+                "application/json");
+            return;
+        }
 
-        bool accepted = source_.Reconnect(port, generation);
+        bool accepted;
+        try {
+            accepted = source_.Reconnect(port, generation);
+        } catch (const std::exception& e) {
+            auto currentGeneration = source_.Status().generation;
+            std::cerr << "[admin] reconnect failed: " << e.what() << std::endl;
+            res.status = 502;
+            res.set_content(
+                json{
+                    {"accepted", false},
+                    {"error", e.what()},
+                    {"current_generation", currentGeneration},
+                }.dump(),
+                "application/json");
+            return;
+        }
         res.status = accepted ? 200 : 409;
         json responseBody = accepted
             ? json{{"accepted", true}, {"generation", generation}}
