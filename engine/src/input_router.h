@@ -24,6 +24,8 @@ private:
     struct FingerState {
         bool down = false;
         std::uint64_t pointerId = 0;
+        double x = 0.0;
+        double y = 0.0;
     };
 
     void HandleMessage(PeerSession* peer, const std::string& jsonMessage);

@@ -89,6 +89,10 @@ public:
     }
 
     size_t ControlBytesReceived() const { return controlBytesReceived_.load(); }
+    std::vector<std::uint8_t> ControlDataReceived() const {
+        std::lock_guard<std::mutex> lock(controlDataMutex_);
+        return controlDataReceived_;
+    }
 
 private:
     static void CloseSocket(SOCKET& sock, bool resetAbort) {
@@ -183,6 +187,11 @@ private:
             int result = recv(sock, reinterpret_cast<char*>(scratch.data()),
                                static_cast<int>(scratch.size()), 0);
             if (result <= 0) return;
+            {
+                std::lock_guard<std::mutex> lock(controlDataMutex_);
+                controlDataReceived_.insert(
+                    controlDataReceived_.end(), scratch.begin(), scratch.begin() + result);
+            }
             controlBytesReceived_.fetch_add(static_cast<size_t>(result));
         }
     }
@@ -205,6 +214,8 @@ private:
     std::thread controlReaderThread_;
     std::atomic<bool> running_{true};
     std::atomic<size_t> controlBytesReceived_{0};
+    std::vector<std::uint8_t> controlDataReceived_;
+    mutable std::mutex controlDataMutex_;
     std::mutex socketMutex_;
     std::mutex stopMutex_;
     std::condition_variable stoppedCv_;

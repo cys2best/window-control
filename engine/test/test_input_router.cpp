@@ -10,6 +10,90 @@
 #include <thread>
 #include <vector>
 
+namespace {
+
+std::uint32_t ReadU32BE(const std::vector<std::uint8_t>& bytes, std::size_t offset) {
+    return (static_cast<std::uint32_t>(bytes[offset]) << 24) |
+           (static_cast<std::uint32_t>(bytes[offset + 1]) << 16) |
+           (static_cast<std::uint32_t>(bytes[offset + 2]) << 8) |
+           static_cast<std::uint32_t>(bytes[offset + 3]);
+}
+
+struct TouchEvent {
+    std::uint8_t action;
+    std::uint32_t x;
+    std::uint32_t y;
+};
+
+std::vector<TouchEvent> DecodeTouchEvents(const std::vector<std::uint8_t>& bytes) {
+    std::vector<TouchEvent> events;
+    for (std::size_t offset = 0; offset + 32 <= bytes.size(); offset += 32) {
+        events.push_back(TouchEvent{
+            bytes[offset + 1],
+            ReadU32BE(bytes, offset + 10),
+            ReadU32BE(bytes, offset + 14),
+        });
+    }
+    return events;
+}
+
+class NegotiatedInputPeer {
+public:
+    NegotiatedInputPeer()
+        : source(registry), router(source) {}
+
+    ~NegotiatedInputPeer() {
+        if (session) registry.Remove(session->Id());
+        session.reset();
+        fake.Stop();
+    }
+
+    bool Connect(const std::string& id) {
+        fake.Serve();
+        source.ConnectInitial(fake.Port());
+
+        inputChannel = viewerPc.createDataChannel("input");
+        viewerPc.addTransceiver(rtc::Description::Media::Kind::Video,
+                                 rtc::Description::Direction::RecvOnly);
+        std::atomic<bool> gathered{false};
+        viewerPc.onGatheringStateChange([&](rtc::PeerConnection::GatheringState state) {
+            if (state == rtc::PeerConnection::GatheringState::Complete) gathered = true;
+        });
+        viewerPc.setLocalDescription();
+        for (int i = 0; i < 200 && !gathered; ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        }
+        if (!gathered) return false;
+
+        session = registry.Create(PeerKind::Local, id, {});
+        if (!session) return false;
+        router.AttachToPeer(*session);
+        std::string answer = session->AnswerOffer(std::string(*viewerPc.localDescription()));
+        viewerPc.setRemoteDescription(rtc::Description(answer, "answer"));
+
+        std::atomic<bool> dcOpen{false};
+        inputChannel->onOpen([&]() { dcOpen = true; });
+        for (int i = 0; i < 200 && !dcOpen; ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        }
+        return dcOpen;
+    }
+
+    void Send(const std::string& message) {
+        inputChannel->send(message);
+    }
+
+    FakeScrcpyServer fake;
+    PeerRegistry registry;
+    ScrcpySource source;
+    InputRouter router;
+    rtc::PeerConnection viewerPc;
+    std::shared_ptr<rtc::DataChannel> inputChannel;
+    std::shared_ptr<PeerSession> session;
+};
+
+} // namespace
+
 TEST(InputRouter, ClickSendsDownThenUpTouchPair) {
     FakeScrcpyServer fake;
     fake.Serve();
@@ -164,4 +248,73 @@ TEST(InputRouter, EchoIsReflectedVerbatimOnSamePeer) {
     EXPECT_EQ(echoBody, R"({"type":"echo","t":123})");
 
     fake.Stop();
+}
+
+TEST(InputRouter, RealPeerDragSequenceIgnoresMovesOutsideActiveDrag) {
+    NegotiatedInputPeer peer;
+    ASSERT_TRUE(peer.Connect("input-drag-sequence"));
+
+    peer.Send(R"({"type":"drag_move","x":0.9,"y":0.9})");
+    peer.Send(R"({"type":"drag_start","x":0.1,"y":0.2})");
+    peer.Send(R"({"type":"drag_move","x":0.3,"y":0.4})");
+    peer.Send(R"({"type":"drag_end","x":0.5,"y":0.6})");
+    peer.Send(R"({"type":"drag_end","x":0.8,"y":0.8})");
+
+    ASSERT_TRUE(PollUntil([&]() { return peer.fake.ControlBytesReceived() >= 96u; }));
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    auto events = DecodeTouchEvents(peer.fake.ControlDataReceived());
+    ASSERT_EQ(events.size(), 3u);
+    EXPECT_EQ(events[0].action, ScrcpyControlClient::ACTION_DOWN);
+    EXPECT_EQ(events[0].x, 10u);
+    EXPECT_EQ(events[0].y, 40u);
+    EXPECT_EQ(events[1].action, ScrcpyControlClient::ACTION_MOVE);
+    EXPECT_EQ(events[1].x, 30u);
+    EXPECT_EQ(events[1].y, 80u);
+    EXPECT_EQ(events[2].action, ScrcpyControlClient::ACTION_UP);
+    EXPECT_EQ(events[2].x, 50u);
+    EXPECT_EQ(events[2].y, 120u);
+}
+
+TEST(InputRouter, ScrollCancelsDragAndClampsScaledCoordinates) {
+    NegotiatedInputPeer peer;
+    ASSERT_TRUE(peer.Connect("input-scroll-bounds"));
+
+    peer.Send(R"({"type":"drag_start","x":0.25,"y":0.25})");
+    peer.Send(R"({"type":"drag_move","x":0.4,"y":0.4})");
+    peer.Send(R"({"type":"scroll","x":0.5,"y":0.5,"dy":1})");
+
+    ASSERT_TRUE(PollUntil([&]() { return peer.fake.ControlBytesReceived() >= 192u; }));
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    auto events = DecodeTouchEvents(peer.fake.ControlDataReceived());
+    ASSERT_EQ(events.size(), 6u);
+    EXPECT_EQ(events[2].action, ScrcpyControlClient::ACTION_UP);
+    EXPECT_EQ(events[2].x, 40u);
+    EXPECT_EQ(events[2].y, 80u);
+    EXPECT_EQ(events[3].action, ScrcpyControlClient::ACTION_DOWN);
+    EXPECT_EQ(events[3].y, 100u);
+    EXPECT_EQ(events[4].action, ScrcpyControlClient::ACTION_MOVE);
+    EXPECT_EQ(events[4].y, 200u);
+    EXPECT_EQ(events[5].action, ScrcpyControlClient::ACTION_UP);
+    EXPECT_EQ(events[5].y, 200u);
+    for (const auto& event : events) {
+        EXPECT_LE(event.x, 100u);
+        EXPECT_LE(event.y, 200u);
+    }
+}
+
+TEST(InputRouter, ClickClearsActiveDragState) {
+    NegotiatedInputPeer peer;
+    ASSERT_TRUE(peer.Connect("input-click-clears-drag"));
+
+    peer.Send(R"({"type":"drag_start","x":0.1,"y":0.1})");
+    peer.Send(R"({"type":"click","x":0.5,"y":0.5})");
+    peer.Send(R"({"type":"drag_end","x":0.8,"y":0.8})");
+
+    ASSERT_TRUE(PollUntil([&]() { return peer.fake.ControlBytesReceived() >= 96u; }));
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    auto events = DecodeTouchEvents(peer.fake.ControlDataReceived());
+    ASSERT_EQ(events.size(), 3u);
+    EXPECT_EQ(events[0].action, ScrcpyControlClient::ACTION_DOWN);
+    EXPECT_EQ(events[1].action, ScrcpyControlClient::ACTION_DOWN);
+    EXPECT_EQ(events[2].action, ScrcpyControlClient::ACTION_UP);
 }

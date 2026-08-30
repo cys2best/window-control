@@ -3,8 +3,8 @@
 // calls and src/server/app.py's WebSocket input handler exactly, ported
 // to per-peer WebRTC DataChannels instead of one shared WebSocket.
 #include "input_router.h"
+#include <algorithm>
 #include <nlohmann/json.hpp>
-#include <iostream>
 #include <unordered_map>
 
 using json = nlohmann::json;
@@ -40,16 +40,24 @@ void InputRouter::AttachToPeer(PeerSession& peer) {
         }
         // Best-effort UP so one abruptly-disconnected viewer's held-down
         // finger doesn't stay stuck for whoever connects next.
-        std::lock_guard<std::mutex> lock(fingerMutex_);
-        auto it = fingerStates_.find(&peer);
-        if (it != fingerStates_.end() && it->second.down) {
-            if (auto control = source_.Control()) {
-                auto status = source_.Status();
-                control->SendTouch(ScrcpyControlClient::ACTION_UP, 0, 0,
-                                    status.width, status.height, it->second.pointerId);
+        FingerState finger;
+        bool releaseFinger = false;
+        {
+            std::lock_guard<std::mutex> lock(fingerMutex_);
+            auto it = fingerStates_.find(&peer);
+            if (it != fingerStates_.end()) {
+                finger = it->second;
+                releaseFinger = finger.down;
+                fingerStates_.erase(it);
             }
         }
-        fingerStates_.erase(it);
+        if (releaseFinger) {
+            if (auto control = source_.Control()) {
+                auto status = source_.Status();
+                control->SendTouch(ScrcpyControlClient::ACTION_UP, finger.x, finger.y,
+                                    status.width, status.height, finger.pointerId);
+            }
+        }
     });
 }
 
@@ -80,27 +88,78 @@ void InputRouter::HandleMessage(PeerSession* peer, const std::string& jsonMessag
     double y = msg.value("y", 0.0);
 
     if (type == "click") {
-        control->SendTouch(ScrcpyControlClient::ACTION_DOWN, x, y, status.width, status.height);
-        control->SendTouch(ScrcpyControlClient::ACTION_UP, x, y, status.width, status.height);
-    } else if (type == "drag_start") {
-        std::lock_guard<std::mutex> lock(fingerMutex_);
-        fingerStates_[peer] = FingerState{true, 0};
-        control->SendTouch(ScrcpyControlClient::ACTION_DOWN, x, y, status.width, status.height);
-    } else if (type == "drag_move") {
-        control->SendTouch(ScrcpyControlClient::ACTION_MOVE, x, y, status.width, status.height);
-    } else if (type == "drag_end") {
         {
             std::lock_guard<std::mutex> lock(fingerMutex_);
             fingerStates_.erase(peer);
         }
-        control->SendTouch(ScrcpyControlClient::ACTION_UP, x, y, status.width, status.height);
-    } else if (type == "scroll") {
-        // Treated as a fast synthetic drag for this plan's C++ scope (see
-        // Task 8's Interfaces note) — DOWN/MOVE(offset by dy)/UP.
-        double dy = msg.value("dy", 0.0);
         control->SendTouch(ScrcpyControlClient::ACTION_DOWN, x, y, status.width, status.height);
-        control->SendTouch(ScrcpyControlClient::ACTION_MOVE, x, y - dy, status.width, status.height);
-        control->SendTouch(ScrcpyControlClient::ACTION_UP, x, y - dy, status.width, status.height);
+        control->SendTouch(ScrcpyControlClient::ACTION_UP, x, y, status.width, status.height);
+    } else if (type == "drag_start") {
+        {
+            std::lock_guard<std::mutex> lock(fingerMutex_);
+            fingerStates_[peer] = FingerState{true, 0, x, y};
+        }
+        control->SendTouch(ScrcpyControlClient::ACTION_DOWN, x, y, status.width, status.height);
+    } else if (type == "drag_move") {
+        std::uint64_t pointerId = 0;
+        bool moveFinger = false;
+        {
+            std::lock_guard<std::mutex> lock(fingerMutex_);
+            auto it = fingerStates_.find(peer);
+            if (it != fingerStates_.end() && it->second.down) {
+                it->second.x = x;
+                it->second.y = y;
+                pointerId = it->second.pointerId;
+                moveFinger = true;
+            }
+        }
+        if (moveFinger) {
+            control->SendTouch(
+                ScrcpyControlClient::ACTION_MOVE, x, y,
+                status.width, status.height, pointerId);
+        }
+    } else if (type == "drag_end") {
+        std::uint64_t pointerId = 0;
+        bool releaseFinger = false;
+        {
+            std::lock_guard<std::mutex> lock(fingerMutex_);
+            auto it = fingerStates_.find(peer);
+            if (it != fingerStates_.end()) {
+                pointerId = it->second.pointerId;
+                releaseFinger = it->second.down;
+                fingerStates_.erase(it);
+            }
+        }
+        if (releaseFinger) {
+            control->SendTouch(
+                ScrcpyControlClient::ACTION_UP, x, y,
+                status.width, status.height, pointerId);
+        }
+    } else if (type == "scroll") {
+        FingerState activeFinger;
+        bool cancelDrag = false;
+        {
+            std::lock_guard<std::mutex> lock(fingerMutex_);
+            auto it = fingerStates_.find(peer);
+            if (it != fingerStates_.end()) {
+                activeFinger = it->second;
+                cancelDrag = activeFinger.down;
+                fingerStates_.erase(it);
+            }
+        }
+        if (cancelDrag) {
+            control->SendTouch(
+                ScrcpyControlClient::ACTION_UP, activeFinger.x, activeFinger.y,
+                status.width, status.height, activeFinger.pointerId);
+        }
+
+        double dy = msg.value("dy", 0.0);
+        double ny2 = status.height != 0
+            ? std::clamp(y + dy * 120.0 / status.height, 0.0, 1.0)
+            : y;
+        control->SendTouch(ScrcpyControlClient::ACTION_DOWN, x, y, status.width, status.height);
+        control->SendTouch(ScrcpyControlClient::ACTION_MOVE, x, ny2, status.width, status.height);
+        control->SendTouch(ScrcpyControlClient::ACTION_UP, x, ny2, status.width, status.height);
     } else if (type == "key") {
         std::int32_t keycode = KeycodeForKey(msg.value("key", ""));
         if (keycode != 0) control->SendKeycode(keycode);
