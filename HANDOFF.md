@@ -28,9 +28,10 @@ Plan/task identifiers belong here and in workflow state, not in commit subjects.
 - Windows finding/correction: cleanup commands failed because `$serial` and `$scid` were unset in that PowerShell window, shifting `adb -s` arguments so `--remove`, `pkill`, and `--list` appeared to be unsupported commands; commit 6441eb6 replaces the earlier vendor-ADB diagnosis in 35ebc34 with a self-contained, validated cleanup block
 - Finished: Task 10 real-device manual E2E gate — first peer rendered non-black live video with climbing `framesDecoded`, open input DataChannel, and working click; two independent tabs remained live; corrected generation reconnect kept the same engine/tab alive, returned `accepted: true` for generation 1, and health reported generation 1 `connected` at 720x408; engine printed `Stopped.` on `Ctrl+C`; cleanup left no `emulator-5554` forward while preserving other emulator forwards
 - Windows finding/fix: generation reconnect ordering was not explicit enough; commit 4ff209f now states that window A and its WHEP/admin ports must remain alive while only the scrcpy server is replaced, and that an engine restart is a new run rather than reconnect evidence
+- Windows finding/fix: live signaling tests received messages from unexpected peers and lost a claimed role because they reused fixed session IDs against a long-lived relay; commit 0a76922 gives all `SignalingClient`/`PublicSignalingBridge` integration tests collision-resistant per-process sessions, state-based connection waits, atomic callback counters, and payload diagnostics; relay Node suite passes 6/6 locally
 - Finished: expanded `engine/test/README_e2e.md` into the Windows real-device operator runbook
-- Next: run or record the plan's remaining Windows full offline and live-signaling suites, then finalize completion through the Superpowers workflow
-- Blockers: manual E2E is complete; Windows full-suite/live-signaling evidence and workflow-owned completion state remain outstanding unless already captured elsewhere
+- Next: rebuild on Windows and rerun `SignalingClient.*:PublicSignalingBridge.*`, then run or record the full offline suite and finalize completion through the Superpowers workflow
+- Blockers: manual E2E is complete; Windows live-signaling rerun/full-suite evidence and workflow-owned completion state remain outstanding
 
 ### 2026-08-31 00:30 — codex
 - Claiming: 2026-08-30-engine-core-rewrite/final-whole-branch-review-fix
