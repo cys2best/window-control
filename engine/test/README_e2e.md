@@ -54,7 +54,14 @@ cmake --build engine\build --config Release
 
 The filtered executable command is the offline check. The CTest registration
 is unfiltered and includes tests that connect to `ws://localhost:8443`; run it
-only after a local signaling server is available:
+only after starting the auth-free Python test relay in another window (Node/npm
+is not required):
+
+```powershell
+uv run python .\engine\test\local_signaling_server.py
+```
+
+Then run CTest from the repository root:
 
 ```powershell
 ctest --test-dir engine\build -C Release --output-on-failure
