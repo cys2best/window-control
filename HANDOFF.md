@@ -25,6 +25,7 @@ Plan/task identifiers belong here and in workflow state, not in commit subjects.
 - Windows finding/fix: first focused run reached 19 tests but exposed `Illegal role actpass in remote answer description` plus offer fixtures negotiated before adding video; commit 18e910d fixes both; human-reported Windows rerun passed all focused `PeerSession.*:WhepHandler.*:InputRouter.*` tests
 - Windows finding/fix: manual launcher run exposed Windows PowerShell 5 turning merged native stderr into terminating `NativeCommandError`; commit bf29108 makes engine diagnostics non-terminating, removes `2>&1` from the runbook, and prints the separate static-page server URL
 - Windows finding/fix: reconnect instructions assumed window-local variables survived; empty serial/port/scid/tier produced Python syntax failure and a rejected null-port JSON request without changing generation 0; commit dbc059f makes the block self-contained, typed, and passes values as Python argv
+- Windows finding/fix: the emulator-vendor `adb.exe` rejects standard per-forward `--remove`; commit 35ebc34 makes forward removal best-effort, preserves clean-shutdown evidence, and limits `--remove-all` to dedicated devices with no unrelated mappings
 - Finished: expanded `engine/test/README_e2e.md` into the Windows real-device operator runbook
 - Next: resume Task 10's manual real-device gate from the first-browser checkpoint, then verify touch, second peer, reconnect, and clean shutdown
 - Blockers: manual browser/device E2E completion remains pending
