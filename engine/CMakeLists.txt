@@ -31,6 +31,7 @@ add_library(engine_core
   src/scrcpy_control.cpp
   src/signaling_client.cpp
   src/peer.cpp
+  src/h264_nalu.cpp
 )
 target_include_directories(engine_core PUBLIC src)
 target_compile_definitions(engine_core PUBLIC ASIO_STANDALONE)
@@ -45,7 +46,12 @@ target_link_libraries(engine_core PUBLIC
   crypt32.lib
 )
 
-add_executable(engine_tests test/test_scrcpy_video.cpp test/test_scrcpy_control.cpp test/test_signaling_client.cpp)
+add_executable(engine_tests
+  test/test_scrcpy_video.cpp
+  test/test_scrcpy_control.cpp
+  test/test_signaling_client.cpp
+  test/test_h264_nalu.cpp
+)
 target_link_libraries(engine_tests PRIVATE engine_core GTest::gtest GTest::gtest_main)
 add_test(NAME engine_tests COMMAND engine_tests)
 
