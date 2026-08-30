@@ -30,9 +30,11 @@ Plan/task identifiers belong here and in workflow state, not in commit subjects.
 - Windows finding/fix: generation reconnect ordering was not explicit enough; commit 4ff209f now states that window A and its WHEP/admin ports must remain alive while only the scrcpy server is replaced, and that an engine restart is a new run rather than reconnect evidence
 - Windows finding/fix: live signaling tests received messages from unexpected peers and lost a claimed role because they reused fixed session IDs against a long-lived relay; commit 0a76922 gives all `SignalingClient`/`PublicSignalingBridge` integration tests collision-resistant per-process sessions, state-based connection waits, atomic callback counters, and payload diagnostics; relay Node suite passes 6/6 locally
 - Windows environment fix: Host PC has no Node/npm; commit 7ca12a6 adds an auth-free, loopback-only Python signaling relay using the repository's existing `websockets` dependency, plus Windows instructions and 3/3 passing relay contract tests; the unrelated full Python suite still has its pre-existing collection errors for removed `auto_unlock`, `input_handler`, and `window_manager` APIs
+- Windows verification: human-reported rebuilt `SignalingClient.*:PublicSignalingBridge.*` live-relay suite passes in full against the Python relay after commits 0a76922 and 7ca12a6
+- Documentation finding/fix: the offline GTest filter had a second leading minus, which GTest treats as part of the second negative pattern rather than another separator; commit e968d46 uses `-SignalingClient.*:PublicSignalingBridge.*` so both live suites are actually excluded
 - Finished: expanded `engine/test/README_e2e.md` into the Windows real-device operator runbook
-- Next: start `uv run python .\engine\test\local_signaling_server.py`, rebuild on Windows, and rerun `SignalingClient.*:PublicSignalingBridge.*`; then run or record the full offline suite and finalize completion through the Superpowers workflow
-- Blockers: manual E2E is complete; Windows live-signaling rerun/full-suite evidence and workflow-owned completion state remain outstanding
+- Next: run or record the corrected full offline suite, then finalize completion through the Superpowers workflow
+- Blockers: manual E2E and live signaling are complete; Windows full offline-suite evidence and workflow-owned completion state remain outstanding
 
 ### 2026-08-31 00:30 — codex
 - Claiming: 2026-08-30-engine-core-rewrite/final-whole-branch-review-fix
