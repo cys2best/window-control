@@ -19,6 +19,24 @@ Plan/task identifiers belong here and in workflow state, not in commit subjects.
 
 ---
 
+### 2026-08-30 16:35 — claude
+- Finished: 2026-08-29-cpp-engine-sps-pps-cache fully verified on Windows
+  Host PC — engine_tests.exe all green (focused H264Nalu.*/SpsPpsCache.*
+  filter and full suite excluding SignalingClient.*), plus the manual e2e
+  gate confirming the black-frame bug is fixed. Plan complete.
+- Next: feature/engine ready to merge (currently kept as-is, not yet
+  merged into feature/aiortc per human partner's choice).
+- Blockers: none.
+
+### 2026-08-30 16:20 — claude
+- Finished: 2026-08-29-cpp-engine-sps-pps-cache manual e2e gate (plan's Task 2
+  Step 5) — confirmed on Windows Host PC: engine.exe streams the device
+  screen correctly through the SPS/PPS cache fix, black-frame bug resolved.
+- Next: engine_tests.exe (GTest unit suite, `--gtest_filter="H264Nalu.*:SpsPpsCache.*"`
+  then full suite excluding `SignalingClient.*`) has not been run yet — do
+  that before considering the plan fully verified, then merge feature/engine.
+- Blockers: none.
+
 ### 2026-08-30 15:40 — claude
 - Finished: 2026-08-29-cpp-engine-sps-pps-cache/task-1, 2026-08-29-cpp-engine-sps-pps-cache/task-2
 - Next: 2026-08-29-cpp-engine-sps-pps-cache is implementation-complete on branch feature/engine; Windows-side verification (engine_tests.exe, the manual e2e gate in the plan's Task 2 Step 5) still required before merge
