@@ -1,9 +1,9 @@
 #pragma once
 
-#include "h264_nalu.h"
 #include "peer_registry.h"
 #include "scrcpy_control.h"
 #include "scrcpy_video.h"
+#include "source_video_fanout.h"
 
 #include <atomic>
 #include <chrono>
@@ -53,7 +53,8 @@ private:
 
     PeerRegistry& registry_;
     std::chrono::milliseconds stallThreshold_;
-    h264::SpsPpsCache spsPpsCache_;
+    H264SourceAccessUnitPreparer accessUnitPreparer_;
+    SourceVideoFanout videoFanout_;
 
     // lifecycleMutex_ serializes connect/reconnect operations. stateMutex_
     // protects only short state swaps, so status/control calls never wait on

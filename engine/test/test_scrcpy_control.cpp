@@ -190,6 +190,19 @@ TEST(ScrcpyControlClient, ConnectFailureDoesNotReportConnected) {
     EXPECT_FALSE(client.IsConnected());
 }
 
+TEST(ScrcpyControlClient, DisconnectIsSynchronizedAndIdempotent) {
+    ResettingControlServer server;
+    ScrcpyControlClient client(server.Port());
+    client.Connect();
+    ASSERT_TRUE(client.IsConnected());
+
+    client.Disconnect();
+    EXPECT_FALSE(client.IsConnected());
+
+    EXPECT_NO_THROW(client.Disconnect());
+    EXPECT_FALSE(client.IsConnected());
+}
+
 TEST(ScrcpyControlClient, LastSendFailedReflectsResetPeer) {
     ResettingControlServer server;
     ScrcpyControlClient client(server.Port());

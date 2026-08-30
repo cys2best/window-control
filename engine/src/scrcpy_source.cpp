@@ -24,11 +24,27 @@ ScrcpySource::ScrcpySource(
     std::chrono::milliseconds stallThreshold)
     : registry_(registry),
       stallThreshold_(stallThreshold),
+      videoFanout_(
+          accessUnitPreparer_,
+          [this]() {
+              std::vector<SourceVideoPeerTarget> targets;
+              for (const auto& peer : registry_.Snapshot()) {
+                  targets.push_back(SourceVideoPeerTarget{
+                      peer->Id(),
+                      [peer](const std::uint8_t* data, std::size_t size) {
+                          peer->SendVideoNalu(data, size);
+                      },
+                  });
+              }
+              return targets;
+          },
+          [this](const std::string& id) { registry_.Remove(id); }),
       lastFrameAt_(std::chrono::steady_clock::now()) {}
 
 ScrcpySource::~ScrcpySource() {
     std::lock_guard<std::mutex> lifecycleLock(lifecycleMutex_);
     auto retired = RetireCurrent();
+    if (retired.control) retired.control->Disconnect();
     if (retired.video) retired.video->Stop();
 }
 
@@ -92,7 +108,7 @@ void ScrcpySource::Install(PendingConnection connection, std::uint64_t generatio
     auto callbackGate = connection.callbackGate;
     {
         std::lock_guard<std::mutex> stateLock(stateMutex_);
-        spsPpsCache_.Reset();
+        videoFanout_.BeginGeneration();
         video_ = std::move(connection.video);
         control_ = std::move(connection.control);
         width_ = connection.width;
@@ -115,6 +131,7 @@ void ScrcpySource::ConnectInitial(
         generation = generation_;
     }
     auto retired = RetireCurrent();
+    if (retired.control) retired.control->Disconnect();
     if (retired.video) retired.video->Stop();
     retired.video.reset();
     retired.control.reset();
@@ -131,6 +148,7 @@ bool ScrcpySource::Reconnect(int newPort, std::uint64_t requestedGeneration) {
     }
 
     auto retired = RetireCurrent();
+    if (retired.control) retired.control->Disconnect();
     if (retired.video) retired.video->Stop();
     retired.video.reset();
     retired.control.reset();
@@ -143,17 +161,7 @@ bool ScrcpySource::Reconnect(int newPort, std::uint64_t requestedGeneration) {
 
 void ScrcpySource::FanOut(const std::uint8_t* data, size_t size) {
     lastFrameAt_.store(std::chrono::steady_clock::now());
-    auto prepared = spsPpsCache_.ObserveAndPrepare(data, size);
-    const std::uint8_t* sendData = data;
-    size_t sendSize = size;
-    if (prepared.has_value()) {
-        sendData = prepared->data();
-        sendSize = prepared->size();
-    }
-
-    for (const auto& peer : registry_.Snapshot()) {
-        peer->SendVideoNalu(sendData, sendSize);
-    }
+    videoFanout_.SendAccessUnit(data, size);
 }
 
 void ScrcpySource::RequestIdr() {
@@ -168,7 +176,7 @@ void ScrcpySource::RequestIdr() {
 SourceStatus ScrcpySource::Status() const {
     std::lock_guard<std::mutex> stateLock(stateMutex_);
     SourceHealthState state = SourceHealthState::Disconnected;
-    if (connected_ && video_ && control_ &&
+    if (connected_ && video_ && control_ && control_->IsConnected() &&
         !video_->LastReadFailed() && !control_->LastSendFailed()) {
         auto idle = std::chrono::steady_clock::now() - lastFrameAt_.load();
         state = idle > stallThreshold_

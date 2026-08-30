@@ -50,6 +50,13 @@ struct ScrcpyControlClient::Impl {
         if (wsaInitialized) WSACleanup();
     }
 
+    void DisconnectLocked() {
+        if (sock == INVALID_SOCKET) return;
+        shutdown(sock, SD_BOTH);
+        closesocket(sock);
+        sock = INVALID_SOCKET;
+    }
+
     void Send(const std::vector<uint8_t>& msg) {
         std::lock_guard<std::mutex> lock(sendMutex);
         if (sock == INVALID_SOCKET) {
@@ -66,9 +73,7 @@ struct ScrcpyControlClient::Impl {
                 0);
             if (result == SOCKET_ERROR || result == 0) {
                 lastSendFailed.store(true);
-                shutdown(sock, SD_BOTH);
-                closesocket(sock);
-                sock = INVALID_SOCKET;
+                DisconnectLocked();
                 return;
             }
             sent += static_cast<size_t>(result);
@@ -78,17 +83,13 @@ struct ScrcpyControlClient::Impl {
 
 ScrcpyControlClient::ScrcpyControlClient(int port) : impl_(std::make_unique<Impl>(port)) {}
 
-ScrcpyControlClient::~ScrcpyControlClient() = default;
+ScrcpyControlClient::~ScrcpyControlClient() {
+    Disconnect();
+}
 
 void ScrcpyControlClient::Connect() {
-    {
-        std::lock_guard<std::mutex> lock(impl_->sendMutex);
-        if (impl_->sock != INVALID_SOCKET) {
-            shutdown(impl_->sock, SD_BOTH);
-            closesocket(impl_->sock);
-            impl_->sock = INVALID_SOCKET;
-        }
-    }
+    std::lock_guard<std::mutex> lock(impl_->sendMutex);
+    impl_->DisconnectLocked();
 
     std::cerr << "[debug] control: socket()..." << std::endl;
     SOCKET newSock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -111,9 +112,12 @@ void ScrcpyControlClient::Connect() {
     int flag = 1;
     setsockopt(newSock, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&flag), sizeof(flag));
 
-    std::lock_guard<std::mutex> lock(impl_->sendMutex);
-    if (impl_->sock != INVALID_SOCKET) closesocket(impl_->sock);
     impl_->sock = newSock;
+}
+
+void ScrcpyControlClient::Disconnect() {
+    std::lock_guard<std::mutex> lock(impl_->sendMutex);
+    impl_->DisconnectLocked();
 }
 
 void ScrcpyControlClient::SendTouch(uint8_t action, double nx, double ny, int screenWidth, int screenHeight, uint64_t pointerId) {

@@ -85,6 +85,13 @@ public:
         CloseSocket(controlSock_, true);
     }
 
+    bool SendAccessUnit(const std::vector<std::uint8_t>& accessUnit) {
+        std::vector<std::uint8_t> frame(12, 0);
+        WriteU32BE(frame.data() + 8, static_cast<std::uint32_t>(accessUnit.size()));
+        frame.insert(frame.end(), accessUnit.begin(), accessUnit.end());
+        return SendAll(videoSock_, frame.data(), frame.size());
+    }
+
 private:
     static void CloseSocket(SOCKET& sock, bool resetAbort) {
         if (sock == INVALID_SOCKET) return;
@@ -242,6 +249,7 @@ TEST(ScrcpySource, ReconnectAdvancesGenerationAndPreservesPeerRegistry) {
     {
         ScrcpySource source(registry);
         source.ConnectInitial(first.Port());
+        auto retiredControl = source.Control();
         ASSERT_TRUE(source.Reconnect(second.Port(), 2));
 
         auto status = source.Status();
@@ -250,7 +258,23 @@ TEST(ScrcpySource, ReconnectAdvancesGenerationAndPreservesPeerRegistry) {
         EXPECT_EQ(status.height, 400);
         EXPECT_EQ(status.state, SourceHealthState::Connected);
         EXPECT_EQ(registry.Find("existing-peer"), peer);
+        EXPECT_FALSE(retiredControl->IsConnected());
     }
+}
+
+TEST(ScrcpySource, DestructionDisconnectsExternallyRetainedControl) {
+    FakeScrcpyServer fake;
+    fake.Serve();
+    PeerRegistry registry;
+    std::shared_ptr<ScrcpyControlClient> retainedControl;
+    {
+        ScrcpySource source(registry);
+        source.ConnectInitial(fake.Port());
+        retainedControl = source.Control();
+        ASSERT_TRUE(retainedControl->IsConnected());
+    }
+
+    EXPECT_FALSE(retainedControl->IsConnected());
 }
 
 TEST(ScrcpySource, FailedReconnectKeepsCommittedMetadataAndRetiresControl) {
@@ -263,6 +287,7 @@ TEST(ScrcpySource, FailedReconnectKeepsCommittedMetadataAndRetiresControl) {
     {
         ScrcpySource source(registry);
         source.ConnectInitial(first.Port());
+        auto retiredControl = source.Control();
 
         EXPECT_THROW(source.Reconnect(broken.Port(), 3), std::runtime_error);
 
@@ -272,6 +297,7 @@ TEST(ScrcpySource, FailedReconnectKeepsCommittedMetadataAndRetiresControl) {
         EXPECT_EQ(status.height, 200);
         EXPECT_EQ(status.state, SourceHealthState::Disconnected);
         EXPECT_EQ(source.Control(), nullptr);
+        EXPECT_FALSE(retiredControl->IsConnected());
     }
 }
 
@@ -306,6 +332,44 @@ TEST(ScrcpySource, ReportsStalledAfterInactivityThreshold) {
     }
 }
 
+TEST(ScrcpySource, IncomingAccessUnitRefreshesStallHealth) {
+    FakeScrcpyServer fake;
+    fake.Serve();
+    PeerRegistry registry;
+    {
+        ScrcpySource source(registry, std::chrono::milliseconds(50));
+        source.ConnectInitial(fake.Port());
+        ASSERT_TRUE(PollUntil([&]() {
+            return source.Status().state == SourceHealthState::Stalled;
+        }));
+        const std::vector<std::uint8_t> idr = {
+            0x00, 0x00, 0x00, 0x01, 0x65, 0xAA, 0xBB};
+
+        ASSERT_TRUE(fake.SendAccessUnit(idr));
+
+        EXPECT_TRUE(PollUntil([&]() {
+            return source.Status().state == SourceHealthState::Connected;
+        }));
+    }
+}
+
+TEST(ScrcpySource, DisconnectedControlCannotReportHealthyAfterFailureFlagReset) {
+    FakeScrcpyServer fake;
+    fake.Serve();
+    PeerRegistry registry;
+    {
+        ScrcpySource source(registry, std::chrono::seconds(30));
+        source.ConnectInitial(fake.Port());
+        auto control = source.Control();
+        ASSERT_NE(control, nullptr);
+
+        control->Disconnect();
+        control->ResetSendFailureFlag();
+
+        EXPECT_EQ(source.Status().state, SourceHealthState::Disconnected);
+    }
+}
+
 TEST(ScrcpySource, UnexpectedVideoEofReportsDisconnectedImmediately) {
     FakeScrcpyServer fake;
     fake.Serve();
@@ -328,11 +392,17 @@ TEST(ScrcpySource, ControlSendFailureReportsDisconnectedImmediately) {
     {
         ScrcpySource source(registry, std::chrono::seconds(30));
         source.ConnectInitial(fake.Port());
+        auto control = source.Control();
         fake.AbortControl();
 
-        EXPECT_TRUE(PollUntil([&]() {
+        ASSERT_TRUE(PollUntil([&]() {
             source.RequestIdr();
             return source.Status().state == SourceHealthState::Disconnected;
         }));
+        ASSERT_TRUE(control->LastSendFailed());
+
+        control->ResetSendFailureFlag();
+        EXPECT_FALSE(control->LastSendFailed());
+        EXPECT_EQ(source.Status().state, SourceHealthState::Disconnected);
     }
 }
