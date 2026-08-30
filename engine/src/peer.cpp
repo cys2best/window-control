@@ -105,7 +105,7 @@ void WebRtcPeer::StartAsOfferer() {
         /*ssrc=*/1, /*cname=*/"engine-video", /*payloadType=*/96,
         rtc::H264RtpPacketizer::defaultClockRate);
     impl_->packetizer = std::make_shared<rtc::H264RtpPacketizer>(
-        rtc::NalUnit::Separator::LongStartSequence, impl_->rtpConfig);
+        rtc::NalUnit::Separator::StartSequence, impl_->rtpConfig);
 
     auto srReporter = std::make_shared<rtc::RtcpSrReporter>(impl_->rtpConfig);
     impl_->packetizer->addToChain(srReporter);

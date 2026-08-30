@@ -18,3 +18,8 @@ Plan/task identifiers belong here and in workflow state, not in commit subjects.
 <!-- agent-sync:handoff-template:end -->
 
 ---
+
+### 2026-08-30 15:40 — claude
+- Finished: 2026-08-29-cpp-engine-sps-pps-cache/task-1, 2026-08-29-cpp-engine-sps-pps-cache/task-2
+- Next: 2026-08-29-cpp-engine-sps-pps-cache is implementation-complete on branch feature/engine; Windows-side verification (engine_tests.exe, the manual e2e gate in the plan's Task 2 Step 5) still required before merge
+- Blockers: none — verification blocked only by lack of Windows hardware in this session
