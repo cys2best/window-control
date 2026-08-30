@@ -44,11 +44,11 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    std::string instanceName = argv[1];
-    int scrcpyPort = std::stoi(argv[2]);
     std::signal(SIGINT, OnSigint);
 
     try {
+        std::string instanceName = argv[1];
+        int scrcpyPort = std::stoi(argv[2]);
         PeerRegistry registry;
         ScrcpySource source(registry);
         source.ConnectInitial(scrcpyPort);
@@ -68,8 +68,10 @@ int main(int argc, char** argv) {
         adminHandler.RegisterRoutes(adminServer.Server());
         adminServer.Start();
 
-        std::unique_ptr<SignalingClient> signaling;
         std::unique_ptr<PublicSignalingBridge> publicBridge;
+        // Destroy the transport first on exceptional exits so its callback
+        // cannot outlive the bridge object it captures.
+        std::unique_ptr<SignalingClient> signaling;
         std::string signalingUrl = GetEnvOrEmpty("ENGINE_SIGNALING_URL");
         if (!signalingUrl.empty()) {
             std::string signalingToken = GetEnvOrEmpty("ENGINE_SIGNALING_TOKEN");
@@ -98,6 +100,7 @@ int main(int argc, char** argv) {
 
         whepServer.Stop();
         adminServer.Stop();
+        if (signaling) signaling->Disconnect();
         std::cout << "Stopped.\n";
         return 0;
     } catch (const std::exception& e) {

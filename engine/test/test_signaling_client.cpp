@@ -3,6 +3,7 @@
 #include <thread>
 #include <chrono>
 #include <atomic>
+#include <stdexcept>
 
 // Assumes a signaling server instance is already running at
 // ws://localhost:8443 with JWT auth disabled (JWT_SECRET unset) — see
@@ -64,4 +65,70 @@ TEST(SignalingClient, SendImmediatelyAfterConnectIsNotLost) {
 
     EXPECT_TRUE(received);
     EXPECT_NE(receivedMsg.find("race-condition-sdp"), std::string::npos);
+}
+
+TEST(SignalingClient, DisconnectWaitsForCallbackAndSuppressesLaterMessages) {
+    SignalingClient engineSide("ws://localhost:8443", "test-session-disconnect", "engine", "");
+    SignalingClient viewerSide("ws://localhost:8443", "test-session-disconnect", "viewer", "");
+
+    std::atomic<int> callbackCount{0};
+    std::atomic<bool> callbackEntered{false};
+    std::atomic<bool> releaseCallback{false};
+    engineSide.Connect([&](const std::string&) {
+        ++callbackCount;
+        callbackEntered = true;
+        while (!releaseCallback.load()) std::this_thread::yield();
+    });
+    viewerSide.Connect([](const std::string&) {});
+    for (int i = 0; i < 100 &&
+         (!engineSide.IsConnected() || !viewerSide.IsConnected()); ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    ASSERT_TRUE(engineSide.IsConnected());
+    ASSERT_TRUE(viewerSide.IsConnected());
+
+    viewerSide.Send("hold-callback");
+    for (int i = 0; i < 100 && !callbackEntered; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    ASSERT_TRUE(callbackEntered);
+
+    std::atomic<bool> disconnectReturned{false};
+    std::thread disconnectThread([&]() {
+        engineSide.Disconnect();
+        disconnectReturned = true;
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    EXPECT_FALSE(disconnectReturned);
+
+    releaseCallback = true;
+    disconnectThread.join();
+    EXPECT_TRUE(disconnectReturned);
+    EXPECT_FALSE(engineSide.IsConnected());
+
+    engineSide.Disconnect();
+    viewerSide.Send("after-disconnect");
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    EXPECT_EQ(callbackCount.load(), 1);
+}
+
+TEST(SignalingClient, DisconnectBeforeConnectIsIdempotent) {
+    SignalingClient client("ws://127.0.0.1:1", "unused", "engine", "");
+
+    EXPECT_NO_THROW(client.Disconnect());
+    EXPECT_NO_THROW(client.Disconnect());
+    EXPECT_FALSE(client.IsConnected());
+    EXPECT_THROW(client.Connect([](const std::string&) {}), std::logic_error);
+}
+
+TEST(SignalingClient, DisconnectImmediatelyAfterConnectQuiescesHandshake) {
+    SignalingClient client("ws://127.0.0.1:1", "connecting", "engine", "");
+    std::atomic<int> callbackCount{0};
+
+    client.Connect([&](const std::string&) { ++callbackCount; });
+    client.Disconnect();
+    client.Disconnect();
+
+    EXPECT_FALSE(client.IsConnected());
+    EXPECT_EQ(callbackCount.load(), 0);
 }
