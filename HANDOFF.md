@@ -19,6 +19,14 @@ Plan/task identifiers belong here and in workflow state, not in commit subjects.
 
 ---
 
+### 2026-08-30 17:20 — codex
+- Finished: architecture verification and revision of
+  `2026-08-30-engine-full-migration-design`; resolved the VPS signaling,
+  WHEP/DataChannel, multi-peer lifecycle, auth/admin, reconnect, packaging,
+  CI, and cutover-gate gaps; no implementation plan or tasks generated
+- Next: human review of the revised design spec
+- Blockers: none
+
 ### 2026-08-30 16:35 — claude
 - Finished: 2026-08-29-cpp-engine-sps-pps-cache fully verified on Windows
   Host PC — engine_tests.exe all green (focused H264Nalu.*/SpsPpsCache.*
