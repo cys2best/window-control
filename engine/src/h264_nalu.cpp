@@ -103,6 +103,11 @@ SpsPpsCache::ObserveAndPrepare(
     return prepared;
 }
 
+void SpsPpsCache::Reset() {
+    sps_.clear();
+    pps_.clear();
+}
+
 bool SpsPpsCache::HasConfig() const {
     return !sps_.empty() && !pps_.empty();
 }

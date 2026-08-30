@@ -170,3 +170,18 @@ TEST(SpsPpsCache, LeavesNonIdrPayloadUnchanged) {
     EXPECT_FALSE(cache.ObserveAndPrepare(
         slice.data(), slice.size()).has_value());
 }
+
+TEST(SpsPpsCache, ResetClearsStoredConfig) {
+    SpsPpsCache cache;
+    auto sps = Nalu4(0x67, {0x42, 0xC0, 0x29});
+    auto pps = Nalu4(0x68, {0xCE, 0x3C, 0x80});
+    cache.ObserveAndPrepare(sps.data(), sps.size());
+    cache.ObserveAndPrepare(pps.data(), pps.size());
+    ASSERT_TRUE(cache.HasConfig());
+
+    cache.Reset();
+    EXPECT_FALSE(cache.HasConfig());
+
+    auto idr = Nalu4(0x65, {0xAA, 0xBB});
+    EXPECT_FALSE(cache.ObserveAndPrepare(idr.data(), idr.size()).has_value());
+}

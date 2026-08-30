@@ -4,6 +4,9 @@
 #include <ws2tcpip.h>
 #include <thread>
 #include <vector>
+#include <atomic>
+#include <chrono>
+#include <stdexcept>
 
 #pragma comment(lib, "ws2_32.lib")
 
@@ -47,6 +50,65 @@ int StartCapturingServer(size_t expectedBytes, std::vector<uint8_t>& outReceived
 
     return port;
 }
+
+class ResettingControlServer {
+public:
+    ResettingControlServer() {
+        WSADATA wsaData;
+        if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+            throw std::runtime_error("WSAStartup failed");
+        }
+        wsaInitialized_ = true;
+
+        listenSock_ = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (listenSock_ == INVALID_SOCKET) {
+            throw std::runtime_error("socket failed");
+        }
+
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        addr.sin_port = 0;
+        if (bind(listenSock_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0 ||
+            listen(listenSock_, 1) != 0) {
+            throw std::runtime_error("bind/listen failed");
+        }
+
+        int addrLen = sizeof(addr);
+        getsockname(listenSock_, reinterpret_cast<sockaddr*>(&addr), &addrLen);
+        port_ = ntohs(addr.sin_port);
+        thread_ = std::thread([this]() {
+            SOCKET accepted = accept(listenSock_, nullptr, nullptr);
+            if (accepted != INVALID_SOCKET) {
+                linger resetAbort{1, 0};
+                setsockopt(accepted, SOL_SOCKET, SO_LINGER,
+                           reinterpret_cast<const char*>(&resetAbort), sizeof(resetAbort));
+                closesocket(accepted);
+            }
+            closed_.store(true);
+        });
+    }
+
+    ~ResettingControlServer() {
+        if (listenSock_ != INVALID_SOCKET) {
+            shutdown(listenSock_, SD_BOTH);
+            closesocket(listenSock_);
+            listenSock_ = INVALID_SOCKET;
+        }
+        if (thread_.joinable()) thread_.join();
+        if (wsaInitialized_) WSACleanup();
+    }
+
+    int Port() const { return port_; }
+    bool Closed() const { return closed_.load(); }
+
+private:
+    SOCKET listenSock_ = INVALID_SOCKET;
+    int port_ = 0;
+    std::thread thread_;
+    std::atomic<bool> closed_{false};
+    bool wsaInitialized_ = false;
+};
 
 } // namespace
 
@@ -119,4 +181,35 @@ TEST(ScrcpyControlClient, SendKeycodeProducesDownThenUp14ByteMessages) {
     // Second message (up): type=0x00, action=1
     EXPECT_EQ(received[14], 0x00);
     EXPECT_EQ(received[15], 0x01);
+}
+
+TEST(ScrcpyControlClient, ConnectFailureDoesNotReportConnected) {
+    ScrcpyControlClient client(0);
+
+    EXPECT_THROW(client.Connect(), std::runtime_error);
+    EXPECT_FALSE(client.IsConnected());
+}
+
+TEST(ScrcpyControlClient, LastSendFailedReflectsResetPeer) {
+    ResettingControlServer server;
+    ScrcpyControlClient client(server.Port());
+    client.Connect();
+    ASSERT_TRUE(client.IsConnected());
+
+    for (int i = 0; i < 100 && !server.Closed(); ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_TRUE(server.Closed());
+    EXPECT_FALSE(client.LastSendFailed());
+
+    for (int i = 0; i < 100 && !client.LastSendFailed(); ++i) {
+        client.RequestIdr();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    EXPECT_TRUE(client.LastSendFailed());
+    EXPECT_FALSE(client.IsConnected());
+
+    client.ResetSendFailureFlag();
+    EXPECT_FALSE(client.LastSendFailed());
 }

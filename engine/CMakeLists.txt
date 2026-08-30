@@ -39,6 +39,7 @@ add_library(engine_core
   src/ready_record.cpp
   src/whep_capability.cpp
   src/whep_handler.cpp
+  src/scrcpy_source.cpp
 )
 target_include_directories(engine_core PUBLIC src)
 target_compile_definitions(engine_core PUBLIC ASIO_STANDALONE)
@@ -64,6 +65,7 @@ add_executable(engine_tests
   test/test_peer_registry.cpp
   test/test_whep_capability.cpp
   test/test_whep_handler.cpp
+  test/test_scrcpy_source.cpp
 )
 target_link_libraries(engine_tests PRIVATE engine_core GTest::gtest GTest::gtest_main)
 add_test(NAME engine_tests COMMAND engine_tests)

@@ -26,6 +26,7 @@ public:
         const std::uint8_t* data,
         std::size_t size);
 
+    void Reset();
     bool HasConfig() const;
 
 private:

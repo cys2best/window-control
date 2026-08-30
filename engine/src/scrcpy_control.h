@@ -20,6 +20,8 @@ public:
     void SendKeycode(int32_t keycode);
     void RequestIdr();
     bool IsConnected() const;
+    bool LastSendFailed() const;
+    void ResetSendFailureFlag();
 
 private:
     struct Impl;
