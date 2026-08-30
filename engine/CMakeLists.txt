@@ -44,6 +44,7 @@ add_library(engine_core
   src/admin_handler.cpp
   src/public_signaling.cpp
   src/input_router.cpp
+  src/engine_config.cpp
 )
 target_include_directories(engine_core PUBLIC src)
 target_compile_definitions(engine_core PUBLIC ASIO_STANDALONE)
@@ -74,6 +75,7 @@ add_executable(engine_tests
   test/test_admin_handler.cpp
   test/test_public_signaling.cpp
   test/test_input_router.cpp
+  test/test_main_wiring.cpp
 )
 target_link_libraries(engine_tests PRIVATE engine_core GTest::gtest GTest::gtest_main)
 add_test(NAME engine_tests COMMAND engine_tests)

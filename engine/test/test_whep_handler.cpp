@@ -2,7 +2,10 @@
 
 #include "whep_handler.h"
 #include "http_server.h"
+#include "input_router.h"
 #include "peer_registry.h"
+#include "scrcpy_source.h"
+#include "fake_scrcpy_server.h"
 
 #include <httplib.h>
 #include <rtc/rtc.hpp>
@@ -50,8 +53,14 @@ std::string GatheredOffer() {
 }  // namespace
 
 TEST(WhepHandler, PostWithoutAuthWhenDisabledReturnsAnswerAndDeleteCapability) {
+    FakeScrcpyServer fake;
+    fake.Serve();
     PeerRegistry registry;
-    WhepHandler handler(registry, {"", "instance0"}, {});
+    ScrcpySource source(registry);
+    source.ConnectInitial(fake.Port());
+    InputRouter inputRouter(source);
+
+    WhepHandler handler(registry, {"", "instance0"}, {}, inputRouter);
     EngineHttpServer server("127.0.0.1");
     handler.RegisterRoutes(server.Server());
     server.Start();
@@ -72,11 +81,18 @@ TEST(WhepHandler, PostWithoutAuthWhenDisabledReturnsAnswerAndDeleteCapability) {
     EXPECT_EQ(registry.LocalCount(), 0u);
 
     server.Stop();
+    fake.Stop();
 }
 
 TEST(WhepHandler, RejectsPostWithoutBearerWhenAuthIsEnabled) {
+    FakeScrcpyServer fake;
+    fake.Serve();
     PeerRegistry registry;
-    WhepHandler handler(registry, {"secret", "instance0"}, {});
+    ScrcpySource source(registry);
+    source.ConnectInitial(fake.Port());
+    InputRouter inputRouter(source);
+
+    WhepHandler handler(registry, {"secret", "instance0"}, {}, inputRouter);
     EngineHttpServer server("127.0.0.1");
     handler.RegisterRoutes(server.Server());
     server.Start();
@@ -88,11 +104,18 @@ TEST(WhepHandler, RejectsPostWithoutBearerWhenAuthIsEnabled) {
     EXPECT_EQ(registry.LocalCount(), 0u);
 
     server.Stop();
+    fake.Stop();
 }
 
 TEST(WhepHandler, ValidBearerPostCreatesDeleteCapabilityWithoutBearer) {
+    FakeScrcpyServer fake;
+    fake.Serve();
     PeerRegistry registry;
-    WhepHandler handler(registry, {"secret", "instance0"}, {});
+    ScrcpySource source(registry);
+    source.ConnectInitial(fake.Port());
+    InputRouter inputRouter(source);
+
+    WhepHandler handler(registry, {"secret", "instance0"}, {}, inputRouter);
     EngineHttpServer server("127.0.0.1");
     handler.RegisterRoutes(server.Server());
     server.Start();
@@ -112,11 +135,18 @@ TEST(WhepHandler, ValidBearerPostCreatesDeleteCapabilityWithoutBearer) {
     EXPECT_EQ(registry.LocalCount(), 0u);
 
     server.Stop();
+    fake.Stop();
 }
 
 TEST(WhepHandler, RejectsPostBeyondLocalCapacity) {
+    FakeScrcpyServer fake;
+    fake.Serve();
     PeerRegistry registry(/*localCapacity=*/1);
-    WhepHandler handler(registry, {"", "instance0"}, {});
+    ScrcpySource source(registry);
+    source.ConnectInitial(fake.Port());
+    InputRouter inputRouter(source);
+
+    WhepHandler handler(registry, {"", "instance0"}, {}, inputRouter);
     EngineHttpServer server("127.0.0.1");
     handler.RegisterRoutes(server.Server());
     server.Start();
@@ -132,11 +162,18 @@ TEST(WhepHandler, RejectsPostBeyondLocalCapacity) {
     EXPECT_EQ(registry.LocalCount(), 1u);
 
     server.Stop();
+    fake.Stop();
 }
 
 TEST(WhepHandler, OptionsOnCreatedDeleteResourceReturnsCorsPolicy) {
+    FakeScrcpyServer fake;
+    fake.Serve();
     PeerRegistry registry;
-    WhepHandler handler(registry, {"", "instance0"}, {});
+    ScrcpySource source(registry);
+    source.ConnectInitial(fake.Port());
+    InputRouter inputRouter(source);
+
+    WhepHandler handler(registry, {"", "instance0"}, {}, inputRouter);
     EngineHttpServer server("127.0.0.1");
     handler.RegisterRoutes(server.Server());
     server.Start();
@@ -159,11 +196,18 @@ TEST(WhepHandler, OptionsOnCreatedDeleteResourceReturnsCorsPolicy) {
     ASSERT_TRUE(deleted);
     EXPECT_EQ(deleted->status, 204);
     server.Stop();
+    fake.Stop();
 }
 
 TEST(WhepHandler, OptionsReturnsCorsPolicyForBearerSdpNegotiation) {
+    FakeScrcpyServer fake;
+    fake.Serve();
     PeerRegistry registry;
-    WhepHandler handler(registry, {"", "instance0"}, {});
+    ScrcpySource source(registry);
+    source.ConnectInitial(fake.Port());
+    InputRouter inputRouter(source);
+
+    WhepHandler handler(registry, {"", "instance0"}, {}, inputRouter);
     EngineHttpServer server("127.0.0.1");
     handler.RegisterRoutes(server.Server());
     server.Start();
@@ -177,4 +221,5 @@ TEST(WhepHandler, OptionsReturnsCorsPolicyForBearerSdpNegotiation) {
     EXPECT_EQ(response->get_header_value("Access-Control-Expose-Headers"), "Location");
 
     server.Stop();
+    fake.Stop();
 }

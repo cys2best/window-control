@@ -2,8 +2,10 @@
 #include <iostream>
 
 PublicSignalingBridge::PublicSignalingBridge(
-    SignalingClient& signaling, PeerRegistry& registry, std::vector<std::string> iceServers)
-    : signaling_(signaling), registry_(registry), iceServers_(std::move(iceServers)) {}
+    SignalingClient& signaling, PeerRegistry& registry, std::vector<std::string> iceServers,
+    InputRouter& inputRouter)
+    : signaling_(signaling), registry_(registry), iceServers_(std::move(iceServers)),
+      inputRouter_(inputRouter) {}
 
 void PublicSignalingBridge::Start() {
     signaling_.Connect([this](const std::string& rawSdpOffer) {
@@ -13,6 +15,7 @@ void PublicSignalingBridge::Start() {
             std::cerr << "[public_signaling] failed to create public peer slot" << std::endl;
             return;
         }
+        inputRouter_.AttachToPeer(*session);
         try {
             std::string answer = session->AnswerOffer(rawSdpOffer);
             signaling_.Send(answer);

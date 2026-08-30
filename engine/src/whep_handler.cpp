@@ -44,9 +44,9 @@ void ApplyCorsHeaders(httplib::Response& response) {
 }  // namespace
 
 WhepHandler::WhepHandler(PeerRegistry& registry, WhepCapabilityConfig authConfig,
-                         std::vector<std::string> iceServers)
+                         std::vector<std::string> iceServers, InputRouter& inputRouter)
     : registry_(registry), authConfig_(std::move(authConfig)),
-      iceServers_(std::move(iceServers)) {}
+      iceServers_(std::move(iceServers)), inputRouter_(inputRouter) {}
 
 void WhepHandler::RegisterRoutes(httplib::Server& server) {
     const auto optionsHandler = [](const httplib::Request&, httplib::Response& response) {
@@ -72,6 +72,7 @@ void WhepHandler::RegisterRoutes(httplib::Server& server) {
                 response.set_content("local session capacity reached", "text/plain");
                 return;
             }
+            inputRouter_.AttachToPeer(*session);
 
             const std::string answer = session->AnswerOffer(request.body);
             response.status = 201;
