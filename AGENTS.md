@@ -1,13 +1,18 @@
-# Claude Code Instructions
+# Codex Instructions
 
 <!-- agent-sync:agent-policy:start -->
 This file is intentionally thin. All real project knowledge lives in the
 shared files below so other agents see the same thing.
 
-@docs/PROJECT_CONTEXT.md
-@HANDOFF.md
+See:
+- docs/PROJECT_CONTEXT.md — tech stack, conventions, build commands
+- HANDOFF.md — the running log between agents, per plan/task
 
-## Claude Code specific
+(Codex doesn't support `@path` imports like Claude Code does —
+read both files above manually at the start of every session, or wire
+this into a startup script if your setup supports one.)
+
+## Codex specific
 - Before plan-scoped work, inspect Superpowers's activation signals
   (.superpowers/sdd/*/progress.md, docs/superpowers/plans/*.md) and owned state
   (.superpowers/sdd/, docs/superpowers/). If the task belongs to
@@ -17,14 +22,14 @@ shared files below so other agents see the same thing.
   3. Never execute a managed task manually or create or edit Superpowers-owned artifacts directly.
   4. If the required workflow cannot be invoked, stop and report the blocker.
   Do not substitute a manual or generic execution path.
-- Read `HANDOFF.md` to see which agent (Codex) last touched
+- Read `HANDOFF.md` to see which agent (Claude Code) last touched
   each plan/task and what's next.
 - Before claiming or executing a plan task, determine whether it belongs to a
   configured workflow by checking activation signals and owned state. When it
   does, use that tool's official lifecycle for the whole task, including its
   required verification and report. Never finish the task outside that workflow.
 - Claim a task by adding an entry to `HANDOFF.md`:
-  `Claiming plan-name/task-N — claude`
+  `Claiming plan-name/task-N — codex`
 - Before committing, read the convention in `docs/PROJECT_CONTEXT.md`. If it
   names a repository policy file, read that source too. Follow its format and
   examples. Keep plan names, task numbers, agent identity, and AI-attribution
@@ -37,14 +42,3 @@ shared files below so other agents see the same thing.
 - At the end of a session, append a handoff entry to `HANDOFF.md`: what
   you finished, what's next, and any blockers, per plan.
 <!-- agent-sync:agent-policy:end -->
-
-After each fix, if dont tell anything then you can push code, but when creating git commits, do not add Co-Authored-By lines.
-
-- After editing frontend JS/CSS, bump `VERSION` in `src/config.py` — `app.py` appends `?v={VERSION}` to asset URLs to bust browser cache.
-- Python commands: use `uv run pytest` / `uv run python`, never bare `python`/`pytest` (uv-managed project).
-
-## Repo layout
-- `src/` — main Python/FastAPI Windows app (primary, most active). Run: `uv sync && uv run python src/main.py`. Test: `uv run pytest tests/ -v` (runs on Mac via `src/stubs/` — Win32/mss stubbed, so a pass here doesn't confirm Windows behavior).
-- `engine/` — new C++ WebRTC engine, Windows-only, has **never been successfully compiled** (see `engine/BUILD_WINDOWS.md`) — treat it as unverified, don't assert it builds or works without checking the `build-engine` GH Actions workflow.
-- `mobile/` — Expo/React Native app (`npm start`, `npm test` inside `mobile/`).
-- `infra/` — Terraform for the VPS (coturn TURN server + signaling bridge).
