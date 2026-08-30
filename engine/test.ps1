@@ -58,7 +58,24 @@ if (-not (Test-Path $exe)) {
 
 Write-Host "[test.ps1] launching engine.exe..." -ForegroundColor Cyan
 Write-Host "[test.ps1] Once the ready record JSON prints to stdout, extract whep_port from it." -ForegroundColor Yellow
-Write-Host "[test.ps1] Then open test_page.html in a browser:" -ForegroundColor Yellow
-Write-Host "[test.ps1] http://localhost:<whep_port>/test_page.html?whep=http://localhost:<whep_port>/whep" -ForegroundColor Yellow
+Write-Host "[test.ps1] Serve the test page separately:" -ForegroundColor Yellow
+Write-Host "[test.ps1] uv run python -m http.server 8088 --directory engine\test" -ForegroundColor Yellow
+Write-Host "[test.ps1] Then open:" -ForegroundColor Yellow
+Write-Host "[test.ps1] http://localhost:8088/test_page.html?whep=http://localhost:<whep_port>/whep" -ForegroundColor Yellow
 
-& $exe $InstanceName $Port
+# Windows PowerShell 5 wraps redirected native stderr as NativeCommandError.
+# Engine diagnostics intentionally use stderr, so they must not terminate this
+# launcher when a caller redirects or tees its streams.
+$engineExitCode = 1
+$savedErrorActionPreference = $ErrorActionPreference
+try {
+    $ErrorActionPreference = "Continue"
+    & $exe $InstanceName $Port
+    $engineExitCode = $LASTEXITCODE
+} finally {
+    $ErrorActionPreference = $savedErrorActionPreference
+}
+if ($engineExitCode -ne 0) {
+    Write-Host "[test.ps1] engine.exe exited with code $engineExitCode." -ForegroundColor Red
+    exit $engineExitCode
+}

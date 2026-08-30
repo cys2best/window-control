@@ -110,10 +110,12 @@ Remove-Item Env:ENGINE_PUBLIC_ICE_SERVERS -ErrorAction SilentlyContinue
 
 Preferred launch (window A): `test.ps1` builds unless `-SkipBuild` is supplied,
 starts a **fresh** scrcpy server, then runs the engine. `Tee-Object` retains
-the ready record and engine stdout for evidence.
+the ready record and engine stdout for evidence. Do not add `2>&1`: Windows
+PowerShell 5 converts the engine's intentional stderr diagnostics into
+`NativeCommandError` records when the streams are merged.
 
 ```powershell
-.\engine\test.ps1 -Serial $serial -Port $scrcpyPort -Scid $scid -Tier $tier 2>&1 |
+.\engine\test.ps1 -Serial $serial -Port $scrcpyPort -Scid $scid -Tier $tier |
   Tee-Object -FilePath .\engine\test\e2e-engine.stdout.log
 ```
 
@@ -145,7 +147,7 @@ isolating a launcher problem, is:
 $env:PYTHONPATH = "src"
 uv run python -c "from server.scrcpy_session import _start_server, _find_adb; adb = _find_adb(); raise SystemExit(0 if adb and _start_server(adb, '$serial', $scrcpyPort, scid=$scid, tier='$tier') else 1)"
 if ($LASTEXITCODE -ne 0) { throw "Fresh scrcpy-server start failed." }
-& .\engine\build\Release\engine.exe poc-instance $scrcpyPort 2>&1 |
+& .\engine\build\Release\engine.exe poc-instance $scrcpyPort |
   Tee-Object -FilePath .\engine\test\e2e-engine.stdout.log
 ```
 
