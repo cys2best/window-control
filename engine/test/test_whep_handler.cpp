@@ -10,26 +10,41 @@
 #include <atomic>
 #include <chrono>
 #include <regex>
+#include <stdexcept>
 #include <string>
 #include <thread>
 
 namespace {
 
 std::string GatheredOffer() {
-    rtc::PeerConnection pc;
-    pc.addTransceiver(rtc::Description::Media::Kind::Video,
-                      rtc::Description::Direction::RecvOnly);
-    pc.createDataChannel("input");
-
     std::atomic<bool> gathered{false};
-    pc.onGatheringStateChange([&](rtc::PeerConnection::GatheringState state) {
-        if (state == rtc::PeerConnection::GatheringState::Complete) gathered = true;
-    });
-    pc.setLocalDescription();
-    for (int i = 0; i < 200 && !gathered; ++i) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    std::string offer;
+    {
+        rtc::PeerConnection pc;
+        pc.addTransceiver(rtc::Description::Media::Kind::Video,
+                          rtc::Description::Direction::RecvOnly);
+        pc.createDataChannel("input");
+
+        pc.onGatheringStateChange([&](rtc::PeerConnection::GatheringState state) {
+            if (state == rtc::PeerConnection::GatheringState::Complete) {
+                gathered.store(true);
+            }
+        });
+        pc.setLocalDescription();
+        for (int i = 0; i < 200 && !gathered.load(); ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        }
+        if (!gathered.load()) {
+            throw std::runtime_error("timed out gathering WHEP test offer");
+        }
+
+        const auto description = pc.localDescription();
+        if (!description) {
+            throw std::runtime_error("WHEP test offer has no local description");
+        }
+        offer = std::string(*description);
     }
-    return std::string(*pc.localDescription());
+    return offer;
 }
 
 }  // namespace
@@ -116,6 +131,33 @@ TEST(WhepHandler, RejectsPostBeyondLocalCapacity) {
     EXPECT_EQ(second->status, 503);
     EXPECT_EQ(registry.LocalCount(), 1u);
 
+    server.Stop();
+}
+
+TEST(WhepHandler, OptionsOnCreatedDeleteResourceReturnsCorsPolicy) {
+    PeerRegistry registry;
+    WhepHandler handler(registry, {"", "instance0"}, {});
+    EngineHttpServer server("127.0.0.1");
+    handler.RegisterRoutes(server.Server());
+    server.Start();
+
+    httplib::Client client("127.0.0.1", server.Port());
+    auto post = client.Post("/whep", GatheredOffer(), "application/sdp");
+    ASSERT_TRUE(post);
+    ASSERT_EQ(post->status, 201);
+    const std::string location = post->get_header_value("Location");
+    ASSERT_FALSE(location.empty());
+
+    auto response = client.Options(location);
+    ASSERT_TRUE(response);
+    EXPECT_EQ(response->status, 204);
+    EXPECT_EQ(response->get_header_value("Access-Control-Allow-Headers"),
+              "Authorization, Content-Type");
+    EXPECT_EQ(response->get_header_value("Access-Control-Expose-Headers"), "Location");
+
+    auto deleted = client.Delete(location);
+    ASSERT_TRUE(deleted);
+    EXPECT_EQ(deleted->status, 204);
     server.Stop();
 }
 

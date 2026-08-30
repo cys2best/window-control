@@ -49,10 +49,12 @@ WhepHandler::WhepHandler(PeerRegistry& registry, WhepCapabilityConfig authConfig
       iceServers_(std::move(iceServers)) {}
 
 void WhepHandler::RegisterRoutes(httplib::Server& server) {
-    server.Options("/whep", [](const httplib::Request&, httplib::Response& response) {
+    const auto optionsHandler = [](const httplib::Request&, httplib::Response& response) {
         ApplyCorsHeaders(response);
         response.status = 204;
-    });
+    };
+    server.Options("/whep", optionsHandler);
+    server.Options(R"(/whep/([a-f0-9]{32}))", optionsHandler);
 
     server.Post("/whep", [this](const httplib::Request& request, httplib::Response& response) {
         ApplyCorsHeaders(response);
