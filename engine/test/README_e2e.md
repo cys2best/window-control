@@ -145,7 +145,7 @@ isolating a launcher problem, is:
 
 ```powershell
 $env:PYTHONPATH = "src"
-uv run python -c "from server.scrcpy_session import _start_server, _find_adb; adb = _find_adb(); raise SystemExit(0 if adb and _start_server(adb, '$serial', $scrcpyPort, scid=$scid, tier='$tier') else 1)"
+uv run python -c "import sys; from server.scrcpy_session import _start_server, _find_adb; adb = _find_adb(); raise SystemExit(0 if adb and _start_server(adb, sys.argv[1], int(sys.argv[2]), scid=int(sys.argv[3]), tier=sys.argv[4]) else 1)" $serial $scrcpyPort $scid $tier
 if ($LASTEXITCODE -ne 0) { throw "Fresh scrcpy-server start failed." }
 & .\engine\build\Release\engine.exe poc-instance $scrcpyPort |
   Tee-Object -FilePath .\engine\test\e2e-engine.stdout.log
@@ -229,16 +229,29 @@ port, and submit exactly generation + 1. The helper kills the prior server for
 that `scid`, launches a fresh one, and adds the new forward.
 
 ```powershell
-$healthBefore = Invoke-RestMethod -Method Get -Uri "$adminUrl/admin/health"
-$nextGeneration = ([uint64]$healthBefore.generation) + 1
-
+# Re-establish these values in window B; PowerShell variables are window-local.
+[string]$serial = "emulator-5554"  # use the serial selected earlier
+[int]$reconnectPort = 27184         # must differ from the initial port
+[int]$scid = 1                      # same scrcpy connection ID as the initial run
+[string]$tier = "720"
 $env:PYTHONPATH = "src"
-uv run python -c "from server.scrcpy_session import _start_server, _find_adb; adb = _find_adb(); raise SystemExit(0 if adb and _start_server(adb, '$serial', $reconnectPort, scid=$scid, tier='$tier') else 1)"
+$adb = (uv run python -c "from server.adb_manager import _find_adb; print(_find_adb() or '')").Trim()
+if (-not $adb) { throw "adb was not found." }
+if (-not $adminUrl) { throw "adminUrl is missing; derive it from the ready record first." }
+
+$healthBefore = Invoke-RestMethod -Method Get -Uri "$adminUrl/admin/health"
+$nextGeneration = [uint64](([uint64]$healthBefore.generation) + 1)
+
+uv run python -c "import sys; from server.scrcpy_session import _start_server, _find_adb; adb = _find_adb(); raise SystemExit(0 if adb and _start_server(adb, sys.argv[1], int(sys.argv[2]), scid=int(sys.argv[3]), tier=sys.argv[4]) else 1)" $serial $reconnectPort $scid $tier
 if ($LASTEXITCODE -ne 0) { throw "Replacement scrcpy-server start failed." }
 & $adb -s $serial forward --list
 
-$reconnectBody = @{ scrcpy_port = $reconnectPort; generation = $nextGeneration } |
+$reconnectBody = @{
+  scrcpy_port = [int]$reconnectPort
+  generation = [uint64]$nextGeneration
+} |
   ConvertTo-Json -Compress
+$reconnectBody
 $reconnect = Invoke-RestMethod -Method Post -Uri "$adminUrl/admin/reconnect" `
   -ContentType "application/json" -Body $reconnectBody
 $reconnect | ConvertTo-Json
