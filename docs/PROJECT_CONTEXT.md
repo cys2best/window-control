@@ -10,8 +10,8 @@ PWA client. Distributed as a Windows installer built via PyInstaller.
 
 ## Tech stack
 - Language / framework: Python 3.11+ / FastAPI (primary app, `src/`); C++ /
-  WebRTC (new engine, `engine/`, Windows-only, **never successfully
-  compiled** — see `engine/BUILD_WINDOWS.md`); Expo / React Native
+  WebRTC (new engine, `engine/`, Windows-only, successfully built and verified
+  on the Windows Host PC on 2026-08-31 — see `HANDOFF.md`); Expo / React Native
   (`mobile/`); Terraform (`infra/`, VPS: coturn TURN server + signaling
   bridge).
 - Package manager: `uv` (Python, `src/`); npm (`mobile/`); vcpkg + CMake
@@ -55,9 +55,10 @@ npm test                     # mobile/ (jest)
 <!-- agent-sync:project-policy:end -->
 - Code style notes: not detected — fill in manually (no ruff/black/eslint config found)
 - Things NOT to do (generated files to leave alone, dirs to avoid, etc.):
-  - Don't assert the `engine/` C++ WebRTC engine builds or works without
-    checking the `build-engine` GitHub Actions workflow — it has never
-    compiled successfully locally.
+  - Don't assert later `engine/` C++ changes build or work from macOS-only
+    checks. The 2026-08-31 Windows Host PC baseline passed 81 offline tests,
+    the live-signaling suite, and the real-device manual E2E gate; subsequent
+    changes still require Windows or `build-engine` verification.
   - `src/assets/mediamtx/` and `src/assets/scrcpy/` are downloaded at
     startup by `download_assets.py` — not tracked, don't hand-populate.
   - After editing frontend JS/CSS, bump `VERSION` in `src/config.py` —
