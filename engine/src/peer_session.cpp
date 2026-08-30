@@ -108,6 +108,12 @@ void PeerSession::SendVideoNalu(const uint8_t* data, size_t size) {
     impl_->videoTrack->send(reinterpret_cast<const std::byte*>(data), size);
 }
 
+void PeerSession::SendInputMessage(const std::string& jsonMessage) {
+    if (impl_->inputChannel && impl_->inputChannel->isOpen()) {
+        impl_->inputChannel->send(jsonMessage);
+    }
+}
+
 void PeerSession::SetInputCallback(InputCallback onInput) {
     impl_->onInput = std::move(onInput);
 }

@@ -67,6 +67,7 @@ public:
             CloseSocket(listenSock_, false);
         }
         stoppedCv_.notify_all();
+        if (controlReaderThread_.joinable()) controlReaderThread_.join();
         if (thread_.joinable()) thread_.join();
     }
 
@@ -86,6 +87,8 @@ public:
         frame.insert(frame.end(), accessUnit.begin(), accessUnit.end());
         return SendAll(videoSock_, frame.data(), frame.size());
     }
+
+    size_t ControlBytesReceived() const { return controlBytesReceived_.load(); }
 
 private:
     static void CloseSocket(SOCKET& sock, bool resetAbort) {
@@ -141,6 +144,11 @@ private:
         // scrcpy-server, so reversing the client's connect order deadlocks.
         if (!AcceptInto(controlSock_)) return;
 
+        // Drain the control connection on its own thread so bytes sent by
+        // an InputRouter/ScrcpyControlClient under test are counted as they
+        // arrive, independent of the video-metadata/keepalive wait below.
+        controlReaderThread_ = std::thread([this]() { RunControlReader(); });
+
         if (handshakeBehavior_ == HandshakeBehavior::CloseBeforeMetadata) {
             std::lock_guard<std::mutex> lock(socketMutex_);
             CloseSocket(videoSock_, true);
@@ -162,6 +170,23 @@ private:
         stoppedCv_.wait(lock, [this]() { return !running_.load(); });
     }
 
+    void RunControlReader() {
+        std::vector<std::uint8_t> scratch(256);
+        for (;;) {
+            SOCKET sock;
+            {
+                std::lock_guard<std::mutex> lock(socketMutex_);
+                sock = controlSock_;
+            }
+            if (sock == INVALID_SOCKET) return;
+
+            int result = recv(sock, reinterpret_cast<char*>(scratch.data()),
+                               static_cast<int>(scratch.size()), 0);
+            if (result <= 0) return;
+            controlBytesReceived_.fetch_add(static_cast<size_t>(result));
+        }
+    }
+
     static void WriteU32BE(std::uint8_t* destination, std::uint32_t value) {
         destination[0] = static_cast<std::uint8_t>(value >> 24);
         destination[1] = static_cast<std::uint8_t>(value >> 16);
@@ -177,7 +202,9 @@ private:
     SOCKET controlSock_ = INVALID_SOCKET;
     int port_ = 0;
     std::thread thread_;
+    std::thread controlReaderThread_;
     std::atomic<bool> running_{true};
+    std::atomic<size_t> controlBytesReceived_{0};
     std::mutex socketMutex_;
     std::mutex stopMutex_;
     std::condition_variable stoppedCv_;

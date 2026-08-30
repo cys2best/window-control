@@ -22,6 +22,7 @@ public:
                                  std::chrono::milliseconds(10000));
 
     void SendVideoNalu(const uint8_t* data, size_t size);
+    void SendInputMessage(const std::string& jsonMessage);
     void SetInputCallback(InputCallback onInput);
     void SetOnStateChange(StateCallback onStateChange);
     void Close();
