@@ -641,7 +641,7 @@ def run_verification(config: VerificationConfig, deps: Any) -> VerificationResul
 
         before_quality = selection
         current_gate = "quality"
-        target_tier = "1080" if config.tier != "1080" else "720"
+        target_tier = "720" if config.tier == "480" else "480"
         deps.api_quality(serial, target_tier)
         quality = None
 

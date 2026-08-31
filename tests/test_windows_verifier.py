@@ -550,6 +550,22 @@ def test_quality_and_recovery_are_commands_with_polling_not_prompt_only():
     assert any("dimension" in prompt.lower() for prompt in deps.prompts)
 
 
+@pytest.mark.parametrize(
+    ("initial_tier", "expected_target"),
+    [("720", "480"), ("480", "720")],
+)
+def test_quality_request_switches_between_supported_dimension_tiers(
+    initial_tier, expected_target
+):
+    deps = FakeDeps()
+
+    run_verification(config(tier=initial_tier), deps)
+
+    assert [call for call in deps.calls if call[0] == "quality"] == [
+        ("quality", "emulator-5556", expected_target)
+    ]
+
+
 def test_manual_gate_prompts_expose_complete_operator_checklists():
     deps = FakeDeps()
 
