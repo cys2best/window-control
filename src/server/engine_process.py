@@ -159,7 +159,14 @@ class EngineInstance:
                 continue
 
             if line is None:
-                exit_code = self._process.poll()
+                remaining = max(0.0, deadline - self._clock())
+                try:
+                    exit_code = self._process.wait(timeout=remaining)
+                except subprocess.TimeoutExpired:
+                    raise EngineReadyError(
+                        f"engine {self.instance_name!r} did not become ready before deadline "
+                        f"({self._ready_timeout_seconds}s)"
+                    )
                 raise EngineReadyError(
                     f"engine {self.instance_name!r} exited with exit code {exit_code} "
                     "before reporting ready"

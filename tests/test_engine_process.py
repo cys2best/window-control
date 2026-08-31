@@ -1,4 +1,5 @@
 import os
+import queue
 import subprocess
 import sys
 
@@ -122,6 +123,32 @@ def test_early_exit_before_ready_reports_exit_code():
     assert not instance.is_running()
 
 
+def test_stdout_eof_waits_for_exit_code_publication_before_reporting():
+    class ExitCodePublishedByWait:
+        returncode = None
+
+        def poll(self):
+            return self.returncode
+
+        def wait(self, timeout):
+            assert 0 < timeout <= 1.0
+            self.returncode = 3
+            return self.returncode
+
+    instance = EngineInstance(
+        "test-instance", "engine.exe", 27183,
+        env_overrides={},
+        ready_timeout_seconds=1.0,
+        clock=lambda: 10.0,
+    )
+    instance._process = ExitCodePublishedByWait()
+    stdout_queue = queue.Queue()
+    stdout_queue.put(None)
+
+    with pytest.raises(EngineReadyError, match="exit code 3"):
+        instance._await_ready_record(stdout_queue, deadline=11.0)
+
+
 def test_stop_terminates_process_that_exits_promptly():
     instance = make_fake_instance(mode="ready")
     instance.start()
@@ -130,17 +157,32 @@ def test_stop_terminates_process_that_exits_promptly():
     assert not instance.is_running()
 
 
-def test_stop_kills_process_that_ignores_terminate(monkeypatch):
-    instance = make_fake_instance(mode="ready")
-    instance.start()
-    assert instance.is_running()
+def test_stop_kills_and_reaps_process_after_terminate_timeout():
+    class ProcessThatIgnoresTerminate:
+        returncode = None
+        killed = False
 
-    real_terminate = instance._process.terminate
-    monkeypatch.setattr(instance._process, "terminate", lambda: None)
+        def poll(self):
+            return self.returncode
 
-    try:
-        instance.stop(timeout_seconds=0.2)
-        assert not instance.is_running()
-    finally:
-        real_terminate()
-        instance._process.wait(timeout=5)
+        def terminate(self):
+            pass
+
+        def wait(self, timeout):
+            if not self.killed:
+                raise subprocess.TimeoutExpired("engine.exe", timeout)
+            self.returncode = -9
+            return self.returncode
+
+        def kill(self):
+            self.killed = True
+
+    instance = EngineInstance(
+        "test-instance", "engine.exe", 27183,
+        env_overrides={},
+    )
+    instance._process = ProcessThatIgnoresTerminate()
+
+    instance.stop(timeout_seconds=0.2)
+
+    assert not instance.is_running()
