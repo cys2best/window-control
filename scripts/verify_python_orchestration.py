@@ -11,8 +11,10 @@ from __future__ import annotations
 import base64
 import ipaddress
 import json
+import math
 import os
 import platform
+import secrets
 import shutil
 import subprocess
 import sys
@@ -48,6 +50,8 @@ class VerificationConfig:
     poll_seconds: float = 1.0
     expiry_poll_seconds: float = 30.0
     expiry_grace_seconds: float = 1.0
+    file_prompts: bool = False
+    file_prompt_poll_seconds: float = 0.25
 
 
 @dataclass
@@ -62,6 +66,195 @@ class VerificationResult:
             self.status = "FAIL"
         elif status == "SKIP" and self.status == "PASS":
             self.status = "INCOMPLETE"
+
+
+def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
+    temporary = path.with_name(
+        f".{path.name}.{os.getpid()}.{secrets.token_hex(8)}.tmp"
+    )
+    try:
+        temporary.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _write_json_once(path: Path, payload: dict[str, Any]) -> None:
+    """Atomically publish a response without replacing another confirmer's."""
+    temporary = path.with_name(
+        f".{path.name}.{os.getpid()}.{secrets.token_hex(8)}.tmp"
+    )
+    try:
+        temporary.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        try:
+            os.link(temporary, path)
+        except FileExistsError as error:
+            raise VerificationError("confirmation already submitted for this prompt") from error
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _read_json_object(path: Path) -> dict[str, Any] | None:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+class FilePromptChannel:
+    PROMPT_FILENAME = "active-prompt.json"
+    RESPONSE_FILENAME = "prompt-response.json"
+
+    def __init__(
+        self,
+        evidence_dir: Path,
+        *,
+        verifier_pid: int | None = None,
+        poll_seconds: float = 0.25,
+        record_event: Callable[[str], None] | None = None,
+    ):
+        self.evidence_dir = evidence_dir
+        self.verifier_pid = verifier_pid if verifier_pid is not None else os.getpid()
+        self.verifier_started_at = _pid_started_at(self.verifier_pid)
+        if self.verifier_started_at is None:
+            raise VerificationError(
+                "could not determine the live verifier process start time"
+            )
+        self.poll_seconds = poll_seconds
+        self.record_event = record_event
+        self.prompt_path = evidence_dir / self.PROMPT_FILENAME
+        self.response_path = evidence_dir / self.RESPONSE_FILENAME
+
+    def _event(self, message: str) -> None:
+        if self.record_event is not None:
+            self.record_event(message)
+
+    def cleanup(self) -> None:
+        self.prompt_path.unlink(missing_ok=True)
+        self.response_path.unlink(missing_ok=True)
+
+    def prompt(self, message: str, checkpoint: str) -> str:
+        self.cleanup()
+        nonce = secrets.token_hex(16)
+        prompt = {
+            "version": 1,
+            "verifier_pid": self.verifier_pid,
+            "verifier_started_at": self.verifier_started_at,
+            "nonce": nonce,
+            "checkpoint": checkpoint,
+            "message": message,
+            "expected_results": ["PASS", "FAIL"],
+        }
+        _write_json_atomic(self.prompt_path, prompt)
+        notice = (
+            f"Waiting for file confirmation at checkpoint '{checkpoint}'. "
+            "In a second terminal run: "
+            ".\\engine\\verify-python-orchestration.ps1 -Confirm PASS "
+            "(or -Confirm FAIL)"
+        )
+        print(notice, flush=True)
+        self._event(notice)
+        try:
+            while True:
+                if self.response_path.exists():
+                    response = _read_json_object(self.response_path)
+                    self.response_path.unlink(missing_ok=True)
+                    if (
+                        response is not None
+                        and response.get("version") == 1
+                        and response.get("verifier_pid") == self.verifier_pid
+                        and response.get("verifier_started_at")
+                        == self.verifier_started_at
+                        and response.get("nonce") == nonce
+                        and response.get("result") in {"PASS", "FAIL"}
+                    ):
+                        result = str(response["result"])
+                        self._event(
+                            f"File confirmation received for checkpoint "
+                            f"'{checkpoint}': {result}"
+                        )
+                        return result
+                    self._event(
+                        f"Ignored stale or mismatched file confirmation for "
+                        f"checkpoint '{checkpoint}'"
+                    )
+                time.sleep(self.poll_seconds)
+        finally:
+            self.cleanup()
+
+
+def _valid_prompt(value: dict[str, Any] | None) -> bool:
+    return bool(
+        value is not None
+        and value.get("version") == 1
+        and type(value.get("verifier_pid")) is int
+        and value["verifier_pid"] > 0
+        and type(value.get("verifier_started_at")) in {int, float}
+        and value["verifier_started_at"] > 0
+        and isinstance(value.get("nonce"), str)
+        and bool(value["nonce"])
+        and isinstance(value.get("checkpoint"), str)
+        and isinstance(value.get("message"), str)
+        and value.get("expected_results") == ["PASS", "FAIL"]
+    )
+
+
+def _pid_started_at(pid: int) -> float | None:
+    import psutil
+
+    try:
+        return psutil.Process(pid).create_time()
+    except psutil.Error:
+        return None
+
+
+def submit_file_confirmation(repo_root: Path, result: str) -> Path:
+    if result not in {"PASS", "FAIL"}:
+        raise VerificationError("file confirmation must be PASS or FAIL")
+
+    active: list[tuple[Path, dict[str, Any]]] = []
+    prompt_glob = repo_root / "engine" / "test"
+    for prompt_path in prompt_glob.glob(
+        f"verification-*/{FilePromptChannel.PROMPT_FILENAME}"
+    ):
+        prompt = _read_json_object(prompt_path)
+        if not _valid_prompt(prompt):
+            continue
+        if _pid_started_at(prompt["verifier_pid"]) == prompt["verifier_started_at"]:
+            active.append((prompt_path, prompt))
+
+    if not active:
+        raise VerificationError("no live active file prompt found")
+    if len(active) != 1:
+        raise VerificationError(
+            f"multiple live active file prompts found ({len(active)}); "
+            "stop all but one verifier run"
+        )
+
+    prompt_path, prompt = active[0]
+    current = _read_json_object(prompt_path)
+    if (
+        not _valid_prompt(current)
+        or current.get("verifier_pid") != prompt["verifier_pid"]
+        or current.get("verifier_started_at") != prompt["verifier_started_at"]
+        or current.get("nonce") != prompt["nonce"]
+        or _pid_started_at(prompt["verifier_pid"])
+        != prompt["verifier_started_at"]
+    ):
+        raise VerificationError("active file prompt changed; retry confirmation")
+    response_path = prompt_path.with_name(FilePromptChannel.RESPONSE_FILENAME)
+    _write_json_once(
+        response_path,
+        {
+            "version": 1,
+            "verifier_pid": prompt["verifier_pid"],
+            "verifier_started_at": prompt["verifier_started_at"],
+            "nonce": prompt["nonce"],
+            "result": result,
+        },
+    )
+    return response_path
 
 
 def _strip_serial(value: str) -> str:
@@ -178,8 +371,16 @@ def _trace(deps: Any, message: str) -> None:
         recorder(message)
 
 
+def _progress(deps: Any, message: str) -> None:
+    reporter = getattr(deps, "report_progress", None)
+    if reporter is not None:
+        reporter(message)
+    else:
+        _trace(deps, message)
+
+
 def _ask(deps: Any, result: VerificationResult, name: str, message: str) -> bool:
-    answer = deps.prompt(message)
+    answer = deps.prompt(message, checkpoint=name)
     if answer != "PASS":
         result.mark(name, "FAIL", f"operator response: {answer}")
         return False
@@ -216,6 +417,15 @@ def run_verification(config: VerificationConfig, deps: Any) -> VerificationResul
         "PUBLIC_UI_URL": "",
         "TUNNEL_SECRET": "",
     })
+    ready_devices = deps.adb_devices()
+    if len(ready_devices) != 1:
+        raise VerificationError(
+            f"expected exactly one ADB device in state device, found {len(ready_devices)}"
+        )
+    if config.serial and config.serial != ready_devices[0]:
+        raise VerificationError(
+            f"selected serial is not the sole ready ADB device: {config.serial}"
+        )
 
     if config.skip_build is False:
         _record_command(deps, ["cmake", "--build", str(config.repo_root / "engine" / "build"), "--config", "Release"], "engine build")
@@ -252,8 +462,9 @@ def run_verification(config: VerificationConfig, deps: Any) -> VerificationResul
     if config.serial:
         vm = next((item for item in vms if _strip_serial(item["id"]) == config.serial), None)
     else:
-        ready = set(deps.adb_devices())
-        candidates = [item for item in vms if _strip_serial(item["id"]) in ready]
+        candidates = [
+            item for item in vms if _strip_serial(item["id"]) == ready_devices[0]
+        ]
         if len(candidates) != 1:
             raise VerificationError(f"expected one ready discovered emulator, found {len(candidates)}")
         vm = candidates[0]
@@ -354,8 +565,26 @@ def run_verification(config: VerificationConfig, deps: Any) -> VerificationResul
                 expiry = int(selection["whep_token"].split(".", 1)[0])
             except (KeyError, ValueError):
                 raise VerificationError("WHEP token has no parseable expiry")
-            while deps.clock() <= expiry:
-                deps.sleep(min(config.expiry_poll_seconds, expiry + config.expiry_grace_seconds - deps.clock()))
+            expiry_deadline = expiry + config.expiry_grace_seconds
+            remaining = max(0, math.ceil(expiry_deadline - deps.clock()))
+            _progress(
+                deps,
+                f"WHEP token expiry wait: {remaining} seconds remaining",
+            )
+            while deps.clock() < expiry_deadline:
+                deps.sleep(
+                    min(
+                        config.expiry_poll_seconds,
+                        expiry_deadline - deps.clock(),
+                    )
+                )
+                remaining = max(0, math.ceil(expiry_deadline - deps.clock()))
+                if remaining:
+                    _progress(
+                        deps,
+                        f"WHEP token expiry wait: {remaining} seconds remaining",
+                    )
+            _progress(deps, "WHEP token expiry wait: complete")
             fresh = deps.api_select(serial)
             if fresh["whep_token"] == selection["whep_token"]:
                 raise VerificationError("post-expiry selection returned the same token")
@@ -441,7 +670,10 @@ def run_verification(config: VerificationConfig, deps: Any) -> VerificationResul
         try:
             deps.remove_device(serial)
         except VerificationError as error:
-            if deps.prompt(f"Automatic removal failed ({error}); disconnect the selected emulator manually, then type PASS") != "PASS":
+            if deps.prompt(
+                f"Automatic removal failed ({error}); disconnect the selected emulator manually, then type PASS",
+                checkpoint="emulator removal",
+            ) != "PASS":
                 result.mark("emulator removal", "FAIL", "automatic and manual removal failed")
                 return result
         _loop_until(deps, lambda: serial not in deps.adb_devices(), timeout=30, description="selected emulator removal", interval=config.poll_seconds)
@@ -453,7 +685,10 @@ def run_verification(config: VerificationConfig, deps: Any) -> VerificationResul
             return result
 
         current_gate = "application exit"
-        if deps.prompt("Use the WindowControl tray Exit now, then type PASS") != "PASS":
+        if deps.prompt(
+            "Use the WindowControl tray Exit now, then type PASS",
+            checkpoint="application exit",
+        ) != "PASS":
             result.mark("application exit", "FAIL", "operator did not confirm tray Exit")
             return result
         try:
@@ -477,6 +712,9 @@ def run_verification(config: VerificationConfig, deps: Any) -> VerificationResul
         result.summary["error"] = str(error)
         return result
     finally:
+        cleanup_prompts = getattr(deps, "cleanup_prompts", None)
+        if cleanup_prompts is not None:
+            cleanup_prompts()
         # Never force-kill the WindowControl app. On an incomplete/failed run,
         # leave the app, owned engine, and selected forward for diagnostics when
         # requested; helper relay/page processes are safe to stop otherwise.
@@ -511,6 +749,15 @@ class RealDeps:
     def __init__(self, config: VerificationConfig):
         self.config = config
         self._log = config.evidence_dir / "commands.log"
+        self._file_prompt_channel = (
+            FilePromptChannel(
+                config.evidence_dir,
+                poll_seconds=config.file_prompt_poll_seconds,
+                record_event=self.record_event,
+            )
+            if config.file_prompts
+            else None
+        )
 
     def record_command(self, command: list[str], label: str) -> None:
         with self._log.open("a", encoding="utf-8") as stream:
@@ -654,8 +901,21 @@ class RealDeps:
     def open_browser(self, url):
         webbrowser.open(url)
 
-    def prompt(self, message):
+    def prompt(self, message, checkpoint=None):
+        if self._file_prompt_channel is not None:
+            return self._file_prompt_channel.prompt(
+                message,
+                checkpoint or "operator confirmation",
+            )
         return input(message + ": ").strip()
+
+    def cleanup_prompts(self):
+        if self._file_prompt_channel is not None:
+            self._file_prompt_channel.cleanup()
+
+    def report_progress(self, message):
+        print(message, flush=True)
+        self.record_event(message)
 
     def clock(self):
         return time.time()
@@ -669,8 +929,9 @@ def main() -> int:
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo-root", type=Path, required=True)
-    parser.add_argument("--engine-exe", type=Path, required=True)
-    parser.add_argument("--evidence-dir", type=Path, required=True)
+    parser.add_argument("--engine-exe", type=Path)
+    parser.add_argument("--evidence-dir", type=Path)
+    parser.add_argument("--confirm", choices=("PASS", "FAIL"))
     parser.add_argument("--serial", default=None)
     parser.add_argument("--tier", default="720")
     parser.add_argument("--relay-port", type=int, default=8443)
@@ -679,12 +940,27 @@ def main() -> int:
     parser.add_argument("--skip-tests", action="store_true")
     parser.add_argument("--skip-expiry", action="store_true")
     parser.add_argument("--keep-on-failure", action="store_true")
+    parser.add_argument("--file-prompts", action="store_true")
     args = parser.parse_args()
+    if args.confirm:
+        try:
+            response_path = submit_file_confirmation(args.repo_root, args.confirm)
+        except VerificationError as error:
+            print(f"FAIL: {error}")
+            return 1
+        print(
+            f"Submitted {args.confirm} confirmation to "
+            f"{response_path.parent.name}"
+        )
+        return 0
+    if args.engine_exe is None or args.evidence_dir is None:
+        parser.error("--engine-exe and --evidence-dir are required for verification")
     config = VerificationConfig(
         repo_root=args.repo_root, engine_exe=args.engine_exe, evidence_dir=args.evidence_dir,
         serial=args.serial, tier=args.tier, relay_port=args.relay_port, page_port=args.page_port,
         skip_build=args.skip_build, skip_tests=args.skip_tests,
         skip_expiry=args.skip_expiry, keep_on_failure=args.keep_on_failure,
+        file_prompts=args.file_prompts,
     )
     deps = RealDeps(config)
     try:

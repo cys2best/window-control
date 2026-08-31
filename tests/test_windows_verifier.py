@@ -1,18 +1,24 @@
 from dataclasses import dataclass
+import json
 import os
 from pathlib import Path
 import subprocess
 import sys
+import threading
+import time
 
 import httpx
 import psutil
 import pytest
+
+import scripts.verify_python_orchestration as verifier
 
 from scripts.verify_python_orchestration import (
     RealDeps,
     VerificationConfig,
     VerificationError,
     run_verification,
+    submit_file_confirmation,
 )
 
 
@@ -30,7 +36,7 @@ class FakeDeps:
     def __init__(self, *, engines=None, skip_build=True, skip_tests=True, exit_on_tray=True,
                  quality_changes_pid=False, quality_stalls=False,
                  existing_app=False, discovery_failures=None,
-                 exit_app_during_discovery=False):
+                 exit_app_during_discovery=False, ready_devices=None):
         self.engines = list(engines or [])
         self.calls = []
         self.opened = []
@@ -43,6 +49,7 @@ class FakeDeps:
         self.quality_stalls = quality_stalls
         self.discovery_failures = list(discovery_failures or [])
         self.exit_app_during_discovery = exit_app_during_discovery
+        self.ready_devices = list(ready_devices or ["emulator-5556"])
         self.env = {}
         self.selection_count = 0
         self.generation = 0
@@ -56,6 +63,7 @@ class FakeDeps:
         self.page = FakeProcess(302)
         self.started_env = []
         self.child_envs = []
+        self.progress = []
 
     def record_command(self, command, label):
         self.calls.append((label, tuple(command)))
@@ -99,7 +107,7 @@ class FakeDeps:
         return [{"id": "adb:emulator-5556", "ldplayer_index": 7, "title": "vm"}]
 
     def adb_devices(self):
-        return [] if self.removed else ["emulator-5556"]
+        return [] if self.removed else self.ready_devices
 
     def adb_forwards(self, serial, port=None):
         return [] if self.removed else ["emulator-5556 tcp:27190 localabstract:scrcpy_00000007"]
@@ -159,11 +167,14 @@ class FakeDeps:
     def open_browser(self, url):
         self.opened.append(url)
 
-    def prompt(self, message):
+    def prompt(self, message, checkpoint=None):
         self.prompts.append(message)
         if "WindowControl tray Exit" in message and self.exit_on_tray:
             self.app.alive = False
         return "PASS"
+
+    def report_progress(self, message):
+        self.progress.append(message)
 
     def sleep(self, seconds):
         self.now += seconds
@@ -189,6 +200,20 @@ def config(**kwargs):
     return VerificationConfig(**values)
 
 
+def wait_until(predicate, timeout=2.0):
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        if time.monotonic() >= deadline:
+            raise AssertionError("timed out waiting for test file state")
+        time.sleep(0.01)
+
+
+def write_json_atomically(path, payload):
+    temporary = path.with_name(path.name + ".test-tmp")
+    temporary.write_text(json.dumps(payload), encoding="utf-8")
+    os.replace(temporary, path)
+
+
 def test_refuses_preexisting_engine_before_starting_any_owned_process():
     deps = FakeDeps(engines=[FakeProcess(99)])
 
@@ -204,6 +229,24 @@ def test_refuses_preexisting_windowcontrol_app_before_starting_or_running_comman
 
     with pytest.raises(VerificationError, match="pre-existing WindowControl app"):
         run_verification(config(), deps)
+
+    assert deps.calls == []
+    assert deps.opened == []
+
+
+def test_refuses_multiple_adb_devices_even_when_a_serial_is_supplied():
+    deps = FakeDeps(ready_devices=["emulator-5556", "device-123"])
+
+    with pytest.raises(VerificationError, match="exactly one ADB device"):
+        run_verification(
+            config(
+                serial="emulator-5556",
+                skip_build=False,
+                skip_tests=False,
+                require_engine_binary=False,
+            ),
+            deps,
+        )
 
     assert deps.calls == []
     assert deps.opened == []
@@ -572,3 +615,266 @@ print("standalone discovery imported src")
 
     assert completed.returncode == 0, completed.stderr
     assert "standalone discovery imported src" in completed.stdout
+
+
+def test_file_prompt_mode_uses_unique_nonce_and_consumes_responses_once(
+    monkeypatch, tmp_path, capsys
+):
+    repo_root = tmp_path / "repo"
+    evidence_dir = repo_root / "engine" / "test" / "verification-one"
+    evidence_dir.mkdir(parents=True)
+    monkeypatch.setenv("AUTH_TOKEN", "real-auth-secret-must-not-appear")
+    monkeypatch.setattr(
+        "builtins.input",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("file prompt mode must not read stdin")
+        ),
+    )
+    monkeypatch.setattr("psutil.pid_exists", lambda pid: pid == os.getpid())
+    verification_config = config(
+        repo_root=repo_root,
+        evidence_dir=evidence_dir,
+        file_prompts=True,
+        file_prompt_poll_seconds=0.01,
+    )
+    deps = RealDeps(verification_config)
+    prompt_path = evidence_dir / "active-prompt.json"
+    response_path = evidence_dir / "prompt-response.json"
+    answers = {}
+
+    def ask(key, checkpoint, message):
+        try:
+            answers[key] = deps.prompt(message, checkpoint=checkpoint)
+        except BaseException as error:
+            answers[key] = error
+
+    first = threading.Thread(
+        target=ask,
+        args=("first", "first peer", "Confirm first peer video"),
+        daemon=True,
+    )
+    first.start()
+    wait_until(prompt_path.exists)
+    assert (
+        r".\engine\verify-python-orchestration.ps1 -Confirm PASS"
+        in capsys.readouterr().out
+    )
+    first_prompt = json.loads(prompt_path.read_text(encoding="utf-8"))
+    assert first_prompt == {
+        "version": 1,
+        "verifier_pid": os.getpid(),
+        "verifier_started_at": first_prompt["verifier_started_at"],
+        "nonce": first_prompt["nonce"],
+        "checkpoint": "first peer",
+        "message": "Confirm first peer video",
+        "expected_results": ["PASS", "FAIL"],
+    }
+    assert first_prompt["nonce"]
+    assert "real-auth-secret-must-not-appear" not in json.dumps(first_prompt)
+
+    submit_file_confirmation(repo_root, "PASS")
+    first.join(timeout=2)
+    assert not first.is_alive()
+    assert answers["first"] == "PASS"
+    assert not prompt_path.exists()
+    assert not response_path.exists()
+
+    second = threading.Thread(
+        target=ask,
+        args=("second", "second peer", "Confirm second peer video"),
+        daemon=True,
+    )
+    second.start()
+    wait_until(prompt_path.exists)
+    second_prompt = json.loads(prompt_path.read_text(encoding="utf-8"))
+    assert second_prompt["nonce"] != first_prompt["nonce"]
+
+    write_json_atomically(
+        response_path,
+        {
+            "version": 1,
+            "verifier_pid": os.getpid(),
+            "verifier_started_at": second_prompt["verifier_started_at"] + 1,
+            "nonce": second_prompt["nonce"],
+            "result": "PASS",
+        },
+    )
+    wait_until(lambda: not response_path.exists())
+    assert second.is_alive()
+
+    submit_file_confirmation(repo_root, "FAIL")
+    second.join(timeout=2)
+    assert not second.is_alive()
+    assert answers["second"] == "FAIL"
+    assert not prompt_path.exists()
+    assert not response_path.exists()
+
+
+def test_confirmation_ignores_dead_run_and_targets_only_live_prompt(
+    monkeypatch, tmp_path
+):
+    repo_root = tmp_path / "repo"
+    test_root = repo_root / "engine" / "test"
+    dead_dir = test_root / "verification-dead"
+    live_dir = test_root / "verification-live"
+    dead_dir.mkdir(parents=True)
+    live_dir.mkdir(parents=True)
+    prompt = {
+        "version": 1,
+        "verifier_pid": 101,
+        "verifier_started_at": 10.0,
+        "nonce": "dead-nonce",
+        "checkpoint": "first peer",
+        "message": "Confirm video",
+        "expected_results": ["PASS", "FAIL"],
+    }
+    (dead_dir / "active-prompt.json").write_text(
+        json.dumps(prompt), encoding="utf-8"
+    )
+    live_prompt = dict(prompt, verifier_pid=202, nonce="live-nonce")
+    (live_dir / "active-prompt.json").write_text(
+        json.dumps(live_prompt), encoding="utf-8"
+    )
+    monkeypatch.setattr("psutil.pid_exists", lambda pid: pid == 202)
+    monkeypatch.setattr(
+        verifier,
+        "_pid_started_at",
+        lambda pid: 10.0 if pid == 202 else None,
+    )
+
+    submit_file_confirmation(repo_root, "PASS")
+
+    assert not (dead_dir / "prompt-response.json").exists()
+    assert json.loads(
+        (live_dir / "prompt-response.json").read_text(encoding="utf-8")
+    ) == {
+        "version": 1,
+        "verifier_pid": 202,
+        "verifier_started_at": 10.0,
+        "nonce": "live-nonce",
+        "result": "PASS",
+    }
+
+
+def test_confirmation_rejects_a_reused_verifier_pid(monkeypatch, tmp_path):
+    repo_root = tmp_path / "repo"
+    evidence_dir = repo_root / "engine" / "test" / "verification-reused-pid"
+    evidence_dir.mkdir(parents=True)
+    (evidence_dir / "active-prompt.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "verifier_pid": 404,
+                "verifier_started_at": 100.0,
+                "nonce": "old-nonce",
+                "checkpoint": "first peer",
+                "message": "Confirm video",
+                "expected_results": ["PASS", "FAIL"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("psutil.pid_exists", lambda pid: pid == 404)
+    monkeypatch.setattr(
+        verifier,
+        "_pid_started_at",
+        lambda pid: 200.0 if pid == 404 else None,
+        raising=False,
+    )
+
+    with pytest.raises(VerificationError, match="no live active file prompt"):
+        submit_file_confirmation(repo_root, "PASS")
+
+    assert not (evidence_dir / "prompt-response.json").exists()
+
+
+def test_confirmation_does_not_overwrite_a_pending_response(monkeypatch, tmp_path):
+    repo_root = tmp_path / "repo"
+    evidence_dir = repo_root / "engine" / "test" / "verification-pending"
+    evidence_dir.mkdir(parents=True)
+    prompt = {
+        "version": 1,
+        "verifier_pid": 404,
+        "verifier_started_at": 100.0,
+        "nonce": "active-nonce",
+        "checkpoint": "first peer",
+        "message": "Confirm video",
+        "expected_results": ["PASS", "FAIL"],
+    }
+    (evidence_dir / "active-prompt.json").write_text(
+        json.dumps(prompt), encoding="utf-8"
+    )
+    response_path = evidence_dir / "prompt-response.json"
+    response_path.write_text(
+        json.dumps({**prompt, "result": "PASS"}), encoding="utf-8"
+    )
+    monkeypatch.setattr(verifier, "_pid_started_at", lambda pid: 100.0)
+
+    with pytest.raises(VerificationError, match="confirmation already submitted"):
+        submit_file_confirmation(repo_root, "FAIL")
+
+    assert json.loads(response_path.read_text(encoding="utf-8"))["result"] == "PASS"
+
+
+def test_confirmation_refuses_zero_or_ambiguous_live_prompts(
+    monkeypatch, tmp_path
+):
+    repo_root = tmp_path / "repo"
+    test_root = repo_root / "engine" / "test"
+    test_root.mkdir(parents=True)
+    monkeypatch.setattr("psutil.pid_exists", lambda pid: True)
+    monkeypatch.setattr(verifier, "_pid_started_at", lambda pid: 10.0)
+
+    with pytest.raises(VerificationError, match="no live active file prompt"):
+        submit_file_confirmation(repo_root, "PASS")
+
+    for index in (1, 2):
+        evidence_dir = test_root / f"verification-{index}"
+        evidence_dir.mkdir()
+        (evidence_dir / "active-prompt.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "verifier_pid": 300 + index,
+                    "verifier_started_at": 10.0,
+                    "nonce": f"nonce-{index}",
+                    "checkpoint": "first peer",
+                    "message": "Confirm video",
+                    "expected_results": ["PASS", "FAIL"],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    with pytest.raises(VerificationError, match="multiple live active file prompts"):
+        submit_file_confirmation(repo_root, "FAIL")
+    assert not list(test_root.glob("verification-*/prompt-response.json"))
+
+
+def test_expiry_wait_reports_bounded_remaining_time_without_token():
+    deps = FakeDeps()
+
+    run_verification(config(skip_expiry=False), deps)
+
+    assert deps.progress[0] == "WHEP token expiry wait: 301 seconds remaining"
+    assert deps.progress[-1] == "WHEP token expiry wait: complete"
+    remaining = [
+        int(message.split(": ", 1)[1].split(" ", 1)[0])
+        for message in deps.progress[:-1]
+    ]
+    assert all(0 < before - after <= 30 for before, after in zip(remaining, remaining[1:]))
+    assert "token-" not in "\n".join(deps.progress)
+
+
+def test_real_expiry_progress_is_visible_and_written_to_verification_log(
+    tmp_path, capsys
+):
+    deps = RealDeps(config(evidence_dir=tmp_path))
+    tmp_path.mkdir(exist_ok=True)
+
+    deps.report_progress("WHEP token expiry wait: 42 seconds remaining")
+
+    assert capsys.readouterr().out == "WHEP token expiry wait: 42 seconds remaining\n"
+    assert (tmp_path / "verification.log").read_text(encoding="utf-8").endswith(
+        " WHEP token expiry wait: 42 seconds remaining\n"
+    )

@@ -11,12 +11,28 @@ param(
     [switch]$SkipBuild,
     [switch]$SkipTests,
     [switch]$SkipExpiry,
-    [switch]$KeepOnFailure
+    [switch]$KeepOnFailure,
+    [switch]$FilePrompts,
+    [string]$Confirm = ""
 )
 
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+if ($Confirm) {
+    $confirmation = $Confirm.ToUpperInvariant()
+    if ($confirmation -notin @("PASS", "FAIL")) {
+        throw "-Confirm must be PASS or FAIL"
+    }
+    $confirmArguments = @(
+        "run", "python", "-m", "scripts.verify_python_orchestration",
+        "--repo-root", $repoRoot,
+        "--confirm", $confirmation
+    )
+    & uv @confirmArguments
+    exit $LASTEXITCODE
+}
+
+$timestamp = (Get-Date -Format "yyyyMMdd-HHmmss-fff") + "-" + $PID
 $evidenceDir = Join-Path $repoRoot ("engine\test\verification-" + $timestamp)
 $engineExe = Join-Path $repoRoot "engine\build\Release\engine.exe"
 $arguments = @(
@@ -33,6 +49,7 @@ if ($SkipBuild) { $arguments += "--skip-build" }
 if ($SkipTests) { $arguments += "--skip-tests" }
 if ($SkipExpiry) { $arguments += "--skip-expiry" }
 if ($KeepOnFailure) { $arguments += "--keep-on-failure" }
+if ($FilePrompts) { $arguments += "--file-prompts" }
 
 Write-Host "Evidence directory: $evidenceDir"
 & uv @arguments
