@@ -305,7 +305,7 @@ if (-not $adb) { throw "adb was not found." }
 if ($LASTEXITCODE -ne 0) { throw "The selected device is not available." }
 
 $scidHex = $scid.ToString("x")
-& $adb -s $serial shell "pkill -f 'scrcpy-server.*scid=$scidHex'"
+& $adb -s $serial shell "pkill -f 'com[.]genymobile[.]scrcpy[.]Server.*scid=${scidHex}`$'"
 & $adb -s $serial forward --remove "tcp:$scrcpyPort"
 & $adb -s $serial forward --remove "tcp:$reconnectPort"
 & $adb -s $serial forward --list

@@ -92,6 +92,15 @@ def build_scrcpy_args(tier: str, scid: int) -> list[str]:
     ]
 
 
+def scrcpy_server_process_pattern(scid: int) -> str:
+    """Match exactly one app_process scrcpy Server command by hexadecimal scid."""
+    return f"com[.]genymobile[.]scrcpy[.]Server.*scid={scid:x}$"
+
+
+def _server_kill_command(scid: int) -> str:
+    return f"pkill -f '{scrcpy_server_process_pattern(scid)}'"
+
+
 def start_server(adb: str, serial: str, port: int, scid: int, tier: str) -> bool:
     """Push server jar, launch it, set up ONE adb forward.
 
@@ -113,7 +122,7 @@ def start_server(adb: str, serial: str, port: int, scid: int, tier: str) -> bool
             capture_output=True, timeout=15, **nw,
         )
         subprocess.run(
-            [adb, "-s", serial, "shell", f"pkill -f 'scrcpy-server.*scid={scid:x}'"],
+            [adb, "-s", serial, "shell", _server_kill_command(scid)],
             capture_output=True, timeout=5, **nw,
         )
         time.sleep(0.3)
@@ -150,7 +159,7 @@ def start_server(adb: str, serial: str, port: int, scid: int, tier: str) -> bool
 def stop_server(adb: str, serial: str, port: int, scid: int) -> None:
     nw = no_window_flags()
     subprocess.run(
-        [adb, "-s", serial, "shell", f"pkill -f 'scrcpy-server.*scid={scid:x}'"],
+        [adb, "-s", serial, "shell", _server_kill_command(scid)],
         capture_output=True, timeout=5, **nw,
     )
     subprocess.run(

@@ -2,10 +2,12 @@ from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import threading
 import time
+from types import SimpleNamespace
 
 import httpx
 import psutil
@@ -737,6 +739,34 @@ def test_real_adb_forward_listing_is_global_and_exactly_filtered(monkeypatch, tm
         "emulator-5556 tcp:27190 localabstract:scrcpy_00000007"
     ]
     assert calls == [["forward", "--list"]]
+
+
+def test_real_verifier_recovery_kill_targets_only_the_selected_android_server(monkeypatch, tmp_path):
+    """Catches verifier recovery killing no Server process or a different scid."""
+    verification_config = config(repo_root=tmp_path, evidence_dir=tmp_path / "evidence")
+    deps = RealDeps(verification_config)
+    adb_calls = []
+
+    def adb(args):
+        adb_calls.append(args)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(deps, "adb", adb)
+
+    deps.kill_scrcpy("emulator-5554", 0)
+
+    expected = [
+        "-s",
+        "emulator-5554",
+        "shell",
+        "pkill -f 'com[.]genymobile[.]scrcpy[.]Server.*scid=0$'",
+    ]
+    assert adb_calls == [expected]
+
+    pattern = expected[-1].removeprefix("pkill -f '").removesuffix("'")
+    assert re.search(pattern, "app_process / com.genymobile.scrcpy.Server 3.1 scid=0")
+    assert not re.search(pattern, "app_process / com.genymobile.scrcpy.CleanUp 3.1 scid=0")
+    assert not re.search(pattern, "app_process / com.genymobile.scrcpy.Server 3.1 scid=1")
 
 
 def test_standalone_runner_can_import_src_without_pytest_pythonpath(tmp_path):

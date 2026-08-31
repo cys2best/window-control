@@ -931,7 +931,15 @@ class RealDeps:
         return forwards
 
     def kill_scrcpy(self, serial, scid):
-        self.adb(["-s", serial, "shell", f"pkill -f 'scrcpy-server.*scid={scid:x}'"])
+        # discover_vms() has already added <repo>/src to sys.path before the
+        # recovery gate, so this reuses the launcher contract without making
+        # the standalone verifier import depend on PYTHONPATH at startup.
+        from server.scrcpy_server import scrcpy_server_process_pattern
+
+        self.adb([
+            "-s", serial, "shell",
+            f"pkill -f '{scrcpy_server_process_pattern(scid)}'",
+        ])
 
     def remove_device(self, serial):
         if serial.startswith("emulator-"):
