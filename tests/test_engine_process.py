@@ -87,7 +87,7 @@ def test_garbage_diagnostics_before_ready_record_are_skipped():
         instance.stop()
 
 
-@pytest.mark.parametrize("mode", ["wrong_instance", "invalid_port"])
+@pytest.mark.parametrize("mode", ["wrong_instance", "invalid_port", "bool_field"])
 def test_invalid_ready_record_is_rejected_and_process_is_stopped(mode):
     instance = make_fake_instance(mode=mode)
     with pytest.raises(EngineReadyError):

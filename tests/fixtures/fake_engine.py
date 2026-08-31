@@ -56,6 +56,10 @@ elif mode == "invalid_port":
     _emit(_ready_record(whep_port=0))
     _idle()
 
+elif mode == "bool_field":
+    _emit(_ready_record(whep_port=True))
+    _idle()
+
 elif mode == "slow":
     delay = float(os.environ.get("FAKE_ENGINE_DELAY_SECONDS", "0"))
     time.sleep(delay)
