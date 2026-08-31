@@ -565,6 +565,10 @@ def run_verification(config: VerificationConfig, deps: Any) -> VerificationResul
         owned_engine_pids = {int(item.pid) for item in engine_processes}
         result.mark("discovery", "PASS", f"owned engine pid {sorted(owned_engine_pids)[0]}")
 
+        current_gate = "baseline quality"
+        deps.api_quality(serial, config.tier)
+        _trace(deps, f"baseline quality target={config.tier}")
+
         selection = deps.api_select(serial)
         current_gate = "selection"
         if not selection.get("whep_token"):

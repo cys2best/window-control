@@ -59,7 +59,7 @@ class FakeDeps:
         self.selection_count = 0
         self.generation = 0
         self.whep_port = 51000
-        self.quality_done = False
+        self.current_tier = "720"
         self.scrcpy_done = False
         self.engine_dead = False
         self.removed = False
@@ -106,7 +106,7 @@ class FakeDeps:
             return []
         if self.engine_dead:
             return [FakeProcess(401)]
-        if self.quality_done and self.quality_changes_pid:
+        if self.current_tier != "720" and self.quality_changes_pid:
             return [FakeProcess(499)]
         return self.engines
 
@@ -147,10 +147,6 @@ class FakeDeps:
 
     def api_select(self, serial):
         self.selection_count += 1
-        if self.quality_done:
-            self.generation = max(self.generation, 1)
-            if self.quality_stalls:
-                self.generation = 0
         if self.scrcpy_done:
             self.generation = max(self.generation, 2)
         if self.engine_dead:
@@ -161,7 +157,7 @@ class FakeDeps:
             "whep_url": f"http://192.0.2.10:{self.whep_port}/whep",
             "whep_token": f"{expiry}.instance1.token-{self.selection_count}",
             "generation": self.generation,
-            "w": 720 if not self.quality_done else 1080,
+            "w": int(self.current_tier),
             "h": 1280,
             "signaling_url": None,
             "signaling_token": None,
@@ -169,7 +165,9 @@ class FakeDeps:
 
     def api_quality(self, serial, tier):
         self.calls.append(("quality", serial, tier))
-        self.quality_done = True
+        if tier != self.current_tier and not self.quality_stalls:
+            self.current_tier = tier
+            self.generation += 1
         return {"ok": True, "tier": tier}
 
     def open_browser(self, url):
@@ -551,19 +549,31 @@ def test_quality_and_recovery_are_commands_with_polling_not_prompt_only():
 
 
 @pytest.mark.parametrize(
-    ("initial_tier", "expected_target"),
-    [("720", "480"), ("480", "720")],
+    ("configured_tier", "expected_target"),
+    [
+        ("480", "720"),
+        ("720", "480"),
+        ("1080", "480"),
+        ("1440", "480"),
+    ],
 )
-def test_quality_request_switches_between_supported_dimension_tiers(
-    initial_tier, expected_target
+def test_configured_quality_baseline_then_transition_uses_distinct_supported_tier(
+    configured_tier, expected_target
 ):
     deps = FakeDeps()
 
-    run_verification(config(tier=initial_tier), deps)
+    result = run_verification(config(tier=configured_tier), deps)
 
     assert [call for call in deps.calls if call[0] == "quality"] == [
-        ("quality", "emulator-5556", expected_target)
+        ("quality", "emulator-5556", configured_tier),
+        ("quality", "emulator-5556", expected_target),
     ]
+    assert result.summary["initial_selection"]["w"] == int(configured_tier)
+    assert result.summary["quality"]["w"] == int(expected_target)
+    assert (
+        result.summary["quality"]["generation"]
+        > result.summary["initial_selection"]["generation"]
+    )
 
 
 def test_manual_gate_prompts_expose_complete_operator_checklists():
