@@ -58,17 +58,12 @@ class EngineTokenIssuer:
         if not self._signaling_secret:
             return ""
 
-        # NOTE: engine tokens are documented to use the separate 7-day
-        # engine_ttl_seconds lifetime, but the brief's own literal test
-        # (test_signaling_payload_contains_session_role_and_expiry) calls
-        # signaling("instance0", "engine") with default TTLs and asserts
-        # exp == 1300 (i.e. viewer_ttl_seconds, not engine_ttl_seconds).
-        # That test is specified as verbatim/authoritative, so this method
-        # currently uses viewer_ttl_seconds for all roles. See task-3-report.md
-        # "Concerns" for the conflict with the prose spec; engine_ttl_seconds
-        # is still accepted and stored so the constructor signature matches
-        # the brief, but is not yet consumed here.
-        expiry = int(self._clock()) + self._viewer_ttl_seconds
+        # Engine tokens use a separate, longer-lived TTL: the C++ engine
+        # process reads its signaling token once at startup and reuses it
+        # across signaling reconnects, so it must not expire on the same
+        # short cadence as viewer tokens.
+        ttl = self._engine_ttl_seconds if role == "engine" else self._viewer_ttl_seconds
+        expiry = int(self._clock()) + ttl
 
         header = {"alg": "HS256", "typ": "JWT"}
         payload = {"session": instance_name, "role": role, "exp": expiry}

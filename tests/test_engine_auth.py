@@ -42,7 +42,16 @@ def test_tokens_are_minted_from_the_current_clock_each_time():
 def test_signaling_payload_contains_session_role_and_expiry():
     issuer = EngineTokenIssuer("whep", "signal", clock=lambda: 1000.0)
     payload = decode_and_verify_hs256(issuer.signaling("instance0", "engine"), "signal")
-    assert payload == {"session": "instance0", "role": "engine", "exp": 1300}
+    assert payload == {"session": "instance0", "role": "engine", "exp": 605800}
+
+
+def test_signaling_viewer_role_uses_short_ttl_distinct_from_engine():
+    issuer = EngineTokenIssuer("whep", "signal", clock=lambda: 1000.0)
+    viewer_payload = decode_and_verify_hs256(issuer.signaling("instance0", "viewer"), "signal")
+    engine_payload = decode_and_verify_hs256(issuer.signaling("instance0", "engine"), "signal")
+    assert viewer_payload["exp"] == 1300
+    assert engine_payload["exp"] == 605800
+    assert viewer_payload["exp"] != engine_payload["exp"]
 
 
 def test_signaling_rejects_invalid_role():
