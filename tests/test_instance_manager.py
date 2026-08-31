@@ -1,8 +1,85 @@
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from server.instance_manager import InstanceManager
+import pytest
+
+from config import DEFAULT_TIER
+from server.instance_manager import Instance, InstanceManager
 from server.mediamtx_manager import MediamtxManager
+
+
+class FakeOrchestrator:
+    def __init__(self, set_tier_result=False, select_result=None):
+        self.add_calls = []
+        self.remove_calls = []
+        self.select_calls = []
+        self.tier_calls = []
+        self.keyframe_calls = []
+        self.check_count = 0
+        self.stop_count = 0
+        self.set_tier_result = set_tier_result
+        self.select_result = select_result
+
+    def add_instance(self, serial, instance_name, instance_index, tier):
+        self.add_calls.append((serial, instance_name, instance_index, tier))
+
+    def remove_instance(self, serial):
+        self.remove_calls.append(serial)
+
+    def select(self, serial, advertised_host):
+        self.select_calls.append((serial, advertised_host))
+        return self.select_result
+
+    def set_tier(self, serial, tier):
+        self.tier_calls.append((serial, tier))
+        return self.set_tier_result
+
+    def request_keyframe(self, serial):
+        self.keyframe_calls.append(serial)
+
+    def check_all(self):
+        self.check_count += 1
+        return {}
+
+    def stop_all(self):
+        self.stop_count += 1
+
+
+def manager_with_engine_instance(orchestrator):
+    manager = InstanceManager(None, engine_orchestrator=orchestrator)
+    manager._instances["emulator-5554"] = Instance(
+        {
+            "id": "adb:emulator-5554",
+            "title": "LDPlayer #0",
+            "ldplayer_index": 0,
+        },
+        None,
+        100,
+        200,
+    )
+    return manager
+
+
+def patch_one_discovered_vm(monkeypatch):
+    monkeypatch.setattr(
+        "server.instance_manager.adb_manager.list_vms",
+        lambda: [
+            {
+                "id": "adb:emulator-5554",
+                "title": "LDPlayer #0",
+                "ldplayer_index": 0,
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        "server.instance_manager.adb_manager.get_screen_size",
+        lambda serial: (100, 200),
+    )
+    monkeypatch.setattr(
+        InstanceManager,
+        "_ensure_stun",
+        lambda self, ip: pytest.fail("engine discovery must return before STUN setup"),
+    )
 
 
 def test_set_tier_unknown_serial_false():
@@ -251,3 +328,86 @@ def test_start_video_routes_to_aiortc_when_webrtc_manager_present():
     ok = im.start_video(inst.name)
     assert ok is True
     assert calls == ["aiortc"]
+
+
+def test_engine_discovery_starts_engine_without_constructing_scrcpy_session(monkeypatch):
+    orchestrator = FakeOrchestrator()
+    manager = InstanceManager(None, engine_orchestrator=orchestrator)
+    patch_one_discovered_vm(monkeypatch)
+    monkeypatch.setattr(
+        "server.instance_manager.ScrcpySession",
+        lambda *args: pytest.fail("engine mode must not create legacy socket consumer"),
+    )
+    manager.refresh()
+    assert orchestrator.add_calls == [
+        ("emulator-5554", "instance0", 0, DEFAULT_TIER)
+    ]
+
+
+def test_engine_device_removal_stops_runtime(monkeypatch):
+    orchestrator = FakeOrchestrator()
+    manager = manager_with_engine_instance(orchestrator)
+    monkeypatch.setattr("server.instance_manager.adb_manager.list_vms", lambda: [])
+    manager.refresh()
+    assert orchestrator.remove_calls == ["emulator-5554"]
+
+
+def test_engine_quality_and_keyframe_delegate_to_orchestrator():
+    orchestrator = FakeOrchestrator(set_tier_result=True)
+    manager = manager_with_engine_instance(orchestrator)
+    assert manager.set_tier("emulator-5554", "1080") is True
+    manager.request_keyframe("emulator-5554")
+    assert orchestrator.tier_calls == [("emulator-5554", "1080")]
+    assert orchestrator.keyframe_calls == ["emulator-5554"]
+
+
+def test_engine_selection_reports_enabled_and_delegates():
+    selection = object()
+    orchestrator = FakeOrchestrator(select_result=selection)
+    manager = manager_with_engine_instance(orchestrator)
+
+    assert manager.engine_enabled() is True
+    assert manager.select_engine("emulator-5554", "100.64.1.4") is selection
+    assert orchestrator.select_calls == [("emulator-5554", "100.64.1.4")]
+
+
+def test_engine_watchdog_delegates_once_per_interval(monkeypatch):
+    class EndWatchdog(Exception):
+        pass
+
+    class LegacySession:
+        alive_checks = 0
+
+        @property
+        def alive(self):
+            self.alive_checks += 1
+            return False
+
+    monkeypatch.setattr("server.instance_manager.threading.Thread.start", lambda self: None)
+    orchestrator = FakeOrchestrator()
+    manager = manager_with_engine_instance(orchestrator)
+    legacy_session = LegacySession()
+    manager._instances["emulator-5554"].session = legacy_session
+    sleep_count = 0
+
+    def stop_after_one_interval(_seconds):
+        nonlocal sleep_count
+        sleep_count += 1
+        if sleep_count > 1:
+            raise EndWatchdog
+
+    monkeypatch.setattr("server.instance_manager.time.sleep", stop_after_one_interval)
+    with pytest.raises(EndWatchdog):
+        manager._watchdog()
+
+    assert orchestrator.check_count == 1
+    assert legacy_session.alive_checks == 0
+
+
+def test_engine_stop_all_delegates_cleanup():
+    orchestrator = FakeOrchestrator()
+    manager = manager_with_engine_instance(orchestrator)
+
+    manager.stop_all()
+
+    assert orchestrator.stop_count == 1

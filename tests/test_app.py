@@ -7,6 +7,7 @@ import time
 from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
+from server.engine_runtime import EngineSelection
 from server.stream import CaptureState, FrameQueue
 from server.app import create_app
 
@@ -229,16 +230,61 @@ def test_legacy_select_includes_name():
     assert r.json()["name"] == "instance0"
 
 
+def make_instance():
+    inst = MagicMock()
+    inst.id = "adb:emulator-5554"
+    inst.serial = "emulator-5554"
+    inst.name = "instance0"
+    inst.w = 720
+    inst.h = 1280
+    return inst
+
+
+def test_engine_select_returns_complete_fresh_contract():
+    client, manager = _make_client()
+    manager.engine_enabled.return_value = True
+    manager.get.return_value = make_instance()
+    manager.select_engine.return_value = EngineSelection(
+        whep_url="http://100.64.1.4:51000/whep",
+        whep_token="whep-token",
+        signaling_url="wss://signal.example",
+        signaling_token="viewer-token",
+        generation=3,
+        width=720,
+        height=1280,
+    )
+    with patch("server.app.get_best_ip", return_value="100.64.1.4"):
+        response = client.post("/instances/emulator-5554/engine-select")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["signaling_token"] == "viewer-token"
+    assert body["whep_token"] == "whep-token"
+    assert "admin_port" not in body
+    manager.select_engine.assert_called_once_with("emulator-5554", "100.64.1.4")
+
+
+def test_engine_select_statuses_are_distinct():
+    client, manager = _make_client()
+    manager.engine_enabled.return_value = False
+    assert client.post("/instances/emulator-5554/engine-select").status_code == 501
+
+    manager.engine_enabled.return_value = True
+    manager.get.return_value = None
+    assert client.post("/instances/missing/engine-select").status_code == 404
+
+    manager.get.return_value = make_instance()
+    manager.select_engine.return_value = None
+    assert client.post("/instances/emulator-5554/engine-select").status_code == 503
+
+
 def test_keyframe_requests_idr_on_instance():
     # Switch prefetch: POST /keyframe forces a source-side IDR so a fresh WHEP
     # paints instantly under copy-mux (no ffmpeg GOP).
-    inst = MagicMock()
     client, im = _make_client()
-    im.get.return_value = inst
     r = client.post("/instances/emulator-5554/keyframe")
     assert r.status_code == 200
     assert r.json()["ok"] is True
-    inst.session.control.request_idr.assert_called_once()
+    im.request_keyframe.assert_called_once_with("emulator-5554")
 
 
 def test_keyframe_unknown_instance_is_noop_ok():
@@ -279,6 +325,20 @@ def test_quality_endpoint_rejects_bad_tier(client=None):
         client, _ = _make_client()
     r = client.post("/instances/emulator-5554/quality", json={"tier": "9000"})
     assert r.status_code == 400
+
+
+def test_engine_quality_endpoint_delegates_without_changing_contract():
+    client, manager = _make_client()
+    manager.engine_enabled.return_value = True
+    manager.set_tier.return_value = True
+
+    response = client.post(
+        "/instances/emulator-5554/quality", json={"tier": "1080"}
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "tier": "1080"}
+    manager.set_tier.assert_called_once_with("emulator-5554", "1080")
 
 
 def test_input_ws_idr_message_triggers_request_idr():

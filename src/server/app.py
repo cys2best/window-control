@@ -371,6 +371,37 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
             "ice_servers": get_ice_servers(),
         }
 
+    @app.post("/instances/{instance_id}/engine-select")
+    async def select_engine_instance(instance_id: str, request: Request):
+        if not instance_manager.engine_enabled():
+            raise HTTPException(status_code=501, detail="Engine mode disabled")
+
+        inst = instance_manager.get(instance_id)
+        if inst is None:
+            raise HTTPException(status_code=404, detail="Instance not found")
+
+        host = get_best_ip() or request.client.host
+        selection = await asyncio.to_thread(
+            instance_manager.select_engine, instance_id, host
+        )
+        if selection is None:
+            raise HTTPException(status_code=503, detail="Engine runtime not ready")
+
+        return {
+            "ok": True,
+            "id": inst.id,
+            "serial": inst.serial,
+            "name": inst.name,
+            "w": selection.width,
+            "h": selection.height,
+            "whep_url": selection.whep_url,
+            "whep_token": selection.whep_token,
+            "signaling_url": selection.signaling_url,
+            "signaling_token": selection.signaling_token,
+            "ice_servers": get_ice_servers(),
+            "generation": selection.generation,
+        }
+
     @app.get("/instances/{instance_id}/whep-url")
     async def instance_whep_url(instance_id: str, request: Request):
         """Read-only WHEP URL lookup -- unlike /select, never touches
@@ -422,12 +453,7 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
         control socket is a silent no-op (the 2s heartbeat and select()'s own
         request_idr still cover it).
         """
-        inst = instance_manager.get(instance_id)
-        if inst is not None:
-            try:
-                inst.session.control.request_idr()
-            except Exception:
-                pass
+        await asyncio.to_thread(instance_manager.request_keyframe, instance_id)
         return {"ok": True}
 
     @app.post("/instances/{instance_id}/quality")

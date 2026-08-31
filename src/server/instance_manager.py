@@ -9,13 +9,18 @@ any that have crashed.
 import threading
 import time
 import traceback
+from typing import TYPE_CHECKING
 
 from config import DEFAULT_TIER
 from server import adb_manager
+from server.engine_runtime import EngineSelection
 from server.scrcpy_session import ScrcpySession
 from server.mediamtx_manager import MediamtxManager
 from server.webrtc_manager import WebrtcManager
 from server.stun_server import StunServer
+
+if TYPE_CHECKING:
+    from server.engine_orchestrator import EngineOrchestrator
 
 
 def _log(msg: str):
@@ -42,7 +47,7 @@ def instance_name(serial: str) -> str:
 
 
 class Instance:
-    def __init__(self, vm: dict, session: ScrcpySession, w: int, h: int):
+    def __init__(self, vm: dict, session: ScrcpySession | None, w: int, h: int):
         self.id = vm["id"]               # "adb:SERIAL"
         self.serial = vm["id"][4:]       # "SERIAL"
         self.title = vm["title"]
@@ -55,9 +60,12 @@ class Instance:
 
 
 class InstanceManager:
-    def __init__(self, mediamtx: "MediamtxManager | None", webrtc: "WebrtcManager | None" = None):
+    def __init__(self, mediamtx: "MediamtxManager | None",
+                 webrtc: "WebrtcManager | None" = None,
+                 engine_orchestrator: "EngineOrchestrator | None" = None):
         self._mediamtx = mediamtx
         self._webrtc = webrtc
+        self._engine_orchestrator = engine_orchestrator
         self._instances: dict[str, Instance] = {}  # serial → Instance
         self._active_serial: str | None = None
         self._stun: StunServer | None = None
@@ -83,13 +91,8 @@ class InstanceManager:
         current_serials = {vm["id"][4:] for vm in vms}
 
         with self._lock:
-            # Stop sessions for devices that disconnected
             gone = set(self._instances) - current_serials
-            gone_names = [instance_name(serial) for serial in gone]
-            for serial in gone:
-                _log(f"[instance] device gone: {serial}")
-                self._instances[serial].session.stop()
-                del self._instances[serial]
+            gone_instances = [self._instances.pop(serial) for serial in gone]
             if self._active_serial in gone:
                 self._active_serial = None
             new_vms = [v for v in vms if v["id"][4:] not in self._instances]
@@ -97,6 +100,29 @@ class InstanceManager:
             existing_names = [inst.name for inst in self._instances.values()]
             new_names = [instance_name(v["id"][4:]) for v in new_vms]
             all_names = existing_names + new_names
+
+        if self._engine_orchestrator is not None:
+            for gone_instance in gone_instances:
+                _log(f"[instance] device gone: {gone_instance.serial}")
+                self._engine_orchestrator.remove_instance(gone_instance.serial)
+            for vm in new_vms:
+                serial = vm["id"][4:]
+                width, height = adb_manager.get_screen_size(serial)
+                inst = Instance(vm, None, width, height)
+                self._engine_orchestrator.add_instance(
+                    serial, inst.name, vm["ldplayer_index"], inst.tier,
+                )
+                with self._lock:
+                    if serial in current_serials:
+                        self._instances[serial] = inst
+                    else:
+                        self._engine_orchestrator.remove_instance(serial)
+            return
+
+        gone_names = [inst.name for inst in gone_instances]
+        for gone_instance in gone_instances:
+            _log(f"[instance] device gone: {gone_instance.serial}")
+            gone_instance.session.stop()
 
         if not new_vms and not gone:
             return
@@ -202,6 +228,15 @@ class InstanceManager:
         with self._lock:
             return self._instances.get(serial)
 
+    def engine_enabled(self) -> bool:
+        return self._engine_orchestrator is not None
+
+    def select_engine(self, serial: str,
+                      advertised_host: str) -> EngineSelection | None:
+        if self._engine_orchestrator is None:
+            return None
+        return self._engine_orchestrator.select(serial, advertised_host)
+
     def get_by_name(self, name: str) -> Instance | None:
         """Look up a tracked Instance by its mediamtx path name (e.g.
         'instance0'), not its ADB serial. mediamtx's runOnDemand/
@@ -264,10 +299,24 @@ class InstanceManager:
             inst = self._instances.get(serial)
         if inst is None:
             return False
-        ok = inst.session.set_tier(tier)
+        if self._engine_orchestrator is not None:
+            ok = self._engine_orchestrator.set_tier(serial, tier)
+        else:
+            ok = inst.session.set_tier(tier)
         if ok:
             inst.tier = tier
         return ok
+
+    def request_keyframe(self, serial: str) -> None:
+        if self._engine_orchestrator is not None:
+            self._engine_orchestrator.request_keyframe(serial)
+            return
+        inst = self.get(serial)
+        if inst is not None:
+            try:
+                inst.session.control.request_idr()
+            except Exception:
+                pass
 
     # ── REST data ────────────────────────────────────────────────────────────
 
@@ -292,6 +341,9 @@ class InstanceManager:
         while True:
             time.sleep(10)
             try:
+                if self._engine_orchestrator is not None:
+                    self._engine_orchestrator.check_all()
+                    continue
                 with self._lock:
                     dead = [
                         inst for inst in self._instances.values()
@@ -324,10 +376,16 @@ class InstanceManager:
                 inst.session.stop()
 
     def stop_all(self):
-        with self._lock:
-            for inst in self._instances.values():
-                inst.session.stop()
-            self._instances.clear()
-            self._active_serial = None
+        if self._engine_orchestrator is not None:
+            with self._lock:
+                self._instances.clear()
+                self._active_serial = None
+            self._engine_orchestrator.stop_all()
+        else:
+            with self._lock:
+                for inst in self._instances.values():
+                    inst.session.stop()
+                self._instances.clear()
+                self._active_serial = None
         if self._mediamtx is not None:
             self._mediamtx.stop()
