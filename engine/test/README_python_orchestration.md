@@ -14,6 +14,13 @@ confirmation at each of the eight real-engine checkpoints. `-SkipBuild`,
 `-SkipTests`, `-NoBrowser`, and `-KeepLogs` are available for reruns; use
 `-Serial <adb-serial>` when more than one device is connected.
 
+After the token checkpoint, the runner requests a 1080 quality transition,
+then asks for explicit `KILL` confirmation before terminating this instance's
+scrcpy-server and engine process. Disconnect/remove the emulator yourself and
+type `REMOVE`; finally type `EXIT` so the runner can stop the app and verify
+cleanup. These prompts are intentionally destructive but scoped to the
+selected serial and discovered instance.
+
 The browser page calls `/engine-select`, sends its returned WHEP token as a
 Bearer credential, reports generation and `framesDecoded`, supports clicks,
 and exposes quality/fresh-selection controls. It does not fake video or claim

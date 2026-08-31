@@ -194,12 +194,33 @@ try {
     if (-not $NoBrowser) { Start-Process $pageUrl }
     Write-Evidence "verifier page: $pageUrl"
     Ask-Checkpoint 3 "A second selection after the first token's expiry returns a fresh token and still negotiates (use Refresh selection on the page after expiry)."
+
+    $qualityBody = @{ tier = "1080" } | ConvertTo-Json -Compress
+    $qualityResult = Invoke-RestMethod -Method Post -Uri "$baseUrl/instances/$Serial/quality" -ContentType "application/json" -Body $qualityBody
+    $qualityResult | ConvertTo-Json | Out-File (Join-Path $evidenceDir "quality-1080.json")
+    Write-Evidence "quality transition requested through /quality; observe the existing peer for reconnect and dimension change"
     Ask-Checkpoint 4 "quality/reconnect advances generation while the existing peer remains connected and renders the new dimensions."
 
     Write-Host "The next checkpoints intentionally exercise recovery on the selected device." -ForegroundColor Yellow
+    $killScrcpy = Read-Host "Type KILL to terminate this instance's scrcpy-server and trigger watchdog recovery"
+    if ($killScrcpy -cne "KILL") { throw "scrcpy-server death was not triggered." }
+    & $script:adb -s $Serial shell "pkill -f 'scrcpy-server.*scid=$($script:scid.ToString('x'))'" | Out-File (Join-Path $evidenceDir "scrcpy-death.txt")
+    Start-Sleep -Seconds 2
     Ask-Checkpoint 5 "scrcpy-server death produces stalled/disconnected health and watchdog recovery without replacing the engine process or WHEP port."
+    $killEngine = Read-Host "Type KILL to terminate this instance's engine.exe and trigger one respawn"
+    if ($killEngine -cne "KILL") { throw "engine.exe death was not triggered." }
+    $engineTargets = @(Get-CimInstance Win32_Process -Filter "Name = 'engine.exe'" | Where-Object { $_.CommandLine -match [regex]::Escape($instance.name) })
+    if ($engineTargets.Count -ne 1) { throw "Expected one engine.exe before process-death checkpoint, found $($engineTargets.Count)." }
+    Stop-Process -Id ([int]$engineTargets[0].ProcessId) -Force
+    Start-Sleep -Seconds 12
     Ask-Checkpoint 6 "engine.exe death causes one scrcpy relaunch and one engine respawn; /engine-select returns the new dynamic WHEP port."
+    $removeDevice = Read-Host "After removing/disconnecting the emulator, type REMOVE to continue"
+    if ($removeDevice -cne "REMOVE") { throw "emulator removal checkpoint was not confirmed." }
     Ask-Checkpoint 7 "emulator removal during recovery leaves no engine process and no ADB forward for this instance."
+    $exitApp = Read-Host "Type EXIT to stop the WindowControl app and verify application cleanup"
+    if ($exitApp -cne "EXIT") { throw "application exit checkpoint was not triggered." }
+    try { Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue } catch { }
+    Start-Sleep -Seconds 2
     Ask-Checkpoint 8 "application exit leaves no engine processes or instance forwards."
 
     Write-Evidence "all eight Windows matrix checkpoints marked PASS by operator"

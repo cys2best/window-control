@@ -18,6 +18,9 @@ def test_one_command_runner_has_safe_defaults_and_cleanup_contract():
     assert "try {" in text and "finally {" in text
     assert "Stop-Process" in text
     assert "this run's instance command line" in text
+    assert "/quality" in text
+    assert "scrcpy-server.*scid=" in text
+    assert "$app.Id" in text
     assert "forward --remove" in text
     assert "ENGINE_EXE_PATH" in text
     assert "python_orchestration_verifier.html" in text
