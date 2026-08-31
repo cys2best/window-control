@@ -42,6 +42,7 @@ class FakeDeps:
         self.calls = []
         self.opened = []
         self.prompts = []
+        self.prompt_records = []
         self.now = 1_000.0
         self.skip_build = skip_build
         self.skip_tests = skip_tests
@@ -176,7 +177,8 @@ class FakeDeps:
 
     def prompt(self, message, checkpoint=None):
         self.prompts.append(message)
-        if "WindowControl tray Exit" in message and self.exit_on_tray:
+        self.prompt_records.append((checkpoint, message))
+        if "tray exit" in message.lower() and self.exit_on_tray:
             self.app.alive = False
         return "PASS"
 
@@ -548,6 +550,47 @@ def test_quality_and_recovery_are_commands_with_polling_not_prompt_only():
     assert any("dimension" in prompt.lower() for prompt in deps.prompts)
 
 
+def test_manual_gate_prompts_expose_complete_operator_checklists():
+    deps = FakeDeps()
+
+    run_verification(config(skip_expiry=False), deps)
+
+    prompts = dict(deps.prompt_records)
+    expected_keywords = {
+        "first peer": ("non-black", "changing", "framesdecoded", "datachannel", "click"),
+        "second peer": ("fresh", "independently", "framesdecoded", "original"),
+        "quality": ("existing", "dimensions", "framesdecoded", "without reloading"),
+        "scrcpy recovery": ("existing", "resume", "framesdecoded", "without reloading"),
+        "engine respawn": ("fresh", "framesdecoded", "datachannel", "click"),
+        "emulator removal": ("selected", "instance", "engine", "forward"),
+        "application exit": ("tray", "app", "engine", "selected", "forward"),
+    }
+
+    assert set(expected_keywords) <= set(prompts)
+    for checkpoint, keywords in expected_keywords.items():
+        prompt = prompts[checkpoint].lower()
+        assert "checklist" in prompt
+        assert all(keyword in prompt for keyword in keywords)
+
+
+def test_automatic_removal_fallback_limits_manual_action_to_selected_device():
+    class RemovalFailureDeps(FakeDeps):
+        def remove_device(self, serial):
+            raise VerificationError("selected removal command failed")
+
+    deps = RemovalFailureDeps()
+
+    run_verification(config(), deps)
+
+    fallback = next(
+        message for checkpoint, message in deps.prompt_records
+        if checkpoint == "emulator removal" and "automatic removal" in message.lower()
+    )
+    assert "only the selected device" in fallback.lower()
+    assert "emulator-5556" in fallback
+    assert "other devices" in fallback.lower()
+
+
 def test_quality_rejects_engine_pid_replacement_before_visual_prompt():
     deps = FakeDeps(quality_changes_pid=True)
     result = run_verification(config(), deps)
@@ -723,6 +766,12 @@ def test_file_prompt_mode_uses_unique_nonce_and_consumes_responses_once(
     deps = RealDeps(verification_config)
     prompt_path = evidence_dir / "active-prompt.json"
     answers = {}
+    first_message = (
+        "First peer checklist:\n"
+        "- Confirm non-black, changing live video.\n"
+        "- Confirm framesDecoded increases and DataChannel is open.\n"
+        "- Click the video and confirm the device reacts."
+    )
 
     def ask(key, checkpoint, message):
         try:
@@ -732,15 +781,14 @@ def test_file_prompt_mode_uses_unique_nonce_and_consumes_responses_once(
 
     first = threading.Thread(
         target=ask,
-        args=("first", "first peer", "Confirm first peer video"),
+        args=("first", "first peer", first_message),
         daemon=True,
     )
     first.start()
     wait_until(prompt_path.exists)
-    assert (
-        r".\engine\verify-python-orchestration.ps1 -Confirm PASS"
-        in capsys.readouterr().out
-    )
+    console = capsys.readouterr().out
+    assert r".\engine\verify-python-orchestration.ps1 -Confirm PASS" in console
+    assert first_message in console
     first_prompt = json.loads(prompt_path.read_text(encoding="utf-8"))
     assert first_prompt == {
         "version": 1,
@@ -748,7 +796,7 @@ def test_file_prompt_mode_uses_unique_nonce_and_consumes_responses_once(
         "verifier_started_at": first_prompt["verifier_started_at"],
         "nonce": first_prompt["nonce"],
         "checkpoint": "first peer",
-        "message": "Confirm first peer video",
+        "message": first_message,
         "expected_results": ["PASS", "FAIL"],
     }
     assert first_prompt["nonce"]

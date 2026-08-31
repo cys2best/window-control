@@ -38,7 +38,8 @@ In terminal 1, start the complete verifier:
 ```
 
 `-FilePrompts` never reads stdin. When a visual/manual decision is required,
-terminal 1 prints the active checkpoint and instruction, then waits.
+terminal 1 prints the active checkpoint and its full checklist/instructions,
+then waits.
 
 On the current Host PC, terminal stdin has appeared unreliable while the
 verifier-owned PyQt GUI is running or foreground focus changes; closing the GUI

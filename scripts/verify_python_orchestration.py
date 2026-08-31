@@ -161,8 +161,9 @@ class FilePromptChannel:
         _write_json_atomic(self.prompt_path, prompt)
         response_path = self.response_path(self.evidence_dir, nonce)
         notice = (
-            f"Waiting for file confirmation at checkpoint '{checkpoint}'. "
-            "In a second terminal run: "
+            f"CHECKPOINT: {checkpoint}\n"
+            f"{message}\n\n"
+            "Waiting for file confirmation. In a second terminal run: "
             ".\\engine\\verify-python-orchestration.ps1 -Confirm PASS "
             "(or -Confirm FAIL)"
         )
@@ -581,7 +582,16 @@ def run_verification(config: VerificationConfig, deps: Any) -> VerificationResul
         page_url = f"http://127.0.0.1:{config.page_port}/python_orchestration_verifier.html{_fragment(selection)}"
         deps.open_browser(page_url)
         result.summary["initial_page"] = page_url.split("#", 1)[0] + "#<redacted>"
-        if not _ask(deps, result, "first peer", "Confirm non-black live video, climbing framesDecoded, open DataChannel, and click input; type PASS"):
+        if not _ask(
+            deps,
+            result,
+            "first peer",
+            "First peer checklist:\n"
+            "- Confirm non-black, changing live video.\n"
+            "- Confirm framesDecoded is increasing and the DataChannel is open.\n"
+            "- Click the video and confirm the click affects the device.\n"
+            "Type PASS only after every item passes.",
+        ):
             return result
 
         if config.skip_expiry:
@@ -617,7 +627,16 @@ def run_verification(config: VerificationConfig, deps: Any) -> VerificationResul
             fresh_page = f"http://127.0.0.1:{config.page_port}/python_orchestration_verifier.html{_fragment(fresh)}"
             deps.open_browser(fresh_page)
             result.mark("expiry", "PASS", "fresh token opened in an independent verifier page")
-            if not _ask(deps, result, "second peer", "Confirm the fresh verifier independently negotiates live video; type PASS"):
+            if not _ask(
+                deps,
+                result,
+                "second peer",
+                "Second peer checklist:\n"
+                "- Confirm the fresh verifier page independently has live video.\n"
+                "- Confirm its framesDecoded is increasing.\n"
+                "- Confirm the original peer remains live.\n"
+                "Type PASS only after every item passes.",
+            ):
                 return result
 
         before_quality = selection
@@ -639,7 +658,16 @@ def run_verification(config: VerificationConfig, deps: Any) -> VerificationResul
             raise VerificationError("quality reconnect changed the owned engine process")
         _trace(deps, f"quality invariant pid_set={sorted(owned_engine_pids)} endpoint={quality['whep_url']}")
         result.summary["quality"] = _safe_selection(quality)
-        if not _ask(deps, result, "quality", "Confirm the existing peer stayed connected and renders the new dimensions; type PASS"):
+        if not _ask(
+            deps,
+            result,
+            "quality",
+            "Quality checklist:\n"
+            "- Confirm every existing peer stayed connected.\n"
+            "- Confirm the shown dimensions changed.\n"
+            "- Confirm live video and increasing framesDecoded continue without reloading.\n"
+            "Type PASS only after every item passes.",
+        ):
             return result
 
         before_source = quality
@@ -661,7 +689,16 @@ def run_verification(config: VerificationConfig, deps: Any) -> VerificationResul
         if not deps.adb_forwards(serial, scrcpy_port):
             raise VerificationError("scrcpy recovery lost its ADB forward")
         result.summary["source_recovery"] = _safe_selection(source)
-        if not _ask(deps, result, "scrcpy recovery", "Confirm the existing peer resumed live video; type PASS"):
+        if not _ask(
+            deps,
+            result,
+            "scrcpy recovery",
+            "Scrcpy recovery checklist:\n"
+            "- Confirm the same existing peers resume live video.\n"
+            "- Confirm framesDecoded increases again.\n"
+            "- Confirm this happens without reloading either page.\n"
+            "Type PASS only after every item passes.",
+        ):
             return result
 
         old_engine_pid = next(iter(owned_engine_pids))
@@ -685,7 +722,16 @@ def run_verification(config: VerificationConfig, deps: Any) -> VerificationResul
         result.summary["respawn"] = _safe_selection(respawn)
         fresh_respawn_page = f"http://127.0.0.1:{config.page_port}/python_orchestration_verifier.html{_fragment(respawn)}"
         deps.open_browser(fresh_respawn_page)
-        if not _ask(deps, result, "engine respawn", "Confirm the freshly opened verifier renders live video; type PASS"):
+        if not _ask(
+            deps,
+            result,
+            "engine respawn",
+            "Engine respawn checklist:\n"
+            "- Confirm the fresh verifier page has live video with increasing framesDecoded.\n"
+            "- Confirm its DataChannel is open.\n"
+            "- Click the fresh page and confirm the click affects the device.\n"
+            "Type PASS only after every item passes.",
+        ):
             return result
 
         current_gate = "emulator removal"
@@ -697,7 +743,10 @@ def run_verification(config: VerificationConfig, deps: Any) -> VerificationResul
             deps.remove_device(serial)
         except VerificationError as error:
             if deps.prompt(
-                f"Automatic removal failed ({error}); disconnect the selected emulator manually, then type PASS",
+                "Automatic removal checklist:\n"
+                f"- Automatic removal of selected device {serial} failed: {error}\n"
+                f"- Manually remove or disconnect only the selected device {serial}; do not alter other devices.\n"
+                "- Wait until that selected device disappears, then type PASS.",
                 checkpoint="emulator removal",
             ) != "PASS":
                 result.mark("emulator removal", "FAIL", "automatic and manual removal failed")
@@ -707,12 +756,24 @@ def run_verification(config: VerificationConfig, deps: Any) -> VerificationResul
         _loop_until(deps, lambda: not any(item.get("serial") == serial for item in deps.api_instances()), timeout=30, description="API removal of selected instance", interval=config.poll_seconds)
         if deps.adb_forwards(serial, scrcpy_port):
             raise VerificationError("selected emulator removal left an ADB forward")
-        if not _ask(deps, result, "emulator removal", "Confirm removal left no engine process or instance forward; type PASS"):
+        if not _ask(
+            deps,
+            result,
+            "emulator removal",
+            "Emulator removal checklist:\n"
+            "- Confirm the selected instance is absent.\n"
+            "- Confirm its engine process is absent.\n"
+            "- Confirm its selected ADB forward is absent.\n"
+            "Type PASS only after every item passes.",
+        ):
             return result
 
         current_gate = "application exit"
         if deps.prompt(
-            "Use the WindowControl tray Exit now, then type PASS",
+            "Application exit checklist:\n"
+            "- Use WindowControl's tray Exit now; do not force-kill the app.\n"
+            "- Confirm the app, engine, and selected ADB forward are gone.\n"
+            "Type PASS only after every item passes.",
             checkpoint="application exit",
         ) != "PASS":
             result.mark("application exit", "FAIL", "operator did not confirm tray Exit")
