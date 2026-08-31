@@ -11,6 +11,8 @@ class FakeRuntime:
         self.set_tier_calls: list[str] = []
         self.keyframe_count = 0
         self.check_count = 0
+        self.select_count = 0
+        self.selected_hosts: list[str] = []
         self.ready = False
         self.start_error: BaseException | None = None
         self.check_error: BaseException | None = None
@@ -29,7 +31,8 @@ class FakeRuntime:
         self.ready = False
 
     def select(self, advertised_host: str):
-        del advertised_host
+        self.select_count += 1
+        self.selected_hosts.append(advertised_host)
         return self.selection if self.ready else None
 
     def set_tier(self, tier: str) -> None:
@@ -144,6 +147,17 @@ def test_unknown_serial_operations_are_noops():
     assert orchestrator.select("unknown", "127.0.0.1") is None
     assert orchestrator.set_tier("unknown", "1080") is False
     assert factory.runtimes[0].keyframe_count == 0
+
+
+def test_select_delegates_host_and_returns_registered_runtime_selection():
+    orchestrator, factory = make_orchestrator()
+    orchestrator.add_instance("emulator-5554", "instance0", 0, "720")
+
+    selection = orchestrator.select("emulator-5554", "192.0.2.10")
+
+    assert selection is factory.runtimes[0].selection
+    assert factory.runtimes[0].select_count == 1
+    assert factory.runtimes[0].selected_hosts == ["192.0.2.10"]
 
 
 def test_tier_and_keyframe_delegate_to_the_registered_runtime():
