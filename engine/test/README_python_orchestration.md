@@ -71,9 +71,10 @@ the live verifier PID, a new random nonce, checkpoint, instruction, and allowed
 results—never WHEP/auth credentials. `-Confirm` considers only prompt files
 whose verifier PID is live. It refuses when no live prompt exists or when
 multiple verifier runs are active, then atomically writes a nonce-matched
-response beside the selected prompt. The verifier consumes that response once,
-deletes both active files, and gives the next checkpoint a different nonce, so
-an old `PASS` cannot satisfy a later wait.
+response in a nonce-specific file beside the selected prompt. The verifier
+consumes that response once, deletes its prompt/response artifacts, and gives the next
+checkpoint a different nonce, so a late or old `PASS` cannot satisfy a later
+wait.
 
 ## What terminal 1 verifies
 

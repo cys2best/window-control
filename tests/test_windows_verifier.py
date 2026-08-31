@@ -36,7 +36,8 @@ class FakeDeps:
     def __init__(self, *, engines=None, skip_build=True, skip_tests=True, exit_on_tray=True,
                  quality_changes_pid=False, quality_stalls=False,
                  existing_app=False, discovery_failures=None,
-                 exit_app_during_discovery=False, ready_devices=None):
+                 exit_app_during_discovery=False, ready_devices=None,
+                 ready_devices_after_tests=None, cleanup_prompt_error=None):
         self.engines = list(engines or [])
         self.calls = []
         self.opened = []
@@ -50,6 +51,9 @@ class FakeDeps:
         self.discovery_failures = list(discovery_failures or [])
         self.exit_app_during_discovery = exit_app_during_discovery
         self.ready_devices = list(ready_devices or ["emulator-5556"])
+        self.ready_devices_after_tests = ready_devices_after_tests
+        self.cleanup_prompt_error = cleanup_prompt_error
+        self.discover_calls = 0
         self.env = {}
         self.selection_count = 0
         self.generation = 0
@@ -73,6 +77,8 @@ class FakeDeps:
         self.child_envs.append(env)
         if label == "engine tests" and self.skip_tests:
             return
+        if label == "engine tests" and self.ready_devices_after_tests is not None:
+            self.ready_devices = list(self.ready_devices_after_tests)
         if label == "engine build" and self.skip_build:
             return
 
@@ -104,6 +110,7 @@ class FakeDeps:
         return self.engines
 
     def discover_vms(self):
+        self.discover_calls += 1
         return [{"id": "adb:emulator-5556", "ldplayer_index": 7, "title": "vm"}]
 
     def adb_devices(self):
@@ -175,6 +182,10 @@ class FakeDeps:
 
     def report_progress(self, message):
         self.progress.append(message)
+
+    def cleanup_prompts(self):
+        if self.cleanup_prompt_error is not None:
+            raise self.cleanup_prompt_error
 
     def sleep(self, seconds):
         self.now += seconds
@@ -250,6 +261,60 @@ def test_refuses_multiple_adb_devices_even_when_a_serial_is_supplied():
 
     assert deps.calls == []
     assert deps.opened == []
+
+
+def test_rechecks_the_same_single_adb_device_after_tests_before_discovery(tmp_path):
+    repo_root = tmp_path / "repo"
+    engine_dir = repo_root / "engine" / "build" / "Release"
+    engine_dir.mkdir(parents=True)
+    (engine_dir / "engine.exe").touch()
+    (engine_dir / "engine_tests.exe").touch()
+    deps = FakeDeps(
+        skip_tests=False,
+        ready_devices_after_tests=["emulator-5556", "device-123"],
+    )
+
+    with pytest.raises(VerificationError, match="exactly one ADB device"):
+        run_verification(
+            config(
+                repo_root=repo_root,
+                engine_exe=engine_dir / "engine.exe",
+                evidence_dir=tmp_path / "evidence",
+                skip_build=False,
+                skip_tests=False,
+            ),
+            deps,
+        )
+
+    assert not deps.started_env
+    assert not deps.opened
+    assert deps.discover_calls == 0
+
+
+def test_refuses_a_changed_sole_adb_device_after_tests_before_discovery(tmp_path):
+    repo_root = tmp_path / "repo"
+    engine_dir = repo_root / "engine" / "build" / "Release"
+    engine_dir.mkdir(parents=True)
+    (engine_dir / "engine.exe").touch()
+    (engine_dir / "engine_tests.exe").touch()
+    deps = FakeDeps(skip_tests=False, ready_devices_after_tests=["emulator-5558"])
+
+    with pytest.raises(VerificationError, match="sole ready ADB device changed"):
+        run_verification(
+            config(
+                repo_root=repo_root,
+                engine_exe=engine_dir / "engine.exe",
+                evidence_dir=tmp_path / "evidence",
+                serial="emulator-5556",
+                skip_build=False,
+                skip_tests=False,
+            ),
+            deps,
+        )
+
+    assert not deps.started_env
+    assert not deps.opened
+    assert deps.discover_calls == 0
 
 
 def test_real_preflight_refusal_creates_no_evidence_state(monkeypatch, tmp_path):
@@ -511,6 +576,24 @@ def test_timeout_failure_preserves_partial_result_and_stops_only_helpers():
     assert not any(call[0] == "kill app" for call in deps.calls)
 
 
+def test_prompt_cleanup_failure_preserves_result_and_stops_helpers():
+    deps = FakeDeps(
+        quality_stalls=True,
+        cleanup_prompt_error=OSError("prompt response is temporarily locked"),
+    )
+
+    result = run_verification(config(), deps)
+
+    assert result.status == "FAIL"
+    assert result.checkpoints["quality"]["status"] == "FAIL"
+    assert ("stop helper", 301) in deps.calls
+    assert ("stop helper", 302) in deps.calls
+    assert any(
+        "prompt cleanup unavailable" in message.lower()
+        for message in deps.progress
+    )
+
+
 def test_keep_on_failure_retains_app_and_engine_but_stops_helpers():
     deps = FakeDeps(quality_stalls=True)
     result = run_verification(config(keep_on_failure=True), deps)
@@ -639,7 +722,6 @@ def test_file_prompt_mode_uses_unique_nonce_and_consumes_responses_once(
     )
     deps = RealDeps(verification_config)
     prompt_path = evidence_dir / "active-prompt.json"
-    response_path = evidence_dir / "prompt-response.json"
     answers = {}
 
     def ask(key, checkpoint, message):
@@ -671,6 +753,9 @@ def test_file_prompt_mode_uses_unique_nonce_and_consumes_responses_once(
     }
     assert first_prompt["nonce"]
     assert "real-auth-secret-must-not-appear" not in json.dumps(first_prompt)
+    response_path = verifier.FilePromptChannel.response_path(
+        evidence_dir, first_prompt["nonce"]
+    )
 
     submit_file_confirmation(repo_root, "PASS")
     first.join(timeout=2)
@@ -688,6 +773,9 @@ def test_file_prompt_mode_uses_unique_nonce_and_consumes_responses_once(
     wait_until(prompt_path.exists)
     second_prompt = json.loads(prompt_path.read_text(encoding="utf-8"))
     assert second_prompt["nonce"] != first_prompt["nonce"]
+    response_path = verifier.FilePromptChannel.response_path(
+        evidence_dir, second_prompt["nonce"]
+    )
 
     write_json_atomically(
         response_path,
@@ -744,9 +832,13 @@ def test_confirmation_ignores_dead_run_and_targets_only_live_prompt(
 
     submit_file_confirmation(repo_root, "PASS")
 
-    assert not (dead_dir / "prompt-response.json").exists()
+    assert not verifier.FilePromptChannel.response_path(
+        dead_dir, "dead-nonce"
+    ).exists()
     assert json.loads(
-        (live_dir / "prompt-response.json").read_text(encoding="utf-8")
+        verifier.FilePromptChannel.response_path(
+            live_dir, "live-nonce"
+        ).read_text(encoding="utf-8")
     ) == {
         "version": 1,
         "verifier_pid": 202,
@@ -785,7 +877,9 @@ def test_confirmation_rejects_a_reused_verifier_pid(monkeypatch, tmp_path):
     with pytest.raises(VerificationError, match="no live active file prompt"):
         submit_file_confirmation(repo_root, "PASS")
 
-    assert not (evidence_dir / "prompt-response.json").exists()
+    assert not verifier.FilePromptChannel.response_path(
+        evidence_dir, "old-nonce"
+    ).exists()
 
 
 def test_confirmation_does_not_overwrite_a_pending_response(monkeypatch, tmp_path):
@@ -804,7 +898,9 @@ def test_confirmation_does_not_overwrite_a_pending_response(monkeypatch, tmp_pat
     (evidence_dir / "active-prompt.json").write_text(
         json.dumps(prompt), encoding="utf-8"
     )
-    response_path = evidence_dir / "prompt-response.json"
+    response_path = verifier.FilePromptChannel.response_path(
+        evidence_dir, "active-nonce"
+    )
     response_path.write_text(
         json.dumps({**prompt, "result": "PASS"}), encoding="utf-8"
     )
@@ -814,6 +910,48 @@ def test_confirmation_does_not_overwrite_a_pending_response(monkeypatch, tmp_pat
         submit_file_confirmation(repo_root, "FAIL")
 
     assert json.loads(response_path.read_text(encoding="utf-8"))["result"] == "PASS"
+
+
+def test_confirmation_race_cannot_satisfy_a_replacement_prompt(monkeypatch, tmp_path):
+    repo_root = tmp_path / "repo"
+    evidence_dir = repo_root / "engine" / "test" / "verification-race"
+    evidence_dir.mkdir(parents=True)
+    prompt_path = evidence_dir / "active-prompt.json"
+    original_prompt = {
+        "version": 1,
+        "verifier_pid": 404,
+        "verifier_started_at": 100.0,
+        "nonce": "old-nonce",
+        "checkpoint": "first peer",
+        "message": "Confirm first peer",
+        "expected_results": ["PASS", "FAIL"],
+    }
+    replacement_prompt = {
+        **original_prompt,
+        "nonce": "next-nonce",
+        "checkpoint": "quality",
+        "message": "Confirm quality",
+    }
+    prompt_path.write_text(json.dumps(original_prompt), encoding="utf-8")
+    monkeypatch.setattr(verifier, "_pid_started_at", lambda pid: 100.0)
+    write_once = verifier._write_json_once
+
+    def replace_prompt_then_publish(path, payload):
+        write_json_atomically(prompt_path, replacement_prompt)
+        write_once(path, payload)
+
+    monkeypatch.setattr(verifier, "_write_json_once", replace_prompt_then_publish)
+
+    response_path = submit_file_confirmation(repo_root, "PASS")
+
+    assert response_path == verifier.FilePromptChannel.response_path(
+        evidence_dir, "old-nonce"
+    )
+    assert response_path.exists()
+    assert not verifier.FilePromptChannel.response_path(
+        evidence_dir, "next-nonce"
+    ).exists()
+    assert json.loads(prompt_path.read_text(encoding="utf-8"))["nonce"] == "next-nonce"
 
 
 def test_confirmation_refuses_zero_or_ambiguous_live_prompts(
@@ -848,7 +986,7 @@ def test_confirmation_refuses_zero_or_ambiguous_live_prompts(
 
     with pytest.raises(VerificationError, match="multiple live active file prompts"):
         submit_file_confirmation(repo_root, "FAIL")
-    assert not list(test_root.glob("verification-*/prompt-response.json"))
+    assert not list(test_root.glob("verification-*/prompt-response-*.json"))
 
 
 def test_expiry_wait_reports_bounded_remaining_time_without_token():

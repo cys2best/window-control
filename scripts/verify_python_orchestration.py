@@ -9,6 +9,7 @@ and browser adapters.
 from __future__ import annotations
 
 import base64
+import hashlib
 import ipaddress
 import json
 import math
@@ -104,7 +105,7 @@ def _read_json_object(path: Path) -> dict[str, Any] | None:
 
 class FilePromptChannel:
     PROMPT_FILENAME = "active-prompt.json"
-    RESPONSE_FILENAME = "prompt-response.json"
+    RESPONSE_PREFIX = "prompt-response-"
 
     def __init__(
         self,
@@ -124,15 +125,26 @@ class FilePromptChannel:
         self.poll_seconds = poll_seconds
         self.record_event = record_event
         self.prompt_path = evidence_dir / self.PROMPT_FILENAME
-        self.response_path = evidence_dir / self.RESPONSE_FILENAME
 
     def _event(self, message: str) -> None:
         if self.record_event is not None:
             self.record_event(message)
 
+    @classmethod
+    def response_path(cls, evidence_dir: Path, nonce: str) -> Path:
+        digest = hashlib.sha256(nonce.encode("utf-8")).hexdigest()
+        return evidence_dir / f"{cls.RESPONSE_PREFIX}{digest}.json"
+
+    def _remove_artifact(self, path: Path) -> None:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError as error:
+            self._event(f"File prompt cleanup unavailable for {path.name}: {error}")
+
     def cleanup(self) -> None:
-        self.prompt_path.unlink(missing_ok=True)
-        self.response_path.unlink(missing_ok=True)
+        self._remove_artifact(self.prompt_path)
+        for response_path in self.evidence_dir.glob(f"{self.RESPONSE_PREFIX}*.json"):
+            self._remove_artifact(response_path)
 
     def prompt(self, message: str, checkpoint: str) -> str:
         self.cleanup()
@@ -147,6 +159,7 @@ class FilePromptChannel:
             "expected_results": ["PASS", "FAIL"],
         }
         _write_json_atomic(self.prompt_path, prompt)
+        response_path = self.response_path(self.evidence_dir, nonce)
         notice = (
             f"Waiting for file confirmation at checkpoint '{checkpoint}'. "
             "In a second terminal run: "
@@ -157,9 +170,9 @@ class FilePromptChannel:
         self._event(notice)
         try:
             while True:
-                if self.response_path.exists():
-                    response = _read_json_object(self.response_path)
-                    self.response_path.unlink(missing_ok=True)
+                if response_path.exists():
+                    response = _read_json_object(response_path)
+                    self._remove_artifact(response_path)
                     if (
                         response is not None
                         and response.get("version") == 1
@@ -243,7 +256,9 @@ def submit_file_confirmation(repo_root: Path, result: str) -> Path:
         != prompt["verifier_started_at"]
     ):
         raise VerificationError("active file prompt changed; retry confirmation")
-    response_path = prompt_path.with_name(FilePromptChannel.RESPONSE_FILENAME)
+    response_path = FilePromptChannel.response_path(
+        prompt_path.parent, prompt["nonce"]
+    )
     _write_json_once(
         response_path,
         {
@@ -388,6 +403,15 @@ def _ask(deps: Any, result: VerificationResult, name: str, message: str) -> bool
     return True
 
 
+def _sole_ready_adb_device(deps: Any) -> str:
+    ready_devices = deps.adb_devices()
+    if len(ready_devices) != 1:
+        raise VerificationError(
+            f"expected exactly one ADB device in state device, found {len(ready_devices)}"
+        )
+    return ready_devices[0]
+
+
 def run_verification(config: VerificationConfig, deps: Any) -> VerificationResult:
     result = VerificationResult()
     if config.enforce_windows and platform.system() != "Windows":
@@ -417,12 +441,8 @@ def run_verification(config: VerificationConfig, deps: Any) -> VerificationResul
         "PUBLIC_UI_URL": "",
         "TUNNEL_SECRET": "",
     })
-    ready_devices = deps.adb_devices()
-    if len(ready_devices) != 1:
-        raise VerificationError(
-            f"expected exactly one ADB device in state device, found {len(ready_devices)}"
-        )
-    if config.serial and config.serial != ready_devices[0]:
+    ready_device = _sole_ready_adb_device(deps)
+    if config.serial and config.serial != ready_device:
         raise VerificationError(
             f"selected serial is not the sole ready ADB device: {config.serial}"
         )
@@ -458,12 +478,18 @@ def run_verification(config: VerificationConfig, deps: Any) -> VerificationResul
     else:
         result.mark("local tests", "SKIP", "explicit --skip-tests")
 
+    current_ready_device = _sole_ready_adb_device(deps)
+    if current_ready_device != ready_device:
+        raise VerificationError(
+            "sole ready ADB device changed before discovery: "
+            f"{ready_device} -> {current_ready_device}"
+        )
     vms = list(deps.discover_vms())
     if config.serial:
         vm = next((item for item in vms if _strip_serial(item["id"]) == config.serial), None)
     else:
         candidates = [
-            item for item in vms if _strip_serial(item["id"]) == ready_devices[0]
+            item for item in vms if _strip_serial(item["id"]) == ready_device
         ]
         if len(candidates) != 1:
             raise VerificationError(f"expected one ready discovered emulator, found {len(candidates)}")
@@ -714,7 +740,10 @@ def run_verification(config: VerificationConfig, deps: Any) -> VerificationResul
     finally:
         cleanup_prompts = getattr(deps, "cleanup_prompts", None)
         if cleanup_prompts is not None:
-            cleanup_prompts()
+            try:
+                cleanup_prompts()
+            except OSError as error:
+                _progress(deps, f"File prompt cleanup unavailable: {error}")
         # Never force-kill the WindowControl app. On an incomplete/failed run,
         # leave the app, owned engine, and selected forward for diagnostics when
         # requested; helper relay/page processes are safe to stop otherwise.
