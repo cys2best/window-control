@@ -1,6 +1,9 @@
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
+import queue
+import threading
+
 import pytest
 
 from config import DEFAULT_TIER
@@ -350,6 +353,97 @@ def test_engine_device_removal_stops_runtime(monkeypatch):
     monkeypatch.setattr("server.instance_manager.adb_manager.list_vms", lambda: [])
     manager.refresh()
     assert orchestrator.remove_calls == ["emulator-5554"]
+
+
+def test_engine_rediscovery_recreates_runtime_after_stale_removal(monkeypatch):
+    serial = "emulator-5554"
+    vm = {
+        "id": f"adb:{serial}",
+        "title": "LDPlayer #0",
+        "ldplayer_index": 0,
+    }
+    remove_entered = threading.Event()
+    allow_remove = threading.Event()
+    interleaving = queue.Queue()
+
+    class ObservedLock:
+        def __init__(self):
+            self._lock = threading.Lock()
+            self._attempt_lock = threading.Lock()
+            self._attempts = 0
+
+        def __enter__(self):
+            with self._attempt_lock:
+                self._attempts += 1
+                if self._attempts == 2:
+                    interleaving.put("serialized")
+            self._lock.acquire()
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            self._lock.release()
+
+    class RacingOrchestrator(FakeOrchestrator):
+        def __init__(self):
+            super().__init__()
+            self.runtimes = {serial}
+
+        def remove_instance(self, removed_serial):
+            self.remove_calls.append(removed_serial)
+            remove_entered.set()
+            if not allow_remove.wait(timeout=2):
+                raise AssertionError("test did not release stale removal")
+            self.runtimes.discard(removed_serial)
+
+        def add_instance(self, added_serial, name, instance_index, tier):
+            self.add_calls.append((added_serial, name, instance_index, tier))
+            if added_serial in self.runtimes:
+                interleaving.put("raced")
+                return
+            self.runtimes.add(added_serial)
+
+    list_lock = threading.Lock()
+    list_call_count = 0
+
+    def list_vms():
+        nonlocal list_call_count
+        with list_lock:
+            list_call_count += 1
+            return [] if list_call_count == 1 else [vm]
+
+    orchestrator = RacingOrchestrator()
+    manager = manager_with_engine_instance(orchestrator)
+    manager._engine_refresh_lock = ObservedLock()
+    monkeypatch.setattr("server.instance_manager.adb_manager.list_vms", list_vms)
+    monkeypatch.setattr(
+        "server.instance_manager.adb_manager.get_screen_size",
+        lambda discovered_serial: (100, 200),
+    )
+    errors = []
+
+    def refresh():
+        try:
+            manager.refresh()
+        except BaseException as error:
+            errors.append(error)
+
+    stale_refresh = threading.Thread(target=refresh)
+    rediscovery_refresh = None
+    stale_refresh.start()
+    try:
+        assert remove_entered.wait(timeout=2)
+        rediscovery_refresh = threading.Thread(target=refresh)
+        rediscovery_refresh.start()
+        interleaving.get(timeout=2)
+    finally:
+        allow_remove.set()
+
+    stale_refresh.join(timeout=2)
+    rediscovery_refresh.join(timeout=2)
+    assert not stale_refresh.is_alive()
+    assert not rediscovery_refresh.is_alive()
+    assert errors == []
+    assert orchestrator.runtimes == {serial}
+    assert manager.get(serial) is not None
 
 
 def test_engine_quality_and_keyframe_delegate_to_orchestrator():

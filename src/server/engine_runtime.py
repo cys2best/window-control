@@ -192,9 +192,15 @@ class EngineRuntime:
             raise ValueError(f"unknown quality tier: {tier}")
 
         with self._lock:
-            if self._stopped or self._endpoint is None:
+            if self._stopped:
                 return
             if tier == self._tier:
+                return
+            if self._endpoint is None:
+                # The runtime remains owned after a failed initial start. Keep
+                # the accepted choice so the watchdog's next fresh start uses
+                # it, matching the legacy session's pending-tier behavior.
+                self._tier = tier
                 return
 
             # The engine's own counter is authoritative (it rejects any

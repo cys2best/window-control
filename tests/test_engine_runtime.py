@@ -487,6 +487,21 @@ def test_set_tier_before_start_does_not_launch_or_reconnect():
     assert fakes.reconnect_generations == []
 
 
+def test_unready_failed_start_persists_tier_for_watchdog_recovery():
+    runtime, fakes = make_runtime()
+    fakes.engine_state.start_errors = [EngineReadyError("no ready record")]
+    with pytest.raises(EngineReadyError):
+        runtime.start()
+
+    runtime.set_tier("1080")
+
+    assert runtime.check_once() == "respawned"
+    assert [event for event in fakes.events if event[0] == "scrcpy.launch"] == [
+        ("scrcpy.launch", "720", 0),
+        ("scrcpy.launch", "1080", 0),
+    ]
+
+
 def test_set_tier_rejects_an_unknown_tier():
     runtime, fakes = make_runtime()
     runtime.start()

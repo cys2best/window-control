@@ -71,6 +71,7 @@ class InstanceManager:
         self._stun: StunServer | None = None
         self._stun_ip: str | None = None          # IP the STUN server is bound to
         self._lock = threading.Lock()
+        self._engine_refresh_lock = threading.Lock()
         self._watchdog_thread = threading.Thread(
             target=self._watchdog, daemon=True
         )
@@ -87,6 +88,17 @@ class InstanceManager:
 
     def refresh(self):
         """Discover connected LDPlayer instances and start scrcpy for new ones."""
+        if self._engine_orchestrator is None:
+            self._refresh_once()
+            return
+        # Serialize the complete discovery transition so a stale removal cannot
+        # overtake a concurrent rediscovery of the same serial. This is separate
+        # from _lock: engine cleanup and startup remain blocking work
+        # performed without holding the instance registry lock.
+        with self._engine_refresh_lock:
+            self._refresh_once()
+
+    def _refresh_once(self):
         vms = adb_manager.list_vms()
         current_serials = {vm["id"][4:] for vm in vms}
 
