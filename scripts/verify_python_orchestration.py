@@ -15,6 +15,7 @@ import json
 import math
 import os
 import platform
+import re
 import secrets
 import shutil
 import subprocess
@@ -28,8 +29,29 @@ from typing import Any, Callable
 import httpx
 
 
+_ADB_STDERR_LIMIT = 240
+_SENSITIVE_ADB_STDERR = re.compile(
+    r"(?i)\b([a-z][a-z0-9_]*(?:token|secret|password|key)[a-z0-9_]*)\s*([=:])\s*"
+    r"(?:bearer\s+)?\S+"
+)
+_AUTHORIZATION_ADB_STDERR = re.compile(
+    r"(?i)\b(authorization)\s*:\s*(?:bearer\s+)?\S+"
+)
+
+
 class VerificationError(RuntimeError):
     pass
+
+
+def _safe_adb_stderr(stderr: str | bytes | None) -> str:
+    if isinstance(stderr, bytes):
+        stderr = stderr.decode("utf-8", errors="replace")
+    detail = " ".join((stderr or "").split())
+    detail = _SENSITIVE_ADB_STDERR.sub(r"\1\2<redacted>", detail)
+    detail = _AUTHORIZATION_ADB_STDERR.sub(r"\1: <redacted>", detail)
+    if len(detail) > _ADB_STDERR_LIMIT:
+        return detail[:_ADB_STDERR_LIMIT] + "..."
+    return detail
 
 
 @dataclass
@@ -936,10 +958,19 @@ class RealDeps:
         # the standalone verifier import depend on PYTHONPATH at startup.
         from server.scrcpy_server import scrcpy_server_process_pattern
 
-        self.adb([
+        completed = self.adb([
             "-s", serial, "shell",
             f"pkill -f '{scrcpy_server_process_pattern(scid)}'",
         ])
+        if completed.returncode:
+            detail = _safe_adb_stderr(completed.stderr)
+            message = (
+                "selected scrcpy-server kill failed "
+                f"with exit code {completed.returncode}"
+            )
+            if detail:
+                message += f": {detail}"
+            raise VerificationError(message)
 
     def remove_device(self, serial):
         if serial.startswith("emulator-"):

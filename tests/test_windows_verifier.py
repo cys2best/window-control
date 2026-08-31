@@ -769,12 +769,62 @@ def test_real_verifier_recovery_kill_targets_only_the_selected_android_server(mo
     assert not re.search(pattern, "app_process / com.genymobile.scrcpy.Server 3.1 scid=1")
 
 
+@pytest.mark.parametrize(
+    ("returncode", "stderr", "expected_detail"),
+    [
+        (1, "pkill: no process matched\n", "pkill: no process matched"),
+        (7, "adb: transport offline\n", "adb: transport offline"),
+    ],
+)
+def test_real_verifier_recovery_kill_surfaces_adb_failure(
+    monkeypatch, tmp_path, returncode, stderr, expected_detail
+):
+    """Catches recovery waiting for a watchdog after selected-source kill failed."""
+    deps = RealDeps(config(repo_root=tmp_path, evidence_dir=tmp_path / "evidence"))
+    monkeypatch.setattr(
+        deps,
+        "adb",
+        lambda args: SimpleNamespace(returncode=returncode, stdout="", stderr=stderr),
+    )
+
+    with pytest.raises(VerificationError) as raised:
+        deps.kill_scrcpy("emulator-5554", 0)
+
+    assert f"exit code {returncode}" in str(raised.value)
+    assert expected_detail in str(raised.value)
+
+
+def test_real_verifier_recovery_kill_redacts_and_bounds_adb_stderr(monkeypatch, tmp_path):
+    """Catches recovery errors leaking an uncontrolled ADB stderr blob."""
+    deps = RealDeps(config(repo_root=tmp_path, evidence_dir=tmp_path / "evidence"))
+    stderr = "AUTH_TOKEN=must-not-leak\n" + ("diagnostic " * 100)
+    monkeypatch.setattr(
+        deps,
+        "adb",
+        lambda args: SimpleNamespace(returncode=7, stdout="", stderr=stderr),
+    )
+
+    with pytest.raises(VerificationError) as raised:
+        deps.kill_scrcpy("emulator-5554", 0)
+
+    message = str(raised.value)
+    assert "AUTH_TOKEN=<redacted>" in message
+    assert "must-not-leak" not in message
+    assert len(message) < 400
+
+
 def test_standalone_runner_can_import_src_without_pytest_pythonpath(tmp_path):
     repo_root = Path(__file__).resolve().parents[1]
     evidence_dir = tmp_path / "standalone-evidence"
     script = f"""
 from pathlib import Path
+import sys
+from types import SimpleNamespace
 from scripts.verify_python_orchestration import RealDeps, VerificationConfig
+
+sourceRoot = str((Path.cwd() / "src").resolve())
+sys.path[:] = [path for path in sys.path if str(Path(path or ".").resolve()) != sourceRoot]
+assert sourceRoot not in [str(Path(path or ".").resolve()) for path in sys.path]
 
 config = VerificationConfig(
     repo_root=Path.cwd(),
@@ -782,8 +832,18 @@ config = VerificationConfig(
     evidence_dir=Path({str(evidence_dir)!r}),
     enforce_windows=False,
 )
-RealDeps(config).discover_vms()
-print("standalone discovery imported src")
+deps = RealDeps(config)
+deps.discover_vms()
+adb_calls = []
+deps.adb = lambda args: adb_calls.append(args) or SimpleNamespace(
+    returncode=0, stdout="", stderr=""
+)
+deps.kill_scrcpy("emulator-5554", 0)
+assert adb_calls == [[
+    "-s", "emulator-5554", "shell",
+    "pkill -f 'com[.]genymobile[.]scrcpy[.]Server.*scid=0$'",
+]]
+print("standalone discovery and recovery kill imported src")
 """
     environment = os.environ.copy()
     environment.pop("PYTHONPATH", None)
@@ -796,7 +856,7 @@ print("standalone discovery imported src")
     )
 
     assert completed.returncode == 0, completed.stderr
-    assert "standalone discovery imported src" in completed.stdout
+    assert "standalone discovery and recovery kill imported src" in completed.stdout
 
 
 def test_file_prompt_mode_uses_unique_nonce_and_consumes_responses_once(
