@@ -1,67 +1,253 @@
+from dataclasses import dataclass
+import os
 from pathlib import Path
 
+import pytest
 
-ROOT = Path(__file__).parents[1]
-RUNNER = ROOT / "engine" / "verify-python-orchestration.ps1"
-PAGE = ROOT / "engine" / "test" / "python_orchestration_verifier.html"
-RUNBOOK = ROOT / "engine" / "test" / "README_python_orchestration.md"
-
-
-def test_one_command_runner_has_safe_defaults_and_cleanup_contract():
-    text = RUNNER.read_text()
-
-    assert "param(" in text
-    assert "[string]$Serial" in text
-    assert "[switch]$SkipBuild" in text
-    assert "[switch]$KeepLogs" in text
-    assert "Register-EngineCleanup" in text
-    assert "try {" in text and "finally {" in text
-    assert "Stop-Process" in text
-    assert "this run's instance command line" in text
-    assert "/quality" in text
-    assert "scrcpy-server.*scid=" in text
-    assert "$app.Id" in text
-    assert "forward --remove" in text
-    assert "ENGINE_EXE_PATH" in text
-    assert "python_orchestration_verifier.html" in text
+from scripts.verify_python_orchestration import (
+    VerificationConfig,
+    VerificationError,
+    run_verification,
+)
 
 
-def test_runner_covers_the_eight_windows_matrix_checkpoints():
-    text = RUNNER.read_text()
+@dataclass
+class FakeProcess:
+    pid: int
+    alive: bool = True
 
-    expected_markers = (
-        "Discovery starts exactly one engine.exe",
-        "non-loopback WHEP URL",
-        "fresh selection token",
-        "quality/reconnect",
-        "scrcpy-server death",
-        "engine.exe death",
-        "emulator removal",
-        "application exit",
+    def poll(self):
+        return None if self.alive else 0
+
+
+class FakeDeps:
+    def __init__(self, *, engines=None, skip_build=True, skip_tests=True, exit_on_tray=True):
+        self.engines = list(engines or [])
+        self.calls = []
+        self.opened = []
+        self.prompts = []
+        self.now = 1_000.0
+        self.skip_build = skip_build
+        self.skip_tests = skip_tests
+        self.exit_on_tray = exit_on_tray
+        self.env = {}
+        self.selection_count = 0
+        self.generation = 0
+        self.whep_port = 51000
+        self.quality_done = False
+        self.scrcpy_done = False
+        self.engine_dead = False
+        self.removed = False
+        self.app = FakeProcess(300)
+        self.relay = FakeProcess(301)
+        self.page = FakeProcess(302)
+        self.started_env = []
+
+    def record_command(self, command, label):
+        self.calls.append((label, tuple(command)))
+
+    def run(self, command, *, cwd, env, label):
+        self.calls.append((label, tuple(command)))
+        if label == "engine tests" and self.skip_tests:
+            return
+        if label == "engine build" and self.skip_build:
+            return
+
+    def start(self, command, *, cwd, env, stdout_path, label):
+        self.calls.append((label, tuple(command), stdout_path))
+        self.started_env.append(dict(env))
+        if label == "local signaling relay":
+            return self.relay
+        if label == "WindowControl app":
+            self.engines = [FakeProcess(400)]
+            return self.app
+        if label == "verifier page server":
+            return self.page
+        raise AssertionError(label)
+
+    def stop_helper(self, process):
+        self.calls.append(("stop helper", process.pid))
+        process.alive = False
+
+    def list_engine_processes(self):
+        if self.removed:
+            return []
+        if self.engine_dead:
+            return [FakeProcess(401)]
+        return self.engines
+
+    def discover_vms(self):
+        return [{"id": "adb:emulator-5556", "ldplayer_index": 7, "title": "vm"}]
+
+    def adb_devices(self):
+        return [] if self.removed else ["emulator-5556"]
+
+    def adb_forwards(self, serial):
+        return [] if self.removed else ["emulator-5556 tcp:27190 localabstract:scrcpy_00000007"]
+
+    def adb_state(self, serial):
+        return "device"
+
+    def kill_scrcpy(self, serial, scid):
+        self.calls.append(("kill scrcpy", serial, scid))
+        self.scrcpy_done = True
+
+    def remove_device(self, serial):
+        self.calls.append(("remove device", serial))
+        self.removed = True
+
+    def list_app_processes(self):
+        return [] if not self.app.alive else [self.app]
+
+    def kill_owned_engine(self, pid):
+        self.calls.append(("kill engine", pid))
+        self.engine_dead = True
+        self.engines = []
+
+    def api_instances(self):
+        return [] if self.removed else [{"serial": "emulator-5556", "name": "instance1"}]
+
+    def api_select(self, serial):
+        self.selection_count += 1
+        if self.quality_done:
+            self.generation = max(self.generation, 1)
+        if self.scrcpy_done:
+            self.generation = max(self.generation, 2)
+        if self.engine_dead:
+            self.generation = 0
+            self.whep_port = 52000
+        expiry = int(self.now) + 300
+        return {
+            "whep_url": f"http://192.0.2.10:{self.whep_port}/whep",
+            "whep_token": f"{expiry}.instance1.token-{self.selection_count}",
+            "generation": self.generation,
+            "w": 720 if not self.quality_done else 1080,
+            "h": 1280,
+            "signaling_url": None,
+            "signaling_token": None,
+        }
+
+    def api_quality(self, serial, tier):
+        self.calls.append(("quality", serial, tier))
+        self.quality_done = True
+        return {"ok": True, "tier": tier}
+
+    def open_browser(self, url):
+        self.opened.append(url)
+
+    def prompt(self, message):
+        self.prompts.append(message)
+        if "WindowControl tray Exit" in message and self.exit_on_tray:
+            self.app.alive = False
+        return "PASS"
+
+    def sleep(self, seconds):
+        self.now += seconds
+
+    def clock(self):
+        return self.now
+
+
+def config(**kwargs):
+    values = dict(
+        repo_root=Path("."),
+        engine_exe=Path("engine/build/Release/engine.exe"),
+        evidence_dir=Path("/tmp/window-control-verifier-test"),
+        skip_expiry=True,
+        keep_on_failure=False,
+        enforce_windows=False,
+        require_engine_binary=False,
     )
-    for marker in expected_markers:
-        assert marker in text
+    values.update(kwargs)
+    return VerificationConfig(**values)
 
 
-def test_verifier_page_selects_with_engine_token_and_reports_webrtc_evidence():
-    text = PAGE.read_text()
+def test_refuses_preexisting_engine_before_starting_any_owned_process():
+    deps = FakeDeps(engines=[FakeProcess(99)])
 
-    assert "/engine-select" in text
-    assert "Authorization" in text
-    assert "Bearer" in text
-    assert "framesDecoded" in text
-    assert "RTCPeerConnection" in text
-    assert "createDataChannel" in text
-    assert "input channel open" in text
-    assert "generation" in text
-    assert "quality" in text
+    with pytest.raises(VerificationError, match="pre-existing engine"):
+        run_verification(config(), deps)
+
+    assert deps.calls == []
+    assert deps.opened == []
 
 
-def test_runbook_is_one_command_and_refuses_to_claim_windows_from_darwin():
-    text = RUNBOOK.read_text()
+def test_derives_scrcpy_port_and_scid_from_discovered_ldplayer_index():
+    deps = FakeDeps()
+    result = run_verification(config(), deps)
 
-    assert ".\\engine\\verify-python-orchestration.ps1" in text
-    assert "Windows Host PC" in text
-    assert "not verified" in text.lower()
-    assert "ENGINE_EXE_PATH" in text
-    assert "KeepLogs" in text
+    assert result.status == "INCOMPLETE"
+    assert ("kill scrcpy", "emulator-5556", 7) in deps.calls
+    assert any(env.get("ENGINE_SIGNALING_SECRET") == "" for env in deps.started_env)
+    assert any(env.get("ENGINE_LOCAL_ICE_SERVERS") == "" for env in deps.started_env)
+    assert any(env.get("ENGINE_PUBLIC_ICE_SERVERS") == "" for env in deps.started_env)
+
+
+def test_expiry_wait_mints_unequal_token_and_opens_independent_second_page():
+    deps = FakeDeps()
+    result = run_verification(config(skip_expiry=False), deps)
+
+    assert result.checkpoints["expiry"]["status"] == "PASS"
+    assert len(deps.opened) >= 2
+    assert result.status == "INCOMPLETE"
+
+
+def test_explicit_expiry_skip_is_marked_incomplete():
+    deps = FakeDeps()
+    result = run_verification(config(skip_expiry=True), deps)
+
+    assert result.checkpoints["expiry"]["status"] == "SKIP"
+    assert result.status == "INCOMPLETE"
+
+
+def test_quality_and_recovery_are_commands_with_polling_not_prompt_only():
+    deps = FakeDeps()
+    run_verification(config(), deps)
+
+    labels = [call[0] for call in deps.calls]
+    assert "quality" in labels
+    assert "kill scrcpy" in labels
+    assert "kill engine" in labels
+    assert "remove device" in labels
+    assert any("dimension" in prompt.lower() for prompt in deps.prompts)
+
+
+def test_app_exit_requires_operator_exit_and_never_force_kills_app():
+    deps = FakeDeps(exit_on_tray=False)
+    result = run_verification(config(), deps)
+
+    assert result.checkpoints["application exit"]["status"] == "FAIL"
+    assert result.status == "FAIL"
+    assert not any(call[0] == "kill app" for call in deps.calls)
+
+
+def test_missing_engine_tests_is_a_failure_by_default(tmp_path):
+    deps = FakeDeps(skip_tests=False)
+
+    with pytest.raises(VerificationError, match="engine_tests.exe"):
+        run_verification(config(evidence_dir=tmp_path, skip_tests=False, require_engine_binary=False), deps)
+
+
+def test_fragment_browser_url_contains_no_query_api_or_token_log_payload(tmp_path):
+    deps = FakeDeps()
+    run_verification(config(evidence_dir=tmp_path), deps)
+
+    assert deps.opened
+    url = deps.opened[0]
+    assert "?" not in url
+    assert "#" in url
+    assert "engine-select" not in url
+    assert "Authorization" not in url
+
+
+def test_engine_ice_and_signaling_environment_is_cleared_then_restored(monkeypatch):
+    monkeypatch.setenv("ENGINE_LOCAL_ICE_SERVERS", "stale-local")
+    monkeypatch.setenv("ENGINE_PUBLIC_ICE_SERVERS", "stale-public")
+    monkeypatch.setenv("ENGINE_SIGNALING_SECRET", "stale-secret")
+    deps = FakeDeps()
+
+    run_verification(config(), deps)
+
+    assert os.environ["ENGINE_LOCAL_ICE_SERVERS"] == "stale-local"
+    assert os.environ["ENGINE_PUBLIC_ICE_SERVERS"] == "stale-public"
+    assert os.environ["ENGINE_SIGNALING_SECRET"] == "stale-secret"

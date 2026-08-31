@@ -20,6 +20,9 @@ src/assets/scrcpy/
 service_crash.log
 *service_crash.log
 
+# One-command Windows verification artifacts
+engine/test/verification-*/
+
 # Git worktrees (superpowers subagent-driven-development scratch)
 .worktrees/
 

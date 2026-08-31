@@ -11,8 +11,12 @@ engine tests, discovers one ready ADB device, starts the auth-free local
 signaling relay and WindowControl app with a fresh WHEP secret, serves the
 token-aware browser verifier, and opens it. It pauses for PASS/FAIL
 confirmation at each of the eight real-engine checkpoints. `-SkipBuild`,
-`-SkipTests`, `-NoBrowser`, and `-KeepLogs` are available for reruns; use
-`-Serial <adb-serial>` when more than one device is connected.
+`-SkipTests`, `-SkipExpiry`, and `-KeepOnFailure` are available for reruns; use
+`-Serial <adb-serial>` when more than one device is connected. `-SkipExpiry`
+marks the expiry checkpoint `SKIP` and the command exits nonzero because the
+mandatory matrix is incomplete. `-KeepOnFailure` leaves the app, owned engine,
+and selected ADB forward for diagnosis; helper logs/processes are otherwise
+cleaned when safe.
 
 After the token checkpoint, the runner requests a 1080 quality transition,
 then asks for explicit `KILL` confirmation before terminating this instance's
@@ -21,9 +25,11 @@ type `REMOVE`; finally type `EXIT` so the runner can stop the app and verify
 cleanup. These prompts are intentionally destructive but scoped to the
 selected serial and discovered instance.
 
-The browser page calls `/engine-select`, sends its returned WHEP token as a
-Bearer credential, reports generation and `framesDecoded`, supports clicks,
-and exposes quality/fresh-selection controls. It does not fake video or claim
+The runner calls `/engine-select` and passes its returned WHEP token to the
+browser in a URL fragment (never a server-visible query). The same-origin page
+sends that token as a Bearer credential, records WHEP Location and DELETEs the
+resource on unload, and displays ICE/DataChannel/resource/generation,
+`framesDecoded`, dimensions, and click input. It does not fake video or claim
 Windows behavior from macOS tests.
 
 Prerequisites are Visual Studio/CMake/vcpkg, `uv`, `adb`, one authorized

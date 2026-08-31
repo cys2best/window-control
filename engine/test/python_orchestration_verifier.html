@@ -7,95 +7,104 @@
   <style>
     body { font: 15px system-ui,sans-serif; max-width: 960px; margin: 24px auto; padding: 0 16px; }
     video { width: min(720px,100%); background: #111; display: block; }
-    button { margin: 6px 6px 6px 0; padding: 8px 12px; }
     #status { font-weight: 600; } #log { white-space: pre-wrap; background:#f2f2f2; padding:12px; }
   </style>
 </head>
 <body>
   <h1>Python orchestration verifier</h1>
   <p>Status: <span id="status">disconnected</span></p>
-  <p>Instance: <code id="serial"></code> · generation: <code id="generation">-</code></p>
+  <p>ICE: <code id="ice">-</code> · DataChannel: <code id="channel">-</code> · generation: <code id="generation">-</code> · dimensions: <code id="dimensions">-</code></p>
+  <p>WHEP resource: <code id="resource">-</code> · framesDecoded: <code id="frames">0</code></p>
   <video id="video" autoplay playsinline muted></video>
-  <button id="refresh">Refresh selection (fresh token)</button>
-  <button data-tier="480">Quality 480</button>
-  <button data-tier="720">Quality 720</button>
-  <button data-tier="1080">Quality 1080</button>
   <pre id="log"></pre>
   <script>
-    const query = new URLSearchParams(location.search);
-    const appUrl = query.get('app') || 'http://127.0.0.1:8080';
-    const serial = query.get('serial') || '';
-    const status = document.querySelector('#status');
-    const logEl = document.querySelector('#log');
-    const video = document.querySelector('#video');
+    // The runner puts selection metadata in the fragment. This page performs
+    // no cross-origin API calls; fragments are not sent to the static server.
+    const statusEl = document.querySelector('#status');
     const generationEl = document.querySelector('#generation');
-    document.querySelector('#serial').textContent = serial;
-    let pc = null;
+    const dimensionsEl = document.querySelector('#dimensions');
+    const iceEl = document.querySelector('#ice');
+    const channelEl = document.querySelector('#channel');
+    const resourceEl = document.querySelector('#resource');
+    const framesEl = document.querySelector('#frames');
+    const logEl = document.querySelector('#log');
+    const videoEl = document.querySelector('#video');
+    let peer = null;
     let inputChannel = null;
-    let currentSelection = null;
+    let resourceUrl = null;
+    let lastFramesDecoded = 0;
 
     function log(...parts) {
       const line = parts.map(String).join(' ');
       console.log(line); logEl.textContent += line + '\n';
     }
-    function setStatus(value) { status.textContent = value; log('status:', value); }
-
-    async function selectEngine() {
-      const response = await fetch(`${appUrl}/instances/${encodeURIComponent(serial)}/engine-select`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}' });
-      if (!response.ok) throw new Error(`engine-select ${response.status}`);
-      currentSelection = await response.json();
-      generationEl.textContent = currentSelection.generation;
-      log('selection:', JSON.stringify({whep_url: currentSelection.whep_url, generation: currentSelection.generation}));
-      return currentSelection;
+    function status(value) { statusEl.textContent = value; log('status:', value); }
+    function selectionFromFragment() {
+      if (!location.hash) throw new Error('runner selection fragment is missing');
+      const encoded = location.hash.slice(1).replace(/-/g, '+').replace(/_/g, '/');
+      const padded = encoded + '='.repeat((4 - encoded.length % 4) % 4);
+      return JSON.parse(atob(padded));
     }
-
-    async function connect(selection) {
-      if (pc) { pc.close(); }
-      pc = new RTCPeerConnection();
-      pc.addTransceiver('video', {direction:'recvonly'});
-      inputChannel = pc.createDataChannel('input');
-      inputChannel.onopen = () => { log('input channel open'); setStatus('connected (input ready)'); };
+    async function connect() {
+      const selection = selectionFromFragment();
+      generationEl.textContent = selection.generation;
+      dimensionsEl.textContent = `${selection.width}x${selection.height}`;
+      peer = new RTCPeerConnection({iceServers: selection.ice_servers || []});
+      peer.addTransceiver('video', {direction:'recvonly'});
+      inputChannel = peer.createDataChannel('input');
+      inputChannel.onopen = () => { channelEl.textContent = 'open'; log('input channel open'); status('connected (input ready)'); };
       inputChannel.onclose = () => log('input channel closed');
       inputChannel.onerror = event => log('input channel error', event);
-      pc.ontrack = event => {
-        video.srcObject = event.streams[0] || new MediaStream([event.track]);
-        setStatus('receiving video');
+      peer.ontrack = event => {
+        videoEl.srcObject = event.streams[0] || new MediaStream([event.track]);
+        status('receiving video');
       };
-      pc.oniceconnectionstatechange = () => log('ICE state:', pc.iceConnectionState);
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      if (pc.iceGatheringState !== 'complete') await new Promise(resolve => {
-        const done = () => { if (pc.iceGatheringState === 'complete') { pc.removeEventListener('icegatheringstatechange', done); resolve(); } };
-        pc.addEventListener('icegatheringstatechange', done);
+      peer.oniceconnectionstatechange = () => { iceEl.textContent = peer.iceConnectionState; log('ICE state:', peer.iceConnectionState); };
+      const offer = await peer.createOffer();
+      await peer.setLocalDescription(offer);
+      if (peer.iceGatheringState !== 'complete') await new Promise(resolve => {
+        const done = () => { if (peer.iceGatheringState === 'complete') { peer.removeEventListener('icegatheringstatechange', done); resolve(); } };
+        peer.addEventListener('icegatheringstatechange', done);
       });
-      const response = await fetch(selection.whep_url, { method:'POST', headers:{'Content-Type':'application/sdp', 'Authorization':`Bearer ${selection.whep_token}`}, body:pc.localDescription.sdp });
+      const response = await fetch(selection.whep_url, {
+        method:'POST',
+        headers:{'Content-Type':'application/sdp', 'Authorization':`Bearer ${selection.whep_token}`},
+        body:peer.localDescription.sdp,
+      });
       if (!response.ok) throw new Error(`WHEP ${response.status}`);
-      await pc.setRemoteDescription({type:'answer', sdp:await response.text()});
-      log('WHEP negotiation complete; framesDecoded is reported below when available.');
+      const locationHeader = response.headers.get('Location');
+      resourceUrl = locationHeader ? new URL(locationHeader, selection.whep_url).href : null;
+      resourceEl.textContent = resourceUrl ? 'received' : 'missing';
+      log('WHEP resource location received:', Boolean(resourceUrl));
+      await peer.setRemoteDescription({type:'answer', sdp:await response.text()});
+      log('WHEP negotiation complete');
     }
-
-    async function refreshSelection() {
-      try { setStatus('refreshing selection'); await connect(await selectEngine()); } catch (error) { setStatus('error'); log(error); }
+    async function cleanup() {
+      if (resourceUrl) {
+        try { await fetch(resourceUrl, {method:'DELETE', keepalive:true}); log('WHEP resource DELETE sent'); }
+        catch (error) { log('WHEP resource DELETE failed', error); }
+      }
+      if (peer) peer.close();
     }
-    async function changeQuality(tier) {
-      const response = await fetch(`${appUrl}/instances/${encodeURIComponent(serial)}/quality`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({tier})});
-      log('quality', tier, 'response', response.status);
-      if (!response.ok) throw new Error(`quality ${response.status}`);
-    }
-    video.addEventListener('click', event => {
+    videoEl.addEventListener('click', event => {
       if (!inputChannel || inputChannel.readyState !== 'open') return log('input channel is not open');
-      const rect = video.getBoundingClientRect();
+      const rect = videoEl.getBoundingClientRect();
       inputChannel.send(JSON.stringify({type:'click', x:(event.clientX-rect.left)/rect.width, y:(event.clientY-rect.top)/rect.height}));
-      log('click sent');
+      log('click input sent');
     });
-    document.querySelector('#refresh').addEventListener('click', refreshSelection);
-    document.querySelectorAll('[data-tier]').forEach(button => button.addEventListener('click', () => changeQuality(button.dataset.tier).catch(error => log(error))));
     setInterval(async () => {
-      if (!pc) return;
-      const stats = await pc.getStats();
-      stats.forEach(report => { if (report.type === 'inbound-rtp' && report.kind === 'video') log('framesDecoded:', report.framesDecoded || 0, 'framesReceived:', report.framesReceived || 0); });
+      if (!peer) return;
+      const stats = await peer.getStats();
+      stats.forEach(report => {
+        if (report.type === 'inbound-rtp' && (report.kind === 'video' || report.mediaType === 'video')) {
+          lastFramesDecoded = report.framesDecoded || 0;
+          framesEl.textContent = lastFramesDecoded;
+          log('framesDecoded:', lastFramesDecoded, 'framesReceived:', report.framesReceived || 0);
+        }
+      });
     }, 5000);
-    refreshSelection();
+    window.addEventListener('beforeunload', () => { cleanup(); });
+    connect().catch(error => { status('error'); log('connection failed', error); });
   </script>
 </body>
 </html>
