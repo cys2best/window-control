@@ -227,61 +227,6 @@ def _recvall(sock: socket.socket, n: int) -> bytes:
     return buf
 
 
-def _start_server(adb: str, serial: str, port: int, scid: int, tier: str) -> bool:
-    """Push server jar, launch it, set up ONE adb forward.
-
-    With tunnel_forward=true, scrcpy-server opens a single LocalServerSocket and
-    accepts connections in order: video first, then control. Both go to the same
-    abstract socket — one adb forward covers both.
-    """
-    nw = _no_window_flags()
-    jar = _server_jar_path()
-    if not os.path.exists(jar):
-        _log(f"[scrcpy] server jar not found: {jar}")
-        return False
-
-    socket_name = f"scrcpy_{scid:08x}"
-
-    try:
-        subprocess.run(
-            [adb, "-s", serial, "push", jar, "/data/local/tmp/scrcpy-server.jar"],
-            capture_output=True, timeout=15, **nw,
-        )
-        subprocess.run(
-            [adb, "-s", serial, "shell", f"pkill -f 'scrcpy-server.*scid={scid:x}'"],
-            capture_output=True, timeout=5, **nw,
-        )
-        time.sleep(0.3)
-        subprocess.Popen(
-            [
-                adb, "-s", serial, "shell",
-                "CLASSPATH=/data/local/tmp/scrcpy-server.jar"
-                " app_process / com.genymobile.scrcpy.Server 3.1 "
-                + " ".join(build_scrcpy_args(tier, scid)),
-            ],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            **nw,
-        )
-        # adb forward just creates the local tunnel; it does not require the
-        # server to be accepting yet (the video-connect retry in _persistent_loop
-        # handles listen-readiness). A short settle is enough for app_process to
-        # have spawned; the old 0.5s was padding.
-        time.sleep(0.15)
-        result = subprocess.run(
-            [adb, "-s", serial, "forward", f"tcp:{port}", f"localabstract:{socket_name}"],
-            capture_output=True, timeout=5, **nw,
-        )
-        if result.returncode != 0:
-            _log(f"[scrcpy] forward failed serial={serial}: {result.stderr.decode()[:200]}")
-            return False
-        _log(f"[scrcpy] server ready serial={serial} scid={scid} port={port} socket={socket_name}")
-        return True
-    except Exception:
-        _log(f"[scrcpy] _start_server error serial={serial}: {traceback.format_exc()[:400]}")
-        return False
-
-
 class ScrcpyControl:
     """Sends touch and key events to scrcpy-server via the control socket.
 
