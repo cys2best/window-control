@@ -4,6 +4,7 @@ from pathlib import Path
 import subprocess
 import sys
 
+import httpx
 import pytest
 
 from scripts.verify_python_orchestration import (
@@ -18,14 +19,17 @@ from scripts.verify_python_orchestration import (
 class FakeProcess:
     pid: int
     alive: bool = True
+    exit_code: int = 0
 
     def poll(self):
-        return None if self.alive else 0
+        return None if self.alive else self.exit_code
 
 
 class FakeDeps:
     def __init__(self, *, engines=None, skip_build=True, skip_tests=True, exit_on_tray=True,
-                 quality_changes_pid=False, quality_stalls=False):
+                 quality_changes_pid=False, quality_stalls=False,
+                 existing_app=False, discovery_failures=None,
+                 exit_app_during_discovery=False):
         self.engines = list(engines or [])
         self.calls = []
         self.opened = []
@@ -36,6 +40,8 @@ class FakeDeps:
         self.exit_on_tray = exit_on_tray
         self.quality_changes_pid = quality_changes_pid
         self.quality_stalls = quality_stalls
+        self.discovery_failures = list(discovery_failures or [])
+        self.exit_app_during_discovery = exit_app_during_discovery
         self.env = {}
         self.selection_count = 0
         self.generation = 0
@@ -44,7 +50,7 @@ class FakeDeps:
         self.scrcpy_done = False
         self.engine_dead = False
         self.removed = False
-        self.app = FakeProcess(300)
+        self.app = FakeProcess(300, alive=existing_app)
         self.relay = FakeProcess(301)
         self.page = FakeProcess(302)
         self.started_env = []
@@ -65,6 +71,7 @@ class FakeDeps:
         if label == "local signaling relay":
             return self.relay
         if label == "WindowControl app":
+            self.app.alive = True
             self.engines = [FakeProcess(400)]
             return self.app
         if label == "verifier page server":
@@ -113,6 +120,9 @@ class FakeDeps:
         self.engines = []
 
     def api_instances(self):
+        self.calls.append(("api instances", self.now))
+        if self.discovery_failures:
+            raise self.discovery_failures.pop(0)
         return [] if self.removed else [{"serial": "emulator-5556", "name": "instance1"}]
 
     def api_select(self, serial):
@@ -153,6 +163,9 @@ class FakeDeps:
 
     def sleep(self, seconds):
         self.now += seconds
+        if self.exit_app_during_discovery and self.discovery_failures:
+            self.app.alive = False
+            self.app.exit_code = 7
 
     def clock(self):
         return self.now
@@ -180,6 +193,93 @@ def test_refuses_preexisting_engine_before_starting_any_owned_process():
 
     assert deps.calls == []
     assert deps.opened == []
+
+
+def test_refuses_preexisting_windowcontrol_app_before_starting_or_running_commands():
+    deps = FakeDeps(existing_app=True)
+
+    with pytest.raises(VerificationError, match="pre-existing WindowControl app"):
+        run_verification(config(), deps)
+
+    assert deps.calls == []
+    assert deps.opened == []
+
+
+def test_owned_app_environment_blanks_real_auth_and_tunnel_values_then_restores_them(monkeypatch):
+    real_values = {
+        "AUTH_TOKEN": "real-auth-must-not-be-forwarded",
+        "PUBLIC_UI_URL": "https://real-ui.example",
+        "TUNNEL_SECRET": "real-tunnel-secret",
+    }
+    for name, value in real_values.items():
+        monkeypatch.setenv(name, value)
+    deps = FakeDeps()
+
+    run_verification(config(), deps)
+
+    assert deps.started_env
+    assert all(
+        env[name] == ""
+        for env in deps.started_env
+        for name in real_values
+    )
+    assert {name: os.environ[name] for name in real_values} == real_values
+
+
+def test_discovery_retries_transport_errors_while_owned_app_is_alive():
+    request = httpx.Request("GET", "http://127.0.0.1:8080/instances")
+    deps = FakeDeps(discovery_failures=[
+        httpx.ConnectError("[WinError 10061] connection refused", request=request),
+        httpx.ConnectError("[WinError 10061] connection refused", request=request),
+    ])
+
+    result = run_verification(config(), deps)
+
+    assert result.checkpoints["discovery"]["status"] == "PASS"
+    discovery_calls = [call for call in deps.calls if call[0] == "api instances"]
+    assert discovery_calls[:3] == [
+        ("api instances", 1_000.0),
+        ("api instances", 1_001.0),
+        ("api instances", 1_002.0),
+    ]
+
+
+def test_discovery_surfaces_http_401_without_retrying():
+    request = httpx.Request("GET", "http://127.0.0.1:8080/instances")
+    response = httpx.Response(401, request=request)
+    deps = FakeDeps(discovery_failures=[
+        httpx.HTTPStatusError("401 Unauthorized", request=request, response=response),
+    ])
+
+    result = run_verification(config(), deps)
+
+    assert result.status == "FAIL"
+    assert result.checkpoints["startup"]["detail"] == "401 Unauthorized"
+    assert [call for call in deps.calls if call[0] == "api instances"] == [
+        ("api instances", 1_000.0),
+    ]
+
+
+def test_discovery_fails_promptly_with_exit_code_when_owned_app_dies():
+    request = httpx.Request("GET", "http://127.0.0.1:8080/instances")
+    deps = FakeDeps(
+        discovery_failures=[
+            httpx.ConnectError("[WinError 10061] connection refused", request=request),
+            httpx.ConnectError("must not be requested", request=request),
+        ],
+        exit_app_during_discovery=True,
+    )
+
+    result = run_verification(config(), deps)
+
+    assert result.status == "FAIL"
+    assert result.checkpoints["startup"]["detail"] == (
+        "WindowControl app exited during discovery with exit code 7"
+    )
+    assert deps.now == 1_001.0
+    assert [call for call in deps.calls if call[0] == "api instances"] == [
+        ("api instances", 1_000.0),
+    ]
 
 
 def test_derives_scrcpy_port_and_scid_from_discovered_ldplayer_index():

@@ -22,6 +22,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+import httpx
+
 
 class VerificationError(RuntimeError):
     pass
@@ -153,7 +155,6 @@ def _ask(deps: Any, result: VerificationResult, name: str, message: str) -> bool
 
 def run_verification(config: VerificationConfig, deps: Any) -> VerificationResult:
     result = VerificationResult()
-    config.evidence_dir.mkdir(parents=True, exist_ok=True)
     if config.enforce_windows and platform.system() != "Windows":
         raise VerificationError("Windows Host PC required; Windows integration is not verified here")
 
@@ -163,6 +164,14 @@ def run_verification(config: VerificationConfig, deps: Any) -> VerificationResul
     _trace(deps, f"pre-existing engine count={len(existing)}")
     if existing:
         raise VerificationError("pre-existing engine.exe process found; close it before retrying")
+    existing_apps = list(deps.list_app_processes())
+    _trace(deps, f"pre-existing WindowControl app count={len(existing_apps)}")
+    if existing_apps:
+        raise VerificationError(
+            "pre-existing WindowControl app src/main.py process found; close it before retrying"
+        )
+
+    config.evidence_dir.mkdir(parents=True, exist_ok=True)
 
     if config.skip_build is False:
         _record_command(deps, ["cmake", "--build", str(config.repo_root / "engine" / "build"), "--config", "Release"], "engine build")
@@ -228,9 +237,10 @@ def run_verification(config: VerificationConfig, deps: Any) -> VerificationResul
             "ENGINE_LOCAL_ICE_SERVERS": "",
             "ENGINE_PUBLIC_ICE_SERVERS": "",
             "VPS_SIGNALING_URL": f"ws://127.0.0.1:{config.relay_port}",
+            "AUTH_TOKEN": "",
+            "PUBLIC_UI_URL": "",
+            "TUNNEL_SECRET": "",
         })
-        for name in ("AUTH_TOKEN", "PUBLIC_UI_URL", "TUNNEL_SECRET"):
-            os.environ.pop(name, None)
         env = dict(os.environ)
         relay = deps.start(
             ["uv", "run", "python", "engine/test/local_signaling_server.py", "--host", "127.0.0.1", "--port", str(config.relay_port)],
@@ -244,8 +254,39 @@ def run_verification(config: VerificationConfig, deps: Any) -> VerificationResul
 
         base = f"http://127.0.0.1:{config.app_port}"
         instances: list[dict[str, Any]] = []
+
+        def discovery_ready() -> bool:
+            nonlocal instances
+            exit_code = app.poll()
+            if exit_code is not None:
+                raise VerificationError(
+                    f"WindowControl app exited during discovery with exit code {exit_code}"
+                )
+            try:
+                instances = deps.api_instances()
+            except httpx.TransportError as error:
+                exit_code = app.poll()
+                if exit_code is not None:
+                    raise VerificationError(
+                        f"WindowControl app exited during discovery with exit code {exit_code}"
+                    ) from error
+                _trace(
+                    deps,
+                    f"WindowControl discovery transport error; retrying: {type(error).__name__}: {error}",
+                )
+                return False
+            exit_code = app.poll()
+            if exit_code is not None:
+                raise VerificationError(
+                    f"WindowControl app exited during discovery with exit code {exit_code}"
+                )
+            return bool(
+                instances
+                and any(item.get("serial") == serial for item in instances)
+            )
+
         _loop_until(
-            deps, lambda: bool((instances := deps.api_instances()) and any(item.get("serial") == serial for item in instances)),
+            deps, discovery_ready,
             timeout=90, description="WindowControl discovery", interval=config.poll_seconds,
         )
         engine_processes = list(deps.list_engine_processes())
