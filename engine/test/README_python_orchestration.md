@@ -114,10 +114,14 @@ completion line. These messages contain no token. Leave terminal 1 running and
 wait for the next file-confirmation instruction; do not create a replacement
 token manually.
 
-For checkpoint 7 the runner uses `adb -s <selected-serial> emu kill` for the
-selected emulator, or `adb disconnect <selected-serial>` for a selected
-non-emulator. If that scoped command fails, disconnect only the selected device
-manually and confirm the corresponding prompt. It never calls
+For checkpoint 7 the runner uses the discovered LDPlayer console executable
+only as `ldconsole.exe quit --index <selected-index>` for the selected
+emulator; it never uses `adb emu kill`, `quit --all`, or a different index. A
+selected non-emulator still uses `adb disconnect <selected-serial>`. If the
+console is unavailable, returns nonzero, times out, or the selected serial is
+still present after the first 30-second removal wait, disconnect only the
+selected device manually and confirm the corresponding prompt; the runner then
+waits again for that selected serial to disappear. It never calls
 `adb kill-server` or targets another device. For checkpoint 8, use the tray
 Exit yourself; the runner never force-kills WindowControl.
 

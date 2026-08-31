@@ -26,6 +26,21 @@ def test_list_vms_parses_emulator_serials():
     assert result[1]["ldplayer_index"] == 1
 
 
+def test_find_ldconsole_reuses_discovery_search_order(monkeypatch):
+    """An installed LDPlayer console is found through the discovery resolver."""
+    from server import adb_manager
+
+    monkeypatch.setattr(adb_manager.sys, "platform", "win32")
+    monkeypatch.setattr(adb_manager, "_find_adb", lambda: "/opt/LDPlayer9/adb.exe")
+    monkeypatch.setattr(
+        adb_manager.os.path,
+        "exists",
+        lambda path: path == "/opt/LDPlayer9/ldconsole.exe",
+    )
+
+    assert adb_manager._find_ldconsole() == "/opt/LDPlayer9/ldconsole.exe"
+
+
 def test_instance_manager_list():
     """InstanceManager.list_instances() returns expected structure."""
     from server.instance_manager import InstanceManager

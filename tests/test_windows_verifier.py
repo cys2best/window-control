@@ -39,7 +39,8 @@ class FakeDeps:
                  quality_changes_pid=False, quality_stalls=False,
                  existing_app=False, discovery_failures=None,
                  exit_app_during_discovery=False, ready_devices=None,
-                 ready_devices_after_tests=None, cleanup_prompt_error=None):
+                 ready_devices_after_tests=None, cleanup_prompt_error=None,
+                 removal_stays_present=False, manual_removal_after_prompt=False):
         self.engines = list(engines or [])
         self.calls = []
         self.opened = []
@@ -56,6 +57,8 @@ class FakeDeps:
         self.ready_devices = list(ready_devices or ["emulator-5556"])
         self.ready_devices_after_tests = ready_devices_after_tests
         self.cleanup_prompt_error = cleanup_prompt_error
+        self.removal_stays_present = removal_stays_present
+        self.manual_removal_after_prompt = manual_removal_after_prompt
         self.discover_calls = 0
         self.env = {}
         self.selection_count = 0
@@ -129,9 +132,10 @@ class FakeDeps:
         self.calls.append(("kill scrcpy", serial, scid))
         self.scrcpy_done = True
 
-    def remove_device(self, serial):
-        self.calls.append(("remove device", serial))
-        self.removed = True
+    def remove_device(self, serial, ldplayer_index=None):
+        self.calls.append(("remove device", serial, ldplayer_index))
+        if not self.removal_stays_present:
+            self.removed = True
 
     def list_app_processes(self):
         return [] if not self.app.alive else [self.app]
@@ -178,6 +182,8 @@ class FakeDeps:
     def prompt(self, message, checkpoint=None):
         self.prompts.append(message)
         self.prompt_records.append((checkpoint, message))
+        if self.manual_removal_after_prompt and "automatic removal checklist" in message.lower():
+            self.removed = True
         if "tray exit" in message.lower() and self.exit_on_tray:
             self.app.alive = False
         return "PASS"
@@ -521,6 +527,95 @@ def test_derives_scrcpy_port_and_scid_from_discovered_ldplayer_index():
     assert any(env.get("ENGINE_PUBLIC_ICE_SERVERS") == "" for env in deps.started_env)
 
 
+def test_removal_passes_the_discovered_ldplayer_index_to_the_dependency():
+    deps = FakeDeps()
+
+    run_verification(config(), deps)
+
+    assert ("remove device", "emulator-5556", 7) in deps.calls
+
+
+def test_removal_timeout_enters_selected_device_manual_fallback_then_rechecks_absence():
+    deps = FakeDeps(
+        removal_stays_present=True,
+        manual_removal_after_prompt=True,
+    )
+
+    result = run_verification(config(), deps)
+
+    assert result.checkpoints["emulator removal"]["status"] == "PASS"
+    assert any(
+        checkpoint == "emulator removal" and "automatic removal checklist" in message.lower()
+        for checkpoint, message in deps.prompt_records
+    )
+
+
+def test_real_emulator_removal_quits_only_the_selected_ldplayer_index(monkeypatch, tmp_path):
+    commands = []
+    console = r"C:\\LDPlayer\\LDPlayer9\\ldconsole.exe"
+
+    monkeypatch.setattr("server.adb_manager._find_ldconsole", lambda: console, raising=False)
+    monkeypatch.setattr(
+        verifier.subprocess,
+        "run",
+        lambda command, **kwargs: commands.append((command, kwargs)) or SimpleNamespace(
+            returncode=0, stdout="", stderr=""
+        ),
+    )
+    deps = RealDeps(config(evidence_dir=tmp_path))
+    tmp_path.mkdir(exist_ok=True)
+
+    deps.remove_device("emulator-5558", 2)
+
+    assert [command for command, _ in commands] == [
+        [console, "quit", "--index", "2"],
+    ]
+    assert all("--all" not in command and "0" not in command for command, _ in commands)
+
+
+def test_real_non_emulator_removal_keeps_selected_adb_disconnect_behavior(monkeypatch, tmp_path):
+    commands = []
+    monkeypatch.setattr(
+        verifier.subprocess,
+        "run",
+        lambda command, **kwargs: commands.append((command, kwargs)) or SimpleNamespace(
+            returncode=0, stdout="", stderr=""
+        ),
+    )
+    deps = RealDeps(config(evidence_dir=tmp_path))
+    tmp_path.mkdir(exist_ok=True)
+
+    deps.remove_device("device-serial", 7)
+
+    assert [command for command, _ in commands] == [["adb", "disconnect", "device-serial"]]
+
+
+@pytest.mark.parametrize(
+    ("console", "outcome", "expected"),
+    [
+        (None, SimpleNamespace(returncode=0, stdout="", stderr=""), "ldconsole.exe is unavailable"),
+        (r"C:\\LDPlayer\\LDPlayer9\\ldconsole.exe", SimpleNamespace(returncode=9, stdout="", stderr="not ready"), "exit code 9"),
+        (r"C:\\LDPlayer\\LDPlayer9\\ldconsole.exe", subprocess.TimeoutExpired("ldconsole.exe", 15, stderr="timed out"), "timed out"),
+    ],
+)
+def test_real_emulator_removal_reports_unavailable_or_unsuccessful_ldconsole(
+    monkeypatch, tmp_path, console, outcome, expected
+):
+    monkeypatch.setattr("server.adb_manager._find_ldconsole", lambda: console, raising=False)
+
+    def run(*_args, **_kwargs):
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(verifier.subprocess, "run", run)
+    deps = RealDeps(config(evidence_dir=tmp_path))
+    tmp_path.mkdir(exist_ok=True)
+
+    with pytest.raises(VerificationError, match=expected):
+        deps.remove_device("emulator-5554", 0)
+
+
 def test_expiry_wait_mints_unequal_token_and_opens_independent_second_page():
     deps = FakeDeps()
     result = run_verification(config(skip_expiry=False), deps)
@@ -603,7 +698,7 @@ def test_manual_gate_prompts_expose_complete_operator_checklists():
 
 def test_automatic_removal_fallback_limits_manual_action_to_selected_device():
     class RemovalFailureDeps(FakeDeps):
-        def remove_device(self, serial):
+        def remove_device(self, serial, ldplayer_index):
             raise VerificationError("selected removal command failed")
 
     deps = RemovalFailureDeps()

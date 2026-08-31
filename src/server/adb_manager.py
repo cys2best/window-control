@@ -79,21 +79,10 @@ def _get_ffmpeg() -> str | None:
         return None
 
 
-def _get_ldconsole_names() -> dict[int, str]:
-    """Map LDPlayer instance index → title via `ldconsole.exe list2`.
-
-    This is the AUTHORITATIVE index→name source. The old approach — dnplayer
-    window titles sorted by PID, indexed by (adb_port-5554)/2 — is wrong twice:
-    PID order is unrelated to instance index, and the title list is dense while
-    device indices are sparse (a stopped instance leaves a gap), so every name
-    after the first gap shifts. ldconsole's list2 keys the title by the real
-    instance index, and each instance's ADB port is 5554 + index*2.
-
-    list2 columns: index,title,topHwnd,bindHwnd,androidStarted,pid,vboxPid.
-    Windows only; returns {} on any failure (caller falls back to a generic name).
-    """
+def _find_ldconsole() -> str | None:
+    """Locate the LDPlayer console executable using discovery's existing paths."""
     if sys.platform != "win32":
-        return {}
+        return None
     # ldconsole.exe lives at the LDPlayer install ROOT, not next to adb (adb may
     # be the bundled scrcpy adb or resolved via PATH). Search install roots too.
     candidates: list[str] = []
@@ -116,9 +105,29 @@ def _get_ldconsole_names() -> dict[int, str]:
     ):
         candidates.append(os.path.join(base, "ldconsole.exe"))
         candidates.append(os.path.join(base, "dnconsole.exe"))
-    exe = next((p for p in candidates if os.path.exists(p)), None)
+    exe = next((path for path in candidates if os.path.exists(path)), None)
     if not exe:
         _log(f"[ldplayer] ldconsole.exe not found — tried: {candidates}")
+    return exe
+
+
+def _get_ldconsole_names() -> dict[int, str]:
+    """Map LDPlayer instance index → title via `ldconsole.exe list2`.
+
+    This is the AUTHORITATIVE index→name source. The old approach — dnplayer
+    window titles sorted by PID, indexed by (adb_port-5554)/2 — is wrong twice:
+    PID order is unrelated to instance index, and the title list is dense while
+    device indices are sparse (a stopped instance leaves a gap), so every name
+    after the first gap shifts. ldconsole's list2 keys the title by the real
+    instance index, and each instance's ADB port is 5554 + index*2.
+
+    list2 columns: index,title,topHwnd,bindHwnd,androidStarted,pid,vboxPid.
+    Windows only; returns {} on any failure (caller falls back to a generic name).
+    """
+    if sys.platform != "win32":
+        return {}
+    exe = _find_ldconsole()
+    if not exe:
         return {}
     _log(f"[ldplayer] using {exe}")
     try:

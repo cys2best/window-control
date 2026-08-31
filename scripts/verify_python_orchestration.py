@@ -765,19 +765,34 @@ def run_verification(config: VerificationConfig, deps: Any) -> VerificationResul
         # removal while recovery is active rather than after a healthy idle.
         deps.kill_scrcpy(serial, scid)
         _trace(deps, "removal ordering: scrcpy source loss triggered before device removal")
-        try:
-            deps.remove_device(serial)
-        except VerificationError as error:
+        def manual_removal_fallback(error: VerificationError) -> bool:
             if deps.prompt(
                 "Automatic removal checklist:\n"
-                f"- Automatic removal of selected device {serial} failed: {error}\n"
+                f"- Automatic removal of selected device {serial} did not complete: {error}\n"
                 f"- Manually remove or disconnect only the selected device {serial}; do not alter other devices.\n"
                 "- Wait until that selected device disappears, then type PASS.",
                 checkpoint="emulator removal",
             ) != "PASS":
                 result.mark("emulator removal", "FAIL", "automatic and manual removal failed")
+                return False
+            return True
+
+        manual_removal_required = False
+        try:
+            deps.remove_device(serial, index)
+        except VerificationError as error:
+            manual_removal_required = True
+            if not manual_removal_fallback(error):
                 return result
-        _loop_until(deps, lambda: serial not in deps.adb_devices(), timeout=30, description="selected emulator removal", interval=config.poll_seconds)
+        if not manual_removal_required:
+            try:
+                _loop_until(deps, lambda: serial not in deps.adb_devices(), timeout=30, description="selected emulator removal", interval=config.poll_seconds)
+            except VerificationError as error:
+                manual_removal_required = True
+                if not manual_removal_fallback(error):
+                    return result
+        if manual_removal_required:
+            _loop_until(deps, lambda: serial not in deps.adb_devices(), timeout=30, description="selected emulator manual removal", interval=config.poll_seconds)
         _loop_until(deps, lambda: not (owned_engine_pids & {int(item.pid) for item in deps.list_engine_processes()}), timeout=30, description="removed instance engine cleanup", interval=config.poll_seconds)
         _loop_until(deps, lambda: not any(item.get("serial") == serial for item in deps.api_instances()), timeout=30, description="API removal of selected instance", interval=config.poll_seconds)
         if deps.adb_forwards(serial, scrcpy_port):
@@ -972,13 +987,38 @@ class RealDeps:
                 message += f": {detail}"
             raise VerificationError(message)
 
-    def remove_device(self, serial):
+    def remove_device(self, serial, ldplayer_index):
         if serial.startswith("emulator-"):
-            completed = self.adb(["-s", serial, "emu", "kill"])
+            from server.adb_manager import _find_ldconsole
+
+            ldconsole = _find_ldconsole()
+            if not ldconsole:
+                raise VerificationError(
+                    "automatic emulator removal failed: ldconsole.exe is unavailable"
+                )
+            command = [ldconsole, "quit", "--index", str(ldplayer_index)]
+            self.record_command(command, "selected LDPlayer quit")
+            try:
+                completed = subprocess.run(
+                    command, text=True, capture_output=True, check=False, timeout=15
+                )
+            except subprocess.TimeoutExpired as error:
+                detail = _safe_adb_stderr(error.stderr)
+                message = "selected LDPlayer quit timed out"
+                if detail:
+                    message += f": {detail}"
+                raise VerificationError(message) from error
         else:
             completed = self.adb(["disconnect", serial])
         if completed.returncode:
-            raise VerificationError("automatic emulator removal failed; disconnect it manually and retry")
+            detail = _safe_adb_stderr(completed.stderr)
+            message = (
+                "automatic emulator removal failed "
+                f"with exit code {completed.returncode}"
+            )
+            if detail:
+                message += f": {detail}"
+            raise VerificationError(message)
 
     def list_app_processes(self):
         import psutil
