@@ -186,3 +186,18 @@ def test_stop_kills_and_reaps_process_after_terminate_timeout():
     instance.stop(timeout_seconds=0.2)
 
     assert not instance.is_running()
+
+
+def test_stop_kills_and_reaps_real_process_when_terminate_is_ignored(monkeypatch):
+    instance = make_fake_instance(mode="ready")
+    instance.start()
+    process = instance._process
+    monkeypatch.setattr(process, "terminate", lambda: None)
+
+    try:
+        instance.stop(timeout_seconds=5.0)
+        assert not instance.is_running()
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5.0)
