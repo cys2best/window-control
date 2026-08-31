@@ -56,6 +56,12 @@ import traceback
 from typing import Callable
 
 from config import ASSETS_DIR, QUALITY_TIERS, DEFAULT_TIER
+from server.scrcpy_server import (
+    build_scrcpy_args,
+    no_window_flags,
+    find_adb as _new_find_adb,
+    start_server as _new_start_server,
+)
 
 _SCRCPY_BASE_PORT = 27183   # instance 0 → 27183, instance 1 → 27184, …
 
@@ -67,7 +73,6 @@ _SCRCPY_BASE_PORT = 27183   # instance 0 → 27183, instance 1 → 27184, …
 # that. scrcpy pushes frames continuously (even a static screen re-sends), so a
 # multi-second gap means the pipeline is dead, not idle.
 _STALL_TIMEOUT = 15.0
-_SERVER_JAR = "scrcpy-server"  # filename in assets/scrcpy/
 
 _WRITE_QUEUE_DEPTH = 30  # ~1s of frames at 30fps
 
@@ -133,6 +138,7 @@ class _NaluWriteQueue:
         return self._q.full()
 
 def _log(msg: str):
+    """Log to Windows paths if available, otherwise silently drop."""
     for _p in [r"C:\ProgramData\WindowControl", r"C:\Windows\Temp"]:
         try:
             os.makedirs(_p, exist_ok=True)
@@ -144,14 +150,11 @@ def _log(msg: str):
 
 
 def _no_window_flags():
-    if sys.platform == "win32":
-        return {"creationflags": 0x08000000}
-    return {}
+    return no_window_flags()
 
 
 def _find_adb() -> str | None:
-    from server.adb_manager import _find_adb as _adb
-    return _adb()
+    return _new_find_adb()
 
 
 def _get_ffmpeg() -> str | None:
@@ -162,54 +165,8 @@ def _get_ffmpeg() -> str | None:
         return None
 
 
-def _server_jar_path() -> str:
-    return os.path.join(ASSETS_DIR, "scrcpy", _SERVER_JAR)
-
-
-def build_scrcpy_args(tier: str, scid: int) -> list[str]:
-    """Build scrcpy-server arguments from a quality tier.
-
-    Returns the app_process arg tokens (the part after `com.genymobile.scrcpy.Server 3.1`).
-    Includes max_size, bit_rate, max_fps from the tier, plus video_encoder_options and scid.
-    """
-    t = QUALITY_TIERS.get(tier, QUALITY_TIERS[DEFAULT_TIER])
-    return [
-        "tunnel_forward=true",
-        "video_codec=h264",
-        f"max_size={t['max_size']}",
-        f"bit_rate={t['bit_rate']}",
-        f"max_fps={t['max_fps']}",
-        "send_device_meta=true",
-        "send_frame_meta=true",
-        "control=true",
-        "audio=false",
-        # Keyframe cadence + H264 profile/level hints for MediaCodec.
-        #
-        # `video_codec_options` is scrcpy-server 3.1's real option key (confirmed
-        # against the bundled server's decompiled source) — the previous
-        # `video_encoder_options` name is not recognized by this server version
-        # at all; it's silently logged as "Unknown server option" and dropped,
-        # meaning i-frame-interval was never actually applied. The IDR heartbeat
-        # (ScrcpyControl.request_idr(), called on a ~2s cadence by callers) has
-        # been masking the resulting lack of keyframe cadence control.
-        #
-        # profile=1,level=512 requests H264 Baseline + Level 3.1
-        # (MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline=0x01,
-        # AVCLevel31=0x200=512). This is a HINT, not a guarantee — MediaCodec's
-        # own docs state the encoder is free to pick a different, compatible
-        # level if the configured resolution/bitrate/fps dictate it (confirmed:
-        # this device was observed emitting Level 4.1 output for identical
-        # max_size/bit_rate/max_fps settings on a different run). Requesting
-        # Level 3.1 explicitly is still worth doing since browsers' WebRTC H264
-        # decoders only advertise Level 3.1 variants (profile-level-id ending in
-        # "1f") — Level 4.1 output cannot be negotiated by any WebRTC-based
-        # client at all, so this is the best available mitigation even though
-        # it isn't hard-enforced. 720p@30fps@4Mbps fits Level 3.1's ceiling
-        # (MaxFS=3600 MB, MaxMBPS=108000 MB/s — both exactly met at 1280x720@30,
-        # zero headroom but spec-compliant; MaxBR=14Mbps, well under 4Mbps).
-        "video_codec_options=i-frame-interval=2,profile=1,level=512,bitrate-mode=1",
-        f"scid={scid:x}",
-    ]
+def _start_server(adb: str, serial: str, port: int, scid: int, tier: str) -> bool:
+    return _new_start_server(adb, serial, port, scid, tier)
 
 
 def build_ffmpeg_args(ffmpeg_exe: str, rtsp_url: str, tier: str = DEFAULT_TIER) -> list[str]:
