@@ -64,21 +64,55 @@ class VerificationResult:
             self.status = "INCOMPLETE"
 
 
-_ENV_NAMES = (
-    "ENGINE_EXE_PATH",
-    "ENGINE_WHEP_CAPABILITY_SECRET",
-    "ENGINE_SIGNALING_SECRET",
-    "ENGINE_LOCAL_ICE_SERVERS",
-    "ENGINE_PUBLIC_ICE_SERVERS",
-    "VPS_SIGNALING_URL",
-    "AUTH_TOKEN",
-    "PUBLIC_UI_URL",
-    "TUNNEL_SECRET",
-)
-
-
 def _strip_serial(value: str) -> str:
     return value[4:] if value.startswith("adb:") else value
+
+
+def _python_script_argument(cmdline: list[Any]) -> str | None:
+    if not cmdline:
+        return None
+    executable = str(cmdline[0]).replace("\\", "/").rsplit("/", 1)[-1].casefold()
+    if executable.endswith(".exe"):
+        executable = executable[:-4]
+    prefix = "pythonw" if executable.startswith("pythonw") else "python"
+    if not executable.startswith(prefix):
+        return None
+    version = executable[len(prefix):]
+    if version and not all(part.isdigit() for part in version.split(".")):
+        return None
+
+    option_values = {"-W", "-X", "--check-hash-based-pycs"}
+    index = 1
+    while index < len(cmdline):
+        argument = str(cmdline[index])
+        if argument == "--":
+            index += 1
+            return str(cmdline[index]) if index < len(cmdline) else None
+        if argument in {"-c", "-m"} or argument.startswith(("-c=", "-m=")):
+            return None
+        if argument in option_values:
+            index += 2
+            continue
+        if argument.startswith("-"):
+            index += 1
+            continue
+        return None if argument == "-" else argument
+    return None
+
+
+def _resolved_casefold_path(value: str, cwd: str | None = None) -> str | None:
+    normalized = value.replace("\\", os.sep).replace("/", os.sep)
+    path = Path(normalized)
+    if not path.is_absolute():
+        if not cwd:
+            return None
+        normalized_cwd = cwd.replace("\\", os.sep).replace("/", os.sep)
+        path = Path(normalized_cwd) / path
+    try:
+        resolved = path.resolve(strict=False)
+    except (OSError, RuntimeError):
+        return None
+    return str(resolved).replace("\\", "/").casefold()
 
 
 def _fragment(selection: dict[str, Any]) -> str:
@@ -161,23 +195,33 @@ def run_verification(config: VerificationConfig, deps: Any) -> VerificationResul
     # Refuse to attach to a process the runner did not create. This happens
     # before build, relay, app, browser, or ADB state changes.
     existing = list(deps.list_engine_processes())
-    _trace(deps, f"pre-existing engine count={len(existing)}")
     if existing:
         raise VerificationError("pre-existing engine.exe process found; close it before retrying")
     existing_apps = list(deps.list_app_processes())
-    _trace(deps, f"pre-existing WindowControl app count={len(existing_apps)}")
     if existing_apps:
         raise VerificationError(
             "pre-existing WindowControl app src/main.py process found; close it before retrying"
         )
 
     config.evidence_dir.mkdir(parents=True, exist_ok=True)
+    env = dict(os.environ)
+    env.update({
+        "ENGINE_EXE_PATH": str(config.engine_exe),
+        "ENGINE_WHEP_CAPABILITY_SECRET": __import__("secrets").token_hex(32),
+        "ENGINE_SIGNALING_SECRET": "",
+        "ENGINE_LOCAL_ICE_SERVERS": "",
+        "ENGINE_PUBLIC_ICE_SERVERS": "",
+        "VPS_SIGNALING_URL": f"ws://127.0.0.1:{config.relay_port}",
+        "AUTH_TOKEN": "",
+        "PUBLIC_UI_URL": "",
+        "TUNNEL_SECRET": "",
+    })
 
     if config.skip_build is False:
         _record_command(deps, ["cmake", "--build", str(config.repo_root / "engine" / "build"), "--config", "Release"], "engine build")
         deps.run(
             ["cmake", "--build", str(config.repo_root / "engine" / "build"), "--config", "Release"],
-            cwd=config.repo_root, env=dict(os.environ), label="engine build",
+            cwd=config.repo_root, env=env, label="engine build",
         )
     else:
         result.mark("engine build", "SKIP", "explicit --skip-build")
@@ -194,13 +238,13 @@ def run_verification(config: VerificationConfig, deps: Any) -> VerificationResul
         ]
         command = ["uv", "run", "pytest", *phase, "-v"]
         _record_command(deps, command, "phase-specific Python tests")
-        deps.run(command, cwd=config.repo_root, env=dict(os.environ), label="phase-specific Python tests")
+        deps.run(command, cwd=config.repo_root, env=env, label="phase-specific Python tests")
         engine_tests = config.repo_root / "engine" / "build" / "Release" / "engine_tests.exe"
         if not engine_tests.exists():
             raise VerificationError(f"missing engine_tests.exe: {engine_tests}")
         command = [str(engine_tests), "--gtest_filter=-SignalingClient.*:PublicSignalingBridge.*"]
         _record_command(deps, command, "engine tests")
-        deps.run(command, cwd=config.repo_root, env=dict(os.environ), label="engine tests")
+        deps.run(command, cwd=config.repo_root, env=env, label="engine tests")
     else:
         result.mark("local tests", "SKIP", "explicit --skip-tests")
 
@@ -224,24 +268,11 @@ def run_verification(config: VerificationConfig, deps: Any) -> VerificationResul
     result.summary.update({"serial": serial, "ldplayer_index": index, "scrcpy_port": scrcpy_port, "scid": scid})
     _trace(deps, f"selected serial={serial} ldplayer_index={index} scrcpy_port={scrcpy_port} scid={scid}")
 
-    saved = {name: os.environ.get(name) for name in _ENV_NAMES}
     owned: list[Any] = []
     owned_engine_pids: set[int] = set()
     app = None
     current_gate = "startup"
     try:
-        os.environ.update({
-            "ENGINE_EXE_PATH": str(config.engine_exe),
-            "ENGINE_WHEP_CAPABILITY_SECRET": __import__("secrets").token_hex(32),
-            "ENGINE_SIGNALING_SECRET": "",
-            "ENGINE_LOCAL_ICE_SERVERS": "",
-            "ENGINE_PUBLIC_ICE_SERVERS": "",
-            "VPS_SIGNALING_URL": f"ws://127.0.0.1:{config.relay_port}",
-            "AUTH_TOKEN": "",
-            "PUBLIC_UI_URL": "",
-            "TUNNEL_SECRET": "",
-        })
-        env = dict(os.environ)
         relay = deps.start(
             ["uv", "run", "python", "engine/test/local_signaling_server.py", "--host", "127.0.0.1", "--port", str(config.relay_port)],
             cwd=config.repo_root, env=env, stdout_path=config.evidence_dir / "relay.log", label="local signaling relay",
@@ -466,11 +497,6 @@ def run_verification(config: VerificationConfig, deps: Any) -> VerificationResul
                 "selected_forward": retained_forward,
             }
             _trace(deps, f"failure retention app={app is not None} engine_pids={sorted(owned_engine_pids)} selected_forward={retained_forward}")
-        for name, value in saved.items():
-            if value is None:
-                os.environ.pop(name, None)
-            else:
-                os.environ[name] = value
         service_log = Path(r"C:\ProgramData\WindowControl\service_crash.log")
         if service_log.exists():
             try:
@@ -485,7 +511,6 @@ class RealDeps:
     def __init__(self, config: VerificationConfig):
         self.config = config
         self._log = config.evidence_dir / "commands.log"
-        self._log.parent.mkdir(parents=True, exist_ok=True)
 
     def record_command(self, command: list[str], label: str) -> None:
         with self._log.open("a", encoding="utf-8") as stream:
@@ -526,7 +551,6 @@ class RealDeps:
         import psutil
 
         processes = [p for p in psutil.process_iter(["pid", "name", "cmdline"]) if (p.info.get("name") or "").lower() == "engine.exe"]
-        self.record_event(f"engine processes={[p.pid for p in processes]}")
         return processes
 
     def discover_vms(self):
@@ -579,8 +603,20 @@ class RealDeps:
     def list_app_processes(self):
         import psutil
 
-        processes = [p for p in psutil.process_iter(["pid", "cmdline"]) if any("src\\main.py" in str(part) or "src/main.py" in str(part) for part in (p.info.get("cmdline") or []))]
-        self.record_event(f"app processes={[p.pid for p in processes]}")
+        target = _resolved_casefold_path(
+            str(self.config.repo_root / "src" / "main.py")
+        )
+        processes = []
+        for process in psutil.process_iter(["pid", "name", "cmdline", "cwd"]):
+            try:
+                info = process.info
+            except psutil.Error:
+                continue
+            script = _python_script_argument(info.get("cmdline") or [])
+            if script is None:
+                continue
+            if _resolved_casefold_path(script, info.get("cwd")) == target:
+                processes.append(process)
         return processes
 
     def kill_owned_engine(self, pid):

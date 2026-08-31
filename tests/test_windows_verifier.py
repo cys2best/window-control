@@ -5,6 +5,7 @@ import subprocess
 import sys
 
 import httpx
+import psutil
 import pytest
 
 from scripts.verify_python_orchestration import (
@@ -54,12 +55,14 @@ class FakeDeps:
         self.relay = FakeProcess(301)
         self.page = FakeProcess(302)
         self.started_env = []
+        self.child_envs = []
 
     def record_command(self, command, label):
         self.calls.append((label, tuple(command)))
 
     def run(self, command, *, cwd, env, label):
         self.calls.append((label, tuple(command)))
+        self.child_envs.append(env)
         if label == "engine tests" and self.skip_tests:
             return
         if label == "engine build" and self.skip_build:
@@ -67,6 +70,7 @@ class FakeDeps:
 
     def start(self, command, *, cwd, env, stdout_path, label):
         self.calls.append((label, tuple(command), stdout_path))
+        self.child_envs.append(env)
         self.started_env.append(dict(env))
         if label == "local signaling relay":
             return self.relay
@@ -205,7 +209,104 @@ def test_refuses_preexisting_windowcontrol_app_before_starting_or_running_comman
     assert deps.opened == []
 
 
-def test_owned_app_environment_blanks_real_auth_and_tunnel_values_then_restores_them(monkeypatch):
+def test_real_preflight_refusal_creates_no_evidence_state(monkeypatch, tmp_path):
+    repo_root = tmp_path / "repo"
+    evidence_dir = tmp_path / "evidence"
+
+    class ExistingApp:
+        pid = 123
+        info = {
+            "pid": pid,
+            "name": "python.exe",
+            "cmdline": ["python.exe", str(repo_root / "src" / "main.py")],
+            "cwd": str(repo_root),
+        }
+
+    monkeypatch.setattr("psutil.process_iter", lambda attrs: [ExistingApp()])
+    verification_config = config(
+        repo_root=repo_root,
+        evidence_dir=evidence_dir,
+    )
+
+    with pytest.raises(VerificationError, match="pre-existing WindowControl app"):
+        run_verification(verification_config, RealDeps(verification_config))
+
+    assert not evidence_dir.exists()
+
+
+def test_real_app_detection_matches_only_this_repo_python_script(monkeypatch, tmp_path):
+    repo_root = tmp_path / "WindowControl"
+    target = repo_root / "src" / "main.py"
+    target.parent.mkdir(parents=True)
+    target.touch()
+    other_repo = tmp_path / "another-repo"
+
+    class Process:
+        def __init__(self, pid, cmdline, cwd, name="python.exe"):
+            self.pid = pid
+            self.info = {
+                "pid": pid,
+                "name": name,
+                "cmdline": cmdline,
+                "cwd": str(cwd),
+            }
+
+    processes = [
+        Process(1, ["python.exe", "src/main.py"], repo_root),
+        Process(2, ["python.exe", r".\src\..\src\main.py"], repo_root),
+        Process(3, ["python.exe", str(target)], tmp_path),
+        Process(4, ["PYTHON.EXE", str(target).upper()], tmp_path),
+        Process(5, ["code.exe", "--search", str(target)], repo_root, "code.exe"),
+        Process(6, ["python.exe", "-c", f"print({str(target)!r})"], repo_root),
+        Process(7, ["python.exe", "src/main.py"], other_repo),
+        Process(8, ["python.exe", "tools/check.py", "src/main.py"], repo_root),
+    ]
+    monkeypatch.setattr("psutil.process_iter", lambda attrs: processes)
+    verification_config = config(repo_root=repo_root, evidence_dir=tmp_path / "evidence")
+
+    found = RealDeps(verification_config).list_app_processes()
+
+    assert {process.pid for process in found} == {1, 2, 3, 4}
+
+
+def test_real_app_detection_skips_inaccessible_or_unresolvable_processes(
+    monkeypatch, tmp_path
+):
+    repo_root = tmp_path / "WindowControl"
+
+    class InaccessibleProcess:
+        pid = 9
+
+        @property
+        def info(self):
+            raise psutil.AccessDenied(self.pid)
+
+    class Process:
+        def __init__(self, pid, cwd):
+            self.pid = pid
+            self.info = {
+                "pid": pid,
+                "name": "python.exe",
+                "cmdline": ["python.exe", "src/main.py"],
+                "cwd": cwd,
+            }
+
+    processes = [
+        InaccessibleProcess(),
+        Process(10, None),
+        Process(11, str(repo_root)),
+    ]
+    monkeypatch.setattr("psutil.process_iter", lambda attrs: processes)
+    verification_config = config(repo_root=repo_root, evidence_dir=tmp_path / "evidence")
+
+    found = RealDeps(verification_config).list_app_processes()
+
+    assert {process.pid for process in found} == {11}
+
+
+def test_every_owned_command_uses_one_sanitized_environment_without_mutating_parent(
+    monkeypatch, tmp_path
+):
     real_values = {
         "AUTH_TOKEN": "real-auth-must-not-be-forwarded",
         "PUBLIC_UI_URL": "https://real-ui.example",
@@ -213,15 +314,32 @@ def test_owned_app_environment_blanks_real_auth_and_tunnel_values_then_restores_
     }
     for name, value in real_values.items():
         monkeypatch.setenv(name, value)
+    engine_tests = tmp_path / "engine" / "build" / "Release" / "engine_tests.exe"
+    engine_tests.parent.mkdir(parents=True)
+    engine_tests.touch()
     deps = FakeDeps()
 
-    run_verification(config(), deps)
+    run_verification(
+        config(
+            repo_root=tmp_path,
+            evidence_dir=tmp_path / "evidence",
+            skip_build=False,
+            skip_tests=False,
+        ),
+        deps,
+    )
 
-    assert deps.started_env
+    assert len(deps.child_envs) == 6
+    assert len({id(env) for env in deps.child_envs}) == 1
     assert all(
         env[name] == ""
-        for env in deps.started_env
+        for env in deps.child_envs
         for name in real_values
+    )
+    assert not any(
+        secret in env.values()
+        for env in deps.child_envs
+        for secret in real_values.values()
     )
     assert {name: os.environ[name] for name in real_values} == real_values
 
