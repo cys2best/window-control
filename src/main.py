@@ -1,11 +1,14 @@
 # src/main.py
 import sys
 import os
+import secrets
 
 # Load .env (repo root, gitignored) before anything reads os.environ —
 # config.py's os.environ.get() calls run at import time below.
 from dotenv import load_dotenv
 load_dotenv()
+
+import config
 
 
 def _log_early(msg: str):
@@ -91,6 +94,27 @@ def _ensure_assets():
         _log(f"[assets] download error: {_tb.format_exc()[:400]}")
 
 
+def build_engine_orchestrator() -> "EngineOrchestrator | None":
+    if not config.ENGINE_EXE_PATH:
+        return None
+
+    from server.engine_orchestrator import EngineOrchestrator
+    from server.engine_runtime import EngineRuntimeConfig
+
+    whep_secret = (
+        config.ENGINE_WHEP_CAPABILITY_SECRET or secrets.token_hex(32)
+    )
+    runtime_config = EngineRuntimeConfig(
+        exe_path=config.ENGINE_EXE_PATH,
+        whep_secret=whep_secret,
+        signaling_url=config.VPS_SIGNALING_URL or "",
+        signaling_secret=config.ENGINE_SIGNALING_SECRET,
+        local_ice_servers=config.ENGINE_LOCAL_ICE_SERVERS,
+        public_ice_servers=config.ENGINE_PUBLIC_ICE_SERVERS,
+    )
+    return EngineOrchestrator(runtime_config)
+
+
 def main():
     # Delegate service CLI args before starting GUI
     _svc_args = {"--install", "--uninstall", "--start", "--stop", "--run-service"}
@@ -137,8 +161,14 @@ def main():
     state.set_quality(QUALITY_MAP[DEFAULT_QUALITY])
     frame_queue = FrameQueue()
 
+    engine_orchestrator = build_engine_orchestrator()
     from config import WEBRTC_BACKEND
-    if WEBRTC_BACKEND == "aiortc":
+    if engine_orchestrator is not None:
+        mediamtx = None
+        instance_manager = InstanceManager(
+            mediamtx=None, engine_orchestrator=engine_orchestrator
+        )
+    elif WEBRTC_BACKEND == "aiortc":
         mediamtx = None
         instance_manager = InstanceManager(mediamtx=None)  # webrtc set once the event loop exists — see app.py's _startup()
     else:
