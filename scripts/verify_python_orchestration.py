@@ -218,6 +218,7 @@ def run_verification(config: VerificationConfig, deps: Any) -> VerificationResul
     owned: list[Any] = []
     owned_engine_pids: set[int] = set()
     app = None
+    current_gate = "startup"
     try:
         os.environ.update({
             "ENGINE_EXE_PATH": str(config.engine_exe),
@@ -247,12 +248,14 @@ def run_verification(config: VerificationConfig, deps: Any) -> VerificationResul
             timeout=90, description="WindowControl discovery", interval=config.poll_seconds,
         )
         engine_processes = list(deps.list_engine_processes())
+        current_gate = "discovery"
         if len(engine_processes) != 1:
             raise VerificationError(f"discovery started {len(engine_processes)} engine.exe processes, expected one")
         owned_engine_pids = {int(item.pid) for item in engine_processes}
         result.mark("discovery", "PASS", f"owned engine pid {sorted(owned_engine_pids)[0]}")
 
         selection = deps.api_select(serial)
+        current_gate = "selection"
         if not selection.get("whep_token"):
             raise VerificationError("engine-select returned no WHEP token")
         if _is_loopback(selection["whep_url"]):
@@ -290,6 +293,7 @@ def run_verification(config: VerificationConfig, deps: Any) -> VerificationResul
                 return result
 
         before_quality = selection
+        current_gate = "quality"
         target_tier = "1080" if config.tier != "1080" else "720"
         deps.api_quality(serial, target_tier)
         quality = None
@@ -303,11 +307,15 @@ def run_verification(config: VerificationConfig, deps: Any) -> VerificationResul
         _loop_until(deps, quality_ready, timeout=45, description="quality reconnect generation/dimensions", interval=config.poll_seconds)
         if quality["whep_url"] != before_quality["whep_url"]:
             raise VerificationError("quality reconnect replaced the WHEP endpoint")
+        if {int(item.pid) for item in deps.list_engine_processes()} != owned_engine_pids:
+            raise VerificationError("quality reconnect changed the owned engine process")
+        _trace(deps, f"quality invariant pid_set={sorted(owned_engine_pids)} endpoint={quality['whep_url']}")
         result.summary["quality"] = _safe_selection(quality)
         if not _ask(deps, result, "quality", "Confirm the existing peer stayed connected and renders the new dimensions; type PASS"):
             return result
 
         before_source = quality
+        current_gate = "scrcpy recovery"
         deps.kill_scrcpy(serial, scid)
         source = None
 
@@ -322,13 +330,14 @@ def run_verification(config: VerificationConfig, deps: Any) -> VerificationResul
             raise VerificationError("scrcpy recovery changed the owned engine process")
         if source["whep_url"] != before_source["whep_url"]:
             raise VerificationError("scrcpy recovery changed the WHEP endpoint")
-        if not any(f"tcp:{scrcpy_port}" in item for item in deps.adb_forwards(serial)):
+        if not deps.adb_forwards(serial, scrcpy_port):
             raise VerificationError("scrcpy recovery lost its ADB forward")
         result.summary["source_recovery"] = _safe_selection(source)
         if not _ask(deps, result, "scrcpy recovery", "Confirm the existing peer resumed live video; type PASS"):
             return result
 
         old_engine_pid = next(iter(owned_engine_pids))
+        current_gate = "engine respawn"
         deps.kill_owned_engine(old_engine_pid)
         respawn = None
 
@@ -343,7 +352,7 @@ def run_verification(config: VerificationConfig, deps: Any) -> VerificationResul
 
         _loop_until(deps, respawn_ready, timeout=60, description="engine respawn and dynamic WHEP port", interval=config.poll_seconds)
         owned_engine_pids = {int(item.pid) for item in deps.list_engine_processes()}
-        if not any(f"tcp:{scrcpy_port}" in item for item in deps.adb_forwards(serial)):
+        if not deps.adb_forwards(serial, scrcpy_port):
             raise VerificationError("engine respawn did not retain exactly this instance's scrcpy forward")
         result.summary["respawn"] = _safe_selection(respawn)
         fresh_respawn_page = f"http://127.0.0.1:{config.page_port}/python_orchestration_verifier.html{_fragment(respawn)}"
@@ -351,6 +360,11 @@ def run_verification(config: VerificationConfig, deps: Any) -> VerificationResul
         if not _ask(deps, result, "engine respawn", "Confirm the freshly opened verifier renders live video; type PASS"):
             return result
 
+        current_gate = "emulator removal"
+        # Kill the source immediately before removal, so this gate proves
+        # removal while recovery is active rather than after a healthy idle.
+        deps.kill_scrcpy(serial, scid)
+        _trace(deps, "removal ordering: scrcpy source loss triggered before device removal")
         try:
             deps.remove_device(serial)
         except VerificationError as error:
@@ -360,11 +374,12 @@ def run_verification(config: VerificationConfig, deps: Any) -> VerificationResul
         _loop_until(deps, lambda: serial not in deps.adb_devices(), timeout=30, description="selected emulator removal", interval=config.poll_seconds)
         _loop_until(deps, lambda: not (owned_engine_pids & {int(item.pid) for item in deps.list_engine_processes()}), timeout=30, description="removed instance engine cleanup", interval=config.poll_seconds)
         _loop_until(deps, lambda: not any(item.get("serial") == serial for item in deps.api_instances()), timeout=30, description="API removal of selected instance", interval=config.poll_seconds)
-        if any(f"tcp:{scrcpy_port}" in item for item in deps.adb_forwards(serial)):
+        if deps.adb_forwards(serial, scrcpy_port):
             raise VerificationError("selected emulator removal left an ADB forward")
         if not _ask(deps, result, "emulator removal", "Confirm removal left no engine process or instance forward; type PASS"):
             return result
 
+        current_gate = "application exit"
         if deps.prompt("Use the WindowControl tray Exit now, then type PASS") != "PASS":
             result.mark("application exit", "FAIL", "operator did not confirm tray Exit")
             return result
@@ -376,22 +391,39 @@ def run_verification(config: VerificationConfig, deps: Any) -> VerificationResul
         if deps.list_engine_processes():
             result.mark("application exit", "FAIL", "engine process remains after tray Exit")
             return result
-        if deps.adb_forwards(serial):
+        if deps.adb_forwards(serial, scrcpy_port):
             result.mark("application exit", "FAIL", "ADB forward remains after tray Exit")
             return result
         result.mark("application exit", "PASS", "tray Exit observed and owned engine processes gone")
         result.status = "INCOMPLETE" if any(item["status"] == "SKIP" for item in result.checkpoints.values()) else result.status
         result.summary["status"] = result.status
         return result
+    except Exception as error:
+        result.mark(current_gate, "FAIL", str(error))
+        result.summary["failed_gate"] = current_gate
+        result.summary["error"] = str(error)
+        return result
     finally:
         # Never force-kill the WindowControl app. On an incomplete/failed run,
         # leave the app, owned engine, and selected forward for diagnostics when
         # requested; helper relay/page processes are safe to stop otherwise.
         failed = result.status in {"FAIL", "INCOMPLETE"}
-        if not (failed and config.keep_on_failure):
-            for process in owned:
-                if process is not app:
-                    deps.stop_helper(process)
+        for process in owned:
+            if process is not app:
+                deps.stop_helper(process)
+        if failed:
+            retained_forward = False
+            try:
+                retained_forward = bool(deps.adb_forwards(serial, scrcpy_port))
+            except Exception:
+                pass
+            result.summary["retained_on_failure"] = {
+                "keep_on_failure": config.keep_on_failure,
+                "app": app is not None,
+                "owned_engine_pids": sorted(owned_engine_pids),
+                "selected_forward": retained_forward,
+            }
+            _trace(deps, f"failure retention app={app is not None} engine_pids={sorted(owned_engine_pids)} selected_forward={retained_forward}")
         for name, value in saved.items():
             if value is None:
                 os.environ.pop(name, None)
@@ -473,9 +505,19 @@ class RealDeps:
     def adb_state(self, serial):
         return self.adb(["-s", serial, "get-state"]).stdout.strip()
 
-    def adb_forwards(self, serial):
-        forwards = self.adb(["-s", serial, "forward", "--list"]).stdout.splitlines()
-        self.record_event(f"adb forwards count={len(forwards)}")
+    def adb_forwards(self, serial, port):
+        completed = self.adb(["forward", "--list"])
+        if completed.returncode:
+            raise VerificationError(
+                f"adb forward --list failed with exit code {completed.returncode}"
+            )
+        forwards = [
+            line for line in completed.stdout.splitlines()
+            if len(line.split()) >= 2
+            and line.split()[0] == serial
+            and line.split()[1] == f"tcp:{port}"
+        ]
+        self.record_event(f"adb forwards serial={serial} port={port} count={len(forwards)}")
         return forwards
 
     def kill_scrcpy(self, serial, scid):

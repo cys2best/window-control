@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from scripts.verify_python_orchestration import (
+    RealDeps,
     VerificationConfig,
     VerificationError,
     run_verification,
@@ -21,7 +22,8 @@ class FakeProcess:
 
 
 class FakeDeps:
-    def __init__(self, *, engines=None, skip_build=True, skip_tests=True, exit_on_tray=True):
+    def __init__(self, *, engines=None, skip_build=True, skip_tests=True, exit_on_tray=True,
+                 quality_changes_pid=False, quality_stalls=False):
         self.engines = list(engines or [])
         self.calls = []
         self.opened = []
@@ -30,6 +32,8 @@ class FakeDeps:
         self.skip_build = skip_build
         self.skip_tests = skip_tests
         self.exit_on_tray = exit_on_tray
+        self.quality_changes_pid = quality_changes_pid
+        self.quality_stalls = quality_stalls
         self.env = {}
         self.selection_count = 0
         self.generation = 0
@@ -74,6 +78,8 @@ class FakeDeps:
             return []
         if self.engine_dead:
             return [FakeProcess(401)]
+        if self.quality_done and self.quality_changes_pid:
+            return [FakeProcess(499)]
         return self.engines
 
     def discover_vms(self):
@@ -82,7 +88,7 @@ class FakeDeps:
     def adb_devices(self):
         return [] if self.removed else ["emulator-5556"]
 
-    def adb_forwards(self, serial):
+    def adb_forwards(self, serial, port=None):
         return [] if self.removed else ["emulator-5556 tcp:27190 localabstract:scrcpy_00000007"]
 
     def adb_state(self, serial):
@@ -111,6 +117,8 @@ class FakeDeps:
         self.selection_count += 1
         if self.quality_done:
             self.generation = max(self.generation, 1)
+            if self.quality_stalls:
+                self.generation = 0
         if self.scrcpy_done:
             self.generation = max(self.generation, 2)
         if self.engine_dead:
@@ -212,6 +220,50 @@ def test_quality_and_recovery_are_commands_with_polling_not_prompt_only():
     assert any("dimension" in prompt.lower() for prompt in deps.prompts)
 
 
+def test_quality_rejects_engine_pid_replacement_before_visual_prompt():
+    deps = FakeDeps(quality_changes_pid=True)
+    result = run_verification(config(), deps)
+
+    assert result.status == "FAIL"
+    assert result.checkpoints["quality"]["status"] == "FAIL"
+
+
+def test_source_loss_is_triggered_immediately_before_emulator_removal():
+    deps = FakeDeps()
+    run_verification(config(), deps)
+
+    labels = [call[0] for call in deps.calls]
+    assert labels.index("kill scrcpy", labels.index("kill engine")) < labels.index("remove device")
+
+
+def test_timeout_failure_preserves_partial_result_and_stops_only_helpers():
+    deps = FakeDeps(quality_stalls=True)
+    result = run_verification(config(), deps)
+
+    assert result.status == "FAIL"
+    assert result.checkpoints["quality"]["status"] == "FAIL"
+    assert result.summary["failed_gate"] == "quality"
+    assert ("stop helper", 301) in deps.calls
+    assert ("stop helper", 302) in deps.calls
+    assert not any(call[0] == "kill app" for call in deps.calls)
+
+
+def test_keep_on_failure_retains_app_and_engine_but_stops_helpers():
+    deps = FakeDeps(quality_stalls=True)
+    result = run_verification(config(keep_on_failure=True), deps)
+
+    assert result.status == "FAIL"
+    assert ("stop helper", 301) in deps.calls
+    assert ("stop helper", 302) in deps.calls
+    retained = result.summary["retained_on_failure"]
+    assert retained == {
+        "keep_on_failure": True,
+        "app": True,
+        "owned_engine_pids": [400],
+        "selected_forward": True,
+    }
+
+
 def test_app_exit_requires_operator_exit_and_never_force_kills_app():
     deps = FakeDeps(exit_on_tray=False)
     result = run_verification(config(), deps)
@@ -251,3 +303,22 @@ def test_engine_ice_and_signaling_environment_is_cleared_then_restored(monkeypat
     assert os.environ["ENGINE_LOCAL_ICE_SERVERS"] == "stale-local"
     assert os.environ["ENGINE_PUBLIC_ICE_SERVERS"] == "stale-public"
     assert os.environ["ENGINE_SIGNALING_SECRET"] == "stale-secret"
+
+
+def test_real_adb_forward_listing_is_global_and_exactly_filtered(monkeypatch, tmp_path):
+    deps = RealDeps(config(evidence_dir=tmp_path))
+    calls = []
+
+    class Completed:
+        returncode = 0
+        stdout = "emulator-5556 tcp:27190 localabstract:scrcpy_00000007\nother tcp:27190 localabstract:other\nselected tcp:2719 localabstract:near\n"
+
+    def fake_adb(args):
+        calls.append(args)
+        return Completed()
+
+    monkeypatch.setattr(deps, "adb", fake_adb)
+    assert deps.adb_forwards("emulator-5556", 27190) == [
+        "emulator-5556 tcp:27190 localabstract:scrcpy_00000007"
+    ]
+    assert calls == [["forward", "--list"]]
