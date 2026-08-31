@@ -6,12 +6,12 @@ export async function createSignalingServer({ port = 8443, jwtSecret = null } = 
   const httpServer = createServer();
   const wss = new WebSocketServer({ server: httpServer });
 
-  // session id -> { engine: ws|null, viewer: ws|null, queue: { role, msg }[] }
+  // session id -> { engine: ws|null, viewer: ws|null }
   const sessions = new Map();
 
   function getSession(id) {
     if (!sessions.has(id)) {
-      sessions.set(id, { engine: null, viewer: null, queue: [] });
+      sessions.set(id, { engine: null, viewer: null });
     }
     return sessions.get(id);
   }
@@ -33,9 +33,9 @@ export async function createSignalingServer({ port = 8443, jwtSecret = null } = 
 
     if (jwtSecret) {
       try {
-        const payload = jwt.verify(token, jwtSecret);
-        if (payload.session !== sessionId) {
-          ws.close(1008, 'token session claim does not match session param');
+        const payload = jwt.verify(token, jwtSecret, { algorithms: ['HS256'] });
+        if (payload.session !== sessionId || payload.role !== role) {
+          ws.close(1008, 'token claims do not match session and role params');
           return;
         }
       } catch {
@@ -51,23 +51,11 @@ export async function createSignalingServer({ port = 8443, jwtSecret = null } = 
     }
     session[role] = ws;
 
-    // Flush any queued messages meant for this role.
-    session.queue = session.queue.filter(({ role: destRole, msg }) => {
-      if (destRole === role) {
-        ws.send(msg);
-        return false;
-      }
-      return true;
-    });
-
     ws.on('message', (data) => {
       const target = session[otherRole(role)];
       const msg = data.toString();
       if (target && target.readyState === target.OPEN) {
         target.send(msg);
-      } else {
-        session.queue.push({ role: otherRole(role), msg });
-        if (session.queue.length > 10) session.queue.shift();
       }
     });
 

@@ -88,12 +88,53 @@ test('rejects connection with token for a different session', async () => {
 
 test('accepts connection with valid token matching session', async () => {
   const { server, port } = await createSignalingServer({ port: 0, jwtSecret: 'test-secret' });
-  const token = jwt.sign({ session: 'sess-1' }, 'test-secret');
+  const token = jwt.sign({ session: 'sess-1', role: 'engine' }, 'test-secret');
   const ws = await openClientWithToken(port, 'sess-1', 'engine', token);
   ws.close();
   server.close();
   // openClientWithToken resolves only on 'open' — if we got here, connection was accepted.
   assert.ok(true);
+});
+
+test('rejects connection where token role does not match requested role param', async () => {
+  const { server, port } = await createSignalingServer({ port: 0, jwtSecret: 'test-secret' });
+  const token = jwt.sign({ session: 'sess-1', role: 'viewer' }, 'test-secret');
+  const ws = new WebSocket(`ws://localhost:${port}/?session=sess-1&role=engine&token=${token}`);
+  const closeCode = await new Promise((resolve) => {
+    ws.once('close', (code) => resolve(code));
+  });
+  assert.strictEqual(closeCode, 1008);
+  server.close();
+});
+
+test('accepts connection where token role matches requested role param', async () => {
+  const { server, port } = await createSignalingServer({ port: 0, jwtSecret: 'test-secret' });
+  const token = jwt.sign({ session: 'sess-1', role: 'viewer' }, 'test-secret');
+  const ws = await openClientWithToken(port, 'sess-1', 'viewer', token);
+  ws.close();
+  server.close();
+  assert.ok(true);
+});
+
+test('does not deliver a message queued before the destination ever connected', async () => {
+  const { server, port } = await createSignalingServer({ port: 0 });
+  const engine = await openClient(port, 'sess-1', 'engine');
+
+  engine.send(JSON.stringify({ type: 'offer', sdp: 'stale-offer' }));
+  // Give the relay a tick to process the message with no viewer connected.
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  const viewer = await openClient(port, 'sess-1', 'viewer');
+  let viewerGotMessage = false;
+  viewer.once('message', () => { viewerGotMessage = true; });
+
+  // Give any (incorrect) queued-flush delivery a chance to arrive.
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.strictEqual(viewerGotMessage, false);
+
+  engine.close();
+  viewer.close();
+  server.close();
 });
 
 test('rejects a second connection claiming an already-taken role and keeps the first alive', async () => {
