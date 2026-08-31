@@ -435,13 +435,7 @@ class EngineRuntime:
         # Dimensions come from the engine's post-reconnect health, never
         # synthesized from the requested tier: the device decides the real
         # output size, and the tier is only a ceiling hint.
-        try:
-            health = self._admin.health(admin_port)
-        except (EngineAdminUnavailable, EngineAdminProtocolError) as e:
-            self._log(
-                f"[engine] post-reconnect health failed for {self.instance_name}: {e}"
-            )
-            return
+        health = self._admin.health(admin_port)
         self._apply_health_locked(health)
 
     def _apply_health_locked(self, health: EngineHealth) -> None:

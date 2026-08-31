@@ -607,6 +607,27 @@ def test_disconnected_health_also_recovers_through_reconnect():
     assert fakes.reconnect_generations == [1]
 
 
+def test_accepted_reconnect_with_failed_health_refresh_is_not_recovered():
+    runtime, fakes = make_runtime(health_state="stalled", stall_grace=0)
+    runtime.start()
+
+    initial_health = fakes.admin.health
+    health_calls = 0
+
+    def fail_only_the_post_reconnect_refresh(admin_port: int) -> EngineHealth:
+        nonlocal health_calls
+        health_calls += 1
+        if health_calls == 1:
+            return initial_health(admin_port)
+        raise EngineAdminUnavailable("refresh down")
+
+    fakes.admin.health = fail_only_the_post_reconnect_refresh
+
+    with pytest.raises(EngineAdminUnavailable, match="refresh down"):
+        runtime.check_once()
+    assert fakes.reconnect_generations == [1]
+
+
 def test_unknown_health_state_is_degraded_and_never_reconnects():
     runtime, fakes = make_runtime()
     runtime.start()
