@@ -15,6 +15,7 @@ import os
 import platform
 import shutil
 import subprocess
+import sys
 import time
 import webbrowser
 from dataclasses import dataclass, field
@@ -488,6 +489,9 @@ class RealDeps:
         return processes
 
     def discover_vms(self):
+        source_root = str((self.config.repo_root / "src").resolve())
+        if source_root not in sys.path:
+            sys.path.insert(0, source_root)
         from server.adb_manager import list_vms
 
         return list_vms()

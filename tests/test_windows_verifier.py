@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 import os
 from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 
@@ -322,3 +324,33 @@ def test_real_adb_forward_listing_is_global_and_exactly_filtered(monkeypatch, tm
         "emulator-5556 tcp:27190 localabstract:scrcpy_00000007"
     ]
     assert calls == [["forward", "--list"]]
+
+
+def test_standalone_runner_can_import_src_without_pytest_pythonpath(tmp_path):
+    repo_root = Path(__file__).resolve().parents[1]
+    evidence_dir = tmp_path / "standalone-evidence"
+    script = f"""
+from pathlib import Path
+from scripts.verify_python_orchestration import RealDeps, VerificationConfig
+
+config = VerificationConfig(
+    repo_root=Path.cwd(),
+    engine_exe=Path.cwd() / "engine.exe",
+    evidence_dir=Path({str(evidence_dir)!r}),
+    enforce_windows=False,
+)
+RealDeps(config).discover_vms()
+print("standalone discovery imported src")
+"""
+    environment = os.environ.copy()
+    environment.pop("PYTHONPATH", None)
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=repo_root,
+        env=environment,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "standalone discovery imported src" in completed.stdout
