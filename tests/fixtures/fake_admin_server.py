@@ -20,7 +20,8 @@ class FakeAdminHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         """Handle GET requests for /health endpoint."""
-        if self.path == "/health":
+        self.server.request_paths.append(self.path)
+        if self.path == "/admin/health":
             response = self.server.dequeue_response()
             if response is None:
                 # No queued response, return default health
@@ -52,7 +53,9 @@ class FakeAdminHandler(BaseHTTPRequestHandler):
         content_length = int(self.headers.get('Content-Length', 0))
         body = self.rfile.read(content_length) if content_length > 0 else b""
 
-        if self.path == "/reconnect":
+        self.server.request_paths.append(self.path)
+
+        if self.path == "/admin/reconnect":
             response = self.server.dequeue_response()
             if response is None:
                 # No queued response, return error
@@ -77,7 +80,7 @@ class FakeAdminHandler(BaseHTTPRequestHandler):
             else:
                 self.wfile.write(json.dumps(response_body).encode())
 
-        elif self.path == "/keyframe":
+        elif self.path == "/admin/keyframe":
             response = self.server.dequeue_response()
             if response is None:
                 # No queued response, return error
@@ -155,6 +158,7 @@ class FakeAdminServer:
         self.server.width = self.width
         self.server.height = self.height
         self.server.dequeue_response = self._dequeue_response
+        self.server.request_paths = []
         self.port = self.server.server_address[1]
 
         # Start server in background thread

@@ -2,9 +2,9 @@
 
 The engine.exe Windows process runs a local HTTP listener on localhost:{admin_port}
 with endpoints for:
-  - GET /health: returns health status (state, generation, dimensions)
-  - POST /reconnect: triggers scrcpy reconnect
-  - POST /keyframe: requests IDR keyframe
+  - GET /admin/health: returns health status (state, generation, dimensions)
+  - POST /admin/reconnect: triggers scrcpy reconnect
+  - POST /admin/keyframe: requests IDR keyframe
 
 This module provides a strongly-typed client that maps these HTTP calls to
 Python methods and cleanly separates three failure modes:
@@ -114,7 +114,7 @@ class EngineAdminClient:
             EngineAdminUnavailable: Port is unreachable.
             EngineAdminProtocolError: Response is invalid or malformed.
         """
-        url = f"http://127.0.0.1:{admin_port}/health"
+        url = f"http://127.0.0.1:{admin_port}/admin/health"
         try:
             response = self._get_client().get(url, timeout=self._timeout)
         except httpx.TransportError as e:
@@ -178,7 +178,7 @@ class EngineAdminClient:
                 reflects an unexpected status (400/5xx).
             ReconnectRejected: Engine rejected reconnect (409 stale generation).
         """
-        url = f"http://127.0.0.1:{admin_port}/reconnect"
+        url = f"http://127.0.0.1:{admin_port}/admin/reconnect"
         payload = {
             "scrcpy_port": scrcpy_port,
             "generation": generation,
@@ -264,7 +264,7 @@ class EngineAdminClient:
             EngineAdminUnavailable: Port is unreachable.
             EngineAdminProtocolError: Response has unexpected status.
         """
-        url = f"http://127.0.0.1:{admin_port}/keyframe"
+        url = f"http://127.0.0.1:{admin_port}/admin/keyframe"
 
         try:
             response = self._get_client().post(url, timeout=self._timeout)

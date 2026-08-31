@@ -13,6 +13,24 @@ from server.engine_admin import (
 from tests.fixtures.fake_admin_server import FakeAdminServer
 
 
+def test_client_uses_cpp_admin_routes_for_every_request():
+    """The client must interoperate with engine's /admin-only handler."""
+    with FakeAdminServer(generation=5) as server:
+        client = EngineAdminClient()
+
+        assert client.health(server.port).generation == 5
+        server.queue_reconnect(200, {"accepted": True, "generation": 6})
+        assert client.reconnect(server.port, 27183, 6) == 6
+        server.queue_keyframe(204)
+        assert client.keyframe(server.port) is None
+
+        assert server.server.request_paths == [
+            "/admin/health",
+            "/admin/reconnect",
+            "/admin/keyframe",
+        ]
+
+
 def test_health_connected_state():
     """Test reading health in connected state."""
     with FakeAdminServer(generation=3, state="connected", width=1920, height=1080) as server:
