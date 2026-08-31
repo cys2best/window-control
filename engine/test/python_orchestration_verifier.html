@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>WindowControl Python orchestration verifier</title>
+  <style>
+    body { font: 15px system-ui,sans-serif; max-width: 960px; margin: 24px auto; padding: 0 16px; }
+    video { width: min(720px,100%); background: #111; display: block; }
+    button { margin: 6px 6px 6px 0; padding: 8px 12px; }
+    #status { font-weight: 600; } #log { white-space: pre-wrap; background:#f2f2f2; padding:12px; }
+  </style>
+</head>
+<body>
+  <h1>Python orchestration verifier</h1>
+  <p>Status: <span id="status">disconnected</span></p>
+  <p>Instance: <code id="serial"></code> · generation: <code id="generation">-</code></p>
+  <video id="video" autoplay playsinline muted></video>
+  <button id="refresh">Refresh selection (fresh token)</button>
+  <button data-tier="480">Quality 480</button>
+  <button data-tier="720">Quality 720</button>
+  <button data-tier="1080">Quality 1080</button>
+  <pre id="log"></pre>
+  <script>
+    const query = new URLSearchParams(location.search);
+    const appUrl = query.get('app') || 'http://127.0.0.1:8080';
+    const serial = query.get('serial') || '';
+    const status = document.querySelector('#status');
+    const logEl = document.querySelector('#log');
+    const video = document.querySelector('#video');
+    const generationEl = document.querySelector('#generation');
+    document.querySelector('#serial').textContent = serial;
+    let pc = null;
+    let inputChannel = null;
+    let currentSelection = null;
+
+    function log(...parts) {
+      const line = parts.map(String).join(' ');
+      console.log(line); logEl.textContent += line + '\n';
+    }
+    function setStatus(value) { status.textContent = value; log('status:', value); }
+
+    async function selectEngine() {
+      const response = await fetch(`${appUrl}/instances/${encodeURIComponent(serial)}/engine-select`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}' });
+      if (!response.ok) throw new Error(`engine-select ${response.status}`);
+      currentSelection = await response.json();
+      generationEl.textContent = currentSelection.generation;
+      log('selection:', JSON.stringify({whep_url: currentSelection.whep_url, generation: currentSelection.generation}));
+      return currentSelection;
+    }
+
+    async function connect(selection) {
+      if (pc) { pc.close(); }
+      pc = new RTCPeerConnection();
+      pc.addTransceiver('video', {direction:'recvonly'});
+      inputChannel = pc.createDataChannel('input');
+      inputChannel.onopen = () => { log('input channel open'); setStatus('connected (input ready)'); };
+      inputChannel.onclose = () => log('input channel closed');
+      inputChannel.onerror = event => log('input channel error', event);
+      pc.ontrack = event => {
+        video.srcObject = event.streams[0] || new MediaStream([event.track]);
+        setStatus('receiving video');
+      };
+      pc.oniceconnectionstatechange = () => log('ICE state:', pc.iceConnectionState);
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      if (pc.iceGatheringState !== 'complete') await new Promise(resolve => {
+        const done = () => { if (pc.iceGatheringState === 'complete') { pc.removeEventListener('icegatheringstatechange', done); resolve(); } };
+        pc.addEventListener('icegatheringstatechange', done);
+      });
+      const response = await fetch(selection.whep_url, { method:'POST', headers:{'Content-Type':'application/sdp', 'Authorization':`Bearer ${selection.whep_token}`}, body:pc.localDescription.sdp });
+      if (!response.ok) throw new Error(`WHEP ${response.status}`);
+      await pc.setRemoteDescription({type:'answer', sdp:await response.text()});
+      log('WHEP negotiation complete; framesDecoded is reported below when available.');
+    }
+
+    async function refreshSelection() {
+      try { setStatus('refreshing selection'); await connect(await selectEngine()); } catch (error) { setStatus('error'); log(error); }
+    }
+    async function changeQuality(tier) {
+      const response = await fetch(`${appUrl}/instances/${encodeURIComponent(serial)}/quality`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({tier})});
+      log('quality', tier, 'response', response.status);
+      if (!response.ok) throw new Error(`quality ${response.status}`);
+    }
+    video.addEventListener('click', event => {
+      if (!inputChannel || inputChannel.readyState !== 'open') return log('input channel is not open');
+      const rect = video.getBoundingClientRect();
+      inputChannel.send(JSON.stringify({type:'click', x:(event.clientX-rect.left)/rect.width, y:(event.clientY-rect.top)/rect.height}));
+      log('click sent');
+    });
+    document.querySelector('#refresh').addEventListener('click', refreshSelection);
+    document.querySelectorAll('[data-tier]').forEach(button => button.addEventListener('click', () => changeQuality(button.dataset.tier).catch(error => log(error))));
+    setInterval(async () => {
+      if (!pc) return;
+      const stats = await pc.getStats();
+      stats.forEach(report => { if (report.type === 'inbound-rtp' && report.kind === 'video') log('framesDecoded:', report.framesDecoded || 0, 'framesReceived:', report.framesReceived || 0); });
+    }, 5000);
+    refreshSelection();
+  </script>
+</body>
+</html>
