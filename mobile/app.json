@@ -47,7 +47,8 @@
     },
     "plugins": [
       "@config-plugins/react-native-webrtc",
-      "expo-font"
+      "expo-font",
+      "expo-secure-store"
     ],
     "extra": {
       "eas": {

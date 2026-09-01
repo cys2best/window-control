@@ -1,20 +1,56 @@
 import { httpUrl, wsUrl } from "./urls";
 
 export type Instance = { id: string; serial: string; title: string; w?: number; h?: number };
-export type SelectResp = {
-  ok: boolean; serial: string; name: string; w: number; h: number;
-  whep_url: string; stun_url: string;
+
+export type IceServer = {
+  urls: string | string[];
+  username?: string;
+  credential?: string;
 };
+
+export type SelectResp = {
+  ok: true;
+  id: string;
+  serial: string;
+  name: string;
+  w: number;
+  h: number;
+  whep_url: string;
+  whep_token: string;
+  signaling_url: string | null;
+  signaling_token: string | null;
+  ice_servers: IceServer[];
+  generation: number;
+};
+
+export class ApiError extends Error {
+  status: number;
+  constructor(path: string, status: number) {
+    super(`${path} ${status}`);
+    this.status = status;
+  }
+}
 
 function serialOf(raw: any): string {
   const id: string = raw.id ?? raw.serial ?? "";
   return raw.serial ?? (id.startsWith("adb:") ? id.slice(4) : id);
 }
 
-export function makeClient(base: string) {
+export function makeClient(base: string, authToken: string | null) {
+  const request = async (path: string, init: RequestInit = {}) => {
+    const requestHeaders = new Headers(init.headers);
+    if (authToken) requestHeaders.set("Authorization", `Bearer ${authToken}`);
+    const response = await fetch(httpUrl(base, path), {
+      ...init,
+      headers: requestHeaders,
+    });
+    if (!response.ok) throw new ApiError(path, response.status);
+    return response;
+  };
+
   return {
     async instances(): Promise<Instance[]> {
-      const r = await fetch(httpUrl(base, "/instances"));
+      const r = await request("/instances");
       const list = await r.json();
       return (list as any[]).map((d) => ({
         id: d.id ?? d.serial,
@@ -24,23 +60,23 @@ export function makeClient(base: string) {
       }));
     },
     async select(serial: string): Promise<SelectResp> {
-      const r = await fetch(httpUrl(base, `/instances/${serial}/select`), { method: "POST" });
-      if (!r.ok) throw new Error(`select ${r.status}`);
+      const r = await request(`/instances/${serial}/select`, { method: "POST" });
       return r.json();
     },
     async keyframe(serial: string): Promise<void> {
-      try { await fetch(httpUrl(base, `/instances/${serial}/keyframe`), { method: "POST" }); } catch {}
+      try { await request(`/instances/${serial}/keyframe`, { method: "POST" }); } catch {}
     },
     async setQuality(serial: string, tier: string): Promise<void> {
       try {
-        await fetch(httpUrl(base, `/instances/${serial}/quality`), {
+        await request(`/instances/${serial}/quality`, {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ tier }),
         });
       } catch {}
     },
-    previewUrl(serial: string): string {
-      return httpUrl(base, `/instances/${serial}/preview?t=${Date.now()}`);
+    previewSource(serial: string): { uri: string; headers?: { Authorization: string } } {
+      const uri = httpUrl(base, `/instances/${serial}/preview?t=${Date.now()}`);
+      return authToken ? { uri, headers: { Authorization: `Bearer ${authToken}` } } : { uri };
     },
     inputWsUrl(): string { return wsUrl(base, "/input"); },
   };

@@ -8,8 +8,9 @@ import { useServer } from "../api/ServerContext";
 // v3: light warm ground, rounded hero, logo + wordmark, rounded input (coral
 // caret, red border on error), rounded coral error card, "Start streaming" pill.
 export function ServerSetup({ navigation }: { navigation: any }) {
-  const { setBase } = useServer();
+  const { setServer } = useServer();
   const [url, setUrl] = useState("http://100.77.31.86:8080");
+  const [token, setToken] = useState("");
   const [error, setError] = useState("");
   const [hint, setHint] = useState("");
   const [connecting, setConnecting] = useState(false);
@@ -23,14 +24,19 @@ export function ServerSetup({ navigation }: { navigation: any }) {
     }
     setConnecting(true); setError("");
     try {
-      await setBase(url);
-      // Probe reachability so an unreachable host surfaces here, not on the list.
-      const r = await fetch(url.trim().replace(/\/+$/, "") + "/instances");
-      if (!r.ok) throw new Error("bad status");
+      const client = await setServer(url, token);
+      // Probe reachability (and auth) so a bad host or token surfaces here,
+      // not on the list.
+      await client.instances();
       navigation.replace("InstanceList");
-    } catch {
-      setError("Can't reach server");
-      setHint("No response. Confirm the host is on the tailnet.");
+    } catch (e: any) {
+      if (e?.status === 401) {
+        setError("Access token rejected");
+        setHint("Check the token and try again.");
+      } else {
+        setError("Can't reach server");
+        setHint("No response. Confirm the host is on the tailnet.");
+      }
     } finally {
       setConnecting(false);
     }
@@ -64,6 +70,14 @@ export function ServerSetup({ navigation }: { navigation: any }) {
           style={{ height: 56, paddingHorizontal: 18, fontFamily: theme.font.medium, fontSize: 15,
             color: theme.color.text, backgroundColor: theme.color.card,
             borderWidth: 1.5, borderColor: error ? theme.color.error : "rgba(28,26,25,0.12)",
+            borderRadius: theme.radius.input }} />
+        <Text style={{ fontFamily: theme.font.semibold, fontSize: 12, color: theme.color.textMuted, marginTop: 16, marginBottom: 8 }}>Access token (optional)</Text>
+        <TextInput value={token} onChangeText={(t) => { setToken(t); setError(""); }}
+          placeholder="Access token" placeholderTextColor="rgba(28,26,25,0.35)"
+          autoCapitalize="none" autoCorrect={false} spellCheck={false} secureTextEntry
+          style={{ height: 56, paddingHorizontal: 18, fontFamily: theme.font.medium, fontSize: 15,
+            color: theme.color.text, backgroundColor: theme.color.card,
+            borderWidth: 1.5, borderColor: "rgba(28,26,25,0.12)",
             borderRadius: theme.radius.input }} />
         {error ? (
           <View style={{ flexDirection: "row", gap: 10, marginTop: 10, padding: 12, backgroundColor: theme.color.errorBg, borderRadius: theme.radius.sm }}>

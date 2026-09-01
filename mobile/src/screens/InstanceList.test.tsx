@@ -12,7 +12,7 @@ test("renders instances and navigates on tap", async () => {
       { id: "adb:A", serial: "A", title: "LDP-01" },
       { id: "adb:B", serial: "B", title: "LDP-02" },
     ]),
-    previewUrl: (s: string) => `http://h/preview/${s}`,
+    previewSource: (s: string) => ({ uri: `http://h/preview/${s}` }),
     keyframe: jest.fn().mockResolvedValue(undefined),
   };
   jest.spyOn(SC, "useServer").mockReturnValue({ base: "http://h", client, setBase: jest.fn(), ready: true } as any);

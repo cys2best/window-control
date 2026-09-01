@@ -89,7 +89,7 @@ export function InstanceList({ navigation }: { navigation: any }) {
           contentContainerStyle={{ paddingHorizontal: 24, paddingTop: 8, paddingBottom: 120 }}
           renderItem={({ item }) => (
             <InstanceRow instance={item} active={false}
-              previewUri={client!.previewUrl(item.serial)} onPress={() => open(item)} />
+              previewSource={client!.previewSource(item.serial)} onPress={() => open(item)} />
           )} />
       )}
       <BottomNav active="windows"
