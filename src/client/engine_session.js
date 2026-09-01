@@ -31,6 +31,8 @@
 
     function createAttempt(kind, selection, callbacks) {
       const pc = new PeerConnection({ iceServers: selection.ice_servers || [] });
+      let attempt;
+      try {
       let channel = null;
       let input;
       let resourceUrl = null;
@@ -46,7 +48,7 @@
       let timeout = null;
       const ready = new Promise(function (resolve, reject) { readyResolve = resolve; readyReject = reject; });
 
-      const attempt = {
+      attempt = {
         kind: kind,
         pc: pc,
         get channel() { return channel; },
@@ -108,7 +110,7 @@
 
       listen(pc, 'track', function (event) {
         if (closed) return;
-        if (event.track && event.track.kind !== 'video') return;
+        if (!event.track || event.track.kind !== 'video') return;
         videoStream = event.streams && event.streams[0];
         if (!videoStream) return;
         if (callbacks.onTrack) callbacks.onTrack(videoStream);
@@ -148,6 +150,21 @@
         close: function () { return close(); },
       };
       return attempt;
+      } catch (error) {
+        if (attempt) attempt.close();
+        else if (pc && typeof pc.close === 'function') pc.close();
+        throw error;
+      }
+    }
+
+    function failedAttempt(kind, error) {
+      return {
+        kind: kind,
+        ready: Promise.reject(error),
+        fail: function () {},
+        abort: function () { return Promise.resolve(); },
+        close: function () { return Promise.resolve(); },
+      };
     }
 
     async function negotiate(attempt) {
@@ -159,7 +176,12 @@
     }
 
     function startLocal(selection, callbacks) {
-      const attempt = createAttempt('local', selection, callbacks);
+      let attempt;
+      try {
+        attempt = createAttempt('local', selection, callbacks);
+      } catch (error) {
+        return failedAttempt('local', error);
+      }
       (async function () {
         try {
           await negotiate(attempt);
@@ -191,9 +213,15 @@
     }
 
     function startPublic(selection, callbacks) {
-      const attempt = createAttempt('public', selection, callbacks);
+      let attempt;
+      try {
+        attempt = createAttempt('public', selection, callbacks);
+      } catch (error) {
+        return failedAttempt('public', error);
+      }
       let answerApplied = false;
       let closingSignaling = false;
+      let sessionReady = false;
       (async function () {
         try {
           await negotiate(attempt);
@@ -222,12 +250,13 @@
           });
           listen('error', function () { attempt.fail(sessionError('signaling-failed', 'Public signaling failed')); });
           listen('close', function () {
-            if (!attempt.closed && !closingSignaling && !answerApplied) {
-              attempt.fail(sessionError('signaling-closed', 'Public signaling closed before answer'));
+            if (!attempt.closed && !closingSignaling && !sessionReady) {
+              attempt.fail(sessionError('signaling-closed', 'Public signaling closed before readiness'));
             }
           });
           await attempt.ready;
           if (!attempt.closed) {
+            sessionReady = true;
             closingSignaling = true;
             ws.close();
           }
@@ -271,15 +300,26 @@
         let failures = 0;
         attempts.forEach(function (attempt) {
           attempt.ready.then(async function (winner) {
-            if (cancelled || pending !== group) {
+            if (cancelled || pending !== group || managerClosed) {
               await winner.close();
+              reject(cancelError || sessionError('closed', 'Engine session manager is closed'));
               return;
             }
-            pending = null;
             winner.markAdopted();
             await closeAttempts(attempts.filter(function (other) { return other !== winner; }));
+            if (cancelled || pending !== group || managerClosed) {
+              await winner.close();
+              reject(cancelError || sessionError('closed', 'Engine session manager is closed'));
+              return;
+            }
             if (active && active !== winner.session) await active.close();
+            if (cancelled || pending !== group || managerClosed) {
+              await winner.close();
+              reject(cancelError || sessionError('closed', 'Engine session manager is closed'));
+              return;
+            }
             active = winner.session;
+            pending = null;
             if (callbacks.onState) callbacks.onState('connected');
             resolve(winner.session);
           }, function (error) {

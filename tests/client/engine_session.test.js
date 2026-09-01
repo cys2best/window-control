@@ -41,6 +41,7 @@ function fakeDeps() {
     local: { calls: [], post: deferred() },
     public: { calls: [] },
     fetch: { calls: [] },
+    deleteDeferred: null,
     flush: async () => {
       for (let index = 0; index < 10; index += 1) await Promise.resolve();
     },
@@ -63,6 +64,7 @@ function fakeDeps() {
     addTransceiver(kind, options) { this.calls.push(`addTransceiver:${kind}`); this.transceiverOptions = options; }
     createDataChannel(name, options) {
       this.calls.push(`createDataChannel:${name}`);
+      if (this.scenario.createDataChannelError) throw this.scenario.createDataChannelError;
       this.channel = eventTarget({
         name, options, readyState: 'connecting', closed: false, send() {},
         close() {
@@ -72,6 +74,7 @@ function fakeDeps() {
           this.dispatch('close');
         },
       });
+      this.channel.scenario = this.scenario;
       this.scenario.channel = this.channel;
       return this.channel;
     }
@@ -109,17 +112,24 @@ function fakeDeps() {
 
   deps.fetchImpl = async (url, options) => {
     deps.fetch.calls.push({ url, options });
-    if (options.method === 'DELETE') return response(204);
+    if (options.method === 'DELETE') return deps.deleteDeferred ? deps.deleteDeferred.promise : response(204);
     return deps.local.post.promise;
   };
   deps.PeerConnection = FakePeerConnection;
   deps.WebSocketImpl = FakeWebSocket;
-  deps.inputApi = { createSender: (channel) => ({ channel, closed: false, close() { this.closed = true; } }) };
+  deps.inputApi = {
+    createSender(channel) {
+      if (channel.scenario.senderError) throw channel.scenario.senderError;
+      return { channel, closed: false, close() { this.closed = true; } };
+    },
+  };
   deps.local.resolvePost = (location, status) => deps.local.post.resolve(response(status || 201, { Location: location }, 'local-answer'));
   deps.local.rejectPost = (error) => deps.local.post.reject(error || new Error('local failed'));
   deps.local.becomeReady = () => becomeReady(deps.local);
   deps.public.becomeReady = () => becomeReady(deps.public);
   deps.publicOnly = () => { deps.scenarios = [deps.public]; };
+  deps.holdDeletes = () => { deps.deleteDeferred = deferred(); };
+  deps.resolveDelete = () => deps.deleteDeferred.resolve(response(204));
   return deps;
 }
 
@@ -128,7 +138,7 @@ function becomeReady(scenario) {
   scenario.channel.dispatch('open');
   scenario.pc.iceConnectionState = 'connected';
   scenario.pc.dispatch('iceconnectionstatechange');
-  scenario.pc.dispatch('track', { streams: [{ id: 'stream' }] });
+  scenario.pc.dispatch('track', { track: { kind: 'video' }, streams: [{ id: 'stream' }] });
 }
 
 function localSelection() {
@@ -219,7 +229,7 @@ test('uses the final video track, ICE, and input channel before adopting local s
   connecting.then(() => { settled = true; });
   await deps.flush();
   assert.equal(settled, false);
-  deps.local.pc.dispatch('track', { streams: [{ id: 'video-stream' }] });
+  deps.local.pc.dispatch('track', { track: { kind: 'video' }, streams: [{ id: 'video-stream' }] });
   const session = await connecting;
 
   assert.equal(session.kind, 'local');
@@ -240,6 +250,28 @@ test('does not adopt an audio track in place of the required video track', async
   deps.local.pc.iceConnectionState = 'connected';
   deps.local.pc.dispatch('iceconnectionstatechange');
   deps.local.pc.dispatch('track', { track: { kind: 'audio' }, streams: [{ id: 'audio-stream' }] });
+  await deps.flush();
+  let settled = false;
+  connecting.then(() => { settled = true; });
+  await deps.flush();
+  assert.equal(settled, false);
+  deps.local.pc.dispatch('track', { track: { kind: 'video' }, streams: [{ id: 'video-stream' }] });
+  assert.equal((await connecting).kind, 'local');
+});
+
+test('does not adopt a track event that lacks a video track', async () => {
+  const api = loadApi();
+  const deps = fakeDeps();
+  const manager = api.createManager({ ...deps, timeoutMs: 0 });
+  const connecting = manager.connect(localSelection(), callbacks());
+  await deps.flush();
+  deps.local.resolvePost('/resource');
+  await deps.flush();
+  deps.local.channel.readyState = 'open';
+  deps.local.channel.dispatch('open');
+  deps.local.pc.iceConnectionState = 'connected';
+  deps.local.pc.dispatch('iceconnectionstatechange');
+  deps.local.pc.dispatch('track', { streams: [{ id: 'missing-track' }] });
   await deps.flush();
   let settled = false;
   connecting.then(() => { settled = true; });
@@ -349,6 +381,61 @@ test('race adopts first ready session and deletes the WHEP loser', async () => {
   assert.equal(deps.local.pc.closed, true);
 });
 
+test('manager close cancels a winner while loser cleanup is still pending', async () => {
+  const api = loadApi();
+  const deps = fakeDeps();
+  deps.holdDeletes();
+  const manager = api.createManager(deps);
+  const connecting = manager.connect(fullSelection(), callbacks());
+  await deps.flush();
+  deps.local.resolvePost('/local-resource');
+  await deps.flush();
+  deps.public.ws.open();
+  await deps.flush();
+  deps.public.ws.answer('public-answer');
+  await deps.flush();
+  deps.public.becomeReady();
+  await deps.flush();
+  assert.equal(deps.fetch.calls.at(-1).options.method, 'DELETE');
+
+  await manager.close();
+  deps.resolveDelete();
+
+  await assert.rejects(connecting, /closed/);
+  assert.equal(deps.public.pc.closed, true);
+});
+
+test('a later connect supersedes a winner while loser cleanup is still pending', async () => {
+  const api = loadApi();
+  const deps = fakeDeps();
+  deps.holdDeletes();
+  const manager = api.createManager(deps);
+  const first = manager.connect(fullSelection(), callbacks());
+  await deps.flush();
+  deps.local.resolvePost('/local-resource');
+  await deps.flush();
+  deps.public.ws.open();
+  await deps.flush();
+  deps.public.ws.answer('public-answer');
+  await deps.flush();
+  deps.public.becomeReady();
+  await deps.flush();
+
+  const replacementAttempt = { calls: [] };
+  deps.scenarios.push(replacementAttempt);
+  const replacement = manager.connect(publicSelection(), callbacks());
+  await deps.flush();
+  deps.public.ws.open();
+  await deps.flush();
+  deps.public.ws.answer('replacement-answer');
+  await deps.flush();
+  becomeReady(replacementAttempt);
+  deps.resolveDelete();
+
+  await assert.rejects(first, /superseded/);
+  assert.equal((await replacement).kind, 'public');
+});
+
 test('allows a failed local transport to leave public able to win', async () => {
   const api = loadApi();
   const deps = fakeDeps();
@@ -364,6 +451,58 @@ test('allows a failed local transport to leave public able to win', async () => 
   deps.public.becomeReady();
 
   assert.equal((await connected).kind, 'public');
+});
+
+test('a public signaling close after answer rejects before readiness', async () => {
+  const api = loadApi();
+  const deps = fakeDeps();
+  deps.publicOnly();
+  const manager = api.createManager({ ...deps, timeoutMs: 0 });
+  const connecting = manager.connect(publicSelection(), callbacks());
+  await deps.flush();
+  deps.public.ws.open();
+  await deps.flush();
+  deps.public.ws.answer('public-answer');
+  await deps.flush();
+  deps.public.ws.close();
+  deps.public.becomeReady();
+
+  await assert.rejects(connecting, /Public signaling closed/);
+  assert.equal(deps.public.pc.closed, true);
+});
+
+test('a synchronous local DataChannel failure cleans its peer and lets public win', async () => {
+  const api = loadApi();
+  const deps = fakeDeps();
+  deps.local.createDataChannelError = new Error('DataChannel setup failed');
+  const manager = api.createManager(deps);
+  const connecting = manager.connect(fullSelection(), callbacks());
+  await deps.flush();
+  deps.public.ws.open();
+  await deps.flush();
+  deps.public.ws.answer('public-answer');
+  await deps.flush();
+  deps.public.becomeReady();
+
+  assert.equal((await connecting).kind, 'public');
+  assert.equal(deps.local.pc.closed, true);
+});
+
+test('a synchronous local input sender failure cleans its peer and lets public win', async () => {
+  const api = loadApi();
+  const deps = fakeDeps();
+  deps.local.senderError = new Error('Input sender setup failed');
+  const manager = api.createManager(deps);
+  const connecting = manager.connect(fullSelection(), callbacks());
+  await deps.flush();
+  deps.public.ws.open();
+  await deps.flush();
+  deps.public.ws.answer('public-answer');
+  await deps.flush();
+  deps.public.becomeReady();
+
+  assert.equal((await connecting).kind, 'public');
+  assert.equal(deps.local.pc.closed, true);
 });
 
 test('rejects only after every configured transport fails', async () => {
