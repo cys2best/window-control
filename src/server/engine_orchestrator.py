@@ -23,6 +23,7 @@ class EngineOrchestrator:
         self._log = log
         self._lock = threading.Lock()
         self._runtimes: dict[str, EngineRuntime] = {}
+        self._closed = False
         self._admin = EngineAdminClient()
         self._token_issuer = EngineTokenIssuer(
             config.whep_secret, config.signaling_secret
@@ -31,7 +32,7 @@ class EngineOrchestrator:
     def add_instance(self, serial: str, instance_name: str,
                      instance_index: int, tier: str) -> None:
         with self._lock:
-            if serial in self._runtimes:
+            if self._closed or serial in self._runtimes:
                 return
 
         launcher = ScrcpyServerLauncher(serial, instance_index)
@@ -48,10 +49,11 @@ class EngineOrchestrator:
 
         with self._lock:
             existing = self._runtimes.get(serial)
-            if existing is None:
+            closed = self._closed
+            if existing is None and not closed:
                 self._runtimes[serial] = runtime
 
-        if existing is not None:
+        if existing is not None or closed:
             runtime.stop()
             return
 
@@ -102,6 +104,7 @@ class EngineOrchestrator:
 
     def stop_all(self) -> None:
         with self._lock:
+            self._closed = True
             runtimes = tuple(self._runtimes.values())
             self._runtimes.clear()
 

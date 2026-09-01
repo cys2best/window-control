@@ -1,5 +1,7 @@
 """Registry-level lifecycle tests for discovery-managed engine runtimes."""
 
+import threading
+
 from server.engine_orchestrator import EngineOrchestrator
 from server.engine_runtime import EngineRuntimeConfig
 
@@ -194,3 +196,39 @@ def test_stop_all_stops_every_runtime_and_clears_the_registry():
     assert [runtime.stop_count for runtime in factory.runtimes] == [1, 1]
     assert orchestrator.select("emulator-5554", "127.0.0.1") is None
     assert orchestrator.select("emulator-5556", "127.0.0.1") is None
+
+
+def test_stop_all_closes_registry_and_stops_an_add_that_arrives_late():
+    factory = FakeRuntimeFactory()
+    factory_entered = threading.Event()
+    release_factory = threading.Event()
+
+    def blocking_factory(*args):
+        runtime = factory(*args)
+        factory_entered.set()
+        release_factory.wait(timeout=2)
+        return runtime
+
+    orchestrator = EngineOrchestrator(
+        make_config(), runtime_factory=blocking_factory, log=lambda _: None
+    )
+    worker = threading.Thread(
+        target=lambda: orchestrator.add_instance(
+            "emulator-5554", "instance0", 0, "720"
+        )
+    )
+    worker.start()
+
+    assert factory_entered.wait(timeout=1)
+    orchestrator.stop_all()
+    release_factory.set()
+    worker.join(timeout=1)
+
+    assert not worker.is_alive()
+    assert factory.created_count == 1
+    assert factory.runtimes[0].start_count == 0
+    assert factory.runtimes[0].stop_count == 1
+    assert orchestrator.select("emulator-5554", "127.0.0.1") is None
+
+    orchestrator.add_instance("emulator-5556", "instance1", 1, "720")
+    assert factory.created_count == 1
