@@ -498,7 +498,7 @@ def run_verification(config: VerificationConfig, deps: Any) -> VerificationResul
         engine_tests = config.repo_root / "engine" / "build" / "Release" / "engine_tests.exe"
         if not engine_tests.exists():
             raise VerificationError(f"missing engine_tests.exe: {engine_tests}")
-        command = [str(engine_tests), "--gtest_filter=-SignalingClient.*:PublicSignalingBridge.*"]
+        command = [str(engine_tests)]
         _record_command(deps, command, "engine tests")
         deps.run(command, cwd=config.repo_root, env=env, label="engine tests")
     else:

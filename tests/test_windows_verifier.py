@@ -527,6 +527,31 @@ def test_derives_scrcpy_port_and_scid_from_discovered_ldplayer_index():
     assert any(env.get("ENGINE_PUBLIC_ICE_SERVERS") == "" for env in deps.started_env)
 
 
+def test_runs_the_complete_unfiltered_engine_test_suite(tmp_path):
+    repo_root = tmp_path / "repo"
+    engine_dir = repo_root / "engine" / "build" / "Release"
+    engine_dir.mkdir(parents=True)
+    (engine_dir / "engine.exe").touch()
+    (engine_dir / "engine_tests.exe").touch()
+    deps = FakeDeps(skip_tests=False)
+
+    run_verification(
+        config(
+            repo_root=repo_root,
+            engine_exe=engine_dir / "engine.exe",
+            skip_tests=False,
+        ),
+        deps,
+    )
+
+    engine_test_calls = [call for call in deps.calls if call[0] == "engine tests"]
+    assert engine_test_calls
+    for call in engine_test_calls:
+        command = call[1]
+        assert command == (str(engine_dir / "engine_tests.exe"),)
+        assert not any(arg.startswith("--gtest_filter") for arg in command)
+
+
 def test_starts_node_signaling_relay_with_cleared_jwt_secret():
     deps = FakeDeps()
     run_verification(config(), deps)
