@@ -34,8 +34,9 @@ export async function createSignalingServer({ port = 8443, jwtSecret = null } = 
     if (jwtSecret) {
       try {
         const payload = jwt.verify(token, jwtSecret, { algorithms: ['HS256'] });
-        if (payload.session !== sessionId || payload.role !== role) {
-          ws.close(1008, 'token claims do not match session and role params');
+        if (payload.session !== sessionId || payload.role !== role
+            || typeof payload.exp !== 'number' || !Number.isFinite(payload.exp)) {
+          ws.close(1008, 'token claims do not match session, role, and expiry requirements');
           return;
         }
       } catch {

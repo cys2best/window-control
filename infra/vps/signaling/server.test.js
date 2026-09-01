@@ -21,6 +21,16 @@ function openClientWithToken(port, session, role, token) {
   });
 }
 
+function waitForCloseCode(ws, timeoutMs = 250) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(null), timeoutMs);
+    ws.once('close', (code) => {
+      clearTimeout(timer);
+      resolve(code);
+    });
+  });
+}
+
 test('relays a message from engine to viewer in the same session', async () => {
   const { server, port } = await createSignalingServer({ port: 0 });
   const engine = await openClient(port, 'sess-1', 'engine');
@@ -88,7 +98,11 @@ test('rejects connection with token for a different session', async () => {
 
 test('accepts connection with valid token matching session', async () => {
   const { server, port } = await createSignalingServer({ port: 0, jwtSecret: 'test-secret' });
-  const token = jwt.sign({ session: 'sess-1', role: 'engine' }, 'test-secret');
+  const token = jwt.sign({
+    session: 'sess-1',
+    role: 'engine',
+    exp: Math.floor(Date.now() / 1000) + 60,
+  }, 'test-secret');
   const ws = await openClientWithToken(port, 'sess-1', 'engine', token);
   ws.close();
   server.close();
@@ -109,11 +123,40 @@ test('rejects connection where token role does not match requested role param', 
 
 test('accepts connection where token role matches requested role param', async () => {
   const { server, port } = await createSignalingServer({ port: 0, jwtSecret: 'test-secret' });
-  const token = jwt.sign({ session: 'sess-1', role: 'viewer' }, 'test-secret');
+  const token = jwt.sign({
+    session: 'sess-1',
+    role: 'viewer',
+    exp: Math.floor(Date.now() / 1000) + 60,
+  }, 'test-secret');
   const ws = await openClientWithToken(port, 'sess-1', 'viewer', token);
   ws.close();
   server.close();
   assert.ok(true);
+});
+
+test('rejects an otherwise matching token without an expiry claim', async () => {
+  const { server, port } = await createSignalingServer({ port: 0, jwtSecret: 'test-secret' });
+  const token = jwt.sign({ session: 'sess-1', role: 'engine' }, 'test-secret');
+  const ws = new WebSocket(`ws://localhost:${port}/?session=sess-1&role=engine&token=${token}`);
+  const closeCode = await waitForCloseCode(ws);
+  ws.close();
+  await server.close();
+  assert.strictEqual(closeCode, 1008);
+});
+
+test('rejects an expired token with otherwise matching claims', async () => {
+  const { server, port } = await createSignalingServer({ port: 0, jwtSecret: 'test-secret' });
+  const token = jwt.sign({
+    session: 'sess-1',
+    role: 'engine',
+    exp: Math.floor(Date.now() / 1000) - 1,
+  }, 'test-secret');
+  const ws = new WebSocket(`ws://localhost:${port}/?session=sess-1&role=engine&token=${token}`);
+  const closeCode = await new Promise((resolve) => {
+    ws.once('close', (code) => resolve(code));
+  });
+  assert.strictEqual(closeCode, 1008);
+  server.close();
 });
 
 test('does not deliver a message queued before the destination ever connected', async () => {
