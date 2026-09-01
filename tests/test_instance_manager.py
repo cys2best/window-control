@@ -3,12 +3,18 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 import queue
 import threading
+import time
 
 import pytest
 
 from config import DEFAULT_TIER
+from server.engine_admin import EngineHealth
+from server.engine_orchestrator import EngineOrchestrator
+from server.engine_process import EngineReadyRecord
+from server.engine_runtime import EngineRuntime, EngineRuntimeConfig
 from server.instance_manager import Instance, InstanceManager
 from server.mediamtx_manager import MediamtxManager
+from server.scrcpy_server import ScrcpyServerLauncher
 
 
 class FakeOrchestrator:
@@ -520,6 +526,125 @@ def test_engine_watchdog_removes_disconnected_device_while_checking_health(monke
 
     assert orchestrator.remove_calls == ["emulator-5554"]
     assert orchestrator.check_count == 1
+
+
+def test_engine_watchdog_removal_waits_for_recovery_then_stops_engine_and_forward(monkeypatch):
+    serial = "emulator-5554"
+    forward_removals = []
+    recovery_entered = threading.Event()
+    release_recovery = threading.Event()
+
+    class Engine:
+        running = True
+        stop_count = 0
+
+        def start(self):
+            return EngineReadyRecord("instance0", 4242, 51000, 51001, 0, 1280, 720)
+
+        def is_running(self):
+            return self.running
+
+        def stop(self):
+            self.stop_count += 1
+            self.running = False
+
+    class Admin:
+        def health(self, _admin_port):
+            recovery_entered.set()
+            assert release_recovery.wait(timeout=5)
+            return EngineHealth("stalled", 0, 1280, 720)
+
+        def reconnect(self, _admin_port, _scrcpy_port, generation):
+            return generation
+
+        def keyframe(self, _admin_port):
+            pass
+
+    class TokenIssuer:
+        def whep(self, _instance_name):
+            return "whep"
+
+        def signaling(self, _instance_name, _role):
+            return "signal"
+
+    engine = Engine()
+    launcher = ScrcpyServerLauncher(
+        serial, 0,
+        find_adb=lambda: "adb",
+        start_server=lambda *_args: True,
+        stop_server=lambda *args: forward_removals.append(args),
+    )
+    config = EngineRuntimeConfig(
+        exe_path=r"C:\engine\engine.exe",
+        whep_secret="whep-secret",
+        signaling_url="",
+        signaling_secret="signal-secret",
+        local_ice_servers=(),
+        public_ice_servers=(),
+    )
+
+    def runtime_factory(*args):
+        return EngineRuntime(
+            *args[:5], launcher, Admin(), TokenIssuer(),
+            engine_factory=lambda **_engine_args: engine,
+            stall_grace_seconds=0,
+            log=lambda _message: None,
+        )
+
+    orchestrator = EngineOrchestrator(config, runtime_factory=runtime_factory, log=lambda _: None)
+    orchestrator.add_instance(serial, "instance0", 0, DEFAULT_TIER)
+
+    real_thread_start = threading.Thread.start
+    monkeypatch.setattr("server.instance_manager.threading.Thread.start", lambda self: None)
+    manager = manager_with_engine_instance(orchestrator)
+    monkeypatch.setattr("server.instance_manager.threading.Thread.start", real_thread_start)
+    monkeypatch.setattr("server.instance_manager.adb_manager.list_vms", lambda: [])
+
+    recovery = threading.Thread(target=orchestrator.check_all)
+    recovery.start()
+    assert recovery_entered.wait(timeout=5)
+
+    class EndWatchdog(Exception):
+        pass
+
+    intervals = 0
+    watchdog_thread = None
+    real_sleep = time.sleep
+
+    def one_interval_then_stop(_seconds):
+        nonlocal intervals
+        if threading.current_thread() is not watchdog_thread:
+            return real_sleep(_seconds)
+        intervals += 1
+        if intervals > 1:
+            raise EndWatchdog
+
+    monkeypatch.setattr("server.instance_manager.time.sleep", one_interval_then_stop)
+    watchdog_errors = []
+
+    def watchdog():
+        try:
+            manager._watchdog()
+        except EndWatchdog:
+            pass
+        except BaseException as error:
+            watchdog_errors.append(error)
+
+    watchdog_thread = threading.Thread(target=watchdog)
+    watchdog_thread.start()
+    watchdog_thread.join(timeout=0.2)
+    assert watchdog_thread.is_alive()
+
+    release_recovery.set()
+    recovery.join(timeout=5)
+    watchdog_thread.join(timeout=5)
+
+    assert not recovery.is_alive()
+    assert not watchdog_thread.is_alive()
+    assert watchdog_errors == []
+    assert engine.stop_count == 1
+    assert forward_removals[-1] == ("adb", serial, 27183, 0)
+    assert orchestrator.select(serial, "127.0.0.1") is None
 
 
 def test_engine_stop_all_delegates_cleanup():
