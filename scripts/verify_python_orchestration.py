@@ -31,7 +31,8 @@ import httpx
 
 _ADB_STDERR_LIMIT = 240
 _SENSITIVE_ADB_STDERR = re.compile(
-    r"(?i)\b([a-z][a-z0-9_]*(?:token|secret|password|key)[a-z0-9_]*)\s*([=:])\s*"
+    r"(?i)\b((?:[a-z][a-z0-9_]*(?:token|secret|password|key)[a-z0-9_]*|"
+    r"token|secret|password|key))\s*([=:])\s*"
     r"(?:bearer\s+)?\S+"
 )
 _AUTHORIZATION_ADB_STDERR = re.compile(
@@ -989,7 +990,7 @@ class RealDeps:
 
     def remove_device(self, serial, ldplayer_index):
         if serial.startswith("emulator-"):
-            from server.adb_manager import _find_ldconsole
+            from server.adb_manager import _find_ldconsole, _no_window_flags
 
             ldconsole = _find_ldconsole()
             if not ldconsole:
@@ -1000,11 +1001,22 @@ class RealDeps:
             self.record_command(command, "selected LDPlayer quit")
             try:
                 completed = subprocess.run(
-                    command, text=True, capture_output=True, check=False, timeout=15
+                    command,
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                    timeout=15,
+                    **_no_window_flags(),
                 )
             except subprocess.TimeoutExpired as error:
                 detail = _safe_adb_stderr(error.stderr)
                 message = "selected LDPlayer quit timed out"
+                if detail:
+                    message += f": {detail}"
+                raise VerificationError(message) from error
+            except OSError as error:
+                detail = _safe_adb_stderr(str(error))
+                message = "selected LDPlayer quit could not start"
                 if detail:
                     message += f": {detail}"
                 raise VerificationError(message) from error

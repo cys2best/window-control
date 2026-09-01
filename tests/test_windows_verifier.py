@@ -555,6 +555,7 @@ def test_real_emulator_removal_quits_only_the_selected_ldplayer_index(monkeypatc
     console = r"C:\\LDPlayer\\LDPlayer9\\ldconsole.exe"
 
     monkeypatch.setattr("server.adb_manager._find_ldconsole", lambda: console, raising=False)
+    monkeypatch.setattr("server.adb_manager.sys.platform", "win32")
     monkeypatch.setattr(
         verifier.subprocess,
         "run",
@@ -571,6 +572,13 @@ def test_real_emulator_removal_quits_only_the_selected_ldplayer_index(monkeypatc
         [console, "quit", "--index", "2"],
     ]
     assert all("--all" not in command and "0" not in command for command, _ in commands)
+    assert commands[0][1] == {
+        "text": True,
+        "capture_output": True,
+        "check": False,
+        "timeout": 15,
+        "creationflags": 0x08000000,
+    }
 
 
 def test_real_non_emulator_removal_keeps_selected_adb_disconnect_behavior(monkeypatch, tmp_path):
@@ -596,6 +604,7 @@ def test_real_non_emulator_removal_keeps_selected_adb_disconnect_behavior(monkey
         (None, SimpleNamespace(returncode=0, stdout="", stderr=""), "ldconsole.exe is unavailable"),
         (r"C:\\LDPlayer\\LDPlayer9\\ldconsole.exe", SimpleNamespace(returncode=9, stdout="", stderr="not ready"), "exit code 9"),
         (r"C:\\LDPlayer\\LDPlayer9\\ldconsole.exe", subprocess.TimeoutExpired("ldconsole.exe", 15, stderr="timed out"), "timed out"),
+        (r"C:\\LDPlayer\\LDPlayer9\\ldconsole.exe", PermissionError("access denied secret=do-not-log"), "secret=<redacted>"),
     ],
 )
 def test_real_emulator_removal_reports_unavailable_or_unsuccessful_ldconsole(
