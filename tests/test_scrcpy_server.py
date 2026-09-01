@@ -49,6 +49,30 @@ def test_stop_removes_only_its_forward_and_server():
     assert stopped == [("adb", "emulator-5556", 27184, 1)]
 
 
+def test_failed_launch_cleans_up_only_its_server_and_forward_before_raising():
+    events = []
+    launcher = ScrcpyServerLauncher(
+        "emulator-5556",
+        1,
+        find_adb=lambda: "adb",
+        start_server=lambda *args: events.append(("start", args)) or False,
+        stop_server=lambda *args: events.append(("stop", args)),
+    )
+
+    with pytest.raises(RuntimeError, match="failed to start server"):
+        launcher.launch("1080", generation=4)
+
+    expected_scope = ("adb", "emulator-5556", 27184, 1)
+    expected_events = [
+        ("start", (*expected_scope, "1080")),
+        ("stop", expected_scope),
+    ]
+    assert events == expected_events
+
+    launcher.stop()
+    assert events == expected_events
+
+
 def test_server_cleanup_targets_only_the_selected_android_server_process(monkeypatch):
     """Catches a cleanup pattern that misses app_process Server or crosses scids."""
     commands = []

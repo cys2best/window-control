@@ -221,7 +221,12 @@ class ScrcpyServerLauncher:
             raise RuntimeError("adb not found")
 
         if not self._start_server(adb, self._serial, self._tcp_port, self._instance_index, tier):
-            raise RuntimeError(f"failed to start server for {self._serial}")
+            try:
+                self._stop_server(
+                    adb, self._serial, self._tcp_port, self._instance_index
+                )
+            finally:
+                raise RuntimeError(f"failed to start server for {self._serial}")
 
         self._last_launch = ScrcpyLaunch(
             port=self._tcp_port,
