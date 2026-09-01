@@ -354,6 +354,7 @@ class InstanceManager:
             time.sleep(10)
             try:
                 if self._engine_orchestrator is not None:
+                    self.refresh()
                     self._engine_orchestrator.check_all()
                     continue
                 with self._lock:

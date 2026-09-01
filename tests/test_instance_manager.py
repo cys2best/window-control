@@ -498,6 +498,30 @@ def test_engine_watchdog_delegates_once_per_interval(monkeypatch):
     assert legacy_session.alive_checks == 0
 
 
+def test_engine_watchdog_removes_disconnected_device_while_checking_health(monkeypatch):
+    class EndWatchdog(Exception):
+        pass
+
+    monkeypatch.setattr("server.instance_manager.threading.Thread.start", lambda self: None)
+    orchestrator = FakeOrchestrator()
+    manager = manager_with_engine_instance(orchestrator)
+    monkeypatch.setattr("server.instance_manager.adb_manager.list_vms", lambda: [])
+    intervals = 0
+
+    def stop_after_one_interval(_seconds):
+        nonlocal intervals
+        intervals += 1
+        if intervals > 1:
+            raise EndWatchdog
+
+    monkeypatch.setattr("server.instance_manager.time.sleep", stop_after_one_interval)
+    with pytest.raises(EndWatchdog):
+        manager._watchdog()
+
+    assert orchestrator.remove_calls == ["emulator-5554"]
+    assert orchestrator.check_count == 1
+
+
 def test_engine_stop_all_delegates_cleanup():
     orchestrator = FakeOrchestrator()
     manager = manager_with_engine_instance(orchestrator)
