@@ -27,6 +27,8 @@ class EngineHealth:
     generation: int
     width: int
     height: int
+    local_peers: int
+    public_peer: bool
 
 
 class EngineAdminUnavailable(RuntimeError):
@@ -136,6 +138,8 @@ class EngineAdminClient:
             generation = data["generation"]
             width = data["width"]
             height = data["height"]
+            local_peers = data["local_peers"]
+            public_peer = data["public_peer"]
 
             # Type validation
             if not isinstance(state, str):
@@ -148,6 +152,16 @@ class EngineAdminClient:
                 raise TypeError(f"width must be int, got {type(width).__name__}")
             if not isinstance(height, int):
                 raise TypeError(f"height must be int, got {type(height).__name__}")
+            if isinstance(local_peers, bool) or not isinstance(local_peers, int):
+                raise TypeError(
+                    f"local_peers must be int, got {type(local_peers).__name__}"
+                )
+            if local_peers < 0:
+                raise ValueError("local_peers must be non-negative")
+            if not isinstance(public_peer, bool):
+                raise TypeError(
+                    f"public_peer must be bool, got {type(public_peer).__name__}"
+                )
 
         except (KeyError, TypeError, ValueError) as e:
             raise EngineAdminProtocolError(
@@ -159,6 +173,8 @@ class EngineAdminClient:
             generation=generation,
             width=width,
             height=height,
+            local_peers=local_peers,
+            public_peer=public_peer,
         )
 
     def reconnect(self, admin_port: int, scrcpy_port: int, generation: int) -> int:

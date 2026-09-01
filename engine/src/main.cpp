@@ -64,7 +64,7 @@ int main(int argc, char** argv) {
         whepServer.Start();
 
         EngineHttpServer adminServer("127.0.0.1");
-        AdminHandler adminHandler(source);
+        AdminHandler adminHandler(source, registry);
         adminHandler.RegisterRoutes(adminServer.Server());
         adminServer.Start();
 

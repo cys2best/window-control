@@ -32,6 +32,8 @@ class FakeAdminHandler(BaseHTTPRequestHandler):
                         "generation": self.server.generation,
                         "width": self.server.width,
                         "height": self.server.height,
+                        "local_peers": self.server.local_peers,
+                        "public_peer": self.server.public_peer,
                     },
                 }
             status = response["status"]
@@ -126,11 +128,15 @@ class FakeAdminServer:
         state: Literal["connected", "stalled", "disconnected"] = "connected",
         width: int = 1920,
         height: int = 1080,
+        local_peers: int = 0,
+        public_peer: bool = False,
     ):
         self.generation = generation
         self.state = state
         self.width = width
         self.height = height
+        self.local_peers = local_peers
+        self.public_peer = public_peer
         self.port: Optional[int] = None
         self.server: Optional[HTTPServer] = None
         self.thread: Optional[threading.Thread] = None
@@ -157,6 +163,8 @@ class FakeAdminServer:
         self.server.generation = self.generation
         self.server.width = self.width
         self.server.height = self.height
+        self.server.local_peers = self.local_peers
+        self.server.public_peer = self.public_peer
         self.server.dequeue_response = self._dequeue_response
         self.server.request_paths = []
         self.port = self.server.server_address[1]

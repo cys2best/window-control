@@ -347,7 +347,7 @@ def test_watchdog_removal_waits_for_recovery_then_stops_engine_and_forward(monke
         def health(self, _admin_port):
             recovery_entered.set()
             assert release_recovery.wait(timeout=5)
-            return EngineHealth("stalled", 0, 1280, 720)
+            return EngineHealth("stalled", 0, 1280, 720, 0, False)
 
         def reconnect(self, _admin_port, _scrcpy_port, generation):
             return generation

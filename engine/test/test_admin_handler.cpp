@@ -16,7 +16,7 @@ TEST(AdminHandler, HealthReflectsSourceStatus) {
     ScrcpySource source(registry);
     source.ConnectInitial(fake.Port());
 
-    AdminHandler handler(source);
+    AdminHandler handler(source, registry);
     EngineHttpServer server("127.0.0.1");
     handler.RegisterRoutes(server.Server());
     server.Start();
@@ -29,6 +29,43 @@ TEST(AdminHandler, HealthReflectsSourceStatus) {
     EXPECT_EQ(body["state"], "connected");
     EXPECT_EQ(body["width"], 100);
     EXPECT_EQ(body["height"], 200);
+    EXPECT_EQ(body["local_peers"], 0);
+    EXPECT_EQ(body["public_peer"], false);
+
+    server.Stop();
+    fake.Stop();
+}
+
+TEST(AdminHandler, HealthReflectsPeerCountsAndRemoval) {
+    FakeScrcpyServer fake;
+    fake.Serve();
+    PeerRegistry registry;
+    ScrcpySource source(registry);
+    source.ConnectInitial(fake.Port());
+    AdminHandler handler(source, registry);
+    EngineHttpServer server("127.0.0.1");
+    handler.RegisterRoutes(server.Server());
+    server.Start();
+
+    ASSERT_NE(registry.Create(PeerKind::Local, "local-1", {}), nullptr);
+    ASSERT_NE(registry.Create(PeerKind::Local, "local-2", {}), nullptr);
+    ASSERT_NE(registry.Create(PeerKind::Public, "public-1", {}), nullptr);
+
+    httplib::Client client("127.0.0.1", server.Port());
+    auto activeRes = client.Get("/admin/health");
+    ASSERT_TRUE(activeRes);
+    auto active = json::parse(activeRes->body);
+    EXPECT_EQ(active["local_peers"], 2);
+    EXPECT_EQ(active["public_peer"], true);
+
+    EXPECT_TRUE(registry.Remove("local-1"));
+    EXPECT_TRUE(registry.Remove("local-2"));
+    EXPECT_TRUE(registry.Remove("public-1"));
+    auto removedRes = client.Get("/admin/health");
+    ASSERT_TRUE(removedRes);
+    auto removed = json::parse(removedRes->body);
+    EXPECT_EQ(removed["local_peers"], 0);
+    EXPECT_EQ(removed["public_peer"], false);
 
     server.Stop();
     fake.Stop();
@@ -41,7 +78,7 @@ TEST(AdminHandler, ReconnectAcceptsNewerGenerationAndRejectsStale) {
     ScrcpySource source(registry);
     source.ConnectInitial(fake1.Port());
 
-    AdminHandler handler(source);
+    AdminHandler handler(source, registry);
     EngineHttpServer server("127.0.0.1");
     handler.RegisterRoutes(server.Server());
     server.Start();
@@ -73,7 +110,7 @@ TEST(AdminHandler, KeyframeReturns204) {
     ScrcpySource source(registry);
     source.ConnectInitial(fake.Port());
 
-    AdminHandler handler(source);
+    AdminHandler handler(source, registry);
     EngineHttpServer server("127.0.0.1");
     handler.RegisterRoutes(server.Server());
     server.Start();
@@ -94,7 +131,7 @@ TEST(AdminHandler, ReconnectRejectsWrongFieldTypesWith400) {
     ScrcpySource source(registry);
     source.ConnectInitial(fake.Port());
 
-    AdminHandler handler(source);
+    AdminHandler handler(source, registry);
     EngineHttpServer server("127.0.0.1");
     handler.RegisterRoutes(server.Server());
     server.Start();
@@ -117,7 +154,7 @@ TEST(AdminHandler, ReconnectFailureReturnsStructured502) {
     ScrcpySource source(registry);
     source.ConnectInitial(initial.Port());
 
-    AdminHandler handler(source);
+    AdminHandler handler(source, registry);
     EngineHttpServer server("127.0.0.1");
     handler.RegisterRoutes(server.Server());
     server.Start();

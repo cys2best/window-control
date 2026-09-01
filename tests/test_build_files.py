@@ -54,3 +54,22 @@ def test_ci_runs_unfiltered_engine_suite_with_node_relay():
     assert "npm ci" in text
     assert "engine_tests.exe" in text
     assert "--gtest_filter" not in text
+
+
+def test_engine_cutover_wrapper_forwards_the_complete_safety_contract():
+    wrapper = REPO_ROOT / "engine" / "verify-engine-cutover.ps1"
+    assert wrapper.exists()
+    text = wrapper.read_text(encoding="utf-8")
+    for parameter in (
+        "$Serials",
+        "$PerformanceEvidenceDir",
+        "$PublicSignalingUrl",
+        "$SoakHours",
+        "$KeepOnFailure",
+        "$FilePrompts",
+        "$Confirm",
+    ):
+        assert parameter in text
+    assert "scripts.verify_engine_cutover" in text
+    assert "engine-cutover-" in text
+    assert "--performance-override" in text

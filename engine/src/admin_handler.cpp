@@ -14,7 +14,8 @@ std::string StateToString(SourceHealthState state) {
 }
 }
 
-AdminHandler::AdminHandler(ScrcpySource& source) : source_(source) {}
+AdminHandler::AdminHandler(ScrcpySource& source, const PeerRegistry& registry)
+    : source_(source), registry_(registry) {}
 
 void AdminHandler::RegisterRoutes(httplib::Server& server) {
     server.Get("/admin/health", [this](const httplib::Request&, httplib::Response& res) {
@@ -24,6 +25,8 @@ void AdminHandler::RegisterRoutes(httplib::Server& server) {
             {"generation", status.generation},
             {"width", status.width},
             {"height", status.height},
+            {"local_peers", registry_.LocalCount()},
+            {"public_peer", registry_.HasPublicPeer()},
         };
         res.set_content(body.dump(), "application/json");
     });

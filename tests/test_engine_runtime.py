@@ -180,6 +180,8 @@ class FakeAdmin:
             generation=self.health_generation,
             width=self.health_size[0],
             height=self.health_size[1],
+            local_peers=0,
+            public_peer=False,
         )
 
     def reconnect(self, admin_port: int, scrcpy_port: int, generation: int) -> int:

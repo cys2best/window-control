@@ -1,6 +1,8 @@
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
+import json
+
 import pytest
 import httpx
 from server.engine_admin import (
@@ -31,15 +33,24 @@ def test_client_uses_cpp_admin_routes_for_every_request():
         ]
 
 
-def test_health_connected_state():
+def test_health_connected_state_includes_peer_observability():
     """Test reading health in connected state."""
-    with FakeAdminServer(generation=3, state="connected", width=1920, height=1080) as server:
+    with FakeAdminServer(
+        generation=3,
+        state="connected",
+        width=1920,
+        height=1080,
+        local_peers=2,
+        public_peer=True,
+    ) as server:
         client = EngineAdminClient()
         health = client.health(server.port)
         assert health.state == "connected"
         assert health.generation == 3
         assert health.width == 1920
         assert health.height == 1080
+        assert health.local_peers == 2
+        assert health.public_peer is True
 
 
 def test_health_stalled_state():
@@ -72,7 +83,10 @@ def test_health_missing_field():
     """Test that missing required field raises EngineAdminProtocolError."""
     with FakeAdminServer() as server:
         # Queue response without 'state' field
-        server.queue_raw_health(200, b'{"generation": 1, "width": 1920, "height": 1080}')
+        server.queue_raw_health(
+            200,
+            b'{"generation": 1, "width": 1920, "height": 1080, "local_peers": 0, "public_peer": false}',
+        )
         with pytest.raises(EngineAdminProtocolError):
             EngineAdminClient().health(server.port)
 
@@ -81,7 +95,10 @@ def test_health_wrong_field_type():
     """Test that wrong field type raises EngineAdminProtocolError."""
     with FakeAdminServer() as server:
         # generation should be int, not string
-        server.queue_raw_health(200, b'{"state": "connected", "generation": "not-int", "width": 1920, "height": 1080}')
+        server.queue_raw_health(
+            200,
+            b'{"state": "connected", "generation": "not-int", "width": 1920, "height": 1080, "local_peers": 0, "public_peer": false}',
+        )
         with pytest.raises(EngineAdminProtocolError):
             EngineAdminClient().health(server.port)
 
@@ -188,7 +205,10 @@ def test_custom_timeout():
 def test_queued_response_consumed_once():
     """Test that each queued response is consumed exactly once."""
     with FakeAdminServer() as server:
-        server.queue_raw_health(200, b'{"state": "connected", "generation": 1, "width": 1920, "height": 1080}')
+        server.queue_raw_health(
+            200,
+            b'{"state": "connected", "generation": 1, "width": 1920, "height": 1080, "local_peers": 0, "public_peer": false}',
+        )
         client = EngineAdminClient()
         health1 = client.health(server.port)
         assert health1.generation == 1
@@ -196,6 +216,48 @@ def test_queued_response_consumed_once():
         # Second call should use default (queue is empty, no queued response)
         health2 = client.health(server.port)
         assert health2.generation == 0  # default generation
+
+
+@pytest.mark.parametrize("local_peers", [-1, True])
+def test_health_rejects_invalid_local_peer_count(local_peers):
+    """Negative or boolean counts would make cleanup gates unreliable."""
+    with FakeAdminServer() as server:
+        server.queue_raw_health(
+            200,
+            json.dumps(
+                {
+                    "state": "connected",
+                    "generation": 1,
+                    "width": 1920,
+                    "height": 1080,
+                    "local_peers": local_peers,
+                    "public_peer": False,
+                }
+            ).encode(),
+        )
+        with pytest.raises(EngineAdminProtocolError, match="local_peers"):
+            EngineAdminClient().health(server.port)
+
+
+@pytest.mark.parametrize("public_peer", [0, "false", None])
+def test_health_rejects_non_boolean_public_peer_state(public_peer):
+    """Truthiness coercion would report a public peer that does not exist."""
+    with FakeAdminServer() as server:
+        server.queue_raw_health(
+            200,
+            json.dumps(
+                {
+                    "state": "connected",
+                    "generation": 1,
+                    "width": 1920,
+                    "height": 1080,
+                    "local_peers": 0,
+                    "public_peer": public_peer,
+                }
+            ).encode(),
+        )
+        with pytest.raises(EngineAdminProtocolError, match="public_peer"):
+            EngineAdminClient().health(server.port)
 
 
 def test_reconnect_updates_server_generation():
