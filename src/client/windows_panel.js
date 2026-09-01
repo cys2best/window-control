@@ -1,6 +1,14 @@
 // windows_panel.js — window list screen + window switching
 let _windows = [];
 let _activeId = null;
+let _requestedId = null;
+
+function wcClearActiveWindow() {
+  _activeId = null;
+  _requestedId = null;
+}
+
+window.wcClearActiveWindow = wcClearActiveWindow;
 
 function showScreen(id) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
@@ -92,18 +100,23 @@ async function fetchWindows() {
 
 async function selectWindow(id, serial) {
   const _serial = serial || (id.startsWith('adb:') ? id.slice(4) : id);
-  if (id === _activeId) return;                 // no-op switch
+  if (id === _activeId || id === _requestedId) return;
   // Navigate immediately — don't block on server round-trip
-  _activeId = id;
+  _requestedId = id;
   const w = _windows.find(w => w.id === id);
-  const titleEl = document.getElementById('stream-title');
-  if (titleEl && w) titleEl.textContent = w.title;
   showScreen('screen-stream');
   enterFullscreen(document.getElementById('screen-stream'));
   try {
-    await selectEngineInstance(id, _serial);
+    const adopted = await selectEngineInstance(id, _serial);
+    if (adopted) {
+      _activeId = id;
+      const titleEl = document.getElementById('stream-title');
+      if (titleEl && w) titleEl.textContent = w.title;
+    }
   } catch (error) {
     if (!error || error.code !== 'unauthorized') showUnavailable();
+  } finally {
+    if (_requestedId === id) _requestedId = null;
   }
 }
 
@@ -175,7 +188,7 @@ function renderSwitchList() {
     row.querySelector('.switch-row-label').textContent = w.title;
     row.addEventListener('click', () => {
       closeSwitchDrawer();
-      if (w.id !== _activeId) selectWindow(w.id, w.serial);
+      selectWindow(w.id, w.serial);
     });
     list.appendChild(row);
   });

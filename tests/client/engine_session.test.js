@@ -588,3 +588,28 @@ test('input-channel failure after adoption notifies failure and closes the sessi
   assert.equal(session.pc.closed, true);
   assert.ok(callbacksUsed.states.includes('failed'));
 });
+
+test('reserves a ready replacement before its predecessor cleanup completes', async () => {
+  const api = loadApi();
+  const deps = fakeDeps();
+  const manager = api.createManager(deps);
+  const first = await startLocal(deps, manager);
+  deps.holdDeletes();
+  deps.scenarios = [deps.public];
+  const replacing = manager.connect(localSelection(), callbacks());
+  await deps.flush();
+  deps.public.becomeReady();
+  await deps.flush();
+
+  let resolved = false;
+  replacing.then(() => { resolved = true; });
+  await deps.flush();
+  assert.equal(resolved, true);
+  assert.equal(deps.fetch.calls.filter(call => call.options.method === 'DELETE').length, 0);
+
+  const closingFirst = first.close();
+  assert.equal(deps.fetch.calls.filter(call => call.options.method === 'DELETE').length, 1);
+  deps.resolveDelete();
+  await closingFirst;
+  await replacing;
+});

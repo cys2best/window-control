@@ -25,6 +25,7 @@ let _activeWindowId = null;
 let _currentSerial = null;
 let _activeEngineSession = null;
 let _activeSelectionGeneration = 0;
+let _requestedEngineSelection = null;
 
 // The manager owns each local/public race. The UI owns only the selected,
 // ready session, so the old video remains visible while a replacement starts.
@@ -203,11 +204,12 @@ async function _connectEngineSelection(windowId, serial, selection, generation) 
     clearUnavailable();
     setNetStatus('good', 'Connected');
     if (previous && previous !== session) await previous.close();
+    return true;
   } catch (error) {
     if (generation !== _activeSelectionGeneration) return;
     if (error && error.code === 'credential-expired') {
       if (window.wcShowAuthGate) window.wcShowAuthGate();
-      return;
+      return false;
     }
     showUnavailable(error && error.code === 'capacity' ? 'Engine starting…' : 'Window unavailable');
     setNetStatus('bad', 'Disconnected');
@@ -221,6 +223,8 @@ async function connectEngineInstance(windowId, serial, selection) {
 
 async function closeEngineInstance() {
   _activeSelectionGeneration += 1;
+  _requestedEngineSelection = null;
+  if (window.wcClearActiveWindow) window.wcClearActiveWindow();
   _stopInputHealth();
   stopAdaptiveQuality();
   const session = _activeEngineSession;
@@ -255,15 +259,31 @@ async function fetchEngineSelection(serial) {
 }
 
 async function reconnectEngineInstance() {
-  if (!_currentSerial || !_activeWindowId) return;
-  await selectEngineInstance(_activeWindowId, _currentSerial);
+  const target = _requestedEngineSelection || (_currentSerial && _activeWindowId && {
+    windowId: _activeWindowId, serial: _currentSerial,
+  });
+  if (!target) return;
+  await selectEngineInstance(target.windowId, target.serial);
 }
 
 async function selectEngineInstance(windowId, serial) {
   const generation = ++_activeSelectionGeneration;
-  const selected = await fetchEngineSelection(serial);
-  if (generation !== _activeSelectionGeneration) return;
-  await _connectEngineSelection(windowId, serial, selected, generation);
+  const requested = { windowId, serial, generation };
+  _requestedEngineSelection = requested;
+  try {
+    const selected = await fetchEngineSelection(serial);
+    if (generation !== _activeSelectionGeneration) return false;
+    const adopted = await _connectEngineSelection(windowId, serial, selected, generation);
+    if (generation === _activeSelectionGeneration && _requestedEngineSelection === requested && adopted) {
+      _requestedEngineSelection = null;
+    }
+    return adopted;
+  } catch (error) {
+    // Keep an initial unavailable target so Reconnect can retry it, but a
+    // failed switch must leave the already-adopted instance authoritative.
+    if (generation === _activeSelectionGeneration && _activeEngineSession) _requestedEngineSelection = null;
+    throw error;
+  }
 }
 
 function _forcedLandscapeActive() {
@@ -470,12 +490,34 @@ async function _sampleStats() {
 async function _startApp() {
   if (!initPointer()) { initTouch(); initMouse(); }
   initKeyboard(); initDrawer(); startWindowsPolling();
+  const settingsButton = document.getElementById('settings-btn');
+  const settingsOverlay = document.getElementById('settings-overlay');
+  const settingsClose = document.getElementById('settings-close');
+  const qualityOptions = document.getElementById('quality-opts');
+  const statsToggle = document.getElementById('stats-toggle');
+  const markSelectedTier = () => {
+    if (!qualityOptions || typeof qualityOptions.querySelectorAll !== 'function') return;
+    qualityOptions.querySelectorAll('.q-opt').forEach(button =>
+      button.classList.toggle('sel', button.dataset.tier === _preferredTier));
+  };
+  if (settingsButton && settingsOverlay) settingsButton.addEventListener('click', () => {
+    markSelectedTier();
+    if (statsToggle) statsToggle.checked = document.getElementById('stats-overlay').style.display !== 'none';
+    settingsOverlay.style.display = 'flex';
+  });
+  if (settingsClose && settingsOverlay) settingsClose.addEventListener('click', () => { settingsOverlay.style.display = 'none'; });
+  if (settingsOverlay) settingsOverlay.addEventListener('click', event => {
+    if (event.target === settingsOverlay) settingsOverlay.style.display = 'none';
+  });
+  if (qualityOptions && typeof qualityOptions.querySelectorAll === 'function') {
+    qualityOptions.querySelectorAll('.q-opt').forEach(button => button.addEventListener('click', () => {
+      setPreferredTier(button.dataset.tier);
+      markSelectedTier();
+    }));
+  }
   const reconnect = document.getElementById('reconnect-btn');
   if (reconnect) reconnect.addEventListener('click', () => reconnectEngineInstance().catch(() => showUnavailable()));
-  const toggle = document.getElementById('stats-toggle');
-  if (toggle) toggle.addEventListener('change', () => toggle.checked ? _startStatsOverlay() : _stopStatsOverlay());
-  const quality = document.getElementById('quality-opts');
-  if (quality) quality.querySelectorAll('.q-opt').forEach(button => button.addEventListener('click', () => setPreferredTier(button.dataset.tier)));
+  if (statsToggle) statsToggle.addEventListener('change', () => statsToggle.checked ? _startStatsOverlay() : _stopStatsOverlay());
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden && _activeWindowId) reconnectEngineInstance().catch(() => showUnavailable());
   });

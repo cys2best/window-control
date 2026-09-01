@@ -62,6 +62,7 @@ function createHarness() {
   const connectedSelections = [];
   const pending = new Map();
   const responses = new Map();
+  const closeGates = new Map();
   let authGateShown = false;
   const document = eventTarget({
     getElementById(id) { return elements.get(id) || null; },
@@ -116,7 +117,11 @@ function createHarness() {
               dragEnd(x, y) { this.sent.push({ type: 'drag_end', x, y }); },
               scroll(x, y, dy) { this.sent.push({ type: 'scroll', x, y, dy }); },
             },
-            async close() { this.closed = true; },
+            async close() {
+              this.closed = true;
+              const gate = closeGates.get(selected.serial);
+              if (gate) await gate.promise;
+            },
           };
           session.failInput = () => callbacks.onState('failed');
           sessions.set(selected.serial, session);
@@ -155,6 +160,11 @@ function createHarness() {
       });
     },
     sessionFor(serial) { return sessions.get(serial); },
+    deferClose(serial) {
+      const gate = deferred();
+      closeGates.set(serial, gate);
+      return gate;
+    },
     flush: async () => { for (let i = 0; i < 12; i += 1) await Promise.resolve(); },
   };
 }
@@ -179,6 +189,52 @@ test('rapid switch closes old session and stale completion cannot win', async ()
   await Promise.all([firstConnect, harness.flush()]);
   assert.equal(harness.activeSerial, 'emulator-5556');
   assert.equal(harness.sessionFor('emulator-5554'), undefined);
+});
+
+test('attaches a ready replacement before waiting for predecessor cleanup', async () => {
+  const harness = createHarness();
+  await harness.select('emulator-5554');
+  const cleanup = harness.deferClose('emulator-5554');
+  const switching = harness.select('emulator-5556');
+  await harness.flush();
+
+  assert.equal(harness.activeSerial, 'emulator-5556');
+  assert.equal(harness.sessionFor('emulator-5554').closed, true);
+  cleanup.resolve();
+  await switching;
+});
+
+test('requested selection never overwrites adopted identity on close or failure', async () => {
+  const sameCard = createHarness();
+  await sameCard.select('emulator-5554');
+  await sameCard.context.closeEngineInstance();
+  await sameCard.select('emulator-5554');
+  assert.equal(sameCard.selectPosts.length, 2);
+
+  const failedSwitch = createHarness();
+  await failedSwitch.select('emulator-5554');
+  failedSwitch.respond('emulator-5556', 500);
+  await failedSwitch.select('emulator-5556');
+  await failedSwitch.reconnect();
+  assert.equal(failedSwitch.selectPosts.at(-1).serial, 'emulator-5554');
+});
+
+test('an initial unavailable selection remains reconnectable and settings controls open', async () => {
+  const harness = createHarness();
+  for (let attempt = 0; attempt < 5; attempt += 1) harness.respond('emulator-5554', 503);
+  await harness.select('emulator-5554');
+  await harness.reconnect();
+  assert.equal(harness.selectPosts.length, 6);
+
+  await harness.context._startApp();
+  const settings = harness.context.document.getElementById('settings-btn');
+  const overlay = harness.context.document.getElementById('settings-overlay');
+  const toggle = harness.context.document.getElementById('stats-toggle');
+  settings.dispatch('click');
+  toggle.checked = true;
+  toggle.dispatch('change');
+  assert.equal(overlay.style.display, 'flex');
+  assert.equal(harness.context.document.getElementById('stats-overlay').style.display, 'block');
 });
 
 test('selection opens no input WebSocket or WHEP prewarm and sends keys, IDR, and echo on the DataChannel', async () => {

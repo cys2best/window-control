@@ -313,12 +313,10 @@
               reject(cancelError || sessionError('closed', 'Engine session manager is closed'));
               return;
             }
-            if (active && active !== winner.session) await active.close();
-            if (cancelled || pending !== group || managerClosed) {
-              await winner.close();
-              reject(cancelError || sessionError('closed', 'Engine session manager is closed'));
-              return;
-            }
+            // Reserve the ready replacement now, but leave predecessor cleanup
+            // to the UI after it has attached the replacement stream. A WHEP
+            // DELETE can wait on the server, so awaiting it here creates a
+            // visible gap despite the replacement already being ready.
             active = winner.session;
             pending = null;
             if (callbacks.onState) callbacks.onState('connected');
