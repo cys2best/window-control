@@ -233,6 +233,7 @@ test('uses the final video track, ICE, and input channel before adopting local s
   const session = await connecting;
 
   assert.equal(session.kind, 'local');
+  assert.equal(session.stream.id, 'video-stream');
   assert.equal(callbacksUsed.tracks[0].id, 'video-stream');
   assert.equal(session.input.channel, deps.local.channel);
 });

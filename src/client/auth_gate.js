@@ -12,6 +12,8 @@
     input.focus();
   }
 
+  window.wcShowAuthGate = showGate;
+
   function hideGate() {
     overlay.style.display = 'none';
   }

@@ -147,6 +147,7 @@
         kind: kind,
         pc: pc,
         input: input,
+        get stream() { return videoStream; },
         close: function () { return close(); },
       };
       return attempt;
