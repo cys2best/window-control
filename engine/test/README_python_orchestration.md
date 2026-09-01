@@ -1,5 +1,43 @@
 # Windows Python orchestration verification
 
+## Five-instance cutover performance gate
+
+Before removing the staged engine selection route, collect four comparable
+results on the Windows Host PC. Start exactly the same five ready LDPlayer
+serials yourself; this tool never starts, stops, or changes an emulator. Run
+legacy and engine with both workloads, keeping resolution, quality tier, scene,
+viewer device, network, and duration identical:
+
+```powershell
+.\engine\measure-engine-cutover.ps1 -Mode legacy -Workload no-viewer -Serials emulator-5554,emulator-5556,emulator-5558,emulator-5560,emulator-5562
+.\engine\measure-engine-cutover.ps1 -Mode legacy -Workload one-viewer -Serials emulator-5554,emulator-5556,emulator-5558,emulator-5560,emulator-5562
+.\engine\measure-engine-cutover.ps1 -Mode engine -Workload no-viewer -Serials emulator-5554,emulator-5556,emulator-5558,emulator-5560,emulator-5562
+.\engine\measure-engine-cutover.ps1 -Mode engine -Workload one-viewer -Serials emulator-5554,emulator-5556,emulator-5558,emulator-5560,emulator-5562
+```
+
+Each run writes a schema-v1 `result-*.json` below its unique
+`engine/test/performance-<timestamp>-<pid>` evidence directory. `one-viewer`
+uses exactly one browser viewer and rotates it through five 60-second windows;
+enter numeric glass-to-glass, warm-switch, and cold-switch milliseconds when
+prompted. `no-viewer` opens neither browser nor prompt and records those fields
+as null. Legacy clears `ENGINE_EXE_PATH`; engine requires the verified Release
+binary and uses the staging-only `/engine-select` page route.
+
+After comparing the four PASS results, start the nonce-scoped owner prompt in
+one terminal, then submit the exact decision in a second terminal. The first
+terminal writes `cutover-decision.json` after accepting the matching nonce:
+
+```powershell
+.\engine\measure-engine-cutover.ps1 -AwaitDecision -ResultFiles C:\path\legacy-no-viewer\result-1.json,C:\path\legacy-one-viewer\result-2.json,C:\path\engine-no-viewer\result-3.json,C:\path\engine-one-viewer\result-4.json
+.\engine\measure-engine-cutover.ps1 -RecordDecision "APPROVE CUTOVER"
+```
+
+The owner must explicitly supply either
+`APPROVE CUTOVER` or `OVERRIDE CUTOVER: <reason accepting the measured
+regression>`. `REJECT CUTOVER: <metric and required correction>` deliberately writes no
+approval artifact. The generated `cutover-decision.json` contains hashes of all
+four results; it never infers approval from measured values.
+
 This is a Windows Host PC acceptance run against a real `engine.exe`, browser,
 and disposable LDPlayer instance. It takes more than five minutes because the
 runner waits for a real WHEP capability to expire. It deliberately stops the

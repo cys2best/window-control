@@ -1,0 +1,69 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>WindowControl cutover metrics</title>
+<style>body { font: 16px system-ui; margin: 2rem; } video { max-width: 80vw; display: block; }</style>
+<h1>Cutover one-viewer metrics</h1>
+<p id="status">Waiting for configuration…</p>
+<video id="video" autoplay playsinline muted></video>
+<script>
+(() => {
+  const status = document.querySelector('#status');
+  const video = document.querySelector('#video');
+  const config = JSON.parse(decodeURIComponent(location.hash.slice(1)));
+  const selectPath = serial => `/instances/${encodeURIComponent(serial)}/${
+    config.mode === 'engine' ? 'engine-select' : 'select'
+  }`;
+  const isoNow = () => new Date().toISOString();
+  const waitForIce = peer => new Promise(resolve => {
+    if (peer.iceGatheringState === 'complete') return resolve();
+    peer.addEventListener('icegatheringstatechange', () => {
+      if (peer.iceGatheringState === 'complete') resolve();
+    });
+  });
+  const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+  async function measure(serial) {
+    status.textContent = `Selecting ${serial}; this is the only concurrent viewer.`;
+    const selection = await fetch(config.app_url + selectPath(serial), { method: 'POST' })
+      .then(response => response.ok ? response.json() : Promise.reject(new Error(`select ${response.status}`)));
+    const peer = new RTCPeerConnection({ iceServers: selection.ice_servers || [] });
+    const connectedAt = isoNow();
+    peer.ontrack = event => { video.srcObject = event.streams[0]; };
+    await peer.setLocalDescription(await peer.createOffer());
+    await waitForIce(peer);
+    const answer = await fetch(selection.whep_url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/sdp', 'Authorization': `Bearer ${selection.whep_token || ''}` },
+      body: peer.localDescription.sdp,
+    });
+    if (!answer.ok) throw new Error(`WHEP ${answer.status}`);
+    const resource = answer.headers.get('location');
+    await peer.setRemoteDescription({ type: 'answer', sdp: await answer.text() });
+    await wait(config.stable_window_seconds * 1000);
+    const firstStats = await peer.getStats();
+    const previous = [...firstStats.values()].find(r => r.type === 'inbound-rtp' && r.kind === 'video');
+    await wait(1000);
+    const stats = await peer.getStats();
+    const inbound = [...stats.values()].find(r => r.type === 'inbound-rtp' && r.kind === 'video');
+    if (!inbound || !previous) throw new Error('no inbound video RTP stats');
+    const bitrate = 8 * (inbound.bytesReceived - previous.bytesReceived)
+      / ((inbound.timestamp - previous.timestamp) / 1000);
+    const jitterMs = inbound.jitterBufferEmittedCount
+      ? 1000 * inbound.jitterBufferDelay / inbound.jitterBufferEmittedCount
+      : 0;
+    await fetch(config.submit_url, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+        serial, bits_per_second: bitrate, jitter_buffer_ms: jitterMs,
+        frames_per_second: inbound.framesPerSecond || 0, connected_at: connectedAt, switched_at: isoNow(),
+      }),
+    });
+    if (resource) await fetch(new URL(resource, selection.whep_url), { method: 'DELETE' }).catch(() => {});
+    peer.close();
+  }
+
+  (async () => {
+    for (const serial of config.serials) await measure(serial);
+    status.textContent = 'All five one-viewer windows recorded.';
+  })().catch(error => { status.textContent = `FAIL: ${error.message}`; console.error(error); });
+})();
+</script>
