@@ -87,7 +87,11 @@ test('rejects connection with missing token', async () => {
 
 test('rejects connection with token for a different session', async () => {
   const { server, port } = await createSignalingServer({ port: 0, jwtSecret: 'test-secret' });
-  const token = jwt.sign({ session: 'sess-OTHER' }, 'test-secret');
+  const token = jwt.sign({
+    session: 'sess-OTHER',
+    role: 'engine',
+    exp: Math.floor(Date.now() / 1000) + 60,
+  }, 'test-secret');
   const ws = new WebSocket(`ws://localhost:${port}/?session=sess-1&role=engine&token=${token}`);
   const closeCode = await new Promise((resolve) => {
     ws.once('close', (code) => resolve(code));
@@ -112,7 +116,11 @@ test('accepts connection with valid token matching session', async () => {
 
 test('rejects connection where token role does not match requested role param', async () => {
   const { server, port } = await createSignalingServer({ port: 0, jwtSecret: 'test-secret' });
-  const token = jwt.sign({ session: 'sess-1', role: 'viewer' }, 'test-secret');
+  const token = jwt.sign({
+    session: 'sess-1',
+    role: 'viewer',
+    exp: Math.floor(Date.now() / 1000) + 60,
+  }, 'test-secret');
   const ws = new WebSocket(`ws://localhost:${port}/?session=sess-1&role=engine&token=${token}`);
   const closeCode = await new Promise((resolve) => {
     ws.once('close', (code) => resolve(code));
