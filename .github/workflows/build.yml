@@ -35,9 +35,45 @@ jobs:
         run: cmake --build engine\build --config Release
         shell: pwsh
 
-      - name: Run engine_tests (excludes SignalingClient — no server available in CI)
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install signaling relay dependencies
+        run: npm ci
+        working-directory: infra/vps/signaling
+        shell: cmd
+
+      - name: Run complete engine_tests behind the Node signaling relay
         run: |
-          engine\build\Release\engine_tests.exe --gtest_filter=-SignalingClient.*
+          $env:JWT_SECRET = ""
+          $relay = Start-Process node -ArgumentList "server.js" `
+            -WorkingDirectory "infra\vps\signaling" -PassThru
+          try {
+            $deadline = (Get-Date).AddSeconds(30)
+            $connected = $false
+            while ((Get-Date) -lt $deadline) {
+              try {
+                $client = New-Object System.Net.Sockets.TcpClient
+                $client.Connect("127.0.0.1", 8443)
+                $client.Close()
+                $connected = $true
+                break
+              } catch {
+                Start-Sleep -Milliseconds 500
+              }
+            }
+            if (-not $connected) {
+              throw "signaling relay did not accept connections on port 8443"
+            }
+            engine\build\Release\engine_tests.exe
+            if ($LASTEXITCODE -ne 0) {
+              throw "engine_tests.exe failed with exit code $LASTEXITCODE"
+            }
+          } finally {
+            Stop-Process -Id $relay.Id -ErrorAction SilentlyContinue
+            Wait-Process -Id $relay.Id -ErrorAction SilentlyContinue
+          }
         shell: pwsh
 
       - name: Stage engine.exe + runtime DLLs (flat)

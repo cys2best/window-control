@@ -527,6 +527,20 @@ def test_derives_scrcpy_port_and_scid_from_discovered_ldplayer_index():
     assert any(env.get("ENGINE_PUBLIC_ICE_SERVERS") == "" for env in deps.started_env)
 
 
+def test_starts_node_signaling_relay_with_cleared_jwt_secret():
+    deps = FakeDeps()
+    run_verification(config(), deps)
+
+    relay_calls = [
+        call for call in deps.calls if call[0] == "local signaling relay"
+    ]
+    assert len(relay_calls) == 1
+    command = relay_calls[0][1]
+    assert command == ("node", "server.js")
+    relay_index = deps.calls.index(relay_calls[0])
+    assert deps.child_envs[relay_index].get("JWT_SECRET") == ""
+
+
 def test_removal_passes_the_discovered_ldplayer_index_to_the_dependency():
     deps = FakeDeps()
 

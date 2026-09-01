@@ -13,6 +13,8 @@ a = Analysis(
     binaries=[],
     datas=[
         (str(_root / 'src' / 'client'), 'client'),
+        # 'assets' includes assets/engine (engine.exe + runtime DLLs staged by
+        # build.bat) and assets/scrcpy (downloaded by download_assets.py).
         (str(_root / 'src' / 'assets'), 'assets'),
     ],
     hiddenimports=[
@@ -32,18 +34,7 @@ a = Analysis(
         'PIL',
         'qrcode',
         'numpy',
-        'imageio_ffmpeg',
-        'aiortc',
-        'aiortc.sdp',
-        'aiortc.rtp',
-        'aiortc.rtcdtlstransport',
-        'aiortc.rtcicetransport',
-        'aiortc.rtcpeerconnection',
-        'aiohttp',
         'nest_asyncio',
-        'av',
-        'av.codec',
-        'av.video',
     ],
     hookspath=[],
     hooksconfig={},

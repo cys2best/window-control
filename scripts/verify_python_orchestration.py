@@ -464,6 +464,8 @@ def run_verification(config: VerificationConfig, deps: Any) -> VerificationResul
         "AUTH_TOKEN": "",
         "PUBLIC_UI_URL": "",
         "TUNNEL_SECRET": "",
+        "JWT_SECRET": "",
+        "PORT": str(config.relay_port),
     })
     ready_device = _sole_ready_adb_device(deps)
     if config.serial and config.serial != ready_device:
@@ -535,8 +537,9 @@ def run_verification(config: VerificationConfig, deps: Any) -> VerificationResul
     current_gate = "startup"
     try:
         relay = deps.start(
-            ["uv", "run", "python", "engine/test/local_signaling_server.py", "--host", "127.0.0.1", "--port", str(config.relay_port)],
-            cwd=config.repo_root, env=env, stdout_path=config.evidence_dir / "relay.log", label="local signaling relay",
+            ["node", "server.js"],
+            cwd=config.repo_root / "infra" / "vps" / "signaling",
+            env=env, stdout_path=config.evidence_dir / "relay.log", label="local signaling relay",
         )
         app = deps.start(
             ["uv", "run", "python", "src/main.py"], cwd=config.repo_root, env=env,

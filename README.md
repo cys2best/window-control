@@ -5,11 +5,13 @@ Stream specific Windows 11 application windows to your iPhone over Tailscale.
 ## Features
 
 - Window-specific capture — pick any open app, not the full screen
-- MJPEG streaming at up to 30 fps
-- Touch input: tap to click, two-finger scroll, pinch to zoom
-- Virtual keyboard relay
+- WebRTC (WHEP) streaming via a bundled native engine (`engine.exe`), one
+  instance per selected window, each on its own dynamically assigned port
+- Touch input, keyboard relay, and clicks delivered over a WebRTC
+  DataChannel (no polling)
 - Auto-reconnect if connection drops
-- Tailscale integration for secure remote access from anywhere
+- Tailscale integration for secure remote access from anywhere; embedded
+  STUN/TURN keeps WebRTC working over Tailscale and LAN
 - PWA — add to Home Screen on iPhone for full-screen experience
 - System tray with Show / Stop / Exit controls
 
@@ -39,10 +41,10 @@ Works on the same Wi-Fi network. Use the LAN IP shown in the launcher.
 
 ## Troubleshooting
 
-Stream won't play, or mediamtx won't start? See
-[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) — covers the recurring Safari
-mDNS / STUN WebRTC bug (`write queue is full`) and the mediamtx `:8000` port
-collision.
+Stream won't play, or the engine won't start? See
+[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) — covers the recurring
+Safari mDNS / STUN WebRTC bug (`write queue is full`) and how to read
+`engine.exe`'s per-instance logs and admin-loopback health endpoint.
 
 ## Streaming Quality
 
@@ -66,6 +68,8 @@ The server encodes video at one of four adaptive quality tiers:
 - Python 3.12+
 - [uv](https://github.com/astral-sh/uv)
 - [Inno Setup 6](https://jrsoftware.org/isdl.php) (Windows only, for installer)
+- CMake + vcpkg (Windows only, to build `engine/`; see
+  [engine/BUILD_WINDOWS.md](engine/BUILD_WINDOWS.md))
 
 ### Run from source (Windows)
 
@@ -74,6 +78,9 @@ uv sync
 uv run python src/main.py
 ```
 
+Requires a built `engine.exe` staged at `src/assets/engine/engine.exe` (see
+`build/build.bat` below, or build `engine/` directly with CMake).
+
 ### Build installer (Windows)
 
 ```bat
@@ -81,7 +88,11 @@ cd build
 build_installer.bat
 ```
 
-Produces `release/WindowControlInstaller.exe`.
+`build.bat` (invoked by `build_installer.bat`) builds `engine/` in Release
+mode, stages `engine.exe` and its runtime DLLs into `src/assets/engine`, then
+runs PyInstaller. Produces `release/WindowControlInstaller.exe`. The installer
+adds and removes a named Windows Firewall program rule
+(`WindowControl-Engine`) for the installed `engine.exe`.
 
 ### CI build (GitHub Actions)
 
@@ -105,34 +116,41 @@ uv run pytest tests/ -v
 
 ```
 src/
-  main.py              # Entry point
-  config.py            # Ports, quality settings, paths
+  main.py                    # Entry point
+  config.py                  # Ports, quality settings, paths
   gui/
-    launcher.py        # PyQt5 launcher window
-    window_list.py     # Window picker widget
-    tray.py            # pystray system tray
+    launcher.py              # PyQt5 launcher window
+    window_list.py           # Window picker widget
+    tray.py                  # pystray system tray
   server/
-    app.py             # FastAPI app factory
-    stream.py          # Capture loop + MJPEG generator
-    window_manager.py  # Win32 window enumeration
-    input_handler.py   # Touch → Win32 input
-    preview.py         # Window thumbnail generator
-    tailscale.py       # Tailscale IP detection
+    app.py                   # FastAPI app factory (instance/select/quality routes)
+    engine_orchestrator.py   # Discovers windows, owns per-instance engine runtimes
+    engine_runtime.py        # Launches/reconnects/monitors one engine.exe instance
+    engine_process.py        # engine.exe subprocess launcher
+    engine_admin.py          # Loopback admin client (health/reconnect/keyframe)
+    window_manager.py        # Win32 window enumeration
+    tailscale.py             # Tailscale IP detection
+    stun_server.py           # Embedded STUN, bound to the Tailscale interface
   client/
-    index.html         # iPhone web app
-    app.js             # Stream + touch input
-    windows_panel.js   # Swipe drawer
-    style.css          # Mobile styles
-    manifest.json      # PWA manifest
-  stubs/               # Mac dev stubs for win32 + mss
+    index.html               # iPhone web app
+    app.js                   # WHEP stream + DataChannel touch/keyboard input
+    windows_panel.js         # Swipe drawer
+    style.css                # Mobile styles
+    manifest.json            # PWA manifest
+  assets/
+    engine/                  # engine.exe + runtime DLLs, staged by build.bat
+    scrcpy/                  # downloaded by scripts/download_assets.py
+  stubs/                     # Mac dev stubs for win32 + mss
+engine/                      # C++ WebRTC engine (Windows-only), see engine/BUILD_WINDOWS.md
 build/
-  window_control.spec  # PyInstaller spec
-  build.bat            # Build EXE
-  build_installer.bat  # Build EXE + installer
-  installer.iss        # Inno Setup 6 script
+  window_control.spec        # PyInstaller spec
+  build.bat                  # Build engine + stage assets + build EXE
+  build_installer.bat        # Build EXE + installer
+  installer.iss               # Inno Setup 6 script; owns the engine firewall rule
+infra/vps/signaling/         # Node signaling relay used by public sessions and CI
 .github/workflows/
-  build.yml            # CI: build installer on tag push
-tests/                 # pytest suite (43 tests)
+  build.yml                  # CI: build engine, run full engine_tests.exe, build installer
+tests/                       # pytest suite
 ```
 
 ## License

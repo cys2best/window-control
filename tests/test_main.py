@@ -1,3 +1,4 @@
+from pathlib import Path
 import sys
 import pytest
 
@@ -191,3 +192,12 @@ def test_instance_name_non_emulator():
     from server.instance_manager import instance_name
     name = instance_name("192.168.1.100:5555")
     assert name.startswith("instance_")
+
+
+def test_main_retains_only_stun_firewall_rule_no_legacy_whep_ice_loop():
+    source = (Path(__file__).parent.parent / "src" / "main.py").read_text()
+    assert "STUN" in source
+    assert "netsh" in source
+    assert "WindowControl-Engine" not in source
+    for legacy in ("WHEP", "ICE_PORT", "for port in", "ice_port_range"):
+        assert legacy not in source

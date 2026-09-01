@@ -46,6 +46,26 @@ begin
   Sleep(1000);
 end;
 
+procedure RemoveEngineFirewallRule();
+var
+  ResultCode: Integer;
+begin
+  Exec(ExpandConstant('{sys}\netsh.exe'),
+    'advfirewall firewall delete rule name="WindowControl-Engine"',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
+procedure AddEngineFirewallRule();
+var
+  ResultCode: Integer;
+begin
+  RemoveEngineFirewallRule();
+  Exec(ExpandConstant('{sys}\netsh.exe'),
+    'advfirewall firewall add rule name="WindowControl-Engine" dir=in action=allow ' +
+    'program="' + ExpandConstant('{app}\assets\engine\engine.exe') + '" enable=yes',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   ResultCode: Integer;
@@ -54,13 +74,18 @@ begin
     Exec('taskkill.exe', '/F /IM WindowControl.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     Sleep(1000);
     StopAndRemoveService();
+    RemoveEngineFirewallRule();
   end;
+  if CurStep = ssPostInstall then
+    AddEngineFirewallRule();
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
-  if CurUninstallStep = usUninstall then
+  if CurUninstallStep = usUninstall then begin
     StopAndRemoveService();
+    RemoveEngineFirewallRule();
+  end;
 end;
 
 function InitializeSetup(): Boolean;

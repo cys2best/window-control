@@ -2,19 +2,12 @@
 
 ## WebRTC stream won't play — `write queue is full` / `deadline exceeded`
 
-**Symptom.** mediamtx logs repeat:
-
-```
-WAR [WebRTC] [session ...] write queue is full
-INF [WebRTC] [session ...] closed: deadline exceeded while waiting connection
-```
-
-The stream never appears. In the browser console the ICE state reaches
-`checking` but never `connected`.
+**Symptom.** The stream never appears. In the browser console the ICE state
+reaches `checking` but never `connected`.
 
 This is a **recurring** bug. If you hit it again, the fix below is already in
-the code — check it's actually running (git pull on the server, hard-reload the
-browser) before assuming a new cause.
+the code — check it's actually running (git pull on the server, hard-reload
+the browser) before assuming a new cause.
 
 ### Root cause: Safari mDNS host candidate
 
@@ -26,9 +19,8 @@ Safari only emits an mDNS (`.local`) host ICE candidate for privacy, and offers
 candidate:... udp ... 3b7859fa-....local 65442 typ host ...
 ```
 
-mediamtx cannot resolve `.local` over Tailscale, so the candidate pair never
-forms, media never flows, mediamtx's send buffer fills (`write queue is full`),
-and the session times out.
+The engine cannot resolve `.local` over Tailscale, so the candidate pair never
+forms and media never flows.
 
 ### Why public STUN does NOT fix it
 
@@ -41,8 +33,8 @@ the public internet, so the reflected address is the ISP / Cloudflare-WARP
 candidate:... udp ... 104.28.71.152 41893 typ srflx ...
 ```
 
-mediamtx lives on a Tailscale IP (`100.x.x.x`) and cannot reach `104.x`, so this
-`srflx` candidate is useless. Public STUN is a dead end here.
+The engine listens on a Tailscale IP (`100.x.x.x`) and cannot reach `104.x`, so
+this `srflx` candidate is useless. Public STUN is a dead end here.
 
 ### The fix: embedded STUN bound to the Tailscale IP
 
@@ -51,7 +43,7 @@ We run a minimal STUN Binding server
 **Tailscale interface** on UDP `3478`. Because it lives on the Tailscale IP, the
 browser's Binding request routes *over Tailscale*, so the source address the
 STUN server sees — and returns as the `srflx` candidate — is the browser's
-**Tailscale** IP (`100.x`), which mediamtx can reach directly. No relay hop.
+**Tailscale** IP (`100.x`), which the engine can reach directly. No relay hop.
 
 Wiring:
 
@@ -59,18 +51,10 @@ Wiring:
 |-------|----------|------|
 | STUN server | `src/server/stun_server.py` | UDP Binding responder |
 | Start / rebind | `InstanceManager._ensure_stun` in `src/server/instance_manager.py` | binds STUN to the current Tailscale IP; rebinds if the IP changes |
-| Advertise to client | `/select` in `src/server/app.py` sends `stun_url` per instance | `stun:<tailscale-ip>:3478` |
-| Use it | `initWebRTC` in `src/client/app.js` | `RTCPeerConnection({ iceServers: [{ urls: stun_url }] })` |
+| Advertise to client | engine-select response includes `ice_servers` | `stun:<tailscale-ip>:3478` (and TURN, for public/remote sessions) |
+| Use it | the browser client's WHEP/WebRTC setup in `src/client/app.js` | `RTCPeerConnection({ iceServers })` |
 | Firewall | `src/main.py` | opens UDP `3478` inbound |
 | Config | `STUN_PORT` in `src/config.py` | `3478` |
-
-### Also required: non-trickle WHEP needs the candidate in the offer
-
-mediamtx's WHEP is **non-trickle** — the answer is a one-shot HTTP response, so
-the offer POSTed by the client must already contain the full candidate list.
-`initWebRTC` calls `waitForIceGatheringComplete(pc)` **before** POSTing, so the
-`srflx` candidate is present. Skipping this wait was why earlier STUN attempts
-appeared to do nothing.
 
 ### Verifying the fix
 
@@ -89,53 +73,55 @@ device and that UDP `3478` is open on the server.
 
 ---
 
-## mediamtx fails to start — `listen udp :8000: bind`
+## engine.exe won't start, or a selected instance never goes live
 
-**Symptom.** mediamtx logs at startup:
+Each selected window is served by its own `engine.exe` instance, launched by
+`EngineOrchestrator`/`EngineRuntime` (`src/server/engine_orchestrator.py`,
+`src/server/engine_runtime.py`) with a **dynamically assigned** WHEP port (no
+fixed port to collide on) and a loopback-only admin port.
 
-```
-ERR listen udp :8000: bind: Only one usage of each socket address
-    (protocol/network address/port) is normally permitted.
-```
+### Diagnosing a stuck or crashed instance
 
-WebRTC then never works because the ICE UDP mux never binds.
-
-### Causes and fixes
-
-1. **Orphan `mediamtx.exe` from a crashed/force-closed prior run** still holds
-   the port. `MediamtxManager._stop_locked` only kills the process *this* run
-   spawned, so an orphan is invisible to it. `_reap_orphan_mediamtx()` in
-   `src/server/mediamtx_manager.py` runs `taskkill /F /IM mediamtx.exe` before
-   every start to clear it. Manual clear if needed:
+1. **Per-instance engine logs.** Each `engine.exe` process's stdout/stderr is
+   captured by the Python launcher; check the WindowControl app's own log
+   output (and, on the installed build, `%ProgramData%\WindowControl\` if a
+   crash log was written) for `[engine]`-prefixed lines naming the failing
+   instance.
+2. **Admin-loopback health.** `EngineRuntime` polls the instance's admin HTTP
+   API (`/admin/health`, `/admin/reconnect`, `/admin/keyframe`) on
+   `127.0.0.1:<admin_port>` — never exposed off-box. A stalled instance
+   usually shows up as repeated `[engine] health failed for <instance>: ...`
+   log lines; that triggers an automatic reconnect.
+3. **Orphaned processes.** If WindowControl was force-killed, an orphaned
+   `engine.exe` can hold a device/window resource. Clear it manually:
 
    ```
-   taskkill /F /IM mediamtx.exe
+   taskkill /F /IM engine.exe
    ```
 
-2. **Default port collision.** mediamtx's default WebRTC UDP mux is `:8000`,
-   which collides with other software. We pin it explicitly via
-   `webrtcLocalUDPAddress: :8288` (`WEBRTC_UDP_PORT` in `src/config.py`) and
-   open UDP `8288` in the firewall.
+4. **Missing/blocked firewall rule.** The installer creates and removes a
+   single named inbound rule, `WindowControl-Engine`, scoped to the installed
+   `engine.exe` program path (not to a specific port, since ports are
+   per-instance and dynamic). If a manual firewall change removed it, WHEP
+   connections from other devices on the LAN/Tailscale may fail even though
+   the stream works on `localhost`. Recreate it via `netsh advfirewall
+   firewall add rule name="WindowControl-Engine" dir=in action=allow
+   program="<install dir>\assets\engine\engine.exe" enable=yes` or reinstall.
 
-Note: changing the port does not help if the collision is another *mediamtx*
-orphan — it would grab the new port too. Keep the reaper.
+### Building/running the engine directly
+
+See [engine/BUILD_WINDOWS.md](../engine/BUILD_WINDOWS.md) for the CMake/vcpkg
+build, and [engine/test/README.md](../engine/test/README.md) /
+[engine/test/README_e2e.md](../engine/test/README_e2e.md) for running
+`engine_tests.exe` (including the live signaling suite, which needs the
+repository's Node relay at `infra/vps/signaling`).
 
 ---
 
-## ffmpeg fails to copy video codec — `Non-monotonic DTS` or codec errors
-
-**Symptom.** ffmpeg logs show errors like:
-
-```
-Non-monotonic DTS in output file
-Stream ends prematurely
-```
-
 ## Slow first frame / slow instance switch (~20-30s black screen)
 
-**Symptom:** ICE connects immediately (browser console shows `[ice] state:
-connected` and `ontrack fired`), but the video stays black for 20-30s before
-`loadedmetadata` / `playing`. Same delay on the first select and on every
+**Symptom:** ICE connects immediately, but the video stays black for 20-30s
+before the first frame decodes. Same delay on the first select and on every
 instance switch.
 
 ### Root cause: device encoder emits keyframes too rarely
@@ -143,31 +129,15 @@ instance switch.
 WebRTC cannot start decoding until it receives an IDR keyframe. scrcpy asks the
 device to emit one every ~2s via `video_encoder_options=i-frame-interval=2`, but
 **some device MediaCodec encoders ignore that hint entirely** (observed on ASUS
-AI2205) and emit an IDR only every 20-30s. Time-to-first-frame is then bounded by
-that interval.
+AI2205) and emit an IDR only every 20-30s.
 
-### Fix: copy-mux + source-side IDR request (TYPE_RESET_VIDEO)
+### Fix: source-side IDR request
 
-`build_ffmpeg_args` now uses `-c:v copy` (no re-encode). The device already emits
-H.264 at the tier's bitrate/fps, so libx264 only burned CPU (full decode+encode
-per frame, per active instance) and added ~1 frame of latency.
-
-Keyframes are forced at the **source** instead of by an ffmpeg GOP:
-`ScrcpyControl.request_idr()` sends `TYPE_RESET_VIDEO` (control message type
-`0x11`, a bodyless 1-byte message), which makes scrcpy-server drive the device
-encoder to emit an IDR on demand. `ScrcpySession._stream_loop` requests one right
-after the control socket connects (fast first-frame) and then every ~2s on a
-heartbeat thread. A WHEP subscriber that joins between requests waits at most ~2s
-for a keyframe — the same cadence the forced ffmpeg GOP used to provide, without
-the transcode.
-
-This is why the earlier `-c:v copy` attempt (reverted in commit `7083f8e`)
-failed and this one does not: that attempt had **no way to force an IDR** and
-inherited the device encoder's ~20-30s rare-IDR behavior. `TYPE_RESET_VIDEO` is
-the missing piece.
-
-> **Do not remove `-use_wallclock_as_timestamps 1`.** Raw H.264 from scrcpy
-> carries no container timestamps; without it ffmpeg guesses 25fps, the RTSP
-> muxer stalls on non-monotonic DTS, and mediamtx times out the publish (~10s
-> `i/o timeout`), dropping every instance. This was the FIRST copy-mux failure
-> (commit `15a2d4e`) — see the section above.
+The engine requests an IDR from the device (`TYPE_RESET_VIDEO`, scrcpy control
+message `0x11`) right after connecting to the scrcpy source, and again on a
+heartbeat and whenever a fresh WHEP subscriber joins — the same behavior the
+Python `ScrcpyControl.request_idr()` provided in the legacy pipeline, now owned
+by the engine. A subscriber that joins between heartbeats waits at most ~2s for
+a keyframe. If you see a persistent 20-30s stall, check the engine log for
+whether `TYPE_RESET_VIDEO` requests are actually reaching the device (device
+disconnected, or a busy control socket).

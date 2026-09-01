@@ -59,8 +59,13 @@ npm test                     # mobile/ (jest)
     checks. The 2026-08-31 Windows Host PC baseline passed 81 offline tests,
     the live-signaling suite, and the real-device manual E2E gate; subsequent
     changes still require Windows or `build-engine` verification.
-  - `src/assets/mediamtx/` and `src/assets/scrcpy/` are downloaded at
-    startup by `download_assets.py` — not tracked, don't hand-populate.
+  - `src/assets/scrcpy/` is downloaded at startup by `download_assets.py` —
+    not tracked, don't hand-populate. `src/assets/engine/` (engine.exe +
+    runtime DLLs) is staged locally by `build/build.bat` from the Release
+    CMake build, or by CI's `build-engine` job artifact — not downloaded by
+    `download_assets.py`. `mediamtx` is no longer part of the product; a
+    stale `src/assets/mediamtx/` from an old checkout is removed by
+    `build/build.bat` before packaging.
   - After editing frontend JS/CSS, bump `VERSION` in `src/config.py` —
     `app.py` appends `?v={VERSION}` to asset URLs to bust browser cache.
   - `docs/*` is gitignored except `docs/TROUBLESHOOTING.md` and files
