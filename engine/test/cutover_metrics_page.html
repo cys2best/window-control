@@ -24,7 +24,7 @@
 
   async function measure(serial) {
     status.textContent = `Selecting ${serial}; this is the only concurrent viewer.`;
-    const selection = await fetch(config.app_url + selectPath(serial), { method: 'POST' })
+    const selection = await fetch(selectPath(serial), { method: 'POST' })
       .then(response => response.ok ? response.json() : Promise.reject(new Error(`select ${response.status}`)));
     const peer = new RTCPeerConnection({ iceServers: selection.ice_servers || [] });
     const connectedAt = isoNow();
@@ -51,7 +51,7 @@
     const jitterMs = inbound.jitterBufferEmittedCount
       ? 1000 * inbound.jitterBufferDelay / inbound.jitterBufferEmittedCount
       : 0;
-    await fetch(config.submit_url, {
+    await fetch('/metrics', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
         serial, bits_per_second: bitrate, jitter_buffer_ms: jitterMs,
         frames_per_second: inbound.framesPerSecond || 0, connected_at: connectedAt, switched_at: isoNow(),
@@ -62,6 +62,8 @@
   }
 
   (async () => {
+    const login = await fetch('/measurement-login', { method: 'POST' });
+    if (!login.ok) throw new Error(`measurement login ${login.status}`);
     for (const serial of config.serials) await measure(serial);
     status.textContent = 'All five one-viewer windows recorded.';
   })().catch(error => { status.textContent = `FAIL: ${error.message}`; console.error(error); });

@@ -1,13 +1,20 @@
 import json
 from dataclasses import dataclass
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+import threading
 
+import httpx
 import pytest
 
+import scripts.measure_engine_cutover as measurement
 from scripts.measure_engine_cutover import (
     MeasurementConfig,
     MeasurementError,
     ProcessSample,
+    RealMeasurementDeps,
+    _MetricPageServer,
+    record_cutover_decision,
     run_measurement,
 )
 
@@ -56,6 +63,8 @@ class FakeDeps:
         self.started_env = None
         self.opened = []
         self.non_viewer_submission = None
+        self.viewer_active = False
+        self.events = []
 
     @classmethod
     def five_instances(cls):
@@ -68,10 +77,21 @@ class FakeDeps:
         self.started_env = dict(environment)
         return FakeApp()
 
+    def start_viewer(self, config):
+        self.viewer_active = True
+        self.events.append("viewer-start")
+        return object()
+
+    def finish_viewer(self, _viewer):
+        self.viewer_active = False
+        self.events.append("viewer-finish")
+        return self.viewer_metrics
+
     def stop_app(self, app):
         app.alive = False
 
     def sample_processes(self):
+        self.events.append(f"sample:{self.viewer_active}")
         return self.process_samples.pop(0) if self.process_samples else []
 
     def collect_viewer_metrics(self, config):
@@ -225,3 +245,117 @@ def test_failure_diagnostics_are_bounded_and_redact_secrets(tmp_path):
 
     assert "top-secret" not in str(error.value)
     assert len(str(error.value)) < 320
+
+
+def test_diagnostics_redact_json_and_bearer_secret_forms():
+    """JSON-shaped and Bearer-form credentials must not enter durable failure JSON."""
+    diagnostic = measurement._safe_detail('{"token":"json-secret"} Authorization: Bearer bearer-secret')
+
+    assert "json-secret" not in diagnostic
+    assert "bearer-secret" not in diagnostic
+    assert "<redacted>" in diagnostic
+
+
+def test_one_viewer_is_started_before_and_retained_during_process_sampling(tmp_path):
+    """Moving the viewer after sampling would incorrectly record no-viewer CPU."""
+    deps = FakeDeps.five_instances()
+
+    run_measurement(make_config(tmp_path), deps)
+
+    assert deps.events[0] == "viewer-start"
+    assert all(event == "sample:True" for event in deps.events[1:-1])
+    assert deps.events[-1] == "viewer-finish"
+
+
+def test_process_family_totals_are_computed_per_snapshot_before_percentiles(tmp_path):
+    """Flattening PIDs across time reports the wrong process-family median and RSS peak."""
+    deps = FakeDeps.five_instances()
+    deps.process_samples = [
+        [ProcessSample("WindowControl", 1, 10), ProcessSample("engine", 2, 100), ProcessSample("engine", 3, 200)],
+        [ProcessSample("WindowControl", 1, 20), ProcessSample("engine", 4, 300), ProcessSample("engine", 5, 400)],
+    ]
+
+    result = run_measurement(make_config(tmp_path), deps)
+
+    assert result["processes"]["engine"] == {"cpu_median": 7, "cpu_p95": 8.8, "rss_peak": 700}
+    assert result["processes"]["aggregate"]["cpu_median"] == 8
+
+
+def test_real_adapter_creates_evidence_and_does_not_persist_raw_app_output(tmp_path, monkeypatch):
+    """A nonexistent evidence directory must not stop app startup or leak its raw logs."""
+    config = make_config(tmp_path / "repo", evidence_dir=tmp_path / "evidence")
+    deps = RealMeasurementDeps(config)
+    seen = {}
+
+    class Child:
+        def poll(self): return 0
+
+    def popen(*args, **kwargs):
+        seen.update(kwargs)
+        return Child()
+
+    monkeypatch.setattr(measurement.subprocess, "Popen", popen)
+    child = deps.start_app({})
+
+    assert isinstance(child, Child)
+    assert config.evidence_dir.is_dir()
+    assert seen["stdout"] is measurement.subprocess.DEVNULL
+    assert not (config.evidence_dir / "window-control.log").exists()
+
+
+def test_metrics_page_proxies_authenticated_selection_on_its_own_origin(tmp_path):
+    """A separately served page must not make an unauthenticated cross-origin selection fetch."""
+    requests = []
+
+    class Upstream(BaseHTTPRequestHandler):
+        def do_POST(self):
+            requests.append((self.path, self.headers.get("Cookie")))
+            if self.path == "/login":
+                self.send_response(200)
+                self.send_header("Set-Cookie", "windowcontrol_session=accepted; Path=/; HttpOnly")
+                self.end_headers()
+                return
+            if self.path == "/instances/emulator-5554/engine-select" and "windowcontrol_session=accepted" in (self.headers.get("Cookie") or ""):
+                body = b'{"ok": true}'
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            self.send_error(401)
+
+        def log_message(self, *_args): pass
+
+    upstream = ThreadingHTTPServer(("127.0.0.1", 0), Upstream)
+    thread = threading.Thread(target=upstream.serve_forever, daemon=True)
+    thread.start()
+    page = tmp_path / "cutover_metrics_page.html"
+    page.write_text("<script>fetch('/instances/x/select')</script>", encoding="utf-8")
+    server = _MetricPageServer(page, f"http://127.0.0.1:{upstream.server_port}", "test-token")
+    server.start()
+    try:
+        client = httpx.Client(base_url=server.origin)
+        assert client.post("/measurement-login").status_code == 200
+        selection = client.post("/instances/emulator-5554/engine-select")
+        assert selection.status_code == 200
+        assert selection.json() == {"ok": True}
+        assert requests == [("/login", None), ("/instances/emulator-5554/engine-select", "windowcontrol_session=accepted")]
+    finally:
+        server.close()
+        upstream.shutdown()
+        thread.join(timeout=2)
+
+
+def test_decision_refuses_pass_result_with_incomplete_measurement_schema(tmp_path):
+    """Hashing a malformed PASS result would create an unjustified deletion approval."""
+    files = []
+    for mode, workload in (("legacy", "no-viewer"), ("legacy", "one-viewer"), ("engine", "no-viewer"), ("engine", "one-viewer")):
+        path = tmp_path / f"{mode}-{workload}.json"
+        path.write_text(json.dumps({"schema_version": 1, "result": "PASS", "mode": mode, "workload": workload, "serials": list(SERIALS)}), encoding="utf-8")
+        files.append(path)
+
+    with pytest.raises(MeasurementError, match="complete schema-v1"):
+        record_cutover_decision(files, "APPROVE CUTOVER", tmp_path)
+
+    assert not (tmp_path / "cutover-decision.json").exists()

@@ -28,7 +28,11 @@ from urllib.parse import quote
 _FAMILIES = ("WindowControl", "engine", "mediamtx", "ffmpeg")
 _MANUAL_FIELDS = ("glass_to_glass_ms", "warm_switch_ms", "cold_switch_ms")
 _DIAGNOSTIC_LIMIT = 240
-_SENSITIVE = re.compile(r"(?i)\b(token|secret|password|authorization)\s*([=:])\s*\S+")
+_SENSITIVE = (
+    re.compile(r'''(?i)(["']?(?:token|secret|password|authorization)["']?\s*[:=]\s*["']?(?:bearer\s+)?)\S+'''),
+    re.compile(r"(?i)(authorization\s*:\s*bearer\s+)\S+"),
+    re.compile(r"(?i)(bearer\s+)[^\s,;]+"),
+)
 
 
 class MeasurementError(RuntimeError):
@@ -55,7 +59,8 @@ class ProcessSample:
 
 def _safe_detail(error: BaseException | str) -> str:
     detail = " ".join(str(error).split())
-    detail = _SENSITIVE.sub(r"\1\2<redacted>", detail)
+    for pattern in _SENSITIVE:
+        detail = pattern.sub(r"\1<redacted>", detail)
     return detail[:_DIAGNOSTIC_LIMIT] + ("..." if len(detail) > _DIAGNOSTIC_LIMIT else "")
 
 
@@ -106,12 +111,11 @@ def _number(value: Any, field: str) -> float | int:
 
 
 def _aggregate_processes(samples: list[list[ProcessSample]], mode: str) -> dict[str, dict[str, float | int]]:
-    by_family: dict[str, list[ProcessSample]] = {family: [] for family in _FAMILIES}
+    by_family: dict[str, list[tuple[float, int]]] = {family: [] for family in _FAMILIES}
     aggregate_cpu: list[float] = []
     aggregate_rss: list[int] = []
     for snapshot in samples:
-        snapshot_cpu = 0.0
-        snapshot_rss = 0
+        family_totals = {family: [0.0, 0] for family in _FAMILIES}
         for item in snapshot:
             if item.family not in by_family:
                 continue
@@ -121,20 +125,21 @@ def _aggregate_processes(samples: list[list[ProcessSample]], mode: str) -> dict[
                 raise MeasurementError("unexpected engine process family in legacy mode")
             cpu = _number(item.cpu_percent, f"{item.family} cpu")
             rss = _number(item.rss_bytes, f"{item.family} RSS")
-            by_family[item.family].append(item)
-            snapshot_cpu += cpu
-            snapshot_rss += int(rss)
-        aggregate_cpu.append(snapshot_cpu)
-        aggregate_rss.append(snapshot_rss)
+            family_totals[item.family][0] += cpu
+            family_totals[item.family][1] += int(rss)
+        for family, (cpu, rss) in family_totals.items():
+            by_family[family].append((cpu, rss))
+        aggregate_cpu.append(sum(cpu for cpu, _rss in family_totals.values()))
+        aggregate_rss.append(sum(rss for _cpu, rss in family_totals.values()))
 
-    def summarize(items: list[ProcessSample]) -> dict[str, float | int]:
+    def summarize(items: list[tuple[float, int]]) -> dict[str, float | int]:
         if not items:
             return _empty_metrics()
-        cpus = [float(item.cpu_percent) for item in items]
+        cpus = [cpu for cpu, _rss in items]
         return {
             "cpu_median": statistics.median(cpus),
             "cpu_p95": _percentile95(cpus),
-            "rss_peak": max(int(item.rss_bytes) for item in items),
+            "rss_peak": max(rss for _cpu, rss in items),
         }
 
     result = {family: summarize(by_family[family]) for family in _FAMILIES}
@@ -202,8 +207,10 @@ def run_measurement(config: MeasurementConfig, deps: Any) -> dict[str, Any]:
     started_at = deps.clock()
     result_path = _result_path(config.evidence_dir)
     app = None
+    viewer = None
     try:
         _validate_config(config)
+        config.evidence_dir.mkdir(parents=True, exist_ok=True)
         before = tuple(deps.ready_serials())
         if before != config.serials:
             raise MeasurementError("expected exactly five unique ready serials matching the supplied serials")
@@ -216,6 +223,8 @@ def run_measurement(config: MeasurementConfig, deps: Any) -> dict[str, Any]:
                 raise MeasurementError(f"verified Release engine is missing: {engine_exe}")
             environment["ENGINE_EXE_PATH"] = str(engine_exe)
         app = deps.start_app(environment)
+        if config.workload == "one-viewer":
+            viewer = deps.start_viewer(config)
         snapshots: list[list[ProcessSample]] = []
         deadline = deps.clock() + config.duration_seconds
         while deps.clock() < deadline:
@@ -229,7 +238,7 @@ def run_measurement(config: MeasurementConfig, deps: Any) -> dict[str, Any]:
         if after != before:
             raise MeasurementError(f"ready serials changed during measurement: {before} -> {after}")
         if config.workload == "one-viewer":
-            viewer_metrics = _viewer_records(config.serials, deps.collect_viewer_metrics(config))
+            viewer_metrics = _viewer_records(config.serials, deps.finish_viewer(viewer))
             manual_metrics = _manual_records(deps.collect_manual_metrics())
         else:
             submitted = getattr(deps, "unexpected_no_viewer_submission", lambda: None)()
@@ -265,8 +274,10 @@ def run_measurement(config: MeasurementConfig, deps: Any) -> dict[str, Any]:
 
 
 class _MetricPageServer:
-    def __init__(self, page: Path):
+    def __init__(self, page: Path, app_origin: str, auth_token: str):
         self.page = page
+        self.app_origin = app_origin.rstrip("/")
+        self.auth_token = auth_token
         self.metrics: dict[str, dict[str, Any]] = {}
         self.done = threading.Event()
         parent = self
@@ -284,6 +295,32 @@ class _MetricPageServer:
                 self.wfile.write(body)
 
             def do_POST(self):
+                if self.path == "/measurement-login":
+                    if not parent.auth_token:
+                        self.send_response(204)
+                        self.end_headers()
+                        return
+                    import httpx
+                    response = httpx.post(
+                        f"{parent.app_origin}/login", json={"token": parent.auth_token}, timeout=10,
+                    )
+                    self.send_response(response.status_code)
+                    if cookie := response.headers.get("set-cookie"):
+                        self.send_header("Set-Cookie", cookie)
+                    self.end_headers()
+                    return
+                if self.path.startswith("/instances/") and self.path.endswith(("/select", "/engine-select")):
+                    import httpx
+                    body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                    headers = {"Content-Type": self.headers.get("Content-Type", "application/json")}
+                    if cookie := self.headers.get("Cookie"):
+                        headers["Cookie"] = cookie
+                    response = httpx.post(f"{parent.app_origin}{self.path}", content=body, headers=headers, timeout=30)
+                    self.send_response(response.status_code)
+                    self.send_header("Content-Type", response.headers.get("content-type", "application/json"))
+                    self.end_headers()
+                    self.wfile.write(response.content)
+                    return
                 if self.path != "/metrics":
                     self.send_error(404)
                     return
@@ -308,6 +345,10 @@ class _MetricPageServer:
     @property
     def url(self) -> str:
         return f"http://127.0.0.1:{self.server.server_port}/cutover_metrics_page.html"
+
+    @property
+    def origin(self) -> str:
+        return f"http://127.0.0.1:{self.server.server_port}"
 
     def start(self) -> None:
         self.thread.start()
@@ -485,10 +526,8 @@ class RealMeasurementDeps:
         return tuple(line.split()[0] for line in completed.stdout.splitlines() if len(line.split()) >= 2 and line.split()[1] == "device")
 
     def start_app(self, environment: dict[str, str]):
-        output = (self.config.evidence_dir / "window-control.log").open("a", encoding="utf-8")
-        process = subprocess.Popen(["uv", "run", "python", "src/main.py"], cwd=self.config.repo_root, env=environment, stdout=output, stderr=subprocess.STDOUT, text=True)
-        process._measurement_output = output
-        return process
+        self.config.evidence_dir.mkdir(parents=True, exist_ok=True)
+        return subprocess.Popen(["uv", "run", "python", "src/main.py"], cwd=self.config.repo_root, env=environment, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT, text=True)
 
     def stop_app(self, app: Any) -> None:
         if app.poll() is None:
@@ -497,9 +536,6 @@ class RealMeasurementDeps:
                 app.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 app.kill()
-        output = getattr(app, "_measurement_output", None)
-        if output:
-            output.close()
         if self._page_server:
             self._page_server.close()
 
@@ -522,18 +558,24 @@ class RealMeasurementDeps:
                 continue
         return samples
 
-    def collect_viewer_metrics(self, config: MeasurementConfig) -> dict[str, Any]:
-        page = _MetricPageServer(config.repo_root / "engine" / "test" / "cutover_metrics_page.html")
+    def start_viewer(self, config: MeasurementConfig) -> _MetricPageServer:
+        page = _MetricPageServer(
+            config.repo_root / "engine" / "test" / "cutover_metrics_page.html",
+            f"http://127.0.0.1:{self.app_port}",
+            os.environ.get("AUTH_TOKEN", ""),
+        )
         self._page_server = page
         page.start()
         fragment = quote(json.dumps({
-            "app_url": f"http://127.0.0.1:{self.app_port}",
             "mode": config.mode,
             "serials": config.serials,
             "stable_window_seconds": config.duration_seconds,
-            "submit_url": f"http://127.0.0.1:{page.server.server_port}/metrics",
         }))
         webbrowser.open(f"{page.url}#{fragment}")
+        return page
+
+    def finish_viewer(self, page: _MetricPageServer) -> dict[str, Any]:
+        config = self.config
         deadline = time.monotonic() + config.duration_seconds * len(config.serials) + 120
         while time.monotonic() < deadline:
             if set(page.metrics) == set(config.serials):
@@ -565,9 +607,68 @@ def _load_result(path: Path) -> dict[str, Any]:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise MeasurementError(f"could not read result {path.name}: {_safe_detail(error)}") from error
-    if value.get("schema_version") != 1 or value.get("result") != "PASS":
-        raise MeasurementError(f"result is not a schema-v1 PASS: {path.name}")
+    _validate_completed_result(value, path.name)
     return value
+
+
+def _validate_completed_result(value: Any, label: str) -> None:
+    expected_top_level = {
+        "schema_version", "mode", "workload", "commit", "serials", "started_at",
+        "duration_seconds", "processes", "viewer_metrics", "manual_metrics", "result",
+    }
+    if not isinstance(value, dict) or set(value) != expected_top_level:
+        raise MeasurementError(f"result is not a complete schema-v1 measurement: {label}")
+    if value["schema_version"] != 1 or value["result"] != "PASS":
+        raise MeasurementError(f"result is not a complete schema-v1 measurement: {label}")
+    if value["mode"] not in {"legacy", "engine"} or value["workload"] not in {"no-viewer", "one-viewer"}:
+        raise MeasurementError(f"result is not a complete schema-v1 measurement: {label}")
+    serials = value["serials"]
+    if not isinstance(serials, list) or len(serials) != 5 or len(set(serials)) != 5 or not all(isinstance(serial, str) and serial for serial in serials):
+        raise MeasurementError(f"result is not a complete schema-v1 measurement: {label}")
+    if not isinstance(value["commit"], str) or not value["commit"]:
+        raise MeasurementError(f"result is not a complete schema-v1 measurement: {label}")
+    try:
+        _number(value["started_at"], "started_at")
+    except MeasurementError as error:
+        raise MeasurementError(f"result is not a complete schema-v1 measurement: {label}") from error
+    if type(value["duration_seconds"]) is not int or value["duration_seconds"] < 30:
+        raise MeasurementError(f"result is not a complete schema-v1 measurement: {label}")
+    processes = value["processes"]
+    if not isinstance(processes, dict) or set(processes) != {*_FAMILIES, "aggregate"}:
+        raise MeasurementError(f"result is not a complete schema-v1 measurement: {label}")
+    for metrics in processes.values():
+        if not isinstance(metrics, dict) or set(metrics) != {"cpu_median", "cpu_p95", "rss_peak"}:
+            raise MeasurementError(f"result is not a complete schema-v1 measurement: {label}")
+        try:
+            if any(_number(metrics[field], field) < 0 for field in metrics):
+                raise MeasurementError("negative")
+        except MeasurementError as error:
+            raise MeasurementError(f"result is not a complete schema-v1 measurement: {label}") from error
+    manual = value["manual_metrics"]
+    if not isinstance(manual, dict) or set(manual) != set(_MANUAL_FIELDS):
+        raise MeasurementError(f"result is not a complete schema-v1 measurement: {label}")
+    viewer = value["viewer_metrics"]
+    if value["workload"] == "no-viewer":
+        if viewer != [] or any(manual[field] is not None for field in _MANUAL_FIELDS):
+            raise MeasurementError(f"result is not a complete schema-v1 measurement: {label}")
+        return
+    if not isinstance(viewer, list) or len(viewer) != 5 or {record.get("serial") for record in viewer if isinstance(record, dict)} != set(serials):
+        raise MeasurementError(f"result is not a complete schema-v1 measurement: {label}")
+    for record in viewer:
+        if not isinstance(record, dict) or set(record) != {"serial", "bits_per_second", "jitter_buffer_ms", "frames_per_second", "connected_at", "switched_at"}:
+            raise MeasurementError(f"result is not a complete schema-v1 measurement: {label}")
+        try:
+            if any(_number(record[field], field) < 0 for field in ("bits_per_second", "jitter_buffer_ms", "frames_per_second")):
+                raise MeasurementError("negative")
+        except MeasurementError as error:
+            raise MeasurementError(f"result is not a complete schema-v1 measurement: {label}") from error
+        if not all(isinstance(record[field], str) and record[field] for field in ("connected_at", "switched_at")):
+            raise MeasurementError(f"result is not a complete schema-v1 measurement: {label}")
+    try:
+        if any(_number(manual[field], field) < 0 for field in _MANUAL_FIELDS):
+            raise MeasurementError("negative")
+    except MeasurementError as error:
+        raise MeasurementError(f"result is not a complete schema-v1 measurement: {label}") from error
 
 
 def record_cutover_decision(result_files: list[Path], decision: str, output_dir: Path) -> Path:
