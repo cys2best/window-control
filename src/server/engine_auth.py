@@ -14,6 +14,7 @@ import base64
 import hashlib
 import hmac
 import json
+import threading
 import time
 from typing import Callable, Literal
 
@@ -42,9 +43,17 @@ class EngineTokenIssuer:
         self._viewer_ttl_seconds = viewer_ttl_seconds
         self._engine_ttl_seconds = engine_ttl_seconds
         self._clock = clock
+        self._lock = threading.Lock()
+        self._last_whep_expiry = 0
+        self._jwt_issuance = 0
 
     def whep(self, instance_name: str) -> str:
-        expiry = int(self._clock()) + self._whep_ttl_seconds
+        with self._lock:
+            expiry = max(
+                int(self._clock()) + self._whep_ttl_seconds,
+                self._last_whep_expiry + 1,
+            )
+            self._last_whep_expiry = expiry
         payload = f"{expiry}.{instance_name}"
         signature = hmac.new(
             self._whep_secret.encode(), payload.encode(), hashlib.sha256
@@ -66,7 +75,12 @@ class EngineTokenIssuer:
         expiry = int(self._clock()) + ttl
 
         header = {"alg": "HS256", "typ": "JWT"}
-        payload = {"session": instance_name, "role": role, "exp": expiry}
+        with self._lock:
+            self._jwt_issuance += 1
+            jti = str(self._jwt_issuance)
+        payload = {
+            "session": instance_name, "role": role, "exp": expiry, "jti": jti,
+        }
 
         header_b64 = _b64url_no_pad(
             json.dumps(header, separators=(",", ":")).encode("utf-8")

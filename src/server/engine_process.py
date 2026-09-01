@@ -96,6 +96,7 @@ class EngineInstance:
     def start(self) -> EngineReadyRecord:
         child_env = os.environ.copy()
         child_env.update(self._env_overrides)
+        child_env.pop("AUTH_TOKEN", None)
         self._process = self._popen(
             [self._exe_path, self.instance_name, str(self.scrcpy_port)],
             env=child_env,

@@ -49,8 +49,9 @@ def make_capturing_instance(*, env_overrides: dict[str, str]) \
     return instance, captured
 
 
-def test_spawn_inherits_parent_environment_and_overlays_engine_values(monkeypatch):
+def test_spawn_excludes_auth_token_and_preserves_engine_environment(monkeypatch):
     monkeypatch.setenv("WINDOWCONTROL_PARENT_SENTINEL", "present")
+    monkeypatch.setenv("AUTH_TOKEN", "raw-native-control-secret")
     instance, captured = make_capturing_instance(
         env_overrides={"ENGINE_SIGNALING_TOKEN": "engine-jwt",
                         "FAKE_ENGINE_MODE": "ready"}
@@ -59,6 +60,7 @@ def test_spawn_inherits_parent_environment_and_overlays_engine_values(monkeypatc
         instance.start()
         assert captured["env"]["WINDOWCONTROL_PARENT_SENTINEL"] == "present"
         assert captured["env"]["ENGINE_SIGNALING_TOKEN"] == "engine-jwt"
+        assert "AUTH_TOKEN" not in captured["env"]
     finally:
         instance.stop()
 
