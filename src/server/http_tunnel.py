@@ -1,19 +1,4 @@
-"""Tunnels the FastAPI app's HTTP + /input WebSocket traffic through a VPS
-relay, for public-internet reachability without opening a home router port.
-
-Two message families share one outbound WebSocket connection to the VPS
-(the full protocol, including the WS-stream family, is built out across
-this and the following task):
-- http_request / http_response: the VPS wraps each proxied HTTP request as
-  a single JSON envelope (small request/response bodies only — this app's
-  surface is window-list/select/quality JSON plus small preview JPEGs, no
-  streaming uploads or downloads), this module forwards it to the local
-  FastAPI app via httpx and sends the response back the same way.
-- ws_open / ws_open_ack / ws_message / ws_close: WebSocket stream forwarding
-  for the /input endpoint (mouse/keyboard control); _run_ws_stream proxies
-  inbound frames from the tunnel to a local WebSocket client and echoes
-  responses back to the tunnel.
-"""
+"""Tunnel bounded HTTP request/response envelopes through a VPS relay."""
 import asyncio
 import base64
 import json
@@ -46,15 +31,6 @@ TUNNEL_HTTP_TIMEOUT = httpx.Timeout(60.0, connect=5.0)
 # explicitly with a 501 rather than OOMing the PC.
 _UNSUPPORTED_STREAMING_PATHS = {"/stream"}
 
-# /internal/* is meant for mediamtx's local publish_hook.py only (see app.py's
-# localhost-only guard on these routes). This module forwards every request to
-# the local app over 127.0.0.1 itself, so a request relayed from the public
-# internet would look identical to publish_hook.py's own call by source IP
-# alone -- the tunnel must refuse to forward these paths at all, mirroring the
-# _UNSUPPORTED_STREAMING_PATHS refusal above. A prefix check (not membership in
-# a set) since /internal/ has many sub-paths.
-_INTERNAL_PATH_PREFIX = "/internal/"
-
 _STREAM_UNSUPPORTED_BODY = (
     b"The public tunnel does not support streaming responses (MJPEG). "
     b"Use the WebRTC stream path instead."
@@ -79,31 +55,11 @@ def _error_response(stream_id, status: int, body: bytes) -> dict:
     }
 
 
-def _cookie_headers(headers: dict) -> dict:
-    """Extract just the Cookie header (case-insensitively) from a proxied
-    header dict.
-
-    Only the cookie is forwarded onto the local WebSocket handshake: the rest
-    of the browser's headers that survive _filter_headers (`upgrade`,
-    `sec-websocket-key`, `sec-websocket-version`, ...) belong to the *browser's*
-    handshake with the VPS and would corrupt the new handshake this process
-    performs against the local app.
-    """
-    for key, value in headers.items():
-        if key.lower() == "cookie":
-            return {"Cookie": value}
-    return {}
-
-
 async def _forward_http_request(client: httpx.AsyncClient, msg: dict) -> dict:
     path_only = msg["path"].split("?", 1)[0]
     if path_only in _UNSUPPORTED_STREAMING_PATHS:
         log.warning("tunnel: refusing to forward streaming path %s", msg["path"])
         return _error_response(msg["id"], 501, _STREAM_UNSUPPORTED_BODY)
-    if path_only.startswith(_INTERNAL_PATH_PREFIX):
-        log.warning("tunnel: refusing to forward internal path %s", msg["path"])
-        return _error_response(msg["id"], 501, _STREAM_UNSUPPORTED_BODY)
-
     body = base64.b64decode(msg["body"]) if msg.get("body") else b""
     resp = await client.request(
         msg["method"], APP_BASE_URL + msg["path"],
@@ -118,79 +74,17 @@ async def _forward_http_request(client: httpx.AsyncClient, msg: dict) -> dict:
     }
 
 
-async def _run_ws_stream(ws, open_frame: dict, inbound_queue: "asyncio.Queue",
-                          local_ws_connect) -> None:
-    """Proxy one /input WebSocket connection for the stream's lifetime.
-
-    `inbound_queue` receives ws_message/ws_close frames destined for this
-    stream_id (fed by the demultiplexing loop in run_tunnel_once, added in
-    the next task) -- this function never reads `ws` directly, since it's
-    shared across every concurrent stream.
-    """
-    stream_id = open_frame["id"]
-    # The browser's real headers ride along on the ws_open frame. The Cookie
-    # header MUST be replayed onto the local handshake: with AUTH_TOKEN set
-    # (mandatory whenever the tunnel is configured, see create_app's guard),
-    # app.py's auth gate closes a cookie-less /input handshake with 1008 and
-    # the whole control channel is dead. `additional_headers` is the
-    # websockets>=14 spelling of the old `extra_headers` kwarg (see the
-    # websockets floor pinned in requirements.txt / pyproject.toml).
-    auth_headers = _cookie_headers(_filter_headers(open_frame.get("headers", {})))
-    async with local_ws_connect(
-        f"ws://127.0.0.1:8080{open_frame['path']}",
-        additional_headers=auth_headers,
-    ) as local_ws:
-        await ws.send(json.dumps({"type": "ws_open_ack", "id": stream_id}))
-
-        async def _pull_from_tunnel():
-            while True:
-                frame = await inbound_queue.get()
-                if frame["type"] == "ws_close":
-                    return
-                await local_ws.send(frame["data"])
-
-        async def _push_to_tunnel():
-            async for data in local_ws:
-                await ws.send(json.dumps(
-                    {"type": "ws_message", "id": stream_id, "data": data}))
-
-        pull_task = asyncio.ensure_future(_pull_from_tunnel())
-        push_task = asyncio.ensure_future(_push_to_tunnel())
-        done, pending = await asyncio.wait(
-            {pull_task, push_task}, return_when=asyncio.FIRST_COMPLETED)
-        for t in pending:
-            t.cancel()
-        # Wait for cancellation to actually be delivered before the `async
-        # with` block below closes local_ws out from under a task that may
-        # still be mid-recv()/send().
-        await asyncio.gather(*pending, return_exceptions=True)
-
-        for t in done:
-            exc = t.exception()
-            if exc is not None:
-                log.error("ws stream %s: pipe task failed", stream_id,
-                          exc_info=exc)
-
-    await ws.send(json.dumps({"type": "ws_close", "id": stream_id}))
-
-
 async def run_tunnel_once(
     tunnel_url: str, tunnel_secret: str,
     ws_connect=websockets.connect,
     http_client: httpx.AsyncClient | None = None,
-    local_ws_connect=websockets.connect,
 ) -> None:
-    """Hold one tunnel connection, demultiplexing frames to per-stream
-    handlers until the connection drops (raises, per the same
-    caller-owns-reconnect contract as signaling_bridge.relay_one_instance).
-    """
+    """Hold one tunnel connection and dispatch only HTTP envelopes."""
     client = http_client or _new_http_client()
-    stream_queues: dict[str, asyncio.Queue] = {}
     url = f"{tunnel_url}?token={tunnel_secret}"
 
-    # Both _respond_http and _run_ws_stream are dispatched fire-and-forget
-    # (so one slow request/stream never blocks the demux loop from reading
-    # the next frame) -- but a fire-and-forget asyncio.Task whose outcome is
+    # HTTP responses are dispatched fire-and-forget so one slow request never
+    # blocks the demux loop. A task whose outcome is
     # never retrieved either leaks silently on success or logs nothing but
     # an unhandled "Task exception was never retrieved" warning on failure.
     # Track every dispatched task here so we can wait for genuinely
@@ -229,7 +123,7 @@ async def run_tunnel_once(
                     frame = json.loads(raw)
                     ftype = frame["type"]
                     stream_id = frame.get("id")
-                    if ftype in ("http_request", "ws_open") and stream_id is None:
+                    if ftype == "http_request" and stream_id is None:
                         raise KeyError("id")
                 except (ValueError, TypeError, KeyError) as exc:
                     log.warning("tunnel: ignoring malformed frame (%s): %.200r",
@@ -238,14 +132,8 @@ async def run_tunnel_once(
 
                 if ftype == "http_request":
                     _dispatch(_respond_http(ws, client, frame))
-                elif ftype == "ws_open":
-                    queue: asyncio.Queue = asyncio.Queue()
-                    stream_queues[stream_id] = queue
-                    _dispatch(_run_ws_stream(ws, frame, queue, local_ws_connect))
-                elif stream_id in stream_queues:
-                    await stream_queues[stream_id].put(frame)
-                    if frame.get("type") == "ws_close":
-                        stream_queues.pop(stream_id, None)
+                else:
+                    log.warning("tunnel: ignoring unsupported frame type %r", ftype)
     finally:
         if background_tasks:
             # Anything still in `background_tasks` here was genuinely
@@ -278,7 +166,6 @@ async def run_tunnel_with_reconnect(
     backoff_seconds: float = 2.0,
     ws_connect=websockets.connect,
     http_client: httpx.AsyncClient | None = None,
-    local_ws_connect=websockets.connect,
     sleep=asyncio.sleep,
 ) -> None:
     """Run run_tunnel_once() forever, reconnecting after each disconnect.
@@ -295,7 +182,6 @@ async def run_tunnel_with_reconnect(
                 await run_tunnel_once(
                     tunnel_url, tunnel_secret,
                     ws_connect=ws_connect, http_client=client,
-                    local_ws_connect=local_ws_connect,
                 )
             except (ConnectionError, OSError, websockets.exceptions.WebSocketException) as exc:
                 log.warning("tunnel: connection ended (%s), retrying in %ss",

@@ -42,6 +42,30 @@ def test_protected_route_rejected_without_cookie():
     client, _ = _make_authed_client()
     r = client.get("/instances")
     assert r.status_code == 401
+    assert r.headers["www-authenticate"] == "Bearer"
+
+
+def test_bearer_token_unlocks_native_control_api():
+    client, _ = _make_authed_client()
+
+    response = client.get(
+        "/instances", headers={"Authorization": "Bearer s3cret"}
+    )
+
+    assert response.status_code == 200
+
+
+@pytest.mark.parametrize("value", [
+    "s3cret", "Basic s3cret", "Bearer", "Bearer  s3cret",
+    "bearer s3cret", "Bearer wrong",
+])
+def test_malformed_or_wrong_bearer_is_rejected(value):
+    client, _ = _make_authed_client()
+
+    response = client.get("/instances", headers={"Authorization": value})
+
+    assert response.status_code == 401
+    assert response.headers["www-authenticate"] == "Bearer"
 
 
 def test_login_wrong_token_rejected():
@@ -65,11 +89,10 @@ def test_index_served_without_auth_so_login_page_can_load():
     assert r.status_code != 401
 
 
-def test_websocket_input_rejected_without_cookie():
+def test_input_route_is_not_registered():
     client, _ = _make_authed_client()
-    with pytest.raises(Exception):
-        with client.websocket_connect("/input"):
-            pass
+    response = client.get("/input", headers={"Authorization": "Bearer s3cret"})
+    assert response.status_code == 404
 
 
 def test_public_ui_url_without_auth_token_refuses_to_start():

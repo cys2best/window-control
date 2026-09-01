@@ -247,7 +247,12 @@ class InstanceManager:
                       advertised_host: str) -> EngineSelection | None:
         if self._engine_orchestrator is None:
             return None
-        return self._engine_orchestrator.select(serial, advertised_host)
+        selection = self._engine_orchestrator.select(serial, advertised_host)
+        if selection is not None:
+            with self._lock:
+                if serial in self._instances:
+                    self._active_serial = serial
+        return selection
 
     def get_by_name(self, name: str) -> Instance | None:
         """Look up a tracked Instance by its mediamtx path name (e.g.

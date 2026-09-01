@@ -26,6 +26,16 @@ def check_token(token: str) -> bool:
     return hmac.compare_digest(token or "", config.AUTH_TOKEN)
 
 
+def bearer_token(authorization: str | None) -> str | None:
+    """Return one exact Bearer credential, rejecting every other form."""
+    if not authorization or not authorization.startswith("Bearer "):
+        return None
+    token = authorization[7:]
+    if not token or token.strip() != token or " " in token:
+        return None
+    return token
+
+
 def _sign(issued_at: str) -> str:
     return hmac.new(
         config.AUTH_TOKEN.encode(), issued_at.encode(), hashlib.sha256

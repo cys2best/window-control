@@ -4,8 +4,16 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 import importlib
 import time
 
+import pytest
+
 import config
 from server import auth
+
+
+@pytest.fixture(autouse=True)
+def _clear_auth_token():
+    yield
+    _reload(None)
 
 
 def _reload(token):
@@ -35,6 +43,18 @@ def test_check_token_accepts_correct_token():
 def test_check_token_rejects_wrong_token():
     _reload("s3cret")
     assert auth.check_token("nope") is False
+
+
+def test_bearer_token_accepts_only_one_exact_bearer_credential():
+    assert auth.bearer_token("Bearer s3cret") == "s3cret"
+
+
+@pytest.mark.parametrize("value", [
+    None, "", "s3cret", "Basic s3cret", "Bearer", "Bearer  s3cret",
+    "bearer s3cret", "Bearer s3cret ", "Bearer s3 cret",
+])
+def test_bearer_token_rejects_malformed_authorization(value):
+    assert auth.bearer_token(value) is None
 
 
 def test_make_and_verify_session_cookie_roundtrip():

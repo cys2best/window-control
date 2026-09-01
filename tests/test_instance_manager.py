@@ -461,7 +461,7 @@ def test_engine_quality_and_keyframe_delegate_to_orchestrator():
     assert orchestrator.keyframe_calls == ["emulator-5554"]
 
 
-def test_engine_selection_reports_enabled_and_delegates():
+def test_engine_selection_marks_active_only_after_a_fresh_success():
     selection = object()
     orchestrator = FakeOrchestrator(select_result=selection)
     manager = manager_with_engine_instance(orchestrator)
@@ -469,6 +469,16 @@ def test_engine_selection_reports_enabled_and_delegates():
     assert manager.engine_enabled() is True
     assert manager.select_engine("emulator-5554", "100.64.1.4") is selection
     assert orchestrator.select_calls == [("emulator-5554", "100.64.1.4")]
+    assert manager.active is manager.get("emulator-5554")
+
+
+def test_failed_engine_selection_does_not_replace_active_instance():
+    orchestrator = FakeOrchestrator(select_result=None)
+    manager = manager_with_engine_instance(orchestrator)
+    manager._active_serial = "emulator-5554"
+
+    assert manager.select_engine("emulator-5554", "100.64.1.4") is None
+    assert manager.active is manager.get("emulator-5554")
 
 
 def test_engine_watchdog_delegates_once_per_interval(monkeypatch):

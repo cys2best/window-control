@@ -4,40 +4,30 @@ import logging
 import os
 import struct
 import subprocess
-import time
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Literal
 
-from config import CLIENT_DIR, COOKIE_SECURE, QUALITY_MAP, WHEP_PORT, STUN_PORT, TIER_ORDER, VPS_SIGNALING_URL, WEBRTC_BACKEND
+from config import CLIENT_DIR, COOKIE_SECURE, QUALITY_MAP, WHEP_PORT, STUN_PORT, TIER_ORDER, VPS_SIGNALING_URL
 from server.stream import CaptureState, FrameQueue, mjpeg_generator
 from server import adb_manager
 from server import auth
 from server.ice_config import get_ice_servers
 from server.instance_manager import InstanceManager
 from server.http_tunnel import run_tunnel_with_reconnect
-from server.signaling_bridge import run_bridge_with_reconnect
 from server.tailscale import get_best_ip
-from server.webrtc_manager import WebrtcManager
-from server.whep_app import create_whep_app
 
 log = logging.getLogger(__name__)
 
-_bridge_task: "asyncio.Task | None" = None
 _tunnel_task: "asyncio.Task | None" = None
-_whep_server_task: "asyncio.Task | None" = None
 
 # Routes reachable without a session cookie even when AUTH_TOKEN is set —
 # just enough to load the login gate and let it authenticate.
 _AUTH_EXEMPT_PATHS = {"/", "/login"}
-
-
-def _is_localhost(host: str | None) -> bool:
-    return host in ("127.0.0.1", "::1")
 
 
 def _log(msg: str):
@@ -79,30 +69,6 @@ def _make_exception_handler(default_handler):
         else:
             loop.default_exception_handler(context)
     return handler
-
-
-_JS_KEY_TO_KEYCODE = {
-    "Return":    66,
-    "BackSpace": 67,
-    "Tab":       61,
-    "Escape":    111,
-    "Delete":    112,
-    "ArrowLeft": 21,
-    "ArrowUp":   19,
-    "ArrowRight": 22,
-    "ArrowDown": 20,
-    " ":         62,
-    "Space":     62,
-    "Back":      4,
-    "Home":      3,
-    "Menu":      82,
-}
-
-
-def _dispatch_key_control(ctrl, key: str):
-    kc = _JS_KEY_TO_KEYCODE.get(key)
-    if kc:
-        ctrl.send_keycode(kc)
 
 
 def _decode_raw_screencap(raw: bytes):
@@ -148,8 +114,7 @@ async def _capture_preview(serial: str) -> Response:
 
     Both the adb subprocess (up to ~5s) and the PIL encode run off the
     event loop so a preview fetch never freezes concurrent requests --
-    including the /input WebSocket, which would otherwise stall taps while
-    a thumbnail loads.
+    including concurrent selection and preview requests.
     """
     import asyncio as _asyncio
     from PIL import Image
@@ -189,25 +154,37 @@ async def _capture_preview(serial: str) -> Response:
     return Response(content=data, media_type="image/jpeg")
 
 
-def _restart_bridge_task(instance_name: str) -> None:
-    """(Re)start the public signaling bridge for the newly-selected instance.
+def request_is_authenticated(request: Request) -> bool:
+    return (
+        auth.verify_session_cookie(request.cookies.get(auth.COOKIE_NAME))
+        or auth.check_token(auth.bearer_token(request.headers.get("authorization")))
+    )
 
-    Cancels any bridge task already running for a previously-selected
-    instance, then starts a fresh one for `instance_name` if a public
-    signaling VPS is configured. No-ops (leaving `_bridge_task` as None)
-    when VPS_SIGNALING_URL is unset.
-    """
-    global _bridge_task
-    if _bridge_task is not None and not _bridge_task.done():
-        log.info("bridge: cancelling existing task for switch to %s", instance_name)
-        _bridge_task.cancel()
-    if VPS_SIGNALING_URL:
-        log.info("bridge: starting task for %s", instance_name)
-        _bridge_task = asyncio.create_task(
-            run_bridge_with_reconnect(instance_name, VPS_SIGNALING_URL, WHEP_PORT)
-        )
-    else:
-        _bridge_task = None
+
+def _format_host(host: str) -> str:
+    if host.startswith("[") and host.endswith("]"):
+        return host
+    return host if ":" not in host else f"[{host}]"
+
+
+def _selection_ice_servers(host: str) -> list[dict]:
+    """Place embedded request-host STUN first and de-duplicate URLs in order."""
+    servers = [{"urls": f"stun:{_format_host(host)}:{STUN_PORT}"}]
+    seen = {servers[0]["urls"]}
+    for server in get_ice_servers():
+        urls = server.get("urls")
+        values = urls if isinstance(urls, list) else [urls]
+        unique = []
+        for url in values:
+            if url and url not in seen:
+                seen.add(url)
+                unique.append(url)
+        if not unique:
+            continue
+        item = dict(server)
+        item["urls"] = unique if isinstance(urls, list) else unique[0]
+        servers.append(item)
+    return servers
 
 
 def create_app(state: CaptureState, frame_queue: FrameQueue,
@@ -222,14 +199,13 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
 
     @app.middleware("http")
     async def _auth_gate(request: Request, call_next):
-        if request.url.path.startswith("/internal/"):
-            if not _is_localhost(request.client.host if request.client else None):
-                return JSONResponse({"detail": "Not found"}, status_code=404)
-            return await call_next(request)
         if auth.auth_enabled() and request.url.path not in _AUTH_EXEMPT_PATHS \
                 and not request.url.path.startswith("/static/"):
-            if not auth.verify_session_cookie(request.cookies.get(auth.COOKIE_NAME)):
-                return JSONResponse({"detail": "Not authenticated"}, status_code=401)
+            if not request_is_authenticated(request):
+                return JSONResponse(
+                    {"detail": "Not authenticated"}, status_code=401,
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
         return await call_next(request)
 
     @app.post("/login")
@@ -248,30 +224,6 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
         loop = asyncio.get_event_loop()
         loop.set_exception_handler(_make_exception_handler(loop.get_exception_handler()))
 
-        # Must run BEFORE the instance_manager.refresh() thread below is
-        # started, not after: refresh() branches on `self._webrtc is None`
-        # to decide mediamtx vs aiortc, and under WEBRTC_BACKEND=="aiortc"
-        # main.py constructs InstanceManager with mediamtx=None too -- so a
-        # refresh() that runs before set_webrtc_manager() lands would take
-        # the mediamtx branch with self._mediamtx also None and crash with
-        # AttributeError on that background thread (silently -- instance
-        # discovery would then only recover once /select re-triggers
-        # refresh() later). Previously this block ran AFTER the thread was
-        # started, which raced exactly that window.
-        global _whep_server_task
-        if WEBRTC_BACKEND == "aiortc":
-            webrtc = WebrtcManager(loop)
-            instance_manager.set_webrtc_manager(webrtc)
-            whep_app = create_whep_app(instance_manager, webrtc)
-            import uvicorn
-            whep_config = uvicorn.Config(
-                whep_app, host="0.0.0.0", port=WHEP_PORT,
-                log_level="warning", log_config=None, proxy_headers=False,
-            )
-            whep_server = uvicorn.Server(whep_config)
-            log.info("whep: starting aiortc WHEP server on port %s", WHEP_PORT)
-            _whep_server_task = asyncio.create_task(whep_server.serve())
-
         # Discover LDPlayer instances on startup
         import threading
         threading.Thread(target=instance_manager.refresh, daemon=True).start()
@@ -284,33 +236,12 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
 
     @app.on_event("shutdown")
     async def _shutdown():
-        # The public signaling bridge task (if any) is otherwise left
-        # dangling on app shutdown -- only the switch case (cancel-then-
-        # restart in _restart_bridge_task) tore it down before.
-        global _bridge_task
-        if _bridge_task is not None and not _bridge_task.done():
-            log.info("bridge: cancelling task on shutdown")
-            _bridge_task.cancel()
-            try:
-                await _bridge_task
-            except asyncio.CancelledError:
-                pass
-
         global _tunnel_task
         if _tunnel_task is not None and not _tunnel_task.done():
             log.info("tunnel: cancelling task on shutdown")
             _tunnel_task.cancel()
             try:
                 await _tunnel_task
-            except asyncio.CancelledError:
-                pass
-
-        global _whep_server_task
-        if _whep_server_task is not None and not _whep_server_task.done():
-            log.info("whep: cancelling task on shutdown")
-            _whep_server_task.cancel()
-            try:
-                await _whep_server_task
             except asyncio.CancelledError:
                 pass
 
@@ -343,44 +274,10 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
 
     @app.post("/instances/{instance_id}/select")
     async def select_instance(instance_id: str, request: Request):
-        """Switch active stream. instance_id is the ADB serial (no prefix)."""
-        # select() may start a dead scrcpy session (blocking) — offload so it
-        # never stalls the event loop / websocket input path.
-        ok = await asyncio.to_thread(instance_manager.select, instance_id)
-        if not ok:
-            raise HTTPException(status_code=404, detail="Instance not found")
-        inst = instance_manager.active
-        if inst is None:
-            raise HTTPException(status_code=404, detail="Instance disappeared")
-
-        _restart_bridge_task(inst.name)
-
-        host = get_best_ip() or request.client.host
-        # WHEP straight to this instance's own always-live path (no 'active' mux).
-        whep_url = f"http://{host}:{WHEP_PORT}/{inst.name}/whep"
-        return {
-            "ok": True,
-            "id": inst.id,
-            "serial": inst.serial,
-            "name": inst.name,
-            "w": inst.w,
-            "h": inst.h,
-            "whep_url": whep_url,
-            "stun_url": f"stun:{host}:{STUN_PORT}",
-            "signaling_url": VPS_SIGNALING_URL,
-            "ice_servers": get_ice_servers(),
-        }
-
-    @app.post("/instances/{instance_id}/engine-select")
-    async def select_engine_instance(instance_id: str, request: Request):
-        if not instance_manager.engine_enabled():
-            raise HTTPException(status_code=501, detail="Engine mode disabled")
-
         inst = instance_manager.get(instance_id)
         if inst is None:
             raise HTTPException(status_code=404, detail="Instance not found")
-
-        host = get_best_ip() or request.client.host
+        host = get_best_ip() or (request.client.host if request.client else "127.0.0.1")
         selection = await asyncio.to_thread(
             instance_manager.select_engine, instance_id, host
         )
@@ -398,48 +295,9 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
             "whep_token": selection.whep_token,
             "signaling_url": selection.signaling_url,
             "signaling_token": selection.signaling_token,
-            "ice_servers": get_ice_servers(),
+            "ice_servers": _selection_ice_servers(host),
             "generation": selection.generation,
         }
-
-    @app.get("/instances/{instance_id}/whep-url")
-    async def instance_whep_url(instance_id: str, request: Request):
-        """Read-only WHEP URL lookup -- unlike /select, never touches
-        instance_manager's active-instance state or the VPS signaling
-        bridge. Used by the grid's hover prewarm (windows_panel.js) to open
-        a throwaway WHEP RTCPeerConnection against a path the user hasn't
-        chosen yet, so mediamtx's runOnDemand fires (and ffmpeg boots)
-        while they're still hovering.
-        """
-        inst = instance_manager.get(instance_id)
-        if inst is None:
-            raise HTTPException(status_code=404, detail="Instance not found")
-        host = get_best_ip() or request.client.host
-        return {
-            "whep_url": f"http://{host}:{WHEP_PORT}/{inst.name}/whep",
-            "stun_url": f"stun:{host}:{STUN_PORT}",
-        }
-
-    @app.post("/internal/instances/{name}/publish/start")
-    async def internal_publish_start(name: str):
-        """mediamtx's runOnDemand hook (via publish_hook.py) calls this when
-        a WHEP client requests a path with no one publishing yet. Starts
-        just the on-demand video half -- the persistent half (control
-        socket, input) is already up from discovery, regardless of viewers.
-        """
-        ok = await asyncio.to_thread(instance_manager.start_video, name)
-        return {"ok": ok}
-
-    @app.post("/internal/instances/{name}/publish/stop")
-    async def internal_publish_stop(name: str):
-        """mediamtx's runOnUnDemand hook calls this runOnDemandCloseAfter
-        seconds after the last reader disconnects. Always returns ok:true
-        (mediamtx doesn't wait on or retry this the way it does the start
-        hook's timeout) -- an unknown/already-gone instance is a no-op in
-        InstanceManager.stop_video, not an error.
-        """
-        await asyncio.to_thread(instance_manager.stop_video, name)
-        return {"ok": True}
 
     @app.post("/instances/{instance_id}/keyframe")
     async def request_keyframe(instance_id: str):
@@ -494,8 +352,6 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
         if inst is None:
             raise HTTPException(status_code=404, detail="Instance disappeared")
 
-        _restart_bridge_task(inst.name)
-
         host = get_best_ip() or request.client.host
         whep_url = f"http://{host}:{WHEP_PORT}/{inst.name}/whep"
         return {"ok": True, "id": req.id, "name": inst.name, "w": inst.w, "h": inst.h,
@@ -543,147 +399,6 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
     async def set_quality(req: QualityRequest):
         state.set_quality(QUALITY_MAP[req.quality])
         return {"quality": req.quality}
-
-    # ── WebSocket input ──────────────────────────────────────────────────────
-
-    @app.websocket("/input")
-    async def ws_input(websocket: WebSocket):
-        if auth.auth_enabled() and not auth.verify_session_cookie(
-                websocket.cookies.get(auth.COOKIE_NAME)):
-            await websocket.close(code=1008)  # policy violation
-            return
-        await websocket.accept()
-        import asyncio as _asyncio
-        from server.scrcpy_session import ScrcpyControl
-
-        async def _ping():
-            while True:
-                await _asyncio.sleep(20)
-                try:
-                    await websocket.send_text('{"type":"ping"}')
-                except Exception:
-                    return
-        _asyncio.create_task(_ping())
-
-        drag_pos: tuple | None = None
-        drag_start_pos: tuple | None = None
-        finger_down = False  # track whether touch DOWN was sent (to pair with UP)
-        _last_idr_request = 0.0
-        try:
-            while True:
-                data = await websocket.receive_json()
-                # Latency probe: echo the client's timestamp straight back so the
-                # client can measure input-WS round-trip (client→server→client),
-                # isolating input transport latency from video-feedback latency.
-                if data.get("type") == "echo":
-                    try:
-                        await websocket.send_text(
-                            '{"type":"echo","t":' + str(data.get("t", 0)) + '}'
-                        )
-                    except Exception:
-                        pass
-                    continue
-                if data.get("type") == "idr":
-                    now = time.monotonic()
-                    if now - _last_idr_request >= 0.5:
-                        _last_idr_request = now
-                        active = instance_manager.active
-                        if active is not None:
-                            try:
-                                active.session.control.request_idr()
-                                _log(f"[input] idr requested serial={active.session.serial}")
-                            except Exception as exc:
-                                _log(f"[input] idr request failed: {exc!r}")
-                        else:
-                            _log("[input] idr requested but no active instance")
-                    continue
-                inst = instance_manager.active
-                if inst is None:
-                    finger_down = False
-                    drag_pos = None
-                    drag_start_pos = None
-                    continue
-                try:
-                    t = data.get("type")
-                    nx, ny = data.get("x", 0.5), data.get("y", 0.5)
-                    # Use session dimensions (from scrcpy handshake) — authoritative actual frame size.
-                    # Falls back to inst.w/h (from wm size) before session handshake completes.
-                    sess = inst.session
-                    w, h = sess.w, sess.h
-                    ctrl: ScrcpyControl = sess.control
-
-                    if ctrl.connected:
-                        # ── Scrcpy control socket path (low-latency) ──────────
-                        if t == "click":
-                            ctrl.send_touch(ScrcpyControl.ACTION_DOWN, nx, ny, w, h)
-                            ctrl.send_touch(ScrcpyControl.ACTION_UP, nx, ny, w, h)
-                            finger_down = False
-                        elif t == "drag_start":
-                            drag_start_pos = (nx, ny)
-                            drag_pos = (nx, ny)
-                            ctrl.send_touch(ScrcpyControl.ACTION_DOWN, nx, ny, w, h)
-                            finger_down = True
-                        elif t == "drag_move":
-                            if finger_down:
-                                ctrl.send_touch(ScrcpyControl.ACTION_MOVE, nx, ny, w, h)
-                            drag_pos = (nx, ny)
-                        elif t == "drag_end":
-                            if finger_down:
-                                ctrl.send_touch(ScrcpyControl.ACTION_UP, nx, ny, w, h)
-                                finger_down = False
-                            drag_pos = None
-                            drag_start_pos = None
-                        elif t == "scroll":
-                            # Two-finger scroll: cancel any active drag first, then swipe
-                            if finger_down:
-                                ctrl.send_touch(ScrcpyControl.ACTION_UP, nx, ny, w, h)
-                                finger_down = False
-                            dy = data.get("dy", 0)
-                            ny2 = max(0.0, min(1.0, ny + dy * 120 / h)) if h else ny
-                            ctrl.send_touch(ScrcpyControl.ACTION_DOWN, nx, ny, w, h)
-                            ctrl.send_touch(ScrcpyControl.ACTION_MOVE, nx, ny2, w, h)
-                            ctrl.send_touch(ScrcpyControl.ACTION_UP, nx, ny2, w, h)
-                        elif t == "key":
-                            _dispatch_key_control(ctrl, data["key"])
-                    else:
-                        # ── ADB shell fallback (control socket not connected) ──
-                        serial = inst.serial
-                        if t == "click":
-                            adb_manager.tap(serial, nx, ny, w, h)
-                        elif t == "drag_start":
-                            drag_start_pos = (nx, ny)
-                            drag_pos = (nx, ny)
-                        elif t == "drag_move":
-                            if data.get("scroll"):
-                                prev = drag_pos or (nx, ny)
-                                dx = abs(nx - prev[0]) * w
-                                dy = abs(ny - prev[1]) * h
-                                if dx + dy > 2:
-                                    adb_manager.swipe(serial, prev[0], prev[1], nx, ny,
-                                                      w, h, duration_ms=45)
-                            else:
-                                start = drag_start_pos or (nx, ny)
-                                adb_manager.swipe(serial, start[0], start[1], nx, ny,
-                                                  w, h, duration_ms=25)
-                            drag_pos = (nx, ny)
-                        elif t == "drag_end":
-                            if data.get("scroll"):
-                                prev = drag_pos or (nx, ny)
-                                dx = abs(nx - prev[0]) * w
-                                dy = abs(ny - prev[1]) * h
-                                if dx + dy > 2:
-                                    adb_manager.swipe(serial, prev[0], prev[1], nx, ny,
-                                                      w, h, duration_ms=45)
-                            drag_pos = None
-                            drag_start_pos = None
-                        elif t == "scroll":
-                            adb_manager.scroll(serial, nx, ny, data.get("dy", 0), w, h)
-                        elif t == "key":
-                            adb_manager.send_key(serial, data["key"])
-                except (KeyError, TypeError):
-                    pass
-        except WebSocketDisconnect:
-            pass
 
     if os.path.isdir(CLIENT_DIR):
         app.mount("/static", StaticFiles(directory=CLIENT_DIR), name="static")
