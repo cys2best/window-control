@@ -4,6 +4,7 @@ import { PanResponder } from "react-native";
 import { Stream } from "./Stream";
 import * as SC from "../api/ServerContext";
 import * as Whep from "../webrtc/whep";
+import * as Adaptive from "../quality/adaptive";
 
 jest.mock("@react-native-async-storage/async-storage", () =>
   require("@react-native-async-storage/async-storage/jest/async-storage-mock"));
@@ -123,6 +124,58 @@ test("a disconnected WHEP state (closed input channel) triggers a fresh select/r
   await waitFor(() => expect(connectWhepSpy).toHaveBeenCalledTimes(2));
 });
 
+test("terminal input failure releases an active drag before reconnecting", async () => {
+  const session = makeFakeSession();
+  const createPanResponder = jest.spyOn(PanResponder, "create").mockImplementation(() => ({ panHandlers: {} }) as any);
+  let onState!: (state: "connecting" | "connected" | "disconnected") => void;
+  jest.spyOn(Whep, "connectWhep").mockImplementation((opts: any) => {
+    onState = opts.onState;
+    return Promise.resolve(session as any);
+  });
+  const client = {
+    select: jest.fn().mockResolvedValue(selectResp()),
+    instances: jest.fn().mockResolvedValue([]),
+    setQuality: jest.fn(),
+    keyframe: jest.fn(),
+  };
+  jest.spyOn(SC, "useServer").mockReturnValue({ base: "http://h", client, setBase: jest.fn(), ready: true } as any);
+
+  await render(<Stream route={{ params: { serial: "A" } }} navigation={{ navigate: jest.fn(), setParams: jest.fn() }} />);
+  await waitFor(() => expect(session.input.send).toHaveBeenCalledWith({ type: "idr" }));
+  const pan = createPanResponder.mock.calls[0][0] as any;
+  await act(async () => { pan.onPanResponderGrant(touch(10, 20)); });
+  await act(async () => { pan.onPanResponderMove(touch(40, 60), { dx: 30, dy: 40 }); });
+
+  await act(async () => { onState("disconnected"); });
+  expect(session.input.dragEnd).toHaveBeenCalledTimes(1);
+  expect(client.select).toHaveBeenCalledTimes(2);
+});
+
+test("adaptive stall leaves the connected peer in place", async () => {
+  const session = makeFakeSession();
+  let adaptiveOptions: any;
+  jest.spyOn(Adaptive, "makeAdaptive").mockImplementation((opts: any) => {
+    adaptiveOptions = opts;
+    return { start: jest.fn(), stop: jest.fn(), pin: jest.fn(), setAuto: jest.fn() } as any;
+  });
+  jest.spyOn(Whep, "connectWhep").mockResolvedValue(session as any);
+  const client = {
+    select: jest.fn().mockResolvedValue(selectResp()),
+    instances: jest.fn().mockResolvedValue([]),
+    setQuality: jest.fn(),
+    keyframe: jest.fn(),
+  };
+  jest.spyOn(SC, "useServer").mockReturnValue({ base: "http://h", client, setBase: jest.fn(), ready: true } as any);
+
+  await render(<Stream route={{ params: { serial: "A" } }} navigation={{ navigate: jest.fn(), setParams: jest.fn() }} />);
+  await waitFor(() => expect(adaptiveOptions).toBeDefined());
+
+  expect(adaptiveOptions.onStall).toBeUndefined();
+  expect(client.select).toHaveBeenCalledTimes(1);
+  expect(Whep.connectWhep).toHaveBeenCalledTimes(1);
+  expect(session.close).not.toHaveBeenCalled();
+});
+
 test("does not reconnect after unmount closes the active session", async () => {
   const session = makeFakeSession();
   jest.spyOn(Whep, "connectWhep").mockImplementation((opts: any) => {
@@ -141,6 +194,29 @@ test("does not reconnect after unmount closes the active session", async () => {
   await waitFor(() => expect(Whep.connectWhep).toHaveBeenCalledTimes(1));
   await act(async () => { await result.unmount(); });
   expect(client.select).toHaveBeenCalledTimes(1);
+});
+
+test("unmount releases an active drag before closing its session", async () => {
+  const session = makeFakeSession();
+  const createPanResponder = jest.spyOn(PanResponder, "create").mockImplementation(() => ({ panHandlers: {} }) as any);
+  jest.spyOn(Whep, "connectWhep").mockResolvedValue(session as any);
+  const client = {
+    select: jest.fn().mockResolvedValue(selectResp()),
+    instances: jest.fn().mockResolvedValue([]),
+    setQuality: jest.fn(),
+    keyframe: jest.fn(),
+  };
+  jest.spyOn(SC, "useServer").mockReturnValue({ base: "http://h", client, setBase: jest.fn(), ready: true } as any);
+
+  const result = await render(<Stream route={{ params: { serial: "A" } }} navigation={{ navigate: jest.fn(), setParams: jest.fn() }} />);
+  await waitFor(() => expect(session.input.send).toHaveBeenCalledWith({ type: "idr" }));
+  const pan = createPanResponder.mock.calls[0][0] as any;
+  await act(async () => { pan.onPanResponderGrant(touch(10, 20)); });
+  await act(async () => { await result.unmount(); });
+
+  expect(session.input.dragEnd).toHaveBeenCalledTimes(1);
+  expect(session.input.dragEnd.mock.invocationCallOrder[0])
+    .toBeLessThan(session.close.mock.invocationCallOrder[0]);
 });
 
 test("keeps the current video visible until a replacement session is ready", async () => {

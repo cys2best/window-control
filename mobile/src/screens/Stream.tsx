@@ -37,6 +37,19 @@ export function Stream({ route, navigation }: { route: any; navigation: any }) {
   const inputHealth = useRef<any>(null);
   const scrollLast = useRef(0);
   const keyInput = useRef<TextInput>(null);
+  const dragStarted = useRef(false);
+  const isScroll = useRef(false);
+  const lastTouch = useRef({ x: 0, y: 0 });
+
+  const releaseActiveDrag = useCallback((input = session.current?.input) => {
+    if (input && dragStarted.current) {
+      const point = lastTouch.current;
+      const c = normalizeCoords({ x: point.x, y: point.y }, rect.current, content.current);
+      input.dragEnd(c.x, c.y);
+    }
+    dragStarted.current = false;
+    isScroll.current = false;
+  }, []);
 
   const startGen = useRef(0);
   const start = useCallback(async () => {
@@ -71,7 +84,10 @@ export function Stream({ route, navigation }: { route: any; navigation: any }) {
             // A closed input channel or failed ICE triggers a fresh
             // select()/reconnect rather than surfacing the manual
             // ErrorOverlay for something the app can recover from on its own.
-            if (gen === startGen.current) start();
+            if (gen === startGen.current) {
+              releaseActiveDrag();
+              start();
+            }
           }
         },
       }).catch((error) => {
@@ -85,7 +101,10 @@ export function Stream({ route, navigation }: { route: any; navigation: any }) {
       const previous = session.current;
       session.current = s;
       if (nextStream) setStreamUrl(nextStream.toURL());
-      if (previous) previous.close();
+      if (previous) {
+        releaseActiveDrag(previous.input);
+        previous.close();
+      }
       if (inputHealth.current) clearInterval(inputHealth.current);
       s.input.send({ type: "idr" });
       inputHealth.current = setInterval(() => {
@@ -97,15 +116,10 @@ export function Stream({ route, navigation }: { route: any; navigation: any }) {
       adaptive.current = makeAdaptive({
         serial,
         onApply: (t) => client.setQuality(serial, t),
-        // Decoder stopped producing new frames while the connection still
-        // claims to be "connected" (the mediamtx write-queue-stuck class of
-        // bug) — silently reopen the session rather than surface the manual
-        // ErrorOverlay for something the app can recover from on its own.
-        onStall: () => { if (gen === startGen.current) start(); },
       });
       adaptive.current.start(session.current.pc);
     } catch { if (gen === startGen.current) { setFailed(true); setNet("disconnected"); } }
-  }, [client, serial]);
+  }, [client, serial, releaseActiveDrag]);
 
   // Instance list is owned by the client identity, not by `start`.
   useEffect(() => {
@@ -118,13 +132,14 @@ export function Stream({ route, navigation }: { route: any; navigation: any }) {
   useEffect(() => {
     start();
     return () => {
+      releaseActiveDrag();
       startGen.current += 1;
       if (inputHealth.current) clearInterval(inputHealth.current);
       inputHealth.current = null;
       session.current?.close();
       adaptive.current?.stop();
     };
-  }, [start]);
+  }, [start, releaseActiveDrag]);
 
   // Open the stream in landscape by default, but still allow the user to
   // rotate freely (either landscape direction) while this screen is up.
@@ -145,9 +160,6 @@ export function Stream({ route, navigation }: { route: any; navigation: any }) {
   // Single-finger input begins with drag_start so every touch, including a
   // tap, has a matching drag_end. Motion remains thresholded and coalesced by
   // the sender to avoid flooding the reliable channel.
-  const dragStarted = useRef(false);
-  const isScroll = useRef(false);
-  const lastTouch = useRef({ x: 0, y: 0 });
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
@@ -199,28 +211,15 @@ export function Stream({ route, navigation }: { route: any; navigation: any }) {
         input.dragMove(c.x, c.y);
       },
       onPanResponderRelease: (e) => {
-        const input = session.current?.input;
         const { locationX: x, locationY: y } = e.nativeEvent;
         lastTouch.current = { x, y };
-        const c = norm(x, y);
-        if (input) {
-          if (isScroll.current) { /* two-finger scroll ends without a discrete end event */ }
-          else if (dragStarted.current) input.dragEnd(c.x, c.y);
-        }
-        dragStarted.current = false;
-        isScroll.current = false;
+        releaseActiveDrag();
       },
       onPanResponderTerminate: (e) => {
-        const input = session.current?.input;
-        const point = e?.nativeEvent
-          ? { x: e.nativeEvent.locationX, y: e.nativeEvent.locationY }
-          : lastTouch.current;
-        if (input && dragStarted.current) {
-          const c = norm(point.x, point.y);
-          input.dragEnd(c.x, c.y);
+        if (e?.nativeEvent) {
+          lastTouch.current = { x: e.nativeEvent.locationX, y: e.nativeEvent.locationY };
         }
-        dragStarted.current = false;
-        isScroll.current = false;
+        releaseActiveDrag();
       },
     })
   ).current;
@@ -255,7 +254,12 @@ export function Stream({ route, navigation }: { route: any; navigation: any }) {
     if (t === "auto") adaptive.current?.setAuto();
     else adaptive.current?.pin(t);
   };
-  const reconnect = async () => { setReconnecting(true); await start(); setReconnecting(false); };
+  const reconnect = async () => {
+    releaseActiveDrag();
+    setReconnecting(true);
+    await start();
+    setReconnecting(false);
+  };
 
   // RN key names -> server X11 key names (`_JS_KEY_TO_KEYCODE`). Only map the
   // reliably-wrong ones; everything else passes through unchanged.
