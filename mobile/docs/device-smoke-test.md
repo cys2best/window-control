@@ -17,10 +17,10 @@ Run this checklist on a real device over Tailscale with a running server and at 
 
 ## Stream Screen
 
-- [ ] **Stream: WHEP connects; video paints; net dot green** — Tap an instance to open the Stream screen. Verify the WebRTC connection establishes (green network dot in the toolbar), and the video stream displays.
+- [ ] **Stream: WHEP video + input DataChannel connect; video paints; net dot green** — Tap an instance to open the Stream screen. Verify the WHEP WebRTC peer and its input DataChannel establish (green network dot in the toolbar), and the video stream displays.
 - [ ] **Stream: tap registers on device** — Tap on the video to verify a tap registers on the target device (e.g., opens a menu or confirms selection).
-- [ ] **Stream: drag moves** — Drag your finger across the video to verify movement gestures register on the device (e.g., panning or sliding UI).
-- [ ] **Stream: two-finger scroll scrolls** — Use two fingers to scroll on the video; verify scrolling actions work on the device.
+- [ ] **Stream: rapid drag remains smooth and releases** — Drag rapidly across the video, then lift or let iOS cancel the touch (for example, by opening Control Center). Verify movement remains smooth and the remote device is not left with a held finger.
+- [ ] **Stream: two-finger proportional scroll scrolls** — Compare a short and a long two-finger swipe at the same point. Verify both scroll in the correct direction and the longer swipe produces proportionally more scrolling.
 - [ ] **Stream: keyboard button forwards keystrokes** — Tap the keyboard icon in the toolbar and type text; verify keystrokes are sent to the device and appear in an active text field.
 
 ## Settings & Quality
@@ -36,7 +36,7 @@ Run this checklist on a real device over Tailscale with a running server and at 
 ## Error Recovery
 
 - [ ] **Kill server → ErrorOverlay appears; restart → Reconnect recovers** — Stop the server and verify the ErrorOverlay appears on the mobile client. Restart the server and tap Reconnect; verify the app re-establishes the connection.
-- [ ] **Background/foreground the app → WS + WHEP recover** — While streaming, send the app to the background (home button). Bring it back to the foreground and verify both the WebSocket and WHEP connection recover without manual action.
+- [ ] **Background/foreground the app → WHEP video + input DataChannel recover** — While streaming, send the app to the background (home button). Bring it back to the foreground and verify the WHEP video and input DataChannel recover without manual action.
 
 ## Tier-Switch ICE Bounce Verification
 

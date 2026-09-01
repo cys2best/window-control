@@ -6,8 +6,7 @@ import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { runOnJS } from "react-native-reanimated";
 import { useServer } from "../api/ServerContext";
 import { theme } from "../theme/tokens";
-import { connectWhep } from "../webrtc/whep";
-import { makeInputSocket, clickMsg, dragStartMsg, dragMoveMsg, dragEndMsg, scrollMsg, keyMsg } from "../input/inputSocket";
+import { connectWhep, WhepSession } from "../webrtc/whep";
 import { normalizeCoords } from "../input/coords";
 import { makeAdaptive } from "../quality/adaptive";
 import { StreamToolbar } from "../components/StreamToolbar";
@@ -33,17 +32,15 @@ export function Stream({ route, navigation }: { route: any; navigation: any }) {
   const [rtt, setRtt] = useState<number | null>(null);
   const rect = useRef({ width: 1, height: 1 });
   const content = useRef({ w: 1, h: 1 });
-  const session = useRef<any>(null);
-  const sock = useRef<any>(null);
+  const session = useRef<WhepSession | null>(null);
   const adaptive = useRef<any>(null);
-  const lastMove = useRef(0);
+  const inputHealth = useRef<any>(null);
   const scrollLast = useRef(0);
   const keyInput = useRef<TextInput>(null);
 
   const startGen = useRef(0);
   const start = useCallback(async () => {
     if (!client) return;
-    const t0 = Date.now();
     // Rapid instance switches (fast toolbar swipes) can fire start() again
     // before the previous call's client.select() round-trip has returned.
     // Without this guard, an earlier call can finish after a later one, close
@@ -55,46 +52,47 @@ export function Stream({ route, navigation }: { route: any; navigation: any }) {
     setFailed(false); setNet("connecting");
     try {
       const sel = await client.select(serial);
-      console.log(`[stream] select() answered +${Date.now() - t0}ms`);
       if (gen !== startGen.current) return; // superseded before WHEP even started
       content.current = { w: sel.w, h: sel.h };
-      session.current?.close();
-      let firstFrameSeen = false;
-      const s = connectWhep({
-        whepUrl: sel.whep_url, stunUrl: sel.stun_url,
+      let nextStream: any = null;
+      const s = await connectWhep({
+        whepUrl: sel.whep_url,
+        whepToken: sel.whep_token,
+        iceServers: sel.ice_servers,
         onStream: (stream) => {
           if (gen !== startGen.current) return;
-          firstFrameSeen = true;
-          console.log(`[stream] first track/frame +${Date.now() - t0}ms`);
-          setStreamUrl(stream.toURL());
+          nextStream = stream;
         },
+        onInputRtt: (ms) => { if (gen === startGen.current) setRtt(ms); },
         onState: (st) => {
           if (gen !== startGen.current) return;
-          setNet(st === "connected" ? "connected" : st === "failed" ? "disconnected" : "connecting");
-          if (st === "failed") setFailed(true);
+          setNet(st);
+          if (st === "disconnected") {
+            // A closed input channel or failed ICE triggers a fresh
+            // select()/reconnect rather than surfacing the manual
+            // ErrorOverlay for something the app can recover from on its own.
+            if (gen === startGen.current) start();
+          }
         },
+      }).catch((error) => {
+        if (gen === startGen.current) { setFailed(true); setNet("disconnected"); }
+        throw error;
       });
-      // A session that never sends any video (the mediamtx write-queue-stuck
-      // case: created server-side but peerConnectionEstablished never true,
-      // bytesSent stays 0) never fires onStream/onTrack at all, so it never
-      // produces an inbound-rtp stats report either — the adaptive
-      // controller's frame-stall check above has nothing to read and never
-      // fires. Cover that gap here: if the very first frame hasn't arrived
-      // within a few seconds, the screen is just showing the previous
-      // session's last frame frozen — retry instead of waiting forever.
-      setTimeout(() => {
-        if (gen === startGen.current && !firstFrameSeen) {
-          console.log(`[stream] no frame after 10s, retrying`);
-          start();
-        }
-      }, 10000);
-      // The WHEP POST inside connectWhep() is already in flight and will
-      // create a session server-side regardless of whether we win the race.
-      // If a newer switch supersedes us before that POST resolves (or even
-      // right after), `s` never gets stored below and would otherwise be
-      // leaked — DELETE it explicitly the moment we notice we lost.
       if (gen !== startGen.current) { s.close(); return; }
+      // Keep the current session visible until its replacement is ready,
+      // then close the stale one — avoids a visible gap while the new
+      // session negotiates.
+      const previous = session.current;
       session.current = s;
+      if (nextStream) setStreamUrl(nextStream.toURL());
+      if (previous) previous.close();
+      if (inputHealth.current) clearInterval(inputHealth.current);
+      s.input.send({ type: "idr" });
+      inputHealth.current = setInterval(() => {
+        if (gen === startGen.current && session.current === s) {
+          s.input.send({ type: "echo", t: Date.now() });
+        }
+      }, 2000);
       adaptive.current?.stop();
       adaptive.current = makeAdaptive({
         serial,
@@ -109,23 +107,23 @@ export function Stream({ route, navigation }: { route: any; navigation: any }) {
     } catch { if (gen === startGen.current) { setFailed(true); setNet("disconnected"); } }
   }, [client, serial]);
 
-  // Input socket + instance list are owned by the client identity, not by
-  // `start`. Keying this to [client] keeps the socket alive across serial
-  // changes so in-flight input is not dropped.
+  // Instance list is owned by the client identity, not by `start`.
   useEffect(() => {
     if (!client) return;
-    sock.current = makeInputSocket(client.inputWsUrl(), {
-      onNet: (s) => { if (s === "bad") setNet("disconnected"); },
-      onRtt: (ms) => setRtt(ms),
-    });
     client.instances().then(setInstances).catch(() => {});
-    return () => { sock.current?.close(); };
   }, [client]);
 
-  // WHEP session + adaptive quality follow `start` (serial/client changes).
+  // WHEP session + input channel + adaptive quality follow `start`
+  // (serial/client changes).
   useEffect(() => {
     start();
-    return () => { session.current?.close(); adaptive.current?.stop(); };
+    return () => {
+      startGen.current += 1;
+      if (inputHealth.current) clearInterval(inputHealth.current);
+      inputHealth.current = null;
+      session.current?.close();
+      adaptive.current?.stop();
+    };
   }, [start]);
 
   // Open the stream in landscape by default, but still allow the user to
@@ -136,7 +134,6 @@ export function Stream({ route, navigation }: { route: any; navigation: any }) {
     return () => { ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP); };
   }, []);
 
-  const send = (m: object) => { sock.current?.send(m); };
   const norm = (px: number, py: number) => normalizeCoords({ x: px, y: py }, rect.current, content.current);
 
   // react-native-gesture-handler's Pan gesture never delivers onUpdate in
@@ -145,12 +142,12 @@ export function Stream({ route, navigation }: { route: any; navigation: any }) {
   // gesture configs). A raw PanResponder on the same view tracks every move
   // correctly, so pan/scroll are built on PanResponder instead. RNGH is kept
   // for the toolbar (tap + swipe), which does work there.
-  // Single-finger: a real touch-down isn't sent to the remote until movement
-  // is confirmed past a small threshold, so a plain tap sends one click
-  // (down+up) instead of an unpaired drag-start down followed by a second,
-  // separate click down+up.
+  // Single-finger input begins with drag_start so every touch, including a
+  // tap, has a matching drag_end. Motion remains thresholded and coalesced by
+  // the sender to avoid flooding the reliable channel.
   const dragStarted = useRef(false);
   const isScroll = useRef(false);
+  const lastTouch = useRef({ x: 0, y: 0 });
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
@@ -158,51 +155,78 @@ export function Stream({ route, navigation }: { route: any; navigation: any }) {
       onPanResponderGrant: (e) => {
         isScroll.current = e.nativeEvent.touches.length >= 2;
         dragStarted.current = false;
-        if (isScroll.current) scrollLast.current = 0;
+        const { locationX: x, locationY: y } = e.nativeEvent;
+        lastTouch.current = { x, y };
+        if (isScroll.current) {
+          scrollLast.current = 0;
+          return;
+        }
+        const input = session.current?.input;
+        if (input) {
+          const c = norm(x, y);
+          input.dragStart(c.x, c.y);
+          dragStarted.current = true;
+        }
       },
       onPanResponderMove: (e, gs) => {
+        const input = session.current?.input;
+        if (!input) return;
         const touches = e.nativeEvent.touches;
         if (touches.length >= 2) {
-          if (!isScroll.current) { isScroll.current = true; scrollLast.current = gs.dy; }
+          if (!isScroll.current) {
+            isScroll.current = true;
+            if (dragStarted.current) {
+              const c = norm(e.nativeEvent.locationX, e.nativeEvent.locationY);
+              input.dragEnd(c.x, c.y);
+              dragStarted.current = false;
+            }
+            scrollLast.current = gs.dy;
+          }
           const delta = gs.dy - scrollLast.current;
           if (Math.abs(delta) < 1) return;
           scrollLast.current = gs.dy;
           const x = (touches[0].locationX + touches[1].locationX) / 2;
           const y = (touches[0].locationY + touches[1].locationY) / 2;
           const c = norm(x, y);
-          send(scrollMsg(c.x, c.y, delta > 0 ? -1 : 1));
+          input.scroll(c.x, c.y, -delta / rect.current.height);
           return;
         }
         if (isScroll.current) return; // was a 2-finger gesture that dropped to 1 finger
         const { locationX: x, locationY: y } = e.nativeEvent;
-        if (!dragStarted.current) {
-          if (Math.abs(gs.dx) < 3 && Math.abs(gs.dy) < 3) return;
-          dragStarted.current = true;
-          const c = norm(x - gs.dx, y - gs.dy); // touch-down point, before this move's delta
-          send(dragStartMsg(c.x, c.y));
-        }
-        const now = Date.now();
-        if (now - lastMove.current < 16) return; // ~60fps cap, web-client parity
-        lastMove.current = now;
+        lastTouch.current = { x, y };
+        if (Math.abs(gs.dx) < 3 && Math.abs(gs.dy) < 3) return;
         const c = norm(x, y);
-        send(dragMoveMsg(c.x, c.y, Math.abs(gs.vy) > Math.abs(gs.vx) * 1.5));
+        input.dragMove(c.x, c.y);
       },
-      onPanResponderRelease: (e, gs) => {
+      onPanResponderRelease: (e) => {
+        const input = session.current?.input;
         const { locationX: x, locationY: y } = e.nativeEvent;
+        lastTouch.current = { x, y };
         const c = norm(x, y);
-        if (isScroll.current) { /* no discrete end event for scroll */ }
-        else if (dragStarted.current) send(dragEndMsg(c.x, c.y));
-        else send(clickMsg(c.x, c.y));
+        if (input) {
+          if (isScroll.current) { /* two-finger scroll ends without a discrete end event */ }
+          else if (dragStarted.current) input.dragEnd(c.x, c.y);
+        }
         dragStarted.current = false;
         isScroll.current = false;
       },
-      onPanResponderTerminate: () => { dragStarted.current = false; isScroll.current = false; },
+      onPanResponderTerminate: (e) => {
+        const input = session.current?.input;
+        const point = e?.nativeEvent
+          ? { x: e.nativeEvent.locationX, y: e.nativeEvent.locationY }
+          : lastTouch.current;
+        if (input && dragStarted.current) {
+          const c = norm(point.x, point.y);
+          input.dragEnd(c.x, c.y);
+        }
+        dragStarted.current = false;
+        isScroll.current = false;
+      },
     })
   ).current;
 
   const switchTo = (inst: any) => {
     setOverlay(null);
-    client?.keyframe(inst.serial);
     // setParams (not replace) keeps this screen mounted so the landscape
     // lock in the orientation effect below doesn't flash back to portrait.
     navigation.setParams({ serial: inst.serial, title: inst.title });
@@ -236,7 +260,7 @@ export function Stream({ route, navigation }: { route: any; navigation: any }) {
   // RN key names -> server X11 key names (`_JS_KEY_TO_KEYCODE`). Only map the
   // reliably-wrong ones; everything else passes through unchanged.
   const KEYMAP: Record<string, string> = { Enter: "Return", Backspace: "BackSpace" };
-  const sendKey = (k: string) => send(keyMsg(KEYMAP[k] ?? k));
+  const sendKey = (k: string) => session.current?.input.send({ type: "key", key: KEYMAP[k] ?? k });
 
   const statsLines = `TIER   ${tier}\ninput  ${rtt == null ? "—" : `${rtt}ms`}`; // full stats sampling wired in device pass
 
@@ -265,7 +289,7 @@ export function Stream({ route, navigation }: { route: any; navigation: any }) {
           }} />
       </GestureDetector>
 
-      <TextInput ref={keyInput} onKeyPress={(e) => sendKey(e.nativeEvent.key)}
+      <TextInput ref={keyInput} testID="stream-key-input" onKeyPress={(e) => sendKey(e.nativeEvent.key)}
         showSoftInputOnFocus
         onFocus={() => setKeyboardOn(true)}
         onBlur={() => setKeyboardOn(false)}

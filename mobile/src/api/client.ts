@@ -1,4 +1,4 @@
-import { httpUrl, wsUrl } from "./urls";
+import { httpUrl } from "./urls";
 
 export type Instance = { id: string; serial: string; title: string; w?: number; h?: number };
 
@@ -78,6 +78,5 @@ export function makeClient(base: string, authToken: string | null) {
       const uri = httpUrl(base, `/instances/${serial}/preview?t=${Date.now()}`);
       return authToken ? { uri, headers: { Authorization: `Bearer ${authToken}` } } : { uri };
     },
-    inputWsUrl(): string { return wsUrl(base, "/input"); },
   };
 }

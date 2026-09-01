@@ -1,4 +1,11 @@
-import { RTCPeerConnection as RN_RTC } from "react-native-webrtc";
+import {
+  RTCPeerConnection as RN_RTC,
+  type MediaStream,
+  type RTCPeerConnection,
+} from "react-native-webrtc";
+import { createInputSender } from "../input/inputChannel";
+import type { InputSender } from "../input/inputChannel";
+import type { IceServer } from "../api/client";
 
 export function waitForIceGatheringComplete(pc: any, capMs = 4000): Promise<void> {
   if (pc.iceGatheringState === "complete") return Promise.resolve();
@@ -21,107 +28,191 @@ export function waitForIceGatheringComplete(pc: any, capMs = 4000): Promise<void
   });
 }
 
-type Opts = {
-  whepUrl: string; stunUrl: string;
-  onStream: (s: any) => void;
-  onState: (s: "connecting" | "connected" | "failed") => void;
-  fetchImpl?: typeof fetch; RTCImpl?: any;
+function whepError(code: string, message: string): Error {
+  const error = new Error(message);
+  (error as any).code = code;
+  return error;
+}
+
+export type WhepSession = {
+  pc: RTCPeerConnection;
+  input: InputSender;
+  close(): Promise<void>;
 };
 
-export function connectWhep(opts: Opts) {
+type ConnectWhepOpts = {
+  whepUrl: string;
+  whepToken: string;
+  iceServers: IceServer[];
+  onStream: (stream: MediaStream) => void;
+  onInputRtt: (ms: number) => void;
+  onState: (state: "connecting" | "connected" | "disconnected") => void;
+  fetchImpl?: typeof fetch;
+  RTCImpl?: any;
+  timeoutMs?: number;
+};
+
+export function connectWhep(opts: ConnectWhepOpts): Promise<WhepSession> {
   const RTC = opts.RTCImpl || RN_RTC;
   const doFetch = opts.fetchImpl || fetch;
-  const pc: any = new RTC({ iceServers: opts.stunUrl ? [{ urls: opts.stunUrl }] : [] });
+  const timeoutMs = opts.timeoutMs === undefined ? 8000 : opts.timeoutMs;
+  const pc: any = new RTC({ iceServers: opts.iceServers || [] });
+
   let closed = false;
   let resourceUrl: string | null = null;
-  const onState = (s: "connecting" | "connected" | "failed") => { if (!closed) opts.onState(s); };
-  onState("connecting");
+  let resourceDeleted = false;
+  let channel: any = null;
+  let input: InputSender;
+  let videoStream: MediaStream | null = null;
+  let iceReady = pc.iceConnectionState === "connected" || pc.iceConnectionState === "completed";
+  let channelReady = false;
+  let readyResolve!: (session: WhepSession) => void;
+  let readyReject!: (error: Error) => void;
+  let timeout: any = null;
+  let settled = false;
 
-  const onTrack = (e: any) => { opts.onStream(e.streams ? e.streams[0] : e.stream); onState("connected"); };
-  const onIceChange = () => {
-    const s = pc.iceConnectionState;
-    if (s === "failed" || s === "closed") onState("failed");
-    else if (s === "connected" || s === "completed") onState("connected");
-  };
-  pc.addEventListener?.("track", onTrack);
-  pc.ontrack = onTrack;
-  pc.addEventListener?.("iceconnectionstatechange", onIceChange);
+  const ready = new Promise<WhepSession>((resolve, reject) => {
+    readyResolve = resolve;
+    readyReject = reject;
+  });
+
+  function listen(target: any, type: string, listener: (e?: any) => void) {
+    if (target && typeof target.addEventListener === "function") target.addEventListener(type, listener);
+    else if (target) target[`on${type}`] = listener;
+  }
+
+  function deleteResource(): Promise<void> {
+    if (!resourceUrl || resourceDeleted) return Promise.resolve();
+    resourceDeleted = true;
+    return Promise.resolve(doFetch(resourceUrl, { method: "DELETE" } as any))
+      .then(() => {})
+      .catch(() => {});
+  }
+
+  async function close(): Promise<void> {
+    if (closed) {
+      await deleteResource();
+      return;
+    }
+    closed = true;
+    if (timeout !== null) clearTimeout(timeout);
+    safeState("disconnected");
+    if (input) input.close();
+    if (channel && typeof channel.close === "function") { try { channel.close(); } catch {} }
+    if (pc && typeof pc.close === "function") { try { pc.close(); } catch {} }
+    await deleteResource();
+  }
+
+  function safeState(state: "connecting" | "connected" | "disconnected") {
+    try { opts.onState(state); } catch {}
+  }
+
+  function fail(error: Error) {
+    if (settled) {
+      // Already resolved/adopted: surface as a state transition rather than
+      // rejecting a promise nobody is listening to any more.
+      if (!closed) { safeState("disconnected"); close(); }
+      return;
+    }
+    settled = true;
+    readyReject(error);
+    close();
+  }
+
+  function checkReady() {
+    if (closed || settled) return;
+    if (!iceReady || !videoStream || !channelReady) return;
+    settled = true;
+    if (timeout !== null) clearTimeout(timeout);
+    safeState("connected");
+    readyResolve({ pc, input, close });
+  }
+
+  listen(pc, "track", (event: any) => {
+    if (closed) return;
+    if (!event.track || event.track.kind !== "video") return;
+    const stream = event.streams && event.streams[0];
+    if (!stream) return;
+    videoStream = stream;
+    try { opts.onStream(stream); } catch {}
+    checkReady();
+  });
+  listen(pc, "iceconnectionstatechange", () => {
+    if (closed) return;
+    const state = pc.iceConnectionState;
+    if (state === "connected" || state === "completed") {
+      iceReady = true;
+      checkReady();
+    } else if (state === "failed" || state === "closed") {
+      fail(whepError("ice-failed", `ICE connection ${state}`));
+    }
+  });
+
+  pc.addTransceiver("video", { direction: "recvonly" });
+  channel = pc.createDataChannel("input", { ordered: true });
+  input = createInputSender(channel);
+  channelReady = channel.readyState === "open";
+  listen(channel, "open", () => {
+    if (closed) return;
+    channelReady = true;
+    checkReady();
+  });
+  listen(channel, "message", (event: any) => {
+    if (closed) return;
+    try {
+      const msg = JSON.parse(event.data);
+      if (msg && msg.type === "echo" && typeof msg.t === "number") {
+        opts.onInputRtt(Date.now() - msg.t);
+      }
+    } catch {
+      // ignore malformed messages
+    }
+  });
+  listen(channel, "close", () => { fail(whepError("input-closed", "Input channel closed")); });
+  listen(channel, "error", () => { fail(whepError("input-failed", "Input channel failed")); });
+
+  if (timeoutMs > 0) {
+    timeout = setTimeout(() => { fail(whepError("timeout", "WHEP session timed out")); }, timeoutMs);
+  }
+
+  safeState("connecting");
 
   (async () => {
-    const t0 = Date.now();
     try {
-      pc.addTransceiver("video", { direction: "recvonly" });
       const offer = await pc.createOffer();
+      if (closed) return;
       await pc.setLocalDescription(offer);
-      console.log(`[whep] offer set +${Date.now() - t0}ms`);
-      // Tailscale has no NAT to traverse, so the STUN reflexive candidate the
-      // 4s web-client cap waits for never arrives here — react-native-webrtc's
-      // host candidate already carries the real Tailscale IP, which mediamtx
-      // can reach directly. A short grace period is enough to let that host
-      // candidate land before sending the offer.
       await waitForIceGatheringComplete(pc, 300);
-      console.log(`[whep] ice gathering done +${Date.now() - t0}ms (state=${pc.iceGatheringState})`);
-      const r = await doFetch(opts.whepUrl, {
+      if (closed) return;
+      const response: any = await doFetch(opts.whepUrl, {
         method: "POST",
-        headers: { "Content-Type": "application/sdp" },
+        headers: {
+          "Content-Type": "application/sdp",
+          "Authorization": `Bearer ${opts.whepToken}`,
+        },
         body: pc.localDescription.sdp,
       } as any);
-      console.log(`[whep] whep POST answered +${Date.now() - t0}ms (ok=${r && (r as any).ok})`);
-      if (!r || !(r as any).ok) { onState("failed"); return; }
-      // WHEP resource URL for this session (spec: Location header on the POST
-      // response). DELETEing it on close tells mediamtx to tear the session
-      // down immediately — without this, closing the local peer connection
-      // alone leaves a zombie session server-side pushing video into a full
-      // write queue until it eventually times out on its own.
-      const location = (r as any).headers?.get?.("Location") ?? (r as any).headers?.get?.("location");
-      console.log(`[whep] Location header =`, location);
+      if (!response || !response.ok) {
+        throw whepError("whep-failed", `WHEP POST failed (${response ? response.status : "no response"})`);
+      }
+      const location = response.headers && (response.headers.get?.("Location") ?? response.headers.get?.("location"));
       if (location) {
         try { resourceUrl = new URL(location, opts.whepUrl).toString(); }
         catch { resourceUrl = location; }
       }
-      console.log(`[whep] resourceUrl resolved =`, resourceUrl, "closed already?", closed);
-      // close() may already have run while this POST was in flight (a
-      // superseded instance switch): it couldn't DELETE then because
-      // resourceUrl wasn't known yet. Finish the job now instead of leaving
-      // this session's write queue stuck open server-side forever.
       if (closed) {
-        if (resourceUrl) {
-          console.log(`[whep] late DELETE firing ->`, resourceUrl);
-          doFetch(resourceUrl, { method: "DELETE" } as any)
-            .then((dr: any) => console.log(`[whep] late DELETE result ok=${dr?.ok} status=${dr?.status}`))
-            .catch((e) => console.log(`[whep] late DELETE failed`, e));
-        } else {
-          console.log(`[whep] closed but no resourceUrl — cannot DELETE, session will leak server-side`);
-        }
-        try { pc.close(); } catch {}
+        // A superseded switch may have closed us while the POST was in
+        // flight, before resourceUrl was known. Finish cleanup now instead
+        // of leaking the server-side session.
+        await deleteResource();
         return;
       }
-      const sdp = await (r as any).text();
+      const sdp = await response.text();
       await pc.setRemoteDescription({ type: "answer", sdp });
-      console.log(`[whep] remote description set +${Date.now() - t0}ms`);
-    } catch (err) {
-      console.log(`[whep] error +${Date.now() - t0}ms`, err);
-      onState("failed");
+    } catch (error) {
+      fail(error instanceof Error ? error : whepError("failed", String(error)));
     }
   })();
 
-  return {
-    pc,
-    close: () => {
-      console.log(`[whep] close() called, resourceUrl=`, resourceUrl, "already closed?", closed);
-      closed = true;
-      pc.removeEventListener?.("track", onTrack);
-      pc.removeEventListener?.("iceconnectionstatechange", onIceChange);
-      pc.ontrack = null;
-      if (resourceUrl) {
-        console.log(`[whep] immediate DELETE firing ->`, resourceUrl);
-        doFetch(resourceUrl, { method: "DELETE" } as any)
-          .then((dr: any) => console.log(`[whep] immediate DELETE result ok=${dr?.ok} status=${dr?.status}`))
-          .catch((e) => console.log(`[whep] immediate DELETE failed`, e));
-      } else {
-        console.log(`[whep] close() with no resourceUrl yet — deferred to late-DELETE path if POST hasn't resolved`);
-      }
-      try { pc.close(); } catch {}
-    },
-  };
+  return ready;
 }
