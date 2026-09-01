@@ -2,26 +2,22 @@
 import sys
 import subprocess
 from PyQt5.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QLabel, QComboBox, QGroupBox, QScrollArea
+    QMainWindow, QWidget, QVBoxLayout,
+    QPushButton, QLabel, QGroupBox, QScrollArea
 )
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QPixmap, QImage
 import qrcode
 import io
 
-from config import PORT, QUALITY_MAP, DEFAULT_QUALITY, VERSION
+from config import PORT, VERSION
 from server.tailscale import get_best_ip, has_tailscale
-from server.stream import CaptureState
 from updater import check_for_update
 
 
 class LauncherWindow(QMainWindow):
-    quality_changed = pyqtSignal(int)
-
-    def __init__(self, state: CaptureState, parent=None):
+    def __init__(self, parent=None):
         super().__init__(parent)
-        self._state = state
         self.setWindowTitle(f"WindowControl v{VERSION}")
         self.setMinimumWidth(420)
         self.resize(460, 600)
@@ -65,22 +61,6 @@ class LauncherWindow(QMainWindow):
         server_layout.addWidget(self._qr_label)
 
         layout.addWidget(server_group)
-
-        # --- Quality group ---
-        quality_group = QGroupBox("Stream Quality")
-        quality_layout = QHBoxLayout(quality_group)
-        quality_layout.setContentsMargins(12, 12, 12, 12)
-        self._quality_combo = QComboBox()
-        self._quality_combo.setMinimumHeight(36)
-        self._quality_combo.setStyleSheet("font-size: 14px;")
-        for label in QUALITY_MAP:
-            self._quality_combo.addItem(label.capitalize(), label)
-        idx = self._quality_combo.findData(DEFAULT_QUALITY)
-        if idx >= 0:
-            self._quality_combo.setCurrentIndex(idx)
-        self._quality_combo.currentIndexChanged.connect(self._on_quality_changed)
-        quality_layout.addWidget(self._quality_combo)
-        layout.addWidget(quality_group)
 
         # --- Update banner ---
         self._update_banner = QWidget()
@@ -170,11 +150,6 @@ class LauncherWindow(QMainWindow):
             190, 190, Qt.KeepAspectRatio, Qt.SmoothTransformation
         )
         self._qr_label.setPixmap(pix)
-
-    def _on_quality_changed(self, _idx: int):
-        key = self._quality_combo.currentData()
-        value = QUALITY_MAP[key]
-        self.quality_changed.emit(value)
 
     def _on_update_available(self, latest: str):
         self._pending_update_version = latest

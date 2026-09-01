@@ -2,19 +2,17 @@ import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 import io
+import importlib.util
 import struct
 import time
 from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 from server.engine_runtime import EngineSelection
-from server.stream import CaptureState, FrameQueue
 from server.app import create_app
 
 
 def _make_client(instances=None):
-    state = CaptureState()
-    fq = FrameQueue()
     im = MagicMock()
     im.list_instances.return_value = instances or []
     im.active = None
@@ -29,7 +27,7 @@ def _make_client(instances=None):
     )
     im.refresh.return_value = None
     with patch("server.app.get_best_ip", return_value="127.0.0.1"):
-        app = create_app(state, fq, im)
+        app = create_app(im)
     return TestClient(app, client=("127.0.0.1", 12345)), im
 
 
@@ -96,11 +94,7 @@ def test_legacy_select_includes_name():
     client, im = _make_client()
     im.active = inst
 
-    with patch("server.app.adb_manager") as mock_adb:
-        mock_session = MagicMock()
-        mock_session.start.return_value = True
-        mock_adb.AdbSession.return_value = mock_session
-        r = client.post("/select", json={"id": "adb:emulator-5554"})
+    r = client.post("/select", json={"id": "adb:emulator-5554"})
     assert r.status_code == 200
     assert r.json()["name"] == "instance0"
 
@@ -225,6 +219,21 @@ def test_removed_engine_and_server_input_routes_are_not_registered(method, path)
     assert getattr(client, method)(path).status_code == 404
 
 
+def test_legacy_android_mjpeg_routes_are_not_registered():
+    client, _ = _make_client()
+    registered_paths = {route.path for route in client.app.routes}
+
+    assert registered_paths.isdisjoint({"/stream", "/stats", "/reconnect", "/quality"})
+
+
+def test_android_mjpeg_runtime_is_absent():
+    from server import adb_manager
+
+    assert not hasattr(adb_manager, "AdbSession")
+    assert not hasattr(adb_manager, "_get_ffmpeg")
+    assert importlib.util.find_spec("server.stream") is None
+
+
 def test_keyframe_requests_idr_on_instance():
     # Switch prefetch: POST /keyframe forces a source-side IDR so a fresh WHEP
     # paints instantly under copy-mux (no ffmpeg GOP).
@@ -253,19 +262,6 @@ def test_get_windows_alias():
     r = client.get("/windows")
     assert r.status_code == 200
     assert len(r.json()) == 1
-
-
-def test_post_quality_low():
-    client, _ = _make_client()
-    r = client.post("/quality", json={"quality": "low"})
-    assert r.status_code == 200
-    assert r.json()["quality"] == "low"
-
-
-def test_post_quality_invalid():
-    client, _ = _make_client()
-    r = client.post("/quality", json={"quality": "ultra"})
-    assert r.status_code == 422
 
 
 def test_quality_endpoint_rejects_bad_tier(client=None):

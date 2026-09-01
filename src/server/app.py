@@ -7,13 +7,11 @@ import subprocess
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from typing import Literal
 
-from config import CLIENT_DIR, COOKIE_SECURE, QUALITY_MAP, STUN_PORT, TIER_ORDER
-from server.stream import CaptureState, FrameQueue, mjpeg_generator
+from config import CLIENT_DIR, COOKIE_SECURE, STUN_PORT, TIER_ORDER
 from server import adb_manager
 from server import auth
 from server.ice_config import get_ice_servers
@@ -43,10 +41,6 @@ def _log(msg: str):
 
 class SelectRequest(BaseModel):
     id: str  # "adb:SERIAL"
-
-
-class QualityRequest(BaseModel):
-    quality: Literal["low", "medium", "high"]
 
 
 class QualityTierRequest(BaseModel):
@@ -187,8 +181,7 @@ def _selection_ice_servers(host: str) -> list[dict]:
     return servers
 
 
-def create_app(state: CaptureState, frame_queue: FrameQueue,
-               instance_manager: InstanceManager) -> FastAPI:
+def create_app(instance_manager: InstanceManager) -> FastAPI:
     import asyncio
     from config import PUBLIC_UI_URL, TUNNEL_SECRET
     if PUBLIC_UI_URL and not auth.auth_enabled():
@@ -360,45 +353,11 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
                 "signaling_url": selection.signaling_url,
                 "ice_servers": _selection_ice_servers(host)}
 
-    # ── MJPEG fallback stream ────────────────────────────────────────────────
-
-    @app.get("/stream")
-    async def stream():
-        return StreamingResponse(
-            mjpeg_generator(frame_queue, state),
-            media_type="multipart/x-mixed-replace; boundary=frame",
-        )
-
-    @app.get("/stats")
-    async def stats():
-        count = state.frames_served
-        state.frames_served = 0
-        session = state.adb_session
-        return {"frames": count, "active": session is not None}
-
-    @app.post("/reconnect")
-    async def reconnect():
-        session = state.adb_session
-        if session is None:
-            raise HTTPException(status_code=404, detail="No active session")
-        session.stop()
-        ok = session.start()
-        if not ok:
-            raise HTTPException(status_code=503, detail="Could not restart session")
-        return {"ok": True}
-
     # ── Preview (legacy URL) ─────────────────────────────────────────────────
 
     @app.get("/window/{window_id}/preview")
     async def preview(window_id: str):
         return await _capture_preview(window_id)
-
-    # ── Quality ──────────────────────────────────────────────────────────────
-
-    @app.post("/quality")
-    async def set_quality(req: QualityRequest):
-        state.set_quality(QUALITY_MAP[req.quality])
-        return {"quality": req.quality}
 
     if os.path.isdir(CLIENT_DIR):
         app.mount("/static", StaticFiles(directory=CLIENT_DIR), name="static")

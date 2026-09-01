@@ -78,15 +78,8 @@ class _FakeApplication:
         pass
 
 
-class _FakeState:
-    def set_quality(self, quality):
-        pass
-
-
 class _FakeLauncher:
-    quality_changed = type("Signal", (), {"connect": lambda self, callback: None})()
-
-    def __init__(self, state):
+    def __init__(self):
         pass
 
     def show(self):
@@ -112,8 +105,6 @@ class _FakeTray:
 
 def _patch_main_startup(monkeypatch, main_mod, manager_calls):
     monkeypatch.setattr(main_mod, "QApplication", _FakeApplication)
-    monkeypatch.setattr(main_mod, "CaptureState", _FakeState)
-    monkeypatch.setattr(main_mod, "FrameQueue", object)
     monkeypatch.setattr(main_mod, "LauncherWindow", _FakeLauncher)
     monkeypatch.setattr(main_mod, "TrayIcon", _FakeTray)
     monkeypatch.setattr(main_mod, "_ensure_assets", lambda: None)
@@ -152,11 +143,40 @@ def test_main_constructs_only_engine_instance_manager(monkeypatch):
     assert manager_calls == [((orchestrator,), {})]
 
 
+def test_main_starts_server_without_android_mjpeg_pipeline(monkeypatch):
+    import main as main_mod
+
+    manager_calls = []
+    app_calls = []
+    thread_targets = []
+
+    class RecordingThread:
+        def __init__(self, *args, target=None, **kwargs):
+            thread_targets.append(target)
+
+        def start(self):
+            pass
+
+    _patch_main_startup(monkeypatch, main_mod, manager_calls)
+    monkeypatch.setattr(main_mod.threading, "Thread", RecordingThread)
+    monkeypatch.setattr(
+        main_mod, "create_app", lambda *args, **kwargs: app_calls.append((args, kwargs)) or object()
+    )
+    monkeypatch.setattr(main_mod, "build_engine_orchestrator", object)
+    monkeypatch.setattr(main_mod.sys, "argv", ["main.py"])
+
+    with pytest.raises(SystemExit) as exit_info:
+        main_mod.main()
+
+    assert exit_info.value.code == 0
+    assert len(app_calls) == 1
+    assert len(app_calls[0][0]) == 1
+    assert all(getattr(target, "__name__", "") != "capture_loop" for target in thread_targets)
+
+
 def test_config_imports():
-    from config import (PORT, VERSION, QUALITY_MAP, DEFAULT_QUALITY,
-                        SCRCPY_PATH, CLIENT_DIR, ASSETS_DIR, engine_exe_path)
+    from config import PORT, VERSION, SCRCPY_PATH, CLIENT_DIR, ASSETS_DIR, engine_exe_path
     assert PORT == 8080
-    assert DEFAULT_QUALITY in QUALITY_MAP
     assert callable(engine_exe_path)
 
 

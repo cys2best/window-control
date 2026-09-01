@@ -6,14 +6,6 @@ DEV_MODE = sys.platform != "win32"
 VERSION = "2.3.19"
 GITHUB_REPO = "cys2best/window-control"
 
-QUALITY_MAP = {
-    "low": 40,
-    "medium": 65,
-    "high": 85,
-}
-DEFAULT_QUALITY = "high"
-assert DEFAULT_QUALITY in QUALITY_MAP, f"DEFAULT_QUALITY '{DEFAULT_QUALITY}' not in QUALITY_MAP"
-
 TIER_ORDER = ["480", "720", "1080", "1440"]
 DEFAULT_TIER = "720"
 QUALITY_TIERS = {

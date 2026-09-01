@@ -3,15 +3,10 @@ import sys
 from pathlib import Path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from config import PORT, QUALITY_MAP, DEV_MODE, get_base_path, CLIENT_DIR, ASSETS_DIR
+from config import PORT, DEV_MODE, get_base_path, CLIENT_DIR, ASSETS_DIR
 
 def test_port_default():
     assert PORT == 8080
-
-def test_quality_map():
-    assert QUALITY_MAP['low'] == 40
-    assert QUALITY_MAP['medium'] == 65
-    assert QUALITY_MAP['high'] == 85
 
 def test_dev_mode_on_mac():
     # On Mac (CI), DEV_MODE must be True
@@ -66,6 +61,7 @@ def test_legacy_runtime_modules_constants_and_dependencies_are_absent():
         "signaling_bridge.py",
         "publish_hook.py",
         "scrcpy_session.py",
+        "stream.py",
     ]
     for filename in deleted_modules:
         assert not (repo / "src" / "server" / filename).exists()
@@ -77,6 +73,12 @@ def test_legacy_runtime_modules_constants_and_dependencies_are_absent():
         "aiortc",
         "imageio_ffmpeg",
         "/input",
+        "CaptureState",
+        "FrameQueue",
+        "capture_loop",
+        "AdbSession",
+        "screenrecord --output-format=h264",
+        "mjpeg",
     )
     runtime_text = "\n".join(
         path.read_text(errors="replace")
@@ -102,5 +104,7 @@ def test_removed_config_exports_are_absent():
         "WEBRTC_UDP_PORT",
         "AIORTC_PROFILE_LEVEL_ID",
         "MEDIAMTX_PATH",
+        "QUALITY_MAP",
+        "DEFAULT_QUALITY",
     ):
         assert not hasattr(config, name)

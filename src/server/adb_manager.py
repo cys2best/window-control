@@ -1,15 +1,4 @@
-"""
-ADB-based Android VM capture and input for LDPlayer/VirtualBox headless instances.
-
-Capture pipeline:
-  adb exec-out screenrecord --output-format=h264 --time-limit=3600 -
-    | ffmpeg -i pipe:0 -vf fps=15 -f image2pipe -vcodec mjpeg pipe:1
-    -> Python reads JPEG frames -> FrameQueue
-
-Input:
-  adb shell input tap X Y
-  adb shell input keyevent KEYCODE
-"""
+"""ADB discovery, screenshots, and input for LDPlayer instances."""
 
 import os
 import re
@@ -69,12 +58,6 @@ def _find_adb() -> str | None:
         return found
     _log(f"[adb] not found — tried: {_ADB_PATH_FALLBACKS}")
     return None
-
-
-def _get_ffmpeg() -> str | None:
-    import shutil
-
-    return shutil.which("ffmpeg")
 
 
 def _find_ldconsole() -> str | None:
@@ -246,117 +229,6 @@ def get_screen_size(serial: str) -> tuple[int, int]:
     except Exception:
         pass
     return 1280, 720
-
-
-class AdbSession:
-    """Holds the screenrecord+ffmpeg pipeline for one ADB device."""
-
-    def __init__(self, serial: str, w: int, h: int, fps: int = 15, ldplayer_index: int = 0):
-        self.serial = serial
-        self.w = w
-        self.h = h
-        self.fps = fps
-        self.ldplayer_index = ldplayer_index
-        self._record_proc: subprocess.Popen | None = None
-        self._ffmpeg_proc: subprocess.Popen | None = None
-        self._lock = threading.Lock()
-        self._latest_frame: bytes | None = None
-        self._reader_thread: threading.Thread | None = None
-        self._running = False
-
-    def start(self) -> bool:
-        adb = _find_adb()
-        ffmpeg = _get_ffmpeg()
-        if not adb:
-            _log("[adb] adb.exe not found")
-            return False
-        if not ffmpeg:
-            _log("[adb] ffmpeg not found on PATH")
-            return False
-        try:
-            nw = _no_window_flags()
-            self._record_proc = subprocess.Popen(
-                [adb, "-s", self.serial, "exec-out",
-                 f"screenrecord --output-format=h264 --bit-rate=2000000 -"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                **nw,
-            )
-            self._ffmpeg_proc = subprocess.Popen(
-                [ffmpeg,
-                 "-loglevel", "quiet",
-                 "-hwaccel", "auto",      # GPU decode H.264; silent CPU fallback if unavailable
-                 "-fflags", "nobuffer",
-                 "-flags", "low_delay",
-                 "-probesize", "32",
-                 "-analyzeduration", "0",
-                 "-i", "pipe:0",
-                 "-vf", f"fps={self.fps}",
-                 "-vsync", "0",
-                 "-f", "image2pipe",
-                 "-vcodec", "mjpeg",
-                 "-q:v", "5",
-                 "pipe:1"],
-                stdin=self._record_proc.stdout,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                **nw,
-            )
-            self._record_proc.stdout.close()
-            self._running = True
-            self._reader_thread = threading.Thread(target=self._read_frames, daemon=True)
-            self._reader_thread.start()
-            _log(f"[adb] session started serial={self.serial} {self.w}x{self.h}@{self.fps}fps")
-            return True
-        except Exception:
-            _log(f"[adb] session start failed: {traceback.format_exc()[:400]}")
-            self.stop()
-            return False
-
-    def _read_frames(self):
-        """Parse JPEG frames from ffmpeg stdout (SOI=FFD8, EOI=FFD9)."""
-        buf = b""
-        ffmpeg = self._ffmpeg_proc
-        if ffmpeg is None:
-            return
-        try:
-            while self._running:
-                chunk = ffmpeg.stdout.read(65536)
-                if not chunk:
-                    break
-                buf += chunk
-                while True:
-                    start = buf.find(b"\xff\xd8")
-                    if start == -1:
-                        buf = b""
-                        break
-                    end = buf.find(b"\xff\xd9", start + 2)
-                    if end == -1:
-                        buf = buf[start:]
-                        break
-                    jpeg = buf[start:end + 2]
-                    buf = buf[end + 2:]
-                    with self._lock:
-                        self._latest_frame = jpeg
-        except Exception:
-            pass
-        _log(f"[adb] frame reader exited serial={self.serial}")
-
-    def get_latest_frame(self) -> bytes | None:
-        with self._lock:
-            return self._latest_frame
-
-    def stop(self):
-        self._running = False
-        for proc in [self._ffmpeg_proc, self._record_proc]:
-            if proc:
-                try:
-                    proc.kill()
-                except Exception:
-                    pass
-        self._ffmpeg_proc = None
-        self._record_proc = None
-        _log(f"[adb] session stopped serial={self.serial}")
 
 
 # ── Input ─────────────────────────────────────────────────────────────────────

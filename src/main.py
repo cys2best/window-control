@@ -42,9 +42,8 @@ except Exception:
     raise
 
 try:
-    from config import PORT, QUALITY_MAP, DEFAULT_QUALITY
+    from config import PORT
     from server.app import create_app
-    from server.stream import CaptureState, FrameQueue, capture_loop
     from server.instance_manager import InstanceManager
     from gui.launcher import LauncherWindow
     from gui.tray import TrayIcon
@@ -148,26 +147,16 @@ def main():
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
 
-    state = CaptureState()
-    state.set_quality(QUALITY_MAP[DEFAULT_QUALITY])
-    frame_queue = FrameQueue()
-
     engine_orchestrator = build_engine_orchestrator()
     instance_manager = InstanceManager(engine_orchestrator)
 
-    fastapi_app = create_app(state, frame_queue, instance_manager)
+    fastapi_app = create_app(instance_manager)
 
     server = None
     _server_thread = None
-    _capture_thread = None
 
     def start_server():
-        nonlocal _server_thread, _capture_thread, server
-        state.running = True
-        _capture_thread = threading.Thread(
-            target=capture_loop, args=(state, frame_queue), daemon=True
-        )
-        _capture_thread.start()
+        nonlocal _server_thread, server
         # Fresh uvicorn Server each restart (uvicorn cannot be re-run after exit)
         # proxy_headers=False is load-bearing, not a default restated:
         # uvicorn defaults it to True and trusts 127.0.0.1 as a forwarding
@@ -208,7 +197,6 @@ def main():
         _log("[GUI] server started")
 
     def stop_server():
-        state.running = False
         if server:
             server.should_exit = True
 
@@ -225,7 +213,7 @@ def main():
                     _log(f"[GUI] watchdog restart failed: {_tb.format_exc()[:300]}")
     threading.Thread(target=_watchdog, daemon=True).start()
 
-    launcher = LauncherWindow(state)
+    launcher = LauncherWindow()
 
     def show_launcher():
         launcher.show()
@@ -259,8 +247,6 @@ def main():
         on_exit=lambda: (stop_server(), app.quit()),
         on_reinstall=_force_reinstall,
     )
-
-    launcher.quality_changed.connect(state.set_quality)
 
     launcher.show()
     tray.start()

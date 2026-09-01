@@ -66,22 +66,6 @@ async def test_forward_http_request_decodes_base64_body():
     )
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("path", ["/stream", "/stream?1712345678"])
-async def test_forward_http_request_refuses_streaming_path(path):
-    fake_client = AsyncMock()
-    fake_client.request = AsyncMock()
-
-    result = await _forward_http_request(fake_client, {
-        "type": "http_request", "id": "s9", "method": "GET",
-        "path": path, "headers": {}, "body": "",
-    })
-
-    fake_client.request.assert_not_awaited()
-    assert result["status"] == 501
-    assert b"streaming" in base64.b64decode(result["body"])
-
-
 def test_tunnel_http_client_has_generous_read_timeout():
     from server.http_tunnel import _new_http_client
 

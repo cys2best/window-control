@@ -14,17 +14,14 @@ def _make_authed_client(token="s3cret", instances=None):
     importlib.reload(config)
     from server import auth
     importlib.reload(auth)
-    from server.stream import CaptureState, FrameQueue
     from server import app as app_module
     importlib.reload(app_module)
 
-    state = CaptureState()
-    fq = FrameQueue()
     im = MagicMock()
     im.list_instances.return_value = instances or []
     im.active = None
     with patch("server.app.get_best_ip", return_value="127.0.0.1"):
-        app = app_module.create_app(state, fq, im)
+        app = app_module.create_app(im)
     return TestClient(app), im
 
 
@@ -102,18 +99,15 @@ def test_public_ui_url_without_auth_token_refuses_to_start():
     importlib.reload(config)
     from server import auth
     importlib.reload(auth)
-    from server.stream import CaptureState, FrameQueue
     from server import app as app_module
     importlib.reload(app_module)
 
-    state = CaptureState()
-    fq = FrameQueue()
     im = MagicMock()
     im.list_instances.return_value = []
     try:
         with patch("server.app.get_best_ip", return_value="127.0.0.1"):
             with pytest.raises(RuntimeError, match="AUTH_TOKEN"):
-                app_module.create_app(state, fq, im)
+                app_module.create_app(im)
     finally:
         os.environ.pop("PUBLIC_UI_URL", None)
         importlib.reload(config)

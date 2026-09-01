@@ -14,28 +14,13 @@ APP_BASE_URL = "http://127.0.0.1:8080"
 _HOP_BY_HOP_HEADERS = {"host", "content-length", "connection", "transfer-encoding"}
 
 # httpx's default timeout is 5s on every operation, which is far too short for
-# the routes this tunnel actually carries: POST /instances/{id}/select blocks
-# on a scrcpy/adb session start (cold-starting a dead session can take tens of
-# seconds; even the cheaper quality-tier switch is ~1.8s of blocking restart).
+# the routes this tunnel actually carries: POST /instances/{id}/select may
+# cold-start an engine runtime and take tens of seconds; even the cheaper
+# quality-tier switch is ~1.8s of blocking restart.
 # The read/write/pool budget is therefore generous, while `connect` stays short
 # so a local app that isn't listening at all fails fast instead of making the
 # public browser wait a minute for an error.
 TUNNEL_HTTP_TIMEOUT = httpx.Timeout(60.0, connect=5.0)
-
-# Responses this module refuses to forward. _forward_http_request buffers the
-# whole response body (`resp.content`) before wrapping it in one JSON envelope,
-# which is fine for this app's JSON + small preview JPEGs but catastrophic for
-# GET /stream: an endless multipart/x-mixed-replace MJPEG stream would
-# accumulate in the PC's RAM forever, never completing, never responding. The
-# tunnel is small-bodies-only by design (see module docstring); say so
-# explicitly with a 501 rather than OOMing the PC.
-_UNSUPPORTED_STREAMING_PATHS = {"/stream"}
-
-_STREAM_UNSUPPORTED_BODY = (
-    b"The public tunnel does not support streaming responses (MJPEG). "
-    b"Use the WebRTC stream path instead."
-)
-
 
 def _new_http_client() -> httpx.AsyncClient:
     return httpx.AsyncClient(timeout=TUNNEL_HTTP_TIMEOUT)
@@ -56,10 +41,6 @@ def _error_response(stream_id, status: int, body: bytes) -> dict:
 
 
 async def _forward_http_request(client: httpx.AsyncClient, msg: dict) -> dict:
-    path_only = msg["path"].split("?", 1)[0]
-    if path_only in _UNSUPPORTED_STREAMING_PATHS:
-        log.warning("tunnel: refusing to forward streaming path %s", msg["path"])
-        return _error_response(msg["id"], 501, _STREAM_UNSUPPORTED_BODY)
     body = base64.b64decode(msg["body"]) if msg.get("body") else b""
     resp = await client.request(
         msg["method"], APP_BASE_URL + msg["path"],
