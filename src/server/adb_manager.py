@@ -72,11 +72,9 @@ def _find_adb() -> str | None:
 
 
 def _get_ffmpeg() -> str | None:
-    try:
-        import imageio_ffmpeg
-        return imageio_ffmpeg.get_ffmpeg_exe()
-    except Exception:
-        return None
+    import shutil
+
+    return shutil.which("ffmpeg")
 
 
 def _find_ldconsole() -> str | None:
@@ -273,7 +271,7 @@ class AdbSession:
             _log("[adb] adb.exe not found")
             return False
         if not ffmpeg:
-            _log("[adb] ffmpeg not found — install imageio-ffmpeg")
+            _log("[adb] ffmpeg not found on PATH")
             return False
         try:
             nw = _no_window_flags()

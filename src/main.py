@@ -45,7 +45,6 @@ try:
     from config import PORT, QUALITY_MAP, DEFAULT_QUALITY
     from server.app import create_app
     from server.stream import CaptureState, FrameQueue, capture_loop
-    from server.mediamtx_manager import MediamtxManager
     from server.instance_manager import InstanceManager
     from gui.launcher import LauncherWindow
     from gui.tray import TrayIcon
@@ -69,7 +68,7 @@ def _log(msg: str):
 
 
 def _ensure_assets():
-    """Download missing binaries (mediamtx, scrcpy) before the app needs them.
+    """Download missing scrcpy binaries before the app needs them.
 
     In a frozen build assets must be pre-bundled by build.bat — skip download.
     In dev mode, run download_assets.py to fetch missing binaries.
@@ -94,19 +93,17 @@ def _ensure_assets():
         _log(f"[assets] download error: {_tb.format_exc()[:400]}")
 
 
-def build_engine_orchestrator() -> "EngineOrchestrator | None":
-    if not config.ENGINE_EXE_PATH:
-        return None
+def build_engine_orchestrator() -> "EngineOrchestrator":
+    exe_path = config.engine_exe_path()
+    if not os.path.isfile(exe_path):
+        raise RuntimeError(f"engine.exe not found at {exe_path}")
 
     from server.engine_orchestrator import EngineOrchestrator
     from server.engine_runtime import EngineRuntimeConfig
 
-    whep_secret = (
-        config.ENGINE_WHEP_CAPABILITY_SECRET or secrets.token_hex(32)
-    )
     runtime_config = EngineRuntimeConfig(
-        exe_path=config.ENGINE_EXE_PATH,
-        whep_secret=whep_secret,
+        exe_path=exe_path,
+        whep_secret=secrets.token_hex(32),
         signaling_url=config.VPS_SIGNALING_URL or "",
         signaling_secret=config.ENGINE_SIGNALING_SECRET,
         local_ice_servers=config.ENGINE_LOCAL_ICE_SERVERS,
@@ -136,22 +133,16 @@ def main():
                            capture_output=True, timeout=10)
             subprocess.run(["sc.exe", "delete", "WindowControlService"],
                            capture_output=True, timeout=10)
-            # Allow mediamtx WHEP port through Windows Firewall (idempotent)
-            from config import WHEP_PORT, WEBRTC_UDP_PORT, STUN_PORT
-            for proto, port in [
-                ("TCP", WHEP_PORT),
-                ("TCP", 8189),
-                ("UDP", 8189),
-                ("UDP", WEBRTC_UDP_PORT),
-                ("UDP", STUN_PORT),
-            ]:
-                subprocess.run([
-                    "netsh", "advfirewall", "firewall", "add", "rule",
-                    f"name=WindowControl-WebRTC-{proto}-{port}",
-                    "dir=in", "action=allow", f"protocol={proto}",
-                    f"localport={port}",
-                ], capture_output=True, timeout=10)
-            _log(f"[GUI] firewall rules ensured for WHEP {WHEP_PORT}, ICE TCP 8189, ICE UDP {WEBRTC_UDP_PORT}, STUN {STUN_PORT}")
+            # Keep the embedded STUN binding reachable on the LAN/Tailscale
+            # interface. Engine program rules are installed with the package.
+            from config import STUN_PORT
+            subprocess.run([
+                "netsh", "advfirewall", "firewall", "add", "rule",
+                f"name=WindowControl-STUN-UDP-{STUN_PORT}",
+                "dir=in", "action=allow", "protocol=UDP",
+                f"localport={STUN_PORT}",
+            ], capture_output=True, timeout=10)
+            _log(f"[GUI] firewall rule ensured for STUN {STUN_PORT}")
         threading.Thread(target=_win32_setup, daemon=True).start()
 
     app = QApplication(sys.argv)
@@ -162,18 +153,7 @@ def main():
     frame_queue = FrameQueue()
 
     engine_orchestrator = build_engine_orchestrator()
-    from config import WEBRTC_BACKEND
-    if engine_orchestrator is not None:
-        mediamtx = None
-        instance_manager = InstanceManager(
-            mediamtx=None, engine_orchestrator=engine_orchestrator
-        )
-    elif WEBRTC_BACKEND == "aiortc":
-        mediamtx = None
-        instance_manager = InstanceManager(mediamtx=None)  # webrtc set once the event loop exists — see app.py's _startup()
-    else:
-        mediamtx = MediamtxManager()
-        instance_manager = InstanceManager(mediamtx)
+    instance_manager = InstanceManager(engine_orchestrator)
 
     fastapi_app = create_app(state, frame_queue, instance_manager)
 

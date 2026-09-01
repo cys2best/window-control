@@ -18,7 +18,15 @@ def _make_client(instances=None):
     im = MagicMock()
     im.list_instances.return_value = instances or []
     im.active = None
-    im.select.return_value = True
+    im.select.return_value = EngineSelection(
+        whep_url="http://100.64.1.4:51000/whep",
+        whep_token="whep-token",
+        signaling_url=None,
+        signaling_token=None,
+        generation=0,
+        width=720,
+        height=1280,
+    )
     im.refresh.return_value = None
     with patch("server.app.get_best_ip", return_value="127.0.0.1"):
         app = create_app(state, fq, im)
@@ -86,7 +94,6 @@ def test_legacy_select_includes_name():
     inst.h = 1280
     inst.ldplayer_index = 0
     client, im = _make_client()
-    im.select.return_value = True
     im.active = inst
 
     with patch("server.app.adb_manager") as mock_adb:
@@ -111,7 +118,7 @@ def make_instance():
 def test_instance_select_returns_exact_engine_contract():
     client, manager = _make_client()
     manager.get.return_value = make_instance()
-    manager.select_engine.return_value = EngineSelection(
+    manager.select.return_value = EngineSelection(
         whep_url="http://100.64.1.4:51000/whep",
         whep_token="whep-token",
         signaling_url="wss://signal.example",
@@ -139,7 +146,7 @@ def test_instance_select_returns_exact_engine_contract():
         {"urls": "stun:100.64.1.4:3478"},
         {"urls": "stun:stun.l.google.com:19302"},
     ]
-    manager.select_engine.assert_called_once_with("emulator-5554", "100.64.1.4")
+    manager.select.assert_called_once_with("emulator-5554", "100.64.1.4")
 
 
 def test_instance_select_statuses_are_distinct():
@@ -148,14 +155,14 @@ def test_instance_select_statuses_are_distinct():
     assert client.post("/instances/missing/select").status_code == 404
 
     manager.get.return_value = make_instance()
-    manager.select_engine.return_value = None
+    manager.select.return_value = None
     assert client.post("/instances/emulator-5554/select").status_code == 503
 
 
 def test_instance_select_nulls_disabled_public_capabilities_together():
     client, manager = _make_client()
     manager.get.return_value = make_instance()
-    manager.select_engine.return_value = EngineSelection(
+    manager.select.return_value = EngineSelection(
         whep_url="http://100.64.1.4:51000/whep", whep_token="whep-token",
         signaling_url=None, signaling_token=None, generation=4,
         width=1280, height=720,
@@ -171,7 +178,7 @@ def test_instance_select_nulls_disabled_public_capabilities_together():
 def test_instance_select_formats_ipv6_stun_and_removes_duplicate_urls():
     client, manager = _make_client()
     manager.get.return_value = make_instance()
-    manager.select_engine.return_value = EngineSelection(
+    manager.select.return_value = EngineSelection(
         whep_url="http://[fd7a:115c:a1e0::1]:51000/whep", whep_token="whep-token",
         signaling_url=None, signaling_token=None, generation=4,
         width=1280, height=720,
@@ -193,7 +200,7 @@ def test_instance_select_formats_ipv6_stun_and_removes_duplicate_urls():
 def test_instance_select_mints_fresh_capabilities_each_time():
     client, manager = _make_client()
     manager.get.return_value = make_instance()
-    manager.select_engine.side_effect = [
+    manager.select.side_effect = [
         EngineSelection("http://host/whep", "first", None, None, 1, 1280, 720),
         EngineSelection("http://host/whep", "second", None, None, 1, 1280, 720),
     ]
@@ -204,7 +211,7 @@ def test_instance_select_mints_fresh_capabilities_each_time():
     assert first.status_code == second.status_code == 200
     assert first.json()["whep_token"] == "first"
     assert second.json()["whep_token"] == "second"
-    assert manager.select_engine.call_count == 2
+    assert manager.select.call_count == 2
 
 
 @pytest.mark.parametrize("method,path", [

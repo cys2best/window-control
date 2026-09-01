@@ -2,37 +2,45 @@ import sys
 import pytest
 
 
-def test_build_engine_orchestrator_disabled(monkeypatch):
+def test_build_engine_orchestrator_rejects_missing_engine(monkeypatch):
     import main as main_mod
 
-    monkeypatch.setattr(main_mod.config, "ENGINE_EXE_PATH", "", raising=False)
+    monkeypatch.setattr(
+        main_mod.config, "engine_exe_path", lambda: "C:/missing/engine.exe"
+    )
+    monkeypatch.setattr(main_mod.os.path, "isfile", lambda _: False)
 
-    assert main_mod.build_engine_orchestrator() is None
+    with pytest.raises(RuntimeError, match="engine.exe"):
+        main_mod.build_engine_orchestrator()
 
 
-def test_build_engine_orchestrator_uses_one_generated_launch_secret(monkeypatch):
+def test_build_engine_orchestrator_uses_fresh_generated_launch_secret(monkeypatch):
     import main as main_mod
 
     token_sizes = []
-    monkeypatch.setattr(main_mod.config, "ENGINE_EXE_PATH", "C:/app/engine.exe", raising=False)
-    monkeypatch.setattr(main_mod.config, "ENGINE_WHEP_CAPABILITY_SECRET", "", raising=False)
+    tokens = iter(["a" * 64, "b" * 64])
+    monkeypatch.setattr(main_mod.config, "engine_exe_path", lambda: "C:/app/engine.exe")
+    monkeypatch.setattr(main_mod.os.path, "isfile", lambda _: True)
     monkeypatch.setattr(
         main_mod.secrets,
         "token_hex",
-        lambda size: token_sizes.append(size) or "a" * (size * 2),
+        lambda size: token_sizes.append(size) or next(tokens),
     )
 
-    orchestrator = main_mod.build_engine_orchestrator()
+    first = main_mod.build_engine_orchestrator()
+    second = main_mod.build_engine_orchestrator()
 
-    assert orchestrator.config.whep_secret == "a" * 64
-    assert token_sizes == [32]
+    assert first.config.whep_secret == "a" * 64
+    assert second.config.whep_secret == "b" * 64
+    assert token_sizes == [32, 32]
 
 
 def test_build_engine_orchestrator_passes_configured_runtime_values(monkeypatch):
     import main as main_mod
 
-    monkeypatch.setattr(main_mod.config, "ENGINE_EXE_PATH", "C:/app/engine.exe", raising=False)
-    monkeypatch.setattr(main_mod.config, "ENGINE_WHEP_CAPABILITY_SECRET", "configured-whep", raising=False)
+    monkeypatch.setattr(main_mod.config, "engine_exe_path", lambda: "C:/app/engine.exe")
+    monkeypatch.setattr(main_mod.os.path, "isfile", lambda _: True)
+    monkeypatch.setattr(main_mod.secrets, "token_hex", lambda size: "generated-whep")
     monkeypatch.setattr(main_mod.config, "VPS_SIGNALING_URL", "wss://signal.example/ws")
     monkeypatch.setattr(main_mod.config, "ENGINE_SIGNALING_SECRET", "signal-secret", raising=False)
     monkeypatch.setattr(main_mod.config, "ENGINE_LOCAL_ICE_SERVERS", ("stun:local", "turn:local"), raising=False)
@@ -41,7 +49,7 @@ def test_build_engine_orchestrator_passes_configured_runtime_values(monkeypatch)
     orchestrator = main_mod.build_engine_orchestrator()
 
     assert orchestrator.config.exe_path == "C:/app/engine.exe"
-    assert orchestrator.config.whep_secret == "configured-whep"
+    assert orchestrator.config.whep_secret == "generated-whep"
     assert orchestrator.config.signaling_url == "wss://signal.example/ws"
     assert orchestrator.config.signaling_secret == "signal-secret"
     assert orchestrator.config.local_ice_servers == ("stun:local", "turn:local")
@@ -122,7 +130,7 @@ def _patch_main_startup(monkeypatch, main_mod, manager_calls):
     monkeypatch.setattr(main_mod, "create_app", lambda *args: object())
 
 
-def test_main_builds_engine_orchestrator_once_and_passes_it_to_manager(monkeypatch):
+def test_main_constructs_only_engine_instance_manager(monkeypatch):
     import main as main_mod
 
     manager_calls = []
@@ -141,46 +149,15 @@ def test_main_builds_engine_orchestrator_once_and_passes_it_to_manager(monkeypat
 
     assert exit_info.value.code == 0
     assert build_calls == [None]
-    assert manager_calls == [
-        ((), {"mediamtx": None, "engine_orchestrator": orchestrator})
-    ]
-
-
-@pytest.mark.parametrize(
-    ("backend", "expected_manager_call"),
-    [
-        ("aiortc", ((), {"mediamtx": None})),
-        ("mediamtx", (("manager",), {})),
-    ],
-)
-def test_main_preserves_legacy_backend_manager_construction(
-    monkeypatch, backend, expected_manager_call
-):
-    import main as main_mod
-
-    manager_calls = []
-    _patch_main_startup(monkeypatch, main_mod, manager_calls)
-    monkeypatch.setattr(main_mod, "build_engine_orchestrator", lambda: None)
-    monkeypatch.setattr(main_mod.config, "WEBRTC_BACKEND", backend)
-    monkeypatch.setattr(main_mod, "MediamtxManager", lambda: "manager")
-    monkeypatch.setattr(main_mod.sys, "argv", ["main.py"])
-
-    with pytest.raises(SystemExit) as exit_info:
-        main_mod.main()
-
-    assert exit_info.value.code == 0
-    assert manager_calls == [expected_manager_call]
+    assert manager_calls == [((orchestrator,), {})]
 
 
 def test_config_imports():
-    """config.py exports expected constants including new mediamtx config."""
     from config import (PORT, VERSION, QUALITY_MAP, DEFAULT_QUALITY,
-                        MEDIAMTX_PORT, WHEP_PORT, SCRCPY_PATH, MEDIAMTX_PATH,
-                        CLIENT_DIR, ASSETS_DIR)
+                        SCRCPY_PATH, CLIENT_DIR, ASSETS_DIR, engine_exe_path)
     assert PORT == 8080
-    assert MEDIAMTX_PORT == 8554
-    assert WHEP_PORT == 8889
     assert DEFAULT_QUALITY in QUALITY_MAP
+    assert callable(engine_exe_path)
 
 
 def test_instance_name_emulator():

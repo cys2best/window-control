@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Literal
 
-from config import CLIENT_DIR, COOKIE_SECURE, QUALITY_MAP, WHEP_PORT, STUN_PORT, TIER_ORDER, VPS_SIGNALING_URL
+from config import CLIENT_DIR, COOKIE_SECURE, QUALITY_MAP, STUN_PORT, TIER_ORDER
 from server.stream import CaptureState, FrameQueue, mjpeg_generator
 from server import adb_manager
 from server import auth
@@ -279,7 +279,7 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
             raise HTTPException(status_code=404, detail="Instance not found")
         host = get_best_ip() or (request.client.host if request.client else "127.0.0.1")
         selection = await asyncio.to_thread(
-            instance_manager.select_engine, instance_id, host
+            instance_manager.select, instance_id, host
         )
         if selection is None:
             raise HTTPException(status_code=503, detail="Engine runtime not ready")
@@ -340,25 +340,25 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
         if not req.id.startswith("adb:"):
             raise HTTPException(status_code=400, detail="Invalid id — must be adb:SERIAL")
         serial = req.id[4:]
-        # select()/refresh() do blocking network + subprocess work — offload.
-        ok = await asyncio.to_thread(instance_manager.select, serial)
-        if not ok:
+        host = get_best_ip() or (request.client.host if request.client else "127.0.0.1")
+        # Selection and refresh do blocking network/subprocess work — offload.
+        selection = await asyncio.to_thread(instance_manager.select, serial, host)
+        if selection is None:
             # Instance may not be discovered yet — try refresh
             await asyncio.to_thread(instance_manager.refresh)
-            ok = await asyncio.to_thread(instance_manager.select, serial)
-        if not ok:
+            selection = await asyncio.to_thread(instance_manager.select, serial, host)
+        if selection is None:
             raise HTTPException(status_code=404, detail="Instance not found")
         inst = instance_manager.active
         if inst is None:
             raise HTTPException(status_code=404, detail="Instance disappeared")
 
-        host = get_best_ip() or request.client.host
-        whep_url = f"http://{host}:{WHEP_PORT}/{inst.name}/whep"
-        return {"ok": True, "id": req.id, "name": inst.name, "w": inst.w, "h": inst.h,
-                "whep_url": whep_url,
+        return {"ok": True, "id": req.id, "name": inst.name,
+                "w": selection.width, "h": selection.height,
+                "whep_url": selection.whep_url,
                 "stun_url": f"stun:{host}:{STUN_PORT}",
-                "signaling_url": VPS_SIGNALING_URL,
-                "ice_servers": get_ice_servers()}
+                "signaling_url": selection.signaling_url,
+                "ice_servers": _selection_ice_servers(host)}
 
     # ── MJPEG fallback stream ────────────────────────────────────────────────
 

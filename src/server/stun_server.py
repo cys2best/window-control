@@ -2,19 +2,18 @@
 Minimal STUN Binding server (RFC 5389), bound to the Tailscale interface.
 
 Why this exists: Safari only emits an mDNS (.local) host candidate and offers
-no flag to disable it. mediamtx cannot resolve .local over Tailscale, so the
-candidate pair never forms and media never flows ("write queue is full" ->
-"deadline exceeded").
+no flag to disable it. The Windows streaming host cannot resolve .local over
+Tailscale, so the candidate pair never forms and media never flows.
 
 Pointing the browser at a *public* STUN server (Google) does not help either:
 the STUN query exits via the public internet, so the reflexive (srflx)
-candidate reflects the ISP/WARP public IP (e.g. 104.28.x.x), which mediamtx at
-100.x cannot reach.
+candidate reflects the ISP/WARP public IP (e.g. 104.28.x.x), which the
+Tailscale-only host cannot reach.
 
 Binding this STUN server to the *Tailscale IP* fixes it: the browser's query
 routes over Tailscale, so the source address this server sees — and returns as
 XOR-MAPPED-ADDRESS — is the browser's Tailscale IP. That yields an srflx
-candidate mediamtx can reach directly, no relay hop.
+candidate the engine can reach directly, with no relay hop.
 
 Only STUN Binding requests are handled — enough for ICE candidate discovery.
 """

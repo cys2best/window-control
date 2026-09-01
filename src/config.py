@@ -30,15 +30,9 @@ SYSTEM_WINDOW_TITLES = {
     "Task Manager", "Start", "",
 }
 
-# mediamtx / scrcpy
-MEDIAMTX_PORT = 8554   # RTSP
-WHEP_PORT = 8889       # WebRTC/WHEP (mediamtx default)
-RTMP_PORT = 1935       # mediamtx RTMP (unused by us, kept for mediamtx default config)
-WEBRTC_UDP_PORT = 8288 # WebRTC ICE UDP mux (mediamtx default 8000 collided)
+# Engine / scrcpy
 STUN_PORT = 3478       # embedded STUN server, bound to Tailscale IP (see stun_server.py)
 VPS_SIGNALING_URL = os.environ.get("VPS_SIGNALING_URL")  # e.g. "ws://VPS_IP:8443"; None disables the public bridge path
-ENGINE_EXE_PATH = os.environ.get("ENGINE_EXE_PATH", "")
-ENGINE_WHEP_CAPABILITY_SECRET = os.environ.get("ENGINE_WHEP_CAPABILITY_SECRET", "")
 ENGINE_SIGNALING_SECRET = os.environ.get("ENGINE_SIGNALING_SECRET", "")
 ENGINE_LOCAL_ICE_SERVERS = tuple(filter(None, os.environ.get(
     "ENGINE_LOCAL_ICE_SERVERS", ""
@@ -46,18 +40,6 @@ ENGINE_LOCAL_ICE_SERVERS = tuple(filter(None, os.environ.get(
 ENGINE_PUBLIC_ICE_SERVERS = tuple(filter(None, os.environ.get(
     "ENGINE_PUBLIC_ICE_SERVERS", ""
 ).split(",")))
-# In-process aiortc WHEP backend, replacing mediamtx (see
-# docs/superpowers/specs/2026-08-28-mediamtx-aiortc-migration-design.md).
-# "mediamtx" (default) keeps today's mediamtx+ffmpeg pipeline untouched;
-# "aiortc" runs the new in-process WHEP server instead. Both are mutually
-# exclusive per InstanceManager instance -- there is no per-instance mixing.
-WEBRTC_BACKEND = os.environ.get("WEBRTC_BACKEND", "mediamtx")
-# Fixed H264 profile-level-id used by the aiortc backend's WHEP offers.
-# Deliberately NOT derived from the live SPS -- rtc_engine.py's run_engine()
-# already found live-SPS-derived values insufficient for real decoding in
-# E2E testing; this is one of the two exact values Chrome/Brave's H264
-# decoder capability list advertises.
-AIORTC_PROFILE_LEVEL_ID = "42e01f"
 # TURN (+ a public STUN fallback) for the *public* WebRTC path specifically
 # (initWebRTCPublic() in the client) -- the local/Tailscale path above keeps
 # using the embedded STUN_PORT server unchanged. A NAT'd PC has no publicly
@@ -79,7 +61,7 @@ TURN_CREDENTIAL = os.environ.get("TURN_CREDENTIAL")
 
 # App-wide access token. Unset = auth disabled (LAN-only / trusted-network
 # deployments). Set it before exposing the app past a trusted LAN — every
-# route (including /input control) is otherwise open to anyone with the URL.
+# route is otherwise open to anyone with the URL.
 AUTH_TOKEN = os.environ.get("AUTH_TOKEN")
 # Mark the session cookie Secure (HTTPS-only) once the app sits behind TLS
 # (e.g. the VPS tunnel in this plan). Leave unset/false for plain-HTTP LAN
@@ -98,7 +80,6 @@ TUNNEL_SECRET = os.environ.get("TUNNEL_SECRET")
 
 ADB_PATH = "adb"       # overridden at runtime by _find_adb()
 SCRCPY_PATH = os.path.join("assets", "scrcpy", "scrcpy.exe")
-MEDIAMTX_PATH = os.path.join("assets", "mediamtx", "mediamtx.exe")
 
 
 def get_base_path():
@@ -110,3 +91,11 @@ def get_base_path():
 BASE_PATH = get_base_path()
 CLIENT_DIR = os.path.join(BASE_PATH, "client")
 ASSETS_DIR = os.path.join(BASE_PATH, "assets")
+
+
+def engine_exe_path() -> str:
+    if hasattr(sys, "_MEIPASS"):
+        return os.path.join(ASSETS_DIR, "engine", "engine.exe")
+    return os.path.join(
+        os.path.dirname(BASE_PATH), "engine", "build", "Release", "engine.exe"
+    )
