@@ -224,6 +224,8 @@ def run_measurement(config: MeasurementConfig, deps: Any) -> dict[str, Any]:
             environment["ENGINE_EXE_PATH"] = str(engine_exe)
         app = deps.start_app(environment)
         if config.workload == "one-viewer":
+            if not deps.wait_for_app_ready(app):
+                raise MeasurementError("WindowControl is not ready before one-viewer measurement")
             viewer = deps.start_viewer(config)
         snapshots: list[list[ProcessSample]] = []
         deadline = deps.clock() + config.duration_seconds
@@ -283,6 +285,19 @@ class _MetricPageServer:
         parent = self
 
         class Handler(BaseHTTPRequestHandler):
+            def _send_response(self, status: int, body: bytes = b"", *, content_type: str | None = None, cookie: str | None = None) -> None:
+                self.send_response(status)
+                if content_type:
+                    self.send_header("Content-Type", content_type)
+                if cookie:
+                    self.send_header("Set-Cookie", cookie)
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Connection", "close")
+                self.end_headers()
+                if body:
+                    self.wfile.write(body)
+                self.close_connection = True
+
             def do_GET(self):
                 if self.path.split("?", 1)[0] != "/cutover_metrics_page.html":
                     self.send_error(404)
@@ -297,17 +312,17 @@ class _MetricPageServer:
             def do_POST(self):
                 if self.path == "/measurement-login":
                     if not parent.auth_token:
-                        self.send_response(204)
-                        self.end_headers()
+                        self._send_response(204)
                         return
                     import httpx
-                    response = httpx.post(
-                        f"{parent.app_origin}/login", json={"token": parent.auth_token}, timeout=10,
-                    )
-                    self.send_response(response.status_code)
-                    if cookie := response.headers.get("set-cookie"):
-                        self.send_header("Set-Cookie", cookie)
-                    self.end_headers()
+                    try:
+                        response = httpx.post(
+                            f"{parent.app_origin}/login", json={"token": parent.auth_token}, timeout=10,
+                        )
+                    except httpx.HTTPError:
+                        self._send_response(502)
+                        return
+                    self._send_response(response.status_code, cookie=response.headers.get("set-cookie"))
                     return
                 if self.path.startswith("/instances/") and self.path.endswith(("/select", "/engine-select")):
                     import httpx
@@ -315,11 +330,12 @@ class _MetricPageServer:
                     headers = {"Content-Type": self.headers.get("Content-Type", "application/json")}
                     if cookie := self.headers.get("Cookie"):
                         headers["Cookie"] = cookie
-                    response = httpx.post(f"{parent.app_origin}{self.path}", content=body, headers=headers, timeout=30)
-                    self.send_response(response.status_code)
-                    self.send_header("Content-Type", response.headers.get("content-type", "application/json"))
-                    self.end_headers()
-                    self.wfile.write(response.content)
+                    try:
+                        response = httpx.post(f"{parent.app_origin}{self.path}", content=body, headers=headers, timeout=30)
+                    except httpx.HTTPError:
+                        self._send_response(502)
+                        return
+                    self._send_response(response.status_code, response.content, content_type=response.headers.get("content-type", "application/json"))
                     return
                 if self.path != "/metrics":
                     self.send_error(404)
@@ -331,8 +347,7 @@ class _MetricPageServer:
                     if not isinstance(serial, str):
                         raise ValueError("serial")
                     parent.metrics[serial] = value
-                    self.send_response(204)
-                    self.end_headers()
+                    self._send_response(204)
                 except (ValueError, KeyError, UnicodeDecodeError, json.JSONDecodeError):
                     self.send_error(400)
 
@@ -557,6 +572,22 @@ class RealMeasurementDeps:
             except psutil.Error:
                 continue
         return samples
+
+    def wait_for_app_ready(self, app: Any) -> bool:
+        import httpx
+
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            if app.poll() is not None:
+                return False
+            try:
+                response = httpx.get(f"http://127.0.0.1:{self.app_port}/", timeout=1)
+                if response.status_code == 200:
+                    return True
+            except httpx.HTTPError:
+                pass
+            time.sleep(0.25)
+        return False
 
     def start_viewer(self, config: MeasurementConfig) -> _MetricPageServer:
         page = _MetricPageServer(

@@ -65,6 +65,7 @@ class FakeDeps:
         self.non_viewer_submission = None
         self.viewer_active = False
         self.events = []
+        self.app_ready = True
 
     @classmethod
     def five_instances(cls):
@@ -81,6 +82,10 @@ class FakeDeps:
         self.viewer_active = True
         self.events.append("viewer-start")
         return object()
+
+    def wait_for_app_ready(self, _app):
+        self.events.append("app-ready")
+        return self.app_ready
 
     def finish_viewer(self, _viewer):
         self.viewer_active = False
@@ -262,9 +267,20 @@ def test_one_viewer_is_started_before_and_retained_during_process_sampling(tmp_p
 
     run_measurement(make_config(tmp_path), deps)
 
-    assert deps.events[0] == "viewer-start"
-    assert all(event == "sample:True" for event in deps.events[1:-1])
+    assert deps.events[:2] == ["app-ready", "viewer-start"]
+    assert all(event == "sample:True" for event in deps.events[2:-1])
     assert deps.events[-1] == "viewer-finish"
+
+
+def test_cold_app_start_fails_before_opening_or_sampling_a_viewer(tmp_path):
+    """Removing readiness polling would silently label a cold-start sample as one-viewer."""
+    deps = FakeDeps.five_instances()
+    deps.app_ready = False
+
+    with pytest.raises(MeasurementError, match="not ready"):
+        run_measurement(make_config(tmp_path), deps)
+
+    assert deps.events == ["app-ready"]
 
 
 def test_process_family_totals_are_computed_per_snapshot_before_percentiles(tmp_path):
@@ -303,16 +319,20 @@ def test_real_adapter_creates_evidence_and_does_not_persist_raw_app_output(tmp_p
     assert not (config.evidence_dir / "window-control.log").exists()
 
 
-def test_metrics_page_proxies_authenticated_selection_on_its_own_origin(tmp_path):
+@pytest.mark.parametrize("attempt", range(12))
+def test_metrics_page_proxies_authenticated_selection_on_its_own_origin(tmp_path, attempt):
     """A separately served page must not make an unauthenticated cross-origin selection fetch."""
     requests = []
 
     class Upstream(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
         def do_POST(self):
             requests.append((self.path, self.headers.get("Cookie")))
             if self.path == "/login":
                 self.send_response(200)
                 self.send_header("Set-Cookie", "windowcontrol_session=accepted; Path=/; HttpOnly")
+                self.send_header("Content-Length", "0")
                 self.end_headers()
                 return
             if self.path == "/instances/emulator-5554/engine-select" and "windowcontrol_session=accepted" in (self.headers.get("Cookie") or ""):
@@ -335,16 +355,31 @@ def test_metrics_page_proxies_authenticated_selection_on_its_own_origin(tmp_path
     server = _MetricPageServer(page, f"http://127.0.0.1:{upstream.server_port}", "test-token")
     server.start()
     try:
-        client = httpx.Client(base_url=server.origin)
-        assert client.post("/measurement-login").status_code == 200
-        selection = client.post("/instances/emulator-5554/engine-select")
-        assert selection.status_code == 200
-        assert selection.json() == {"ok": True}
-        assert requests == [("/login", None), ("/instances/emulator-5554/engine-select", "windowcontrol_session=accepted")]
+        with httpx.Client(base_url=server.origin) as client:
+            assert client.post("/measurement-login").status_code == 200
+            selection = client.post("/instances/emulator-5554/engine-select")
+            assert selection.status_code == 200
+            assert selection.json() == {"ok": True}
+            assert requests == [("/login", None), ("/instances/emulator-5554/engine-select", "windowcontrol_session=accepted")]
     finally:
         server.close()
         upstream.shutdown()
         thread.join(timeout=2)
+
+
+def test_metrics_proxy_returns_a_deterministic_error_when_upstream_disconnects(tmp_path):
+    """An upstream transport failure must be a 502, never a dropped proxy connection."""
+    page = tmp_path / "cutover_metrics_page.html"
+    page.write_text("ok", encoding="utf-8")
+    server = _MetricPageServer(page, "http://127.0.0.1:1", "test-token")
+    server.start()
+    try:
+        with httpx.Client(base_url=server.origin) as client:
+            response = client.post("/measurement-login")
+        assert response.status_code == 502
+        assert response.content == b""
+    finally:
+        server.close()
 
 
 def test_decision_refuses_pass_result_with_incomplete_measurement_schema(tmp_path):
