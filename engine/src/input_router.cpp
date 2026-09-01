@@ -4,7 +4,9 @@
 // to per-peer WebRTC DataChannels instead of one shared WebSocket.
 #include "input_router.h"
 #include <algorithm>
+#include <cmath>
 #include <nlohmann/json.hpp>
+#include <optional>
 #include <unordered_map>
 
 using json = nlohmann::json;
@@ -21,6 +23,15 @@ const std::unordered_map<std::string, std::int32_t>& KeyTable() {
         {"Menu", 82},
     };
     return table;
+}
+
+std::optional<double> FiniteNumber(const json& message, const char* field) {
+    auto it = message.find(field);
+    if (it == message.end() || !it->is_number() || it->is_boolean()) {
+        return std::nullopt;
+    }
+    const double value = it->get<double>();
+    return std::isfinite(value) ? std::optional<double>(value) : std::nullopt;
 }
 
 } // namespace
@@ -84,22 +95,35 @@ void InputRouter::HandleMessage(PeerSession* peer, const std::string& jsonMessag
     auto status = source_.Status();
     if (!control) return;
 
-    double x = msg.value("x", 0.0);
-    double y = msg.value("y", 0.0);
+    const bool hasCoordinates =
+        type == "click" || type == "drag_start" || type == "drag_move" ||
+        type == "drag_end" || type == "scroll";
+    std::optional<double> x;
+    std::optional<double> y;
+    if (hasCoordinates) {
+        x = FiniteNumber(msg, "x");
+        y = FiniteNumber(msg, "y");
+        if (!x || !y) return;
+        *x = std::clamp(*x, 0.0, 1.0);
+        *y = std::clamp(*y, 0.0, 1.0);
+    }
 
     if (type == "click") {
         {
             std::lock_guard<std::mutex> lock(fingerMutex_);
             fingerStates_.erase(peer);
         }
-        control->SendTouch(ScrcpyControlClient::ACTION_DOWN, x, y, status.width, status.height);
-        control->SendTouch(ScrcpyControlClient::ACTION_UP, x, y, status.width, status.height);
+        control->SendTouch(
+            ScrcpyControlClient::ACTION_DOWN, *x, *y, status.width, status.height);
+        control->SendTouch(
+            ScrcpyControlClient::ACTION_UP, *x, *y, status.width, status.height);
     } else if (type == "drag_start") {
         {
             std::lock_guard<std::mutex> lock(fingerMutex_);
-            fingerStates_[peer] = FingerState{true, 0, x, y};
+            fingerStates_[peer] = FingerState{true, 0, *x, *y};
         }
-        control->SendTouch(ScrcpyControlClient::ACTION_DOWN, x, y, status.width, status.height);
+        control->SendTouch(
+            ScrcpyControlClient::ACTION_DOWN, *x, *y, status.width, status.height);
     } else if (type == "drag_move") {
         std::uint64_t pointerId = 0;
         bool moveFinger = false;
@@ -107,15 +131,15 @@ void InputRouter::HandleMessage(PeerSession* peer, const std::string& jsonMessag
             std::lock_guard<std::mutex> lock(fingerMutex_);
             auto it = fingerStates_.find(peer);
             if (it != fingerStates_.end() && it->second.down) {
-                it->second.x = x;
-                it->second.y = y;
+                it->second.x = *x;
+                it->second.y = *y;
                 pointerId = it->second.pointerId;
                 moveFinger = true;
             }
         }
         if (moveFinger) {
             control->SendTouch(
-                ScrcpyControlClient::ACTION_MOVE, x, y,
+                ScrcpyControlClient::ACTION_MOVE, *x, *y,
                 status.width, status.height, pointerId);
         }
     } else if (type == "drag_end") {
@@ -132,10 +156,13 @@ void InputRouter::HandleMessage(PeerSession* peer, const std::string& jsonMessag
         }
         if (releaseFinger) {
             control->SendTouch(
-                ScrcpyControlClient::ACTION_UP, x, y,
+                ScrcpyControlClient::ACTION_UP, *x, *y,
                 status.width, status.height, pointerId);
         }
     } else if (type == "scroll") {
+        const auto dy = FiniteNumber(msg, "dy");
+        if (!dy) return;
+
         FingerState activeFinger;
         bool cancelDrag = false;
         {
@@ -153,13 +180,14 @@ void InputRouter::HandleMessage(PeerSession* peer, const std::string& jsonMessag
                 status.width, status.height, activeFinger.pointerId);
         }
 
-        double dy = msg.value("dy", 0.0);
-        double ny2 = status.height != 0
-            ? std::clamp(y + dy * 120.0 / status.height, 0.0, 1.0)
-            : y;
-        control->SendTouch(ScrcpyControlClient::ACTION_DOWN, x, y, status.width, status.height);
-        control->SendTouch(ScrcpyControlClient::ACTION_MOVE, x, ny2, status.width, status.height);
-        control->SendTouch(ScrcpyControlClient::ACTION_UP, x, ny2, status.width, status.height);
+        const double delta = std::clamp(*dy, -0.25, 0.25);
+        const double targetY = std::clamp(*y + delta, 0.0, 1.0);
+        control->SendTouch(
+            ScrcpyControlClient::ACTION_DOWN, *x, *y, status.width, status.height);
+        control->SendTouch(
+            ScrcpyControlClient::ACTION_MOVE, *x, targetY, status.width, status.height);
+        control->SendTouch(
+            ScrcpyControlClient::ACTION_UP, *x, targetY, status.width, status.height);
     } else if (type == "key") {
         std::int32_t keycode = KeycodeForKey(msg.value("key", ""));
         if (keycode != 0) control->SendKeycode(keycode);

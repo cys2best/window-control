@@ -7,6 +7,7 @@
 #include <atomic>
 #include <barrier>
 #include <chrono>
+#include <cstdint>
 #include <thread>
 #include <vector>
 
@@ -36,15 +37,22 @@ struct TouchEvent {
     std::uint8_t action;
     std::uint32_t x;
     std::uint32_t y;
+    double normalizedX;
+    double normalizedY;
 };
 
-std::vector<TouchEvent> DecodeTouchEvents(const std::vector<std::uint8_t>& bytes) {
+std::vector<TouchEvent> DecodeTouchEvents(
+    const std::vector<std::uint8_t>& bytes, int sourceWidth, int sourceHeight) {
     std::vector<TouchEvent> events;
     for (std::size_t offset = 0; offset + 32 <= bytes.size(); offset += 32) {
+        const auto x = ReadU32BE(bytes, offset + 10);
+        const auto y = ReadU32BE(bytes, offset + 14);
         events.push_back(TouchEvent{
             bytes[offset + 1],
-            ReadU32BE(bytes, offset + 10),
-            ReadU32BE(bytes, offset + 14),
+            x,
+            y,
+            static_cast<double>(x) / sourceWidth,
+            static_cast<double>(y) / sourceHeight,
         });
     }
     return events;
@@ -93,6 +101,25 @@ public:
 
     void Send(const std::string& message) {
         inputChannel->send(message);
+    }
+
+    bool WaitForTouchEvents(std::size_t count) const {
+        return PollUntil([this, count]() {
+            return fake.ControlBytesReceived() >= count * 32 &&
+                   fake.ControlDataReceived().size() >= count * 32;
+        });
+    }
+
+    std::vector<TouchEvent> TouchEvents() const {
+        const auto status = source.Status();
+        return DecodeTouchEvents(
+            fake.ControlDataReceived(), status.width, status.height);
+    }
+
+    std::vector<std::uint8_t> TouchActions() const {
+        std::vector<std::uint8_t> actions;
+        for (const auto& event : TouchEvents()) actions.push_back(event.action);
+        return actions;
     }
 
     FakeScrcpyServer fake;
@@ -263,56 +290,85 @@ TEST(InputRouter, EchoIsReflectedVerbatimOnSamePeer) {
     fake.Stop();
 }
 
-TEST(InputRouter, RealPeerDragSequenceIgnoresMovesOutsideActiveDrag) {
+TEST(InputRouter, DragStartMovesAndEndEmitOneOrderedGesture) {
     NegotiatedInputPeer peer;
-    ASSERT_TRUE(peer.Connect("input-drag-sequence"));
+    ASSERT_TRUE(peer.Connect("gesture-order"));
 
-    peer.Send(R"({"type":"drag_move","x":0.9,"y":0.9})");
     peer.Send(R"({"type":"drag_start","x":0.1,"y":0.2})");
-    peer.Send(R"({"type":"drag_move","x":0.3,"y":0.4})");
-    peer.Send(R"({"type":"drag_end","x":0.5,"y":0.6})");
-    peer.Send(R"({"type":"drag_end","x":0.8,"y":0.8})");
+    peer.Send(R"({"type":"drag_move","x":0.4,"y":0.5})");
+    peer.Send(R"({"type":"drag_end","x":0.6,"y":0.7})");
 
-    ASSERT_TRUE(PollUntil([&]() { return peer.fake.ControlBytesReceived() >= 96u; }));
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    auto events = DecodeTouchEvents(peer.fake.ControlDataReceived());
-    ASSERT_EQ(events.size(), 3u);
-    EXPECT_EQ(events[0].action, ScrcpyControlClient::ACTION_DOWN);
-    EXPECT_EQ(events[0].x, 10u);
-    EXPECT_EQ(events[0].y, 40u);
-    EXPECT_EQ(events[1].action, ScrcpyControlClient::ACTION_MOVE);
-    EXPECT_EQ(events[1].x, 30u);
-    EXPECT_EQ(events[1].y, 80u);
-    EXPECT_EQ(events[2].action, ScrcpyControlClient::ACTION_UP);
-    EXPECT_EQ(events[2].x, 50u);
-    EXPECT_EQ(events[2].y, 120u);
+    ASSERT_TRUE(peer.WaitForTouchEvents(3));
+    EXPECT_EQ(peer.TouchActions(), (std::vector<std::uint8_t>{
+        ScrcpyControlClient::ACTION_DOWN,
+        ScrcpyControlClient::ACTION_MOVE,
+        ScrcpyControlClient::ACTION_UP,
+    }));
 }
 
-TEST(InputRouter, ScrollCancelsDragAndClampsScaledCoordinates) {
+TEST(InputRouter, ScrollUsesNormalizedMagnitudeAndClampsExtremeDelta) {
+    NegotiatedInputPeer peer;
+    ASSERT_TRUE(peer.Connect("scroll-magnitude"));
+
+    peer.Send(R"({"type":"scroll","x":0.5,"y":0.5,"dy":0.10})");
+    ASSERT_TRUE(peer.WaitForTouchEvents(3));
+    EXPECT_NEAR(peer.TouchEvents()[1].normalizedY, 0.60, 0.01);
+
+    NegotiatedInputPeer clampedPeer;
+    ASSERT_TRUE(clampedPeer.Connect("scroll-clamp"));
+    clampedPeer.Send(R"({"type":"scroll","x":0.5,"y":0.5,"dy":9.0})");
+    ASSERT_TRUE(clampedPeer.WaitForTouchEvents(3));
+    EXPECT_NEAR(clampedPeer.TouchEvents()[1].normalizedY, 0.75, 0.01);
+}
+
+TEST(InputRouter, CoordinatesAreClampedBeforeScrcpyControl) {
+    NegotiatedInputPeer peer;
+    ASSERT_TRUE(peer.Connect("coordinate-clamp"));
+
+    peer.Send(R"({"type":"click","x":-0.5,"y":1.5})");
+    ASSERT_TRUE(peer.WaitForTouchEvents(2));
+    for (const auto& event : peer.TouchEvents()) {
+        EXPECT_EQ(event.x, 0u);
+        EXPECT_EQ(event.y, 200u);
+    }
+}
+
+TEST(InputRouter, ScrollCancelsHeldDragOnceAndMakesLaterDragEndANoOp) {
     NegotiatedInputPeer peer;
     ASSERT_TRUE(peer.Connect("input-scroll-bounds"));
 
     peer.Send(R"({"type":"drag_start","x":0.25,"y":0.25})");
     peer.Send(R"({"type":"drag_move","x":0.4,"y":0.4})");
-    peer.Send(R"({"type":"scroll","x":0.5,"y":0.5,"dy":1})");
+    peer.Send(R"({"type":"scroll","x":0.5,"y":0.5,"dy":0.10})");
+    peer.Send(R"({"type":"drag_end","x":0.8,"y":0.8})");
 
-    ASSERT_TRUE(PollUntil([&]() { return peer.fake.ControlBytesReceived() >= 192u; }));
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    auto events = DecodeTouchEvents(peer.fake.ControlDataReceived());
+    ASSERT_TRUE(peer.WaitForTouchEvents(6));
+    auto events = peer.TouchEvents();
     ASSERT_EQ(events.size(), 6u);
-    EXPECT_EQ(events[2].action, ScrcpyControlClient::ACTION_UP);
+    EXPECT_EQ(peer.TouchActions(), (std::vector<std::uint8_t>{
+        ScrcpyControlClient::ACTION_DOWN,
+        ScrcpyControlClient::ACTION_MOVE,
+        ScrcpyControlClient::ACTION_UP,
+        ScrcpyControlClient::ACTION_DOWN,
+        ScrcpyControlClient::ACTION_MOVE,
+        ScrcpyControlClient::ACTION_UP,
+    }));
     EXPECT_EQ(events[2].x, 40u);
     EXPECT_EQ(events[2].y, 80u);
-    EXPECT_EQ(events[3].action, ScrcpyControlClient::ACTION_DOWN);
-    EXPECT_EQ(events[3].y, 100u);
-    EXPECT_EQ(events[4].action, ScrcpyControlClient::ACTION_MOVE);
-    EXPECT_EQ(events[4].y, 200u);
-    EXPECT_EQ(events[5].action, ScrcpyControlClient::ACTION_UP);
-    EXPECT_EQ(events[5].y, 200u);
-    for (const auto& event : events) {
-        EXPECT_LE(event.x, 100u);
-        EXPECT_LE(event.y, 200u);
-    }
+}
+
+TEST(InputRouter, InvalidCoordinateOrScrollDeltaDoesNotTouchScrcpyControl) {
+    NegotiatedInputPeer peer;
+    ASSERT_TRUE(peer.Connect("invalid-input"));
+
+    peer.Send(R"({"type":"scroll","x":0.5,"y":0.5})");
+    peer.Send(R"({"type":"drag_start","x":true,"y":0.5})");
+    peer.Send(R"({"type":"drag_move","x":0.5,"y":false})");
+    peer.Send(R"({"type":"scroll","x":0.5,"y":0.5,"dy":true})");
+    peer.Send(R"({"type":"scroll","x":0.5,"y":0.5,"dy":null})");
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    EXPECT_EQ(peer.fake.ControlBytesReceived(), 0u);
 }
 
 TEST(InputRouter, ClickClearsActiveDragState) {
@@ -323,9 +379,8 @@ TEST(InputRouter, ClickClearsActiveDragState) {
     peer.Send(R"({"type":"click","x":0.5,"y":0.5})");
     peer.Send(R"({"type":"drag_end","x":0.8,"y":0.8})");
 
-    ASSERT_TRUE(PollUntil([&]() { return peer.fake.ControlBytesReceived() >= 96u; }));
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    auto events = DecodeTouchEvents(peer.fake.ControlDataReceived());
+    ASSERT_TRUE(peer.WaitForTouchEvents(3));
+    auto events = peer.TouchEvents();
     ASSERT_EQ(events.size(), 3u);
     EXPECT_EQ(events[0].action, ScrcpyControlClient::ACTION_DOWN);
     EXPECT_EQ(events[1].action, ScrcpyControlClient::ACTION_DOWN);

@@ -24,6 +24,7 @@ private:
     struct FingerState {
         bool down = false;
         std::uint64_t pointerId = 0;
+        // Stored coordinates are finite normalized values clamped to [0, 1].
         double x = 0.0;
         double y = 0.0;
     };
