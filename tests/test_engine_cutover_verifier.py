@@ -583,9 +583,20 @@ def test_public_browser_uses_real_vps_and_exact_viewer_query_auth(tmp_path):
     assert result.checkpoints["public browser"]["status"] == "PASS"
     assert ("public-open", "wss://signal.example.com") in deps.events
 
+    # A different but non-empty token for the same session must still PASS:
+    # the production client mints a fresh token on every reconnect (e.g. a
+    # tab visibilitychange while an operator inspects DevTools), which is
+    # correct behavior, not a defect this gate should catch.
     deps = FakeDeps()
     deps.public_websocket_url = (
-        "wss://signal.example.com/?session=instance0&role=viewer&token=wrong"
+        "wss://signal.example.com/?session=instance0&role=viewer&token=reconnected-secret"
+    )
+    reconnected = run_cutover_verification(config(tmp_path), deps)
+    assert reconnected.checkpoints["public browser"]["status"] == "PASS"
+
+    deps = FakeDeps()
+    deps.public_websocket_url = (
+        "wss://signal.example.com/?session=instance0&role=viewer&token="
     )
     failed = run_cutover_verification(config(tmp_path), deps)
     assert failed.status == "FAIL"

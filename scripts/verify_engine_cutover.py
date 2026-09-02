@@ -511,17 +511,21 @@ def _validate_public_websocket(
     expected = urlsplit(configured_url)
     actual_endpoint = (actual.scheme, actual.netloc, actual.path or "/")
     expected_endpoint = (expected.scheme, expected.netloc, expected.path or "/")
-    query = parse_qsl(actual.query, keep_blank_values=True)
-    expected_query = {
-        "session": selection["name"],
-        "role": "viewer",
-        "token": selection["signaling_token"],
-    }
+    query = dict(parse_qsl(actual.query, keep_blank_values=True))
+    expected_query_keys = {"session", "role", "token"}
+    # The production client mints a fresh token on every reconnect (e.g. a
+    # tab visibilitychange while an operator inspects DevTools) for the same
+    # session, which is correct behavior, not a defect. Verify the request
+    # reached the configured endpoint for the right session as a viewer with
+    # some non-empty token — not that it's the exact token from the
+    # verifier's own earlier selection() call.
     if (
         actual_endpoint != expected_endpoint
         or actual.fragment
-        or len(query) != len(expected_query)
-        or dict(query) != expected_query
+        or set(query) != expected_query_keys
+        or query["session"] != selection["name"]
+        or query["role"] != "viewer"
+        or not query["token"]
     ):
         raise CutoverError("public browser signaling request did not match exact viewer query auth")
 
