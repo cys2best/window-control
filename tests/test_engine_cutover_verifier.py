@@ -16,6 +16,7 @@ from scripts.verify_engine_cutover import (
     CutoverFilePromptChannel,
     OwnedProcess,
     RealCutoverDeps,
+    _BrowserProcess,
     main,
     run_cutover_verification,
     submit_file_confirmation,
@@ -1174,7 +1175,7 @@ def test_real_local_browser_forces_local_transport_while_using_production_assets
     }
 
 
-def test_real_start_browser_enables_page_domain_before_injecting_tracker(tmp_path, monkeypatch):
+def test_real_start_browser_enables_page_and_injects_tracker_over_one_session(tmp_path, monkeypatch):
     import subprocess as subprocess_module
 
     deps = RealCutoverDeps(config(tmp_path))
@@ -1210,13 +1211,64 @@ def test_real_start_browser_enables_page_domain_before_injecting_tracker(tmp_pat
     monkeypatch.setattr("httpx.get", lambda *_args, **_kwargs: FakeResponse())
     monkeypatch.setattr(time, "sleep", lambda _seconds: None)
 
-    calls = []
-    monkeypatch.setattr(deps, "_cdp", lambda _handle, method, _params: calls.append(method))
+    sessions = []
+
+    def fake_cdp_session(_handle, calls):
+        sessions.append([method for method, _params in calls])
+
+    monkeypatch.setattr(deps, "_cdp_session", fake_cdp_session)
 
     deps._start_browser("local-1", "http://127.0.0.1:8000/")
 
-    assert calls.index("Page.enable") < calls.index("Page.addScriptToEvaluateOnNewDocument")
-    assert calls.index("Page.addScriptToEvaluateOnNewDocument") < calls.index("Page.navigate")
+    assert len(sessions) == 1, "Page.enable, tracker injection, and navigate must share one CDP session"
+    assert sessions[0] == [
+        "Page.enable",
+        "Page.addScriptToEvaluateOnNewDocument",
+        "Page.navigate",
+    ]
+
+
+def test_real_cdp_session_reuses_one_websocket_connection_across_calls(tmp_path, monkeypatch):
+    deps = RealCutoverDeps(config(tmp_path))
+    handle = _BrowserProcess(
+        name="local-1",
+        process=None,
+        started_at=100.0,
+        profile_dir=tmp_path,
+        debug_port=51999,
+        target_id="target-1",
+        websocket_url="ws://127.0.0.1:51999/devtools/page/target-1",
+        owned_pids=[],
+    )
+
+    connect_calls = []
+
+    class FakeSocket:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    def fake_connect(url, **_kwargs):
+        connect_calls.append(url)
+        return FakeSocket()
+
+    monkeypatch.setattr(
+        "websockets.sync.client.connect", fake_connect
+    )
+    monkeypatch.setattr(
+        RealCutoverDeps,
+        "_cdp_call",
+        staticmethod(lambda _socket, method, _params: {"method": method}),
+    )
+
+    deps._cdp_session(
+        handle,
+        [("Page.enable", {}), ("Page.navigate", {"url": "http://x/"})],
+    )
+
+    assert connect_calls == [handle.websocket_url]
 
 
 def test_real_rapid_switch_gate_checks_each_abandoned_engine(tmp_path, monkeypatch):

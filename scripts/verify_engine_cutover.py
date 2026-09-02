@@ -1278,9 +1278,14 @@ class RealCutoverDeps:
     }
 """ if local_only else ""
         tracker = tracker.replace("    LOCAL_ONLY_RESPONSE", local_response)
-        self._cdp(handle, "Page.enable", {})
-        self._cdp(handle, "Page.addScriptToEvaluateOnNewDocument", {"source": tracker})
-        self._cdp(handle, "Page.navigate", {"url": url})
+        self._cdp_session(
+            handle,
+            [
+                ("Page.enable", {}),
+                ("Page.addScriptToEvaluateOnNewDocument", {"source": tracker}),
+                ("Page.navigate", {"url": url}),
+            ],
+        )
         time.sleep(1)
         try:
             root = psutil.Process(process.pid)
@@ -1295,15 +1300,34 @@ class RealCutoverDeps:
     def _cdp(handle: _BrowserProcess, method: str, params: dict[str, Any]) -> dict[str, Any]:
         from websockets.sync.client import connect
 
-        request_id = secrets.randbelow(2**31 - 1) + 1
         with connect(handle.websocket_url, open_timeout=5, close_timeout=2) as socket:
-            socket.send(json.dumps({"id": request_id, "method": method, "params": params}))
-            while True:
-                response = json.loads(socket.recv(timeout=10))
-                if response.get("id") == request_id:
-                    if "error" in response:
-                        raise CutoverError(f"browser CDP {method} failed: {_safe_detail(response['error'])}")
-                    return response.get("result", {})
+            return RealCutoverDeps._cdp_call(socket, method, params)
+
+    @staticmethod
+    def _cdp_call(socket: Any, method: str, params: dict[str, Any]) -> dict[str, Any]:
+        request_id = secrets.randbelow(2**31 - 1) + 1
+        socket.send(json.dumps({"id": request_id, "method": method, "params": params}))
+        while True:
+            response = json.loads(socket.recv(timeout=10))
+            if response.get("id") == request_id:
+                if "error" in response:
+                    raise CutoverError(f"browser CDP {method} failed: {_safe_detail(response['error'])}")
+                return response.get("result", {})
+
+    @staticmethod
+    def _cdp_session(handle: _BrowserProcess, calls: list[tuple[str, dict[str, Any]]]) -> None:
+        """Run several CDP calls over one WebSocket connection.
+
+        addScriptToEvaluateOnNewDocument registers against the debugging
+        session that created it, so it must share a connection with the
+        Page.navigate that follows it, or the registration is dropped
+        before the navigated document ever loads.
+        """
+        from websockets.sync.client import connect
+
+        with connect(handle.websocket_url, open_timeout=5, close_timeout=2) as socket:
+            for method, params in calls:
+                RealCutoverDeps._cdp_call(socket, method, params)
 
     def _decode_stats(self, handle: _BrowserProcess) -> dict[str, Any]:
         expression = """
