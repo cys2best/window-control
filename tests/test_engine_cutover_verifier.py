@@ -1113,6 +1113,28 @@ def test_real_public_query_observation_ignores_unrelated_browser_websockets(tmp_
     assert deps.observed_public_websocket(handle) == expected
 
 
+def test_real_public_query_observation_uses_the_most_recent_reconnect(tmp_path, monkeypatch):
+    # The production client reconnects (fresh /select, fresh token, fresh
+    # WebSocket) on every tab visibilitychange, so an operator switching to
+    # DevTools to inspect signaling legitimately produces more than one
+    # matching request. The most recent one is the live connection.
+    deps = RealCutoverDeps(config(tmp_path))
+    handle = object()
+    first = "wss://signal.example.com/?session=instance0&role=viewer&token=stale-secret"
+    latest = "wss://signal.example.com/?session=instance0&role=viewer&token=fresh-secret"
+    monkeypatch.setattr(
+        deps,
+        "_browser_transport_observation",
+        lambda _handle: {
+            "resource_ids": [],
+            "delete_urls": [],
+            "websocket_urls": [first, latest],
+        },
+    )
+
+    assert deps.observed_public_websocket(handle) == latest
+
+
 def test_real_firewall_cleanup_check_is_bound_to_the_installed_engine_path(tmp_path):
     deps = RealCutoverDeps(config(tmp_path))
     engine = Path(r"C:\Program Files\WindowControl\assets\engine\engine.exe")

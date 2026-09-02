@@ -1430,6 +1430,12 @@ class RealCutoverDeps:
         return {"delete_observed": invoked and resource_id in deletes}
 
     def observed_public_websocket(self, handle: _BrowserProcess) -> str:
+        # The production client reconnects (a fresh /select, a fresh
+        # signaling token, a fresh WebSocket) on every tab visibilitychange,
+        # which is correct behavior for a backgrounded tab resuming — not
+        # something an operator inspecting the page in DevTools can avoid
+        # triggering. Multiple observed signaling requests are therefore
+        # expected; the most recent one is the live connection.
         deadline = self.monotonic() + self.config.handshake_timeout_seconds
         while True:
             urls = self._browser_transport_observation(handle)["websocket_urls"]
@@ -1438,11 +1444,8 @@ class RealCutoverDeps:
                 query = dict(parse_qsl(urlsplit(url).query, keep_blank_values=True))
                 if query.get("role") == "viewer" and {"session", "token"}.issubset(query):
                     candidates.append(url)
-            candidates = list(dict.fromkeys(candidates))
             if candidates:
-                if len(candidates) != 1:
-                    raise CutoverError("public browser opened multiple signaling requests")
-                return candidates[0]
+                return candidates[-1]
             remaining = deadline - self.monotonic()
             if remaining <= 0:
                 raise CutoverError("public browser signaling request was not observed")
