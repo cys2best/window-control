@@ -24,7 +24,7 @@ import webbrowser
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import parse_qsl, quote, urlsplit
+from urllib.parse import parse_qsl, quote, urlsplit, urlunsplit
 
 import httpx
 
@@ -1466,10 +1466,24 @@ class RealCutoverDeps:
             "scroll_delta": 1 if response == "PASS" else 0,
         }
 
+    @staticmethod
+    def _public_page_url() -> str:
+        """The browsable production public UI page.
+
+        PUBLIC_UI_URL (e.g. wss://tunnel.koeeru.com/__tunnel/register) is the
+        app's own tunnel-registration WebSocket endpoint, never a page a
+        browser can navigate to — Chromium refuses wss:// with
+        ERR_UNKNOWN_URL_SCHEME. The public page is the same host over https,
+        with no path.
+        """
+        parts = urlsplit(os.environ["PUBLIC_UI_URL"])
+        scheme = "https" if parts.scheme == "wss" else "http"
+        return urlunsplit((scheme, parts.netloc, "", "", ""))
+
     def open_public_browser(self, _selection: dict[str, Any], public_url: str):
         if public_url != self.config.public_signaling_url:
             raise CutoverError("public browser did not receive configured signaling VPS")
-        handle = self._start_browser("public", os.environ["PUBLIC_UI_URL"])
+        handle = self._start_browser("public", self._public_page_url())
         response = self.confirm(
             "public browser readiness",
             "Log in through the production public UI, select the first instance, verify changing video/input, and inspect signaling to confirm exact viewer token query auth.",

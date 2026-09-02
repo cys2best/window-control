@@ -1177,6 +1177,38 @@ def test_real_start_app_captures_stdout_and_stderr_to_evidence_dir(tmp_path, mon
     assert log_stream.closed, "parent must close its handle after spawning so the child owns the fd"
 
 
+def test_real_public_page_url_is_derived_https_not_the_raw_tunnel_websocket_env(monkeypatch):
+    monkeypatch.setenv("PUBLIC_UI_URL", "wss://tunnel.koeeru.com/__tunnel/register")
+
+    assert RealCutoverDeps._public_page_url() == "https://tunnel.koeeru.com"
+
+
+def test_real_open_public_browser_navigates_to_the_derived_page_not_the_websocket_url(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("PUBLIC_UI_URL", "wss://tunnel.koeeru.com/__tunnel/register")
+    run_config = config(tmp_path, public_signaling_url="wss://signal.example.com")
+    deps = RealCutoverDeps(run_config)
+    handle = object()
+    captured = {}
+
+    def start(name, url, *, local_only=False):
+        captured.update(name=name, url=url, local_only=local_only)
+        return handle
+
+    monkeypatch.setattr(deps, "_start_browser", start)
+    monkeypatch.setattr(deps, "confirm", lambda *_args: "PASS")
+    monkeypatch.setattr(
+        deps,
+        "_decode_stats",
+        lambda _handle: {"frames_decoded": 1, "width": 1280, "height": 720, "peers": 1},
+    )
+
+    deps.open_public_browser({}, "wss://signal.example.com")
+
+    assert captured["url"] == "https://tunnel.koeeru.com"
+
+
 def test_real_scrcpy_recovery_uses_the_launcher_exact_process_pattern(tmp_path):
     from server.scrcpy_server import scrcpy_server_process_pattern
 
