@@ -47,24 +47,31 @@ jobs:
       - name: Run complete engine_tests behind the Node signaling relay
         run: |
           $env:JWT_SECRET = ""
+          $env:SIGNALING_TLS_CERT_FILE = (Resolve-Path "engine\test\tls\localhost-cert.pem").Path
+          $env:SIGNALING_TLS_KEY_FILE = (Resolve-Path "engine\test\tls\localhost-key.pem").Path
+          $env:SIGNALING_TLS_PORT = "8444"
+          $env:SSL_CERT_FILE = (Resolve-Path "engine\test\tls\ca-cert.pem").Path
+          $env:ENGINE_TEST_WSS_PORT = "8444"
           $relay = Start-Process node -ArgumentList "server.js" `
             -WorkingDirectory "infra\vps\signaling" -PassThru
           try {
             $deadline = (Get-Date).AddSeconds(30)
-            $connected = $false
+            $portsReady = $false
             while ((Get-Date) -lt $deadline) {
               try {
-                $client = New-Object System.Net.Sockets.TcpClient
-                $client.Connect("127.0.0.1", 8443)
-                $client.Close()
-                $connected = $true
+                foreach ($port in @(8443, 8444)) {
+                  $client = New-Object System.Net.Sockets.TcpClient
+                  $client.Connect("127.0.0.1", $port)
+                  $client.Close()
+                }
+                $portsReady = $true
                 break
               } catch {
                 Start-Sleep -Milliseconds 500
               }
             }
-            if (-not $connected) {
-              throw "signaling relay did not accept connections on port 8443"
+            if (-not $portsReady) {
+              throw "signaling relay did not accept connections on ports 8443 and 8444"
             }
             engine\build\Release\engine_tests.exe
             if ($LASTEXITCODE -ne 0) {

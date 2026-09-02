@@ -53,12 +53,19 @@ cmake --build engine\build --config Release
 ```
 
 The filtered executable command is the offline check. The CTest registration
-is unfiltered and includes tests that connect to `ws://localhost:8443`; run it
-only after starting the repository's Node relay in another window:
+is unfiltered and includes tests that connect to `ws://localhost:8443` and
+verified `wss://localhost:8444`; run it only after starting both listeners in
+the repository's Node relay in another window:
 
 ```powershell
 Set-Location infra\vps\signaling
-Remove-Item Env:JWT_SECRET -ErrorAction SilentlyContinue
+$repoRoot = (Resolve-Path ..\..\..).Path
+$env:JWT_SECRET = ""
+$env:SIGNALING_TLS_CERT_FILE = Join-Path $repoRoot "engine\test\tls\localhost-cert.pem"
+$env:SIGNALING_TLS_KEY_FILE = Join-Path $repoRoot "engine\test\tls\localhost-key.pem"
+$env:SIGNALING_TLS_PORT = "8444"
+$env:SSL_CERT_FILE = Join-Path $repoRoot "engine\test\tls\ca-cert.pem"
+$env:ENGINE_TEST_WSS_PORT = "8444"
 npm install
 npm start
 ```

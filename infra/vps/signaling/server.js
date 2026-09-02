@@ -1,9 +1,11 @@
 import { WebSocketServer } from 'ws';
 import { createServer } from 'node:http';
+import { createServer as createSecureServer } from 'node:https';
+import { readFileSync } from 'node:fs';
 import jwt from 'jsonwebtoken';
 
-export async function createSignalingServer({ port = 8443, jwtSecret = null } = {}) {
-  const httpServer = createServer();
+export async function createSignalingServer({ port = 8443, jwtSecret = null, tls = null } = {}) {
+  const httpServer = tls ? createSecureServer(tls) : createServer();
   const wss = new WebSocketServer({ server: httpServer });
 
   // session id -> { engine: ws|null, viewer: ws|null }
@@ -87,8 +89,34 @@ export async function createSignalingServer({ port = 8443, jwtSecret = null } = 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const port = process.env.PORT ? Number(process.env.PORT) : 8443;
   const jwtSecret = process.env.JWT_SECRET || null;
-  createSignalingServer({ port, jwtSecret }).then(({ port: actualPort }) => {
+  const tlsCertFile = process.env.SIGNALING_TLS_CERT_FILE;
+  const tlsKeyFile = process.env.SIGNALING_TLS_KEY_FILE;
+  const tlsPort = process.env.SIGNALING_TLS_PORT
+    ? Number(process.env.SIGNALING_TLS_PORT) : null;
+
+  if ([tlsCertFile, tlsKeyFile, tlsPort].some(Boolean)
+      && ![tlsCertFile, tlsKeyFile, tlsPort].every(Boolean)) {
+    throw new Error(
+      'SIGNALING_TLS_CERT_FILE, SIGNALING_TLS_KEY_FILE, and SIGNALING_TLS_PORT must be set together',
+    );
+  }
+
+  const servers = [createSignalingServer({ port, jwtSecret })];
+  if (tlsPort) {
+    servers.push(createSignalingServer({
+      port: tlsPort,
+      jwtSecret,
+      tls: {
+        cert: readFileSync(tlsCertFile),
+        key: readFileSync(tlsKeyFile),
+      },
+    }));
+  }
+
+  Promise.all(servers).then(([plain, secure]) => {
+    const actualPort = plain.port;
     console.log(`Signaling server listening on port ${actualPort}`);
+    if (secure) console.log(`Secure signaling server listening on port ${secure.port}`);
     if (!jwtSecret) console.warn('WARNING: JWT_SECRET not set, auth disabled');
   });
 }

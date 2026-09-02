@@ -1,9 +1,14 @@
 // infra/vps/signaling/server.test.js
 import { test } from 'node:test';
 import assert from 'node:assert';
+import { readFileSync } from 'node:fs';
 import { WebSocketServer, WebSocket } from 'ws';
 import jwt from 'jsonwebtoken';
 import { createSignalingServer } from './server.js';
+
+const tlsCa = readFileSync(new URL('../../../engine/test/tls/ca-cert.pem', import.meta.url));
+const tlsCert = readFileSync(new URL('../../../engine/test/tls/localhost-cert.pem', import.meta.url));
+const tlsKey = readFileSync(new URL('../../../engine/test/tls/localhost-key.pem', import.meta.url));
 
 function openClient(port, session, role) {
   return new Promise((resolve, reject) => {
@@ -16,6 +21,16 @@ function openClient(port, session, role) {
 function openClientWithToken(port, session, role, token) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(`ws://localhost:${port}/?session=${session}&role=${role}&token=${token}`);
+    ws.once('open', () => resolve(ws));
+    ws.once('error', reject);
+  });
+}
+
+function openSecureClient(port, session, role) {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(`wss://localhost:${port}/?session=${session}&role=${role}`, {
+      ca: tlsCa,
+    });
     ws.once('open', () => resolve(ws));
     ws.once('error', reject);
   });
@@ -49,6 +64,25 @@ test('relays a message from engine to viewer in the same session', async () => {
   engine.close();
   viewer.close();
   server.close();
+});
+
+test('relays over TLS when supplied a server certificate and key', async () => {
+  const { server, port } = await createSignalingServer({
+    port: 0,
+    tls: { cert: tlsCert, key: tlsKey },
+  });
+  const engine = await openSecureClient(port, 'secure-session', 'engine');
+  const viewer = await openSecureClient(port, 'secure-session', 'viewer');
+  const received = new Promise((resolve) => {
+    viewer.once('message', (data) => resolve(data.toString()));
+  });
+
+  engine.send('secure-message');
+
+  assert.strictEqual(await received, 'secure-message');
+  engine.close();
+  viewer.close();
+  await server.close();
 });
 
 test('does not leak messages across different sessions', async () => {

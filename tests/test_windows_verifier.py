@@ -93,6 +93,7 @@ class FakeDeps:
         self.child_envs.append(env)
         self.started_env.append(dict(env))
         if label == "local signaling relay":
+            self.relay.alive = True
             return self.relay
         if label == "WindowControl app":
             self.app.alive = True
@@ -101,6 +102,9 @@ class FakeDeps:
         if label == "verifier page server":
             return self.page
         raise AssertionError(label)
+
+    def wait_for_tcp(self, host, ports, timeout):
+        self.calls.append(("wait for tcp", host, tuple(ports), timeout))
 
     def stop_helper(self, process):
         self.calls.append(("stop helper", process.pid))
@@ -445,7 +449,7 @@ def test_every_owned_command_uses_one_sanitized_environment_without_mutating_par
         deps,
     )
 
-    assert len(deps.child_envs) == 6
+    assert len(deps.child_envs) == 7
     assert len({id(env) for env in deps.child_envs}) == 1
     assert all(
         env[name] == ""
@@ -550,6 +554,19 @@ def test_runs_the_complete_unfiltered_engine_test_suite(tmp_path):
         command = call[1]
         assert command == (str(engine_dir / "engine_tests.exe"),)
         assert not any(arg.startswith("--gtest_filter") for arg in command)
+    call_labels = [call[0] for call in deps.calls]
+    engine_tests_index = max(
+        index for index, label in enumerate(call_labels) if label == "engine tests"
+    )
+    relay_index = call_labels.index("local signaling relay")
+    readiness_index = call_labels.index("wait for tcp")
+    assert relay_index < readiness_index < engine_tests_index
+    assert deps.calls[readiness_index] == (
+        "wait for tcp", "127.0.0.1", (8443, 8444), 30.0
+    )
+    assert ("stop helper", deps.relay.pid) in deps.calls[
+        engine_tests_index + 1:
+    ]
 
 
 def test_starts_node_signaling_relay_with_cleared_jwt_secret():
@@ -560,10 +577,21 @@ def test_starts_node_signaling_relay_with_cleared_jwt_secret():
         call for call in deps.calls if call[0] == "local signaling relay"
     ]
     assert len(relay_calls) == 1
-    command = relay_calls[0][1]
-    assert command == ("node", "server.js")
-    relay_index = deps.calls.index(relay_calls[0])
-    assert deps.child_envs[relay_index].get("JWT_SECRET") == ""
+    for relay_call in relay_calls:
+        command = relay_call[1]
+        assert command == ("node", "server.js")
+        relay_index = deps.calls.index(relay_call)
+        relay_env = deps.child_envs[relay_index]
+        assert relay_env.get("JWT_SECRET") == ""
+        assert relay_env.get("SIGNALING_TLS_PORT") == "8444"
+        assert relay_env.get("SIGNALING_TLS_CERT_FILE") == str(
+            Path("engine/test/tls/localhost-cert.pem")
+        )
+        assert relay_env.get("SIGNALING_TLS_KEY_FILE") == str(
+            Path("engine/test/tls/localhost-key.pem")
+        )
+        assert relay_env.get("SSL_CERT_FILE") == str(Path("engine/test/tls/ca-cert.pem"))
+        assert relay_env.get("ENGINE_TEST_WSS_PORT") == "8444"
 
 
 def test_removal_passes_the_discovered_ldplayer_index_to_the_dependency():

@@ -4,11 +4,20 @@
 #include <thread>
 #include <chrono>
 #include <atomic>
+#include <cstdlib>
 #include <stdexcept>
 
 // Assumes a signaling server instance is already running at
 // ws://localhost:8443 with JWT auth disabled (JWT_SECRET unset) — see
 // test/README.md for how to start one for local test runs.
+
+namespace {
+std::string SecureRelayUrl(const std::string& hostname) {
+    const char* configuredPort = std::getenv("ENGINE_TEST_WSS_PORT");
+    const std::string port = configuredPort ? configuredPort : "8444";
+    return "wss://" + hostname + ":" + port;
+}
+}
 
 TEST(SignalingClient, ConnectsAndExchangesMessages) {
     const auto session = signaling_test::UniqueSession("exchange");
@@ -35,6 +44,43 @@ TEST(SignalingClient, ConnectsAndExchangesMessages) {
         << "session=" << session;
     EXPECT_NE(receivedMsg.find("test-sdp-content"), std::string::npos)
         << "session=" << session << " payload=" << receivedMsg;
+}
+
+TEST(SignalingClient, ConnectsAndExchangesMessagesOverVerifiedWss) {
+    const auto session = signaling_test::UniqueSession("secure-exchange");
+    SignalingClient engineSide(SecureRelayUrl("localhost"), session, "engine", "");
+    SignalingClient viewerSide(SecureRelayUrl("localhost"), session, "viewer", "");
+
+    std::atomic<bool> received{false};
+    std::string receivedMsg;
+    viewerSide.Connect([&](const std::string& msg) {
+        receivedMsg = msg;
+        received = true;
+    });
+    engineSide.Connect([](const std::string&) {});
+
+    ASSERT_TRUE(signaling_test::WaitUntil([&]() {
+        return engineSide.IsConnected() && viewerSide.IsConnected();
+    }, std::chrono::seconds(5))) << "session=" << session;
+
+    engineSide.Send(R"({"type":"offer","sdp":"verified-wss"})");
+
+    ASSERT_TRUE(signaling_test::WaitUntil(
+        [&]() { return received.load(); }, std::chrono::seconds(5)))
+        << "session=" << session;
+    EXPECT_NE(receivedMsg.find("verified-wss"), std::string::npos)
+        << "session=" << session << " payload=" << receivedMsg;
+}
+
+TEST(SignalingClient, RejectsWssCertificateForDifferentHost) {
+    const auto session = signaling_test::UniqueSession("hostname-mismatch");
+    SignalingClient client(SecureRelayUrl("127.0.0.1"), session, "engine", "");
+
+    EXPECT_NO_THROW(client.Connect([](const std::string&) {}));
+    EXPECT_FALSE(signaling_test::WaitUntil(
+        [&]() { return client.IsConnected(); }, std::chrono::seconds(2)))
+        << "a certificate valid only for localhost must not authenticate 127.0.0.1";
+    client.Disconnect();
 }
 
 // Regression test for the offer-lost-to-a-connect-race bug: WebRtcPeer calls

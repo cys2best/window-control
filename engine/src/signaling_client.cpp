@@ -1,6 +1,19 @@
 #include "signaling_client.h"
 #include <websocketpp/config/asio_client.hpp>
 #include <websocketpp/client.hpp>
+#include <websocketpp/uri.hpp>
+#include <asio/ssl/host_name_verification.hpp>
+#include <openssl/err.h>
+#include <openssl/ssl.h>
+#include <openssl/x509.h>
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <wincrypt.h>
 #include <thread>
 #include <atomic>
 #include <condition_variable>
@@ -9,11 +22,71 @@
 #include <stdexcept>
 #include <vector>
 
-using WsClient = websocketpp::client<websocketpp::config::asio_client>;
+using PlainWsClient = websocketpp::client<websocketpp::config::asio_client>;
+using TlsWsClient = websocketpp::client<websocketpp::config::asio_tls_client>;
+using TlsContext = websocketpp::lib::asio::ssl::context;
+using TlsContextPtr = websocketpp::lib::shared_ptr<TlsContext>;
+
+namespace {
+std::size_t AddWindowsRootStore(TlsContext& context, DWORD storeLocation) {
+    HCERTSTORE certStore = CertOpenStore(
+        CERT_STORE_PROV_SYSTEM_W,
+        0,
+        0,
+        storeLocation | CERT_STORE_OPEN_EXISTING_FLAG | CERT_STORE_READONLY_FLAG,
+        L"ROOT");
+    if (!certStore) return 0;
+
+    std::size_t added = 0;
+    X509_STORE* trustStore = SSL_CTX_get_cert_store(context.native_handle());
+    PCCERT_CONTEXT cert = nullptr;
+    while ((cert = CertEnumCertificatesInStore(certStore, cert)) != nullptr) {
+        const unsigned char* encoded = cert->pbCertEncoded;
+        X509* root = d2i_X509(nullptr, &encoded, cert->cbCertEncoded);
+        if (!root) {
+            ERR_clear_error();
+            continue;
+        }
+        if (X509_STORE_add_cert(trustStore, root) == 1) ++added;
+        X509_free(root);
+        // Duplicate roots are expected when OpenSSL's default paths and the
+        // current-user/local-machine Windows stores overlap.
+        ERR_clear_error();
+    }
+    CertCloseStore(certStore, 0);
+    return added;
+}
+
+TlsContextPtr CreateTlsContext(const std::string& hostname) {
+    auto context = websocketpp::lib::make_shared<TlsContext>(TlsContext::tls_client);
+    context->set_options(
+        TlsContext::default_workarounds |
+        TlsContext::no_sslv2 |
+        TlsContext::no_sslv3);
+    if (SSL_CTX_set_min_proto_version(context->native_handle(), TLS1_2_VERSION) != 1) {
+        throw std::runtime_error("could not require TLS 1.2 or newer");
+    }
+
+    context->set_verify_mode(websocketpp::lib::asio::ssl::verify_peer);
+    websocketpp::lib::asio::error_code defaultPathsError;
+    context->set_default_verify_paths(defaultPathsError);
+    const auto windowsRoots =
+        AddWindowsRootStore(*context, CERT_SYSTEM_STORE_CURRENT_USER) +
+        AddWindowsRootStore(*context, CERT_SYSTEM_STORE_LOCAL_MACHINE);
+    if (defaultPathsError && windowsRoots == 0) {
+        throw std::runtime_error("no default or Windows root certificates were available");
+    }
+    context->set_verify_callback(
+        websocketpp::lib::asio::ssl::host_name_verification(hostname));
+    return context;
+}
+}
 
 struct SignalingClient::Impl {
     std::string url;
-    WsClient client;
+    PlainWsClient plainClient;
+    TlsWsClient tlsClient;
+    bool secure = false;
     websocketpp::connection_hdl handle;
     std::thread ioThread;
     std::thread::id ioThreadId;
@@ -40,6 +113,74 @@ struct SignalingClient::Impl {
     // forever with nothing sent to the other side.
     std::mutex pendingMutex;
     std::vector<std::string> pending;
+
+    void SendText(const std::string& message, websocketpp::lib::error_code& ec) {
+        if (secure) {
+            tlsClient.send(handle, message, websocketpp::frame::opcode::text, ec);
+        } else {
+            plainClient.send(handle, message, websocketpp::frame::opcode::text, ec);
+        }
+    }
+
+    void CloseTransport(websocketpp::lib::error_code& ec) {
+        if (secure) {
+            tlsClient.close(handle, websocketpp::close::status::normal, "shutdown", ec);
+        } else {
+            plainClient.close(handle, websocketpp::close::status::normal, "shutdown", ec);
+        }
+    }
+
+    void StopTransport() {
+        if (secure) {
+            tlsClient.stop();
+        } else {
+            plainClient.stop();
+        }
+    }
+
+    void RunTransport() {
+        if (secure) {
+            tlsClient.run();
+        } else {
+            plainClient.run();
+        }
+    }
+
+    template <typename Client>
+    void ConfigureConnection(Client& client, std::weak_ptr<Impl> weakImpl) {
+        client.clear_access_channels(websocketpp::log::alevel::all);
+        client.init_asio();
+        asioInitialized = true;
+
+        client.set_open_handler([weakImpl](websocketpp::connection_hdl) {
+            auto state = weakImpl.lock();
+            if (!state || state->disconnectRequested.load()) return;
+            state->connected.store(true);
+            if (state->disconnectRequested.load()) {
+                state->connected.store(false);
+                return;
+            }
+            state->FlushPending();
+        });
+        client.set_close_handler([weakImpl](websocketpp::connection_hdl) {
+            if (auto state = weakImpl.lock()) state->connected.store(false);
+        });
+        client.set_message_handler(
+            [weakImpl](websocketpp::connection_hdl, typename Client::message_ptr msg) {
+                if (auto state = weakImpl.lock()) {
+                    state->DispatchMessage(msg->get_payload());
+                }
+            });
+
+        websocketpp::lib::error_code ec;
+        auto connection = client.get_connection(url, ec);
+        if (ec) {
+            throw std::runtime_error(
+                "SignalingClient: failed to create connection: " + ec.message());
+        }
+        handle = connection->get_handle();
+        client.connect(connection);
+    }
 
     void SetMessageCallback(MessageCallback callback) {
         std::lock_guard<std::mutex> lock(callbackMutex);
@@ -73,7 +214,7 @@ struct SignalingClient::Impl {
         for (auto& msg : toSend) {
             if (disconnectRequested.load()) break;
             websocketpp::lib::error_code ec;
-            client.send(handle, msg, websocketpp::frame::opcode::text, ec);
+            SendText(msg, ec);
             if (ec) {
                 std::cerr << "[debug] SignalingClient: flush send failed: " << ec.message() << std::endl;
             } else {
@@ -85,7 +226,7 @@ struct SignalingClient::Impl {
     ~Impl() {
         disconnectRequested.store(true);
         connected.store(false);
-        if (asioInitialized) client.stop();
+        if (asioInitialized) StopTransport();
         if (!ioThread.joinable()) return;
         if (ioThread.get_id() == std::this_thread::get_id()) {
             ioThread.detach();
@@ -124,44 +265,39 @@ void SignalingClient::Connect(MessageCallback onMessage) {
     impl->connectStarted = true;
     impl->disconnectRequested.store(false);
     impl->SetMessageCallback(std::move(onMessage));
-    impl->client.clear_access_channels(websocketpp::log::alevel::all);
-    impl->client.init_asio();
-    impl->asioInitialized = true;
-
-    std::weak_ptr<Impl> weakImpl = impl;
-    impl->client.set_open_handler([weakImpl](websocketpp::connection_hdl) {
-        auto state = weakImpl.lock();
-        if (!state || state->disconnectRequested.load()) return;
-        state->connected.store(true);
-        if (state->disconnectRequested.load()) {
-            state->connected.store(false);
-            return;
+    try {
+        websocketpp::uri uri(impl->url);
+        if (!uri.get_valid()) {
+            throw std::runtime_error(
+                "SignalingClient: failed to create connection: invalid URI");
         }
-        state->FlushPending();
-    });
-    impl->client.set_close_handler([weakImpl](websocketpp::connection_hdl) {
-        if (auto state = weakImpl.lock()) state->connected.store(false);
-    });
-    impl->client.set_message_handler([weakImpl](websocketpp::connection_hdl, WsClient::message_ptr msg) {
-        if (auto state = weakImpl.lock()) state->DispatchMessage(msg->get_payload());
-    });
-
-    websocketpp::lib::error_code ec;
-    auto con = impl->client.get_connection(impl->url, ec);
-    if (ec) {
+        impl->secure = uri.get_secure();
+        std::weak_ptr<Impl> weakImpl = impl;
+        if (impl->secure) {
+            const std::string hostname = uri.get_host();
+            impl->tlsClient.set_tls_init_handler(
+                [hostname](websocketpp::connection_hdl) {
+                    return CreateTlsContext(hostname);
+                });
+            // websocketpp 0.8.2's TLS transport applies the URI hostname as
+            // SNI before its TLS handshake. The context callback above adds
+            // independent RFC 6125 hostname verification for the certificate.
+            impl->ConfigureConnection(impl->tlsClient, weakImpl);
+        } else {
+            impl->ConfigureConnection(impl->plainClient, weakImpl);
+        }
+    } catch (...) {
         impl->disconnectRequested.store(true);
         impl->shutdownRequested = true;
         impl->quiesced = true;
         impl->SuppressCallbacks();
-        if (impl->asioInitialized) impl->client.stop();
-        throw std::runtime_error("SignalingClient: failed to create connection: " + ec.message());
+        if (impl->asioInitialized) impl->StopTransport();
+        throw;
     }
-    impl->handle = con->get_handle();
-    impl->client.connect(con);
 
     try {
         impl->ioThread = std::thread([impl]() {
-            impl->client.run();
+            impl->RunTransport();
             impl->connected.store(false);
         });
         impl->ioThreadId = impl->ioThread.get_id();
@@ -170,7 +306,7 @@ void SignalingClient::Connect(MessageCallback onMessage) {
         impl->shutdownRequested = true;
         impl->quiesced = true;
         impl->SuppressCallbacks();
-        if (impl->asioInitialized) impl->client.stop();
+        if (impl->asioInitialized) impl->StopTransport();
         throw;
     }
 }
@@ -194,7 +330,7 @@ void SignalingClient::Send(const std::string& jsonMessage) {
     }
 
     websocketpp::lib::error_code ec;
-    impl->client.send(impl->handle, jsonMessage, websocketpp::frame::opcode::text, ec);
+    impl->SendText(jsonMessage, ec);
     if (ec) {
         std::cerr << "[debug] SignalingClient::Send failed: " << ec.message() << std::endl;
     }
@@ -215,10 +351,9 @@ void SignalingClient::Disconnect() {
         }
         if (wasConnected) {
             websocketpp::lib::error_code ec;
-            impl->client.close(
-                impl->handle, websocketpp::close::status::normal, "shutdown", ec);
+            impl->CloseTransport(ec);
         }
-        if (impl->asioInitialized) impl->client.stop();
+        if (impl->asioInitialized) impl->StopTransport();
     }
 
     if (std::this_thread::get_id() == impl->ioThreadId) return;

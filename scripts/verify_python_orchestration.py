@@ -18,6 +18,7 @@ import platform
 import re
 import secrets
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -454,6 +455,8 @@ def run_verification(config: VerificationConfig, deps: Any) -> VerificationResul
 
     config.evidence_dir.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ)
+    tls_fixture_dir = config.repo_root / "engine" / "test" / "tls"
+    tls_relay_port = config.relay_port + 1
     env.update({
         "ENGINE_EXE_PATH": str(config.engine_exe),
         "ENGINE_WHEP_CAPABILITY_SECRET": __import__("secrets").token_hex(32),
@@ -466,6 +469,11 @@ def run_verification(config: VerificationConfig, deps: Any) -> VerificationResul
         "TUNNEL_SECRET": "",
         "JWT_SECRET": "",
         "PORT": str(config.relay_port),
+        "SIGNALING_TLS_CERT_FILE": str(tls_fixture_dir / "localhost-cert.pem"),
+        "SIGNALING_TLS_KEY_FILE": str(tls_fixture_dir / "localhost-key.pem"),
+        "SIGNALING_TLS_PORT": str(tls_relay_port),
+        "SSL_CERT_FILE": str(tls_fixture_dir / "ca-cert.pem"),
+        "ENGINE_TEST_WSS_PORT": str(tls_relay_port),
     })
     ready_device = _sole_ready_adb_device(deps)
     if config.serial and config.serial != ready_device:
@@ -500,7 +508,20 @@ def run_verification(config: VerificationConfig, deps: Any) -> VerificationResul
             raise VerificationError(f"missing engine_tests.exe: {engine_tests}")
         command = [str(engine_tests)]
         _record_command(deps, command, "engine tests")
-        deps.run(command, cwd=config.repo_root, env=env, label="engine tests")
+        test_relay = deps.start(
+            ["node", "server.js"],
+            cwd=config.repo_root / "infra" / "vps" / "signaling",
+            env=env,
+            stdout_path=config.evidence_dir / "engine-test-relay.log",
+            label="local signaling relay",
+        )
+        try:
+            deps.wait_for_tcp(
+                "127.0.0.1", (config.relay_port, tls_relay_port), timeout=30.0
+            )
+            deps.run(command, cwd=config.repo_root, env=env, label="engine tests")
+        finally:
+            deps.stop_helper(test_relay)
     else:
         result.mark("local tests", "SKIP", "explicit --skip-tests")
 
@@ -541,11 +562,15 @@ def run_verification(config: VerificationConfig, deps: Any) -> VerificationResul
             cwd=config.repo_root / "infra" / "vps" / "signaling",
             env=env, stdout_path=config.evidence_dir / "relay.log", label="local signaling relay",
         )
+        owned.append(relay)
+        deps.wait_for_tcp(
+            "127.0.0.1", (config.relay_port, tls_relay_port), timeout=30.0
+        )
         app = deps.start(
             ["uv", "run", "python", "src/main.py"], cwd=config.repo_root, env=env,
             stdout_path=config.evidence_dir / "app.log", label="WindowControl app",
         )
-        owned.extend((relay, app))
+        owned.append(app)
 
         base = f"http://127.0.0.1:{config.app_port}"
         instances: list[dict[str, Any]] = []
@@ -917,6 +942,25 @@ class RealDeps:
         process = subprocess.Popen(command, cwd=cwd, env=env, stdout=output, stderr=subprocess.STDOUT, text=True)
         process._verification_output = output
         return process
+
+    def wait_for_tcp(self, host, ports, timeout):
+        pending = set(ports)
+        deadline = time.monotonic() + timeout
+        last_error = None
+        while pending and time.monotonic() < deadline:
+            for port in tuple(pending):
+                try:
+                    with socket.create_connection((host, port), timeout=0.5):
+                        pending.remove(port)
+                except OSError as error:
+                    last_error = error
+            if pending:
+                time.sleep(0.1)
+        if pending:
+            detail = _safe_adb_stderr(str(last_error))
+            raise VerificationError(
+                f"signaling relay ports did not become ready: {sorted(pending)} ({detail})"
+            )
 
     def stop_helper(self, process):
         if process.poll() is None:

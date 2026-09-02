@@ -35,9 +35,28 @@ real Node relay, using the same sequence as the `build-engine` CI job (no
 ```powershell
 cmake --build engine\build --config Release
 $env:JWT_SECRET = ""
+$env:SIGNALING_TLS_CERT_FILE = (Resolve-Path "engine\test\tls\localhost-cert.pem").Path
+$env:SIGNALING_TLS_KEY_FILE = (Resolve-Path "engine\test\tls\localhost-key.pem").Path
+$env:SIGNALING_TLS_PORT = "8444"
+$env:SSL_CERT_FILE = (Resolve-Path "engine\test\tls\ca-cert.pem").Path
+$env:ENGINE_TEST_WSS_PORT = "8444"
 $relay = Start-Process node -ArgumentList "server.js" `
   -WorkingDirectory "infra\vps\signaling" -PassThru
 try {
+  foreach ($port in @(8443, 8444)) {
+    $deadline = (Get-Date).AddSeconds(30)
+    do {
+      try {
+        $client = New-Object System.Net.Sockets.TcpClient
+        $client.Connect("127.0.0.1", $port)
+        $client.Close()
+        break
+      } catch {
+        if ((Get-Date) -ge $deadline) { throw "signaling relay port $port was not ready" }
+        Start-Sleep -Milliseconds 500
+      }
+    } while ($true)
+  }
   engine\build\Release\engine_tests.exe
   if ($LASTEXITCODE -ne 0) { throw "engine_tests.exe failed" }
 } finally {
@@ -45,6 +64,12 @@ try {
   Wait-Process -Id $relay.Id -ErrorAction SilentlyContinue
 }
 ```
+
+The checked-in CA/key pair is test-only. `SSL_CERT_FILE` adds that CA through
+OpenSSL's standard trust lookup for the local WSS regression; do not install
+it into Windows or use it for a deployed relay. The production WSS connection
+still verifies the server hostname and loads the Windows current-user and
+local-machine ROOT stores.
 
 Then, from the repository root on the Windows Host PC:
 
