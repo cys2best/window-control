@@ -2,6 +2,7 @@ import { WebSocketServer } from 'ws';
 import { createServer } from 'node:http';
 import { createServer as createSecureServer } from 'node:https';
 import { readFileSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
 import jwt from 'jsonwebtoken';
 
 export async function createSignalingServer({ port = 8443, jwtSecret = null, tls = null } = {}) {
@@ -86,7 +87,7 @@ export async function createSignalingServer({ port = 8443, jwtSecret = null, tls
 }
 
 // Run standalone when executed directly (not imported by tests).
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const port = process.env.PORT ? Number(process.env.PORT) : 8443;
   const jwtSecret = process.env.JWT_SECRET || null;
   const tlsCertFile = process.env.SIGNALING_TLS_CERT_FILE;
