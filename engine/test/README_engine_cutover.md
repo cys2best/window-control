@@ -94,22 +94,32 @@ also validates the machine-readable invariants:
 1. Production `/instances/{id}/select` is used and no staging input/media
    route, legacy process, dependency, or asset remains.
 2. Two independent production local pages show video and DataChannel drag /
-   proportional scroll; `/admin/health` reaches two local peers and returns to
-   zero after the two owned browser helpers close.
+   proportional scroll; `/admin/health` reaches two local peers. For each
+   close, the verifier awaits the production session close path, observes the
+   successful WHEP `DELETE`, polls the expected peer count within the
+   handshake timeout, and only then terminates its owned browser helper.
 3. The public production UI uses the configured VPS and exact viewer-token
-   query authentication. A real mobile device uses bearer auth for selection
+   query authentication. This is checked from the browser's CDP-observed
+   WebSocket URL against the exact session/role/token query; capability values
+   are never persisted. A real mobile device uses bearer auth for selection
    and WHEP and confirms video/input.
 4. The local/public race leaves exactly one winner. Twenty rapid switches reap
    every abandoned peer within the handshake timeout.
-5. `480 -> 720 -> 1080 -> 1440 -> 480` advances generation and decoded
-   dimensions without replacing the WHEP resource or peer.
+5. `480 -> 720 -> 1080 -> 1440 -> 480` advances generation and matching
+   engine/browser decoded dimensions, including the return to the initial 480
+   dimensions, without replacing the CDP-observed WHEP `Location` resource or
+   RTCPeerConnection identity.
 6. Killing only the selected scrcpy server advances generation while keeping
    the engine PID, WHEP port, and peer. Killing only the PID/start-time-scoped
    owned engine produces a new PID, dynamic WHEP URL/token, fresh selection,
-   and client reconnection.
+   and client reconnection. Every engine is registered as an exact
+   PID/create-time member of the owned app process tree before any recovery
+   kill; a missing, reused, replaced, or ambiguous identity fails closed.
 7. The eight-hour five-instance soak records process count, peer count, ADB
-   forwards, CPU, RSS, and browser `framesDecoded` every minute. Any shortened
-   run or missing sample is `INCOMPLETE`, never PASS.
+   forwards, CPU, RSS, and browser `framesDecoded` on 480 absolute minute
+   deadlines. Collection overhead is subtracted from the next wait instead of
+   shifting the cadence. Actual elapsed time and each relative sample timestamp
+   are validated; a shortened actual run is `INCOMPLETE`, never FAIL or PASS.
 8. The produced installer launches its installed executable, owns an engine
    program firewall rule whose path is the installed engine, then uninstalls
    and removes both runtime and rule-owned state. To avoid duplicate ownership

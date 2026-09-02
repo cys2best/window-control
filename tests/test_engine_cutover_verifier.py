@@ -82,6 +82,7 @@ class FakeDeps:
         self.selection_count = 0
         self.selection = {
             "request_path": f"/instances/{SERIALS[0]}/select",
+            "name": "instance0",
             "whep_url": "http://100.64.1.4:51000/whep",
             "whep_token": "whep-secret",
             "signaling_url": "wss://signal.example.com",
@@ -106,10 +107,10 @@ class FakeDeps:
             for index in range(20)
         ]
         dimensions = {
-            "480": (480, 854),
-            "720": (720, 1280),
-            "1080": (1080, 1920),
-            "1440": (1440, 2560),
+            "480": (270, 480),
+            "720": (405, 720),
+            "1080": (608, 1080),
+            "1440": (810, 1440),
         }
         self.quality = [
             {
@@ -146,10 +147,12 @@ class FakeDeps:
             "client_reconnected": True,
         }
         self.soak = {
+            "status": "PASS",
             "elapsed_seconds": 8 * 60 * 60,
             "sample_interval_seconds": 60,
             "samples": [
                 {
+                    "sampled_at_seconds": index * 60,
                     "process_count": 6,
                     "peer_count": 5,
                     "forward_count": 5,
@@ -160,6 +163,10 @@ class FakeDeps:
                 for index in range(480)
             ],
         }
+        self.public_websocket_url = (
+            "wss://signal.example.com/?session=instance0&role=viewer&token=viewer-secret"
+        )
+        self.now = 0.0
         self.installer = {
             "installed": True,
             "launched_installed_executable": True,
@@ -198,6 +205,9 @@ class FakeDeps:
     def wait_for_app(self, _app):
         return True
 
+    def register_owned_engines(self, serials):
+        self.events.append(("engine-register", tuple(serials)))
+
     def select(self, serial):
         self.selection_count += 1
         selected = dict(self.selection)
@@ -216,14 +226,26 @@ class FakeDeps:
     def close_browser(self, session):
         self.events.append(("browser-close", session.name))
 
-    def open_public_browser(self, _selection, public_url, viewer_query):
+    def close_local_session(self, session):
+        self.events.append(("session-close", session.name))
+        return {"delete_observed": True}
+
+    def open_public_browser(self, _selection, public_url):
         self.events.append(("public-open", public_url))
         return BrowserSession("public", 450, 45.0), {
             "video": True,
             "data_channel": True,
             "input": True,
-            "viewer_query": viewer_query,
         }
+
+    def observed_public_websocket(self, _session):
+        return self.public_websocket_url
+
+    def monotonic(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.now += seconds
 
     def verify_mobile(self, _selection):
         return {
@@ -432,12 +454,50 @@ def test_uses_production_select_and_validates_local_peer_lifecycle(tmp_path):
 
     assert result.checkpoints["local browser"]["status"] == "PASS"
     assert deps.selection_count >= 1
-    assert [event for event in deps.events if event[0] in {"local-open", "browser-close"}][:4] == [
+    assert [event for event in deps.events if event[0] in {"local-open", "session-close", "browser-close"}][:6] == [
         ("local-open", "local-1"),
         ("local-open", "local-2"),
+        ("session-close", "local-1"),
         ("browser-close", "local-1"),
+        ("session-close", "local-2"),
         ("browser-close", "local-2"),
     ]
+
+
+def test_local_close_awaits_delete_and_polls_peer_count_before_browser_termination(tmp_path):
+    deps = FakeDeps()
+    deps.health_values = [
+        {"local_peers": 1, "public_peer": False},
+        {"local_peers": 2, "public_peer": False},
+        {"local_peers": 2, "public_peer": False},
+        {"local_peers": 1, "public_peer": False},
+        {"local_peers": 1, "public_peer": False},
+        {"local_peers": 0, "public_peer": False},
+    ]
+
+    result = run_cutover_verification(config(tmp_path), deps)
+
+    assert result.checkpoints["local browser"]["status"] == "PASS"
+    close_events = [
+        event for event in deps.events
+        if event[0] in {"session-close", "browser-close"} and event[1].startswith("local-")
+    ]
+    assert close_events == [
+        ("session-close", "local-1"),
+        ("browser-close", "local-1"),
+        ("session-close", "local-2"),
+        ("browser-close", "local-2"),
+    ]
+
+
+def test_local_close_requires_observed_whep_delete(tmp_path):
+    deps = FakeDeps()
+    deps.close_local_session = lambda _session: {"delete_observed": False}
+
+    result = run_cutover_verification(config(tmp_path), deps)
+
+    assert result.status == "FAIL"
+    assert result.summary["failed_gate"] == "local browser"
 
 
 @pytest.mark.parametrize(
@@ -466,15 +526,32 @@ def test_public_browser_uses_real_vps_and_exact_viewer_query_auth(tmp_path):
     assert result.checkpoints["public browser"]["status"] == "PASS"
     assert ("public-open", "wss://signal.example.com") in deps.events
 
-    class WrongQuery(FakeDeps):
-        def open_public_browser(self, selection, public_url, viewer_query):
-            session, observed = super().open_public_browser(selection, public_url, viewer_query)
-            observed["viewer_query"] = "token=wrong"
-            return session, observed
-
-    failed = run_cutover_verification(config(tmp_path), WrongQuery())
+    deps = FakeDeps()
+    deps.public_websocket_url = (
+        "wss://signal.example.com/?session=instance0&role=viewer&token=wrong"
+    )
+    failed = run_cutover_verification(config(tmp_path), deps)
     assert failed.status == "FAIL"
     assert failed.summary["failed_gate"] == "public browser"
+    assert "viewer-secret" not in json.dumps(failed.to_dict())
+
+
+@pytest.mark.parametrize(
+    "actual_url",
+    [
+        "wss://signal.example.com/?session=other&role=viewer&token=viewer-secret",
+        "wss://signal.example.com/?session=instance0&role=viewer&token=viewer-secret&extra=1",
+        "wss://other.example.com/?session=instance0&role=viewer&token=viewer-secret",
+    ],
+)
+def test_public_browser_compares_the_observed_websocket_url_exactly(tmp_path, actual_url):
+    deps = FakeDeps()
+    deps.public_websocket_url = actual_url
+
+    result = run_cutover_verification(config(tmp_path), deps)
+
+    assert result.status == "FAIL"
+    assert result.summary["failed_gate"] == "public browser"
 
 
 def test_public_browser_rejects_selection_from_a_different_signaling_vps(tmp_path):
@@ -527,6 +604,28 @@ def test_quality_ladder_stays_on_one_resource_and_advances_generation_and_dimens
     failed = run_cutover_verification(config(tmp_path), deps)
     assert failed.summary["failed_gate"] == "quality ladder"
 
+    deps = FakeDeps()
+    deps.quality[3]["resource_id"] = "replacement-resource"
+    failed = run_cutover_verification(config(tmp_path), deps)
+    assert failed.summary["failed_gate"] == "quality ladder"
+
+    deps = FakeDeps()
+    for item in deps.quality:
+        item["resource_id"] = ""
+    failed = run_cutover_verification(config(tmp_path), deps)
+    assert failed.summary["failed_gate"] == "quality ladder"
+
+    deps = FakeDeps()
+    for item in deps.quality:
+        item.update(width=270, height=480, decoded_width=270, decoded_height=480)
+    failed = run_cutover_verification(config(tmp_path), deps)
+    assert failed.summary["failed_gate"] == "quality ladder"
+
+    deps = FakeDeps()
+    deps.quality[-1].update(width=405, height=720, decoded_width=405, decoded_height=720)
+    failed = run_cutover_verification(config(tmp_path), deps)
+    assert failed.summary["failed_gate"] == "quality ladder"
+
 
 def test_scrcpy_and_engine_recovery_enforce_identity_contracts(tmp_path):
     result = run_cutover_verification(config(tmp_path), FakeDeps())
@@ -557,11 +656,34 @@ def test_soak_requires_eight_hours_five_instances_and_minute_samples(tmp_path):
     assert failed.summary["failed_gate"] == "soak"
 
     deps = FakeDeps()
+    deps.soak["samples"][20]["sampled_at_seconds"] += 7
+    failed = run_cutover_verification(config(tmp_path), deps)
+    assert failed.summary["failed_gate"] == "soak"
+
+    deps = FakeDeps()
+    extra = dict(deps.soak["samples"][-1])
+    extra.update(sampled_at_seconds=8 * 60 * 60, frames_decoded=20_000)
+    deps.soak["samples"].append(extra)
+    failed = run_cutover_verification(config(tmp_path), deps)
+    assert failed.summary["failed_gate"] == "soak"
+
+    deps = FakeDeps()
     for sample in deps.soak["samples"]:
         sample["frames_decoded"] = 10
     failed = run_cutover_verification(config(tmp_path), deps)
     assert failed.summary["failed_gate"] == "soak"
 
+
+def test_short_actual_soak_is_incomplete_not_failed(tmp_path):
+    deps = FakeDeps()
+    deps.soak.update(status="INCOMPLETE", elapsed_seconds=7.5 * 60 * 60)
+    deps.soak["samples"] = deps.soak["samples"][:450]
+
+    result = run_cutover_verification(config(tmp_path), deps)
+
+    assert result.status == "INCOMPLETE"
+    assert result.checkpoints["soak"]["status"] == "INCOMPLETE"
+    assert "failed_gate" not in result.summary
 
 def test_installer_firewall_uninstall_and_tray_exit_cleanup_are_required(tmp_path):
     result = run_cutover_verification(config(tmp_path), FakeDeps())
@@ -714,6 +836,183 @@ def test_real_soak_runtime_count_excludes_owned_browser_helpers(tmp_path, monkey
     monkeypatch.setattr("scripts.verify_engine_cutover._pid_started_at", lambda pid: 20.0 if pid == 200 else None)
 
     assert deps._runtime_process_count([object()] * 5) == 6
+
+
+def test_real_soak_uses_absolute_minute_deadlines_with_collection_overhead(tmp_path, monkeypatch):
+    class Clock:
+        now = 1000.0
+
+        def monotonic(self):
+            return self.now
+
+        def sleep(self, seconds):
+            self.now += seconds
+
+    class Engine:
+        def cpu_percent(self, interval=None):
+            assert interval is None
+            return 1.0
+
+        class Memory:
+            rss = 100
+
+        def memory_info(self):
+            return self.Memory()
+
+    run_config = config(tmp_path)
+    run_config.evidence_dir.mkdir(parents=True)
+    deps = RealCutoverDeps(run_config)
+    deps._active_browsers = [object()] * 5
+    clock = Clock()
+    engines = {serial: Engine() for serial in SERIALS}
+    frames = itertools.count(100)
+    monkeypatch.setattr("scripts.verify_engine_cutover.time.monotonic", clock.monotonic)
+    monkeypatch.setattr("scripts.verify_engine_cutover.time.sleep", clock.sleep)
+    monkeypatch.setattr(deps, "_engine_process", lambda serial: engines[serial])
+    monkeypatch.setattr(
+        deps,
+        "engine_health",
+        lambda _serial: {"local_peers": 1, "public_peer": False},
+    )
+    monkeypatch.setattr(
+        deps,
+        "_decode_stats",
+        lambda _browser: {"frames_decoded": next(frames)},
+    )
+    monkeypatch.setattr(deps, "_runtime_process_count", lambda _engines: 6)
+
+    def collect_forwards(_serials):
+        clock.now += 7
+        return 5
+
+    monkeypatch.setattr(deps, "_forward_count", collect_forwards)
+
+    soak = deps.run_soak(SERIALS, 8, 60)
+
+    assert soak["status"] == "PASS"
+    assert len(soak["samples"]) == 480
+    assert [sample["sampled_at_seconds"] for sample in soak["samples"]] == [
+        index * 60 for index in range(480)
+    ]
+    assert soak["elapsed_seconds"] == 8 * 60 * 60
+
+
+def test_real_engine_recovery_fails_closed_when_registered_pid_is_replaced(tmp_path, monkeypatch):
+    deps = RealCutoverDeps(config(tmp_path))
+    deps._owned_engines[SERIALS[0]] = OwnedProcess("engine", 301, 30.0)
+    terminated = []
+
+    class ReplacedProcess:
+        pid = 301
+
+        def terminate(self):
+            terminated.append(self.pid)
+
+    monkeypatch.setattr("scripts.verify_engine_cutover._pid_started_at", lambda _pid: 31.0)
+    monkeypatch.setattr("psutil.Process", lambda _pid: ReplacedProcess())
+
+    with pytest.raises(CutoverError, match="replaced"):
+        deps.recover_engine(SERIALS[0])
+
+    assert terminated == []
+
+
+def test_real_engine_registration_rejects_matching_process_outside_owned_app_tree(tmp_path, monkeypatch):
+    deps = RealCutoverDeps(config(tmp_path))
+    deps._owned_app = OwnedProcess("app", 200, 20.0)
+
+    class Process:
+        def __init__(self, pid, started_at):
+            self.pid = pid
+            self._started_at = started_at
+
+        def create_time(self):
+            return self._started_at
+
+    app_engine = Process(301, 30.0)
+    unrelated_engine = Process(999, 99.0)
+    monkeypatch.setattr(
+        deps,
+        "_find_engine_candidates",
+        lambda _serial: [app_engine, unrelated_engine],
+    )
+    monkeypatch.setattr(deps, "_app_descendant_pids", lambda: {301}, raising=False)
+
+    deps.register_owned_engines((SERIALS[0],))
+
+    assert deps._owned_engines[SERIALS[0]] == OwnedProcess("engine", 301, 30.0)
+
+
+def test_real_browser_transport_observation_comes_from_cdp_network_identity(tmp_path, monkeypatch):
+    deps = RealCutoverDeps(config(tmp_path))
+    handle = object()
+    monkeypatch.setattr(
+        deps,
+        "_cdp",
+        lambda *_args, **_kwargs: {
+            "result": {
+                "value": {
+                    "resource_ids": ["http://127.0.0.1:51000/whep/resource-7"],
+                    "delete_urls": [],
+                    "websocket_urls": [
+                        "wss://signal.example.com/?session=instance0&role=viewer&token=viewer-secret"
+                    ],
+                }
+            }
+        },
+    )
+
+    observed = deps._browser_transport_observation(handle)
+
+    assert observed["resource_ids"] == ["http://127.0.0.1:51000/whep/resource-7"]
+    assert deps.observed_public_websocket(handle).endswith("token=viewer-secret")
+
+
+def test_real_local_close_awaits_production_close_and_matches_delete_location(tmp_path, monkeypatch):
+    deps = RealCutoverDeps(config(tmp_path))
+    handle = object()
+    resource = "http://127.0.0.1:51000/whep/resource-7"
+    calls = []
+    monkeypatch.setattr(deps, "_active_resource_id", lambda _handle: resource)
+    monkeypatch.setattr(
+        deps,
+        "_browser_transport_observation",
+        lambda _handle: {
+            "resource_ids": [resource],
+            "delete_urls": [resource],
+            "websocket_urls": [],
+        },
+    )
+
+    def cdp(_handle, method, params):
+        calls.append((method, params))
+        return {"result": {"value": True}}
+
+    monkeypatch.setattr(deps, "_cdp", cdp)
+
+    observed = deps.close_local_session(handle)
+
+    assert observed == {"delete_observed": True}
+    assert calls[0][0] == "Runtime.evaluate"
+    assert calls[0][1]["awaitPromise"] is True
+    assert "closeEngineInstance" in calls[0][1]["expression"]
+
+
+def test_real_public_query_observation_ignores_unrelated_browser_websockets(tmp_path, monkeypatch):
+    deps = RealCutoverDeps(config(tmp_path))
+    handle = object()
+    expected = "wss://signal.example.com/?session=instance0&role=viewer&token=viewer-secret"
+    monkeypatch.setattr(
+        deps,
+        "_browser_transport_observation",
+        lambda _handle: {
+            "resource_ids": [],
+            "delete_urls": [],
+            "websocket_urls": ["wss://telemetry.example.com/socket", expected],
+        },
+    )
+
+    assert deps.observed_public_websocket(handle) == expected
 
 
 def test_real_firewall_cleanup_check_is_bound_to_the_installed_engine_path(tmp_path):

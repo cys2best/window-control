@@ -24,7 +24,7 @@ import webbrowser
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import quote
+from urllib.parse import parse_qsl, quote, urlsplit
 
 import httpx
 
@@ -35,6 +35,7 @@ RECORDED_PERFORMANCE_OVERRIDE = (
 _REQUIRED_SOAK_HOURS = 8
 _REQUIRED_TIERS = ("480", "720", "1080", "1440", "480")
 _SOAK_FIELDS = {
+    "sampled_at_seconds",
     "process_count",
     "peer_count",
     "forward_count",
@@ -431,6 +432,7 @@ def _write_result(config: CutoverConfig, result: CutoverResult) -> None:
 def _validate_selection(selection: Any, serial: str) -> dict[str, Any]:
     required = {
         "request_path",
+        "name",
         "whep_url",
         "whep_token",
         "signaling_url",
@@ -455,6 +457,55 @@ def _validate_selection(selection: Any, serial: str) -> dict[str, Any]:
     return value
 
 
+def _wait_for_health(
+    deps: Any,
+    serial: str,
+    expected_local: int,
+    expected_public: bool,
+    timeout: float,
+) -> None:
+    deadline = deps.monotonic() + timeout
+    while True:
+        health = deps.engine_health(serial)
+        if (
+            health.get("local_peers") == expected_local
+            and health.get("public_peer") is expected_public
+        ):
+            return
+        remaining = deadline - deps.monotonic()
+        if remaining <= 0:
+            raise CutoverError(
+                f"peer cleanup timed out waiting for local={expected_local} public={expected_public}"
+            )
+        deps.sleep(min(0.25, remaining))
+
+
+def _validate_public_websocket(
+    actual_url: Any,
+    selection: dict[str, Any],
+    configured_url: str,
+) -> None:
+    if not isinstance(actual_url, str) or not actual_url:
+        raise CutoverError("public browser signaling request was not observed")
+    actual = urlsplit(actual_url)
+    expected = urlsplit(configured_url)
+    actual_endpoint = (actual.scheme, actual.netloc, actual.path or "/")
+    expected_endpoint = (expected.scheme, expected.netloc, expected.path or "/")
+    query = parse_qsl(actual.query, keep_blank_values=True)
+    expected_query = {
+        "session": selection["name"],
+        "role": "viewer",
+        "token": selection["signaling_token"],
+    }
+    if (
+        actual_endpoint != expected_endpoint
+        or actual.fragment
+        or len(query) != len(expected_query)
+        or dict(query) != expected_query
+    ):
+        raise CutoverError("public browser signaling request did not match exact viewer query auth")
+
+
 def _validate_switches(items: Any, timeout: float) -> None:
     if not isinstance(items, list) or len(items) != 20:
         raise CutoverError("rapid switch gate did not perform exactly 20 switches")
@@ -473,26 +524,51 @@ def _validate_quality(items: Any) -> None:
     resource_ids = set()
     peer_ids = set()
     generations = []
+    longest_dimensions = []
     for item in items:
         item = _require_fields(
             item,
             {"resource_id", "peer_id", "generation", "width", "height", "decoded_width", "decoded_height"},
             "quality observation",
         )
+        if not all(
+            isinstance(item[field], str) and item[field]
+            for field in ("resource_id", "peer_id")
+        ):
+            raise CutoverError("quality observation omitted resource or peer identity")
         resource_ids.add(item["resource_id"])
         peer_ids.add(item["peer_id"])
         generations.append(item["generation"])
+        numeric_dimensions = [
+            item["width"], item["height"], item["decoded_width"], item["decoded_height"]
+        ]
         if (
-            item["width"] <= 0
-            or item["height"] <= 0
+            any(
+                isinstance(dimension, bool)
+                or not isinstance(dimension, (int, float))
+                or dimension <= 0
+                for dimension in numeric_dimensions
+            )
             or item["decoded_width"] != item["width"]
             or item["decoded_height"] != item["height"]
         ):
             raise CutoverError("quality generation decoded dimensions did not advance together")
+        longest = max(item["width"], item["height"])
+        if longest > int(item["tier"]):
+            raise CutoverError("quality dimensions exceeded the requested tier ceiling")
+        longest_dimensions.append(longest)
     if len(resource_ids) != 1 or len(peer_ids) != 1:
         raise CutoverError("quality ladder replaced the WHEP resource or peer")
     if any(after <= before for before, after in zip(generations, generations[1:])):
         raise CutoverError("quality ladder generation did not advance")
+    if not (
+        all(
+            after > before
+            for before, after in zip(longest_dimensions[:3], longest_dimensions[1:4])
+        )
+        and longest_dimensions[-1] == longest_dimensions[0]
+    ):
+        raise CutoverError("quality decoded/health dimensions did not follow the requested ladder")
 
 
 def _validate_recovery(scrcpy: Any, engine: Any) -> None:
@@ -530,17 +606,25 @@ def _validate_recovery(scrcpy: Any, engine: Any) -> None:
         raise CutoverError("engine recovery did not publish fresh dynamic selection and reconnect")
 
 
-def _validate_soak(value: Any, config: CutoverConfig) -> None:
-    soak = _require_fields(value, {"elapsed_seconds", "sample_interval_seconds", "samples"}, "soak")
+def _validate_soak(value: Any, config: CutoverConfig) -> str:
+    soak = _require_fields(
+        value,
+        {"status", "elapsed_seconds", "sample_interval_seconds", "samples"},
+        "soak",
+    )
+    if soak["status"] == "INCOMPLETE":
+        return "INCOMPLETE"
+    if soak["status"] != "PASS":
+        raise CutoverError("soak returned an invalid outcome")
     if soak["elapsed_seconds"] < _REQUIRED_SOAK_HOURS * 3600:
-        raise CutoverError("soak was shorter than eight hours")
+        return "INCOMPLETE"
     if soak["sample_interval_seconds"] != 60:
         raise CutoverError("soak samples were not recorded every minute")
     samples = soak["samples"]
-    if not isinstance(samples, list) or len(samples) < _REQUIRED_SOAK_HOURS * 60:
-        raise CutoverError("soak omitted minute samples")
+    if not isinstance(samples, list) or len(samples) != _REQUIRED_SOAK_HOURS * 60:
+        raise CutoverError("soak did not contain exactly 480 minute samples")
     previous_frames = -1
-    for sample in samples:
+    for index, sample in enumerate(samples):
         if not isinstance(sample, dict) or not _SOAK_FIELDS.issubset(sample):
             raise CutoverError("soak sample omitted process/peer/forward/CPU/RSS/decode fields")
         numeric = [sample[field] for field in _SOAK_FIELDS]
@@ -548,9 +632,13 @@ def _validate_soak(value: Any, config: CutoverConfig) -> None:
             raise CutoverError("soak sample contains invalid metrics")
         if sample["process_count"] > 6 or sample["peer_count"] > 5 or sample["forward_count"] != 5:
             raise CutoverError("soak process/peer/forward counts are unbounded")
+        expected_timestamp = index * soak["sample_interval_seconds"]
+        if abs(sample["sampled_at_seconds"] - expected_timestamp) > 2:
+            raise CutoverError("soak samples did not follow absolute minute deadlines")
         if previous_frames >= 0 and sample["frames_decoded"] <= previous_frames:
             raise CutoverError("soak client decode stats did not advance each minute")
         previous_frames = sample["frames_decoded"]
+    return "PASS"
 
 
 def run_cutover_verification(config: CutoverConfig, deps: Any) -> CutoverResult:
@@ -589,6 +677,7 @@ def run_cutover_verification(config: CutoverConfig, deps: Any) -> CutoverResult:
             raise CutoverError("app adapter did not return an exact owned PID/start-time handle")
         if not deps.wait_for_app(app):
             raise CutoverError("owned WindowControl app did not become ready")
+        deps.register_owned_engines(config.serials)
         selection = _validate_selection(deps.select(serial), serial)
 
         current_gate = "local browser"
@@ -600,12 +689,26 @@ def run_cutover_verification(config: CutoverConfig, deps: Any) -> CutoverResult:
         browsers.append(second)
         _browser_observation(second_observation, "second local browser")
         _health(deps.engine_health(serial), 2, False)
+        closed = _require_fields(
+            deps.close_local_session(first), {"delete_observed"}, "first local close"
+        )
+        if closed["delete_observed"] is not True:
+            raise CutoverError("first local close did not observe the WHEP DELETE")
+        _wait_for_health(
+            deps, serial, 1, False, config.handshake_timeout_seconds
+        )
         deps.close_browser(first)
         browsers.remove(first)
-        _health(deps.engine_health(serial), 1, False)
+        closed = _require_fields(
+            deps.close_local_session(second), {"delete_observed"}, "second local close"
+        )
+        if closed["delete_observed"] is not True:
+            raise CutoverError("second local close did not observe the WHEP DELETE")
+        _wait_for_health(
+            deps, serial, 0, False, config.handshake_timeout_seconds
+        )
         deps.close_browser(second)
         browsers.remove(second)
-        _health(deps.engine_health(serial), 0, False)
         if not _manual_gate(
             deps,
             result,
@@ -617,13 +720,15 @@ def run_cutover_verification(config: CutoverConfig, deps: Any) -> CutoverResult:
         current_gate = "public browser"
         if selection["signaling_url"] != config.public_signaling_url:
             raise CutoverError("selection signaling URL does not match the configured public VPS")
-        viewer_query = "token=" + selection["signaling_token"]
         public_browser, public = deps.open_public_browser(
-            selection, config.public_signaling_url, viewer_query
+            selection, config.public_signaling_url
         )
         browsers.append(public_browser)
-        public = _require_fields(public, {"video", "data_channel", "input", "viewer_query"}, "public browser")
-        if not public["video"] or not public["data_channel"] or not public["input"] or public["viewer_query"] != viewer_query:
+        public = _require_fields(public, {"video", "data_channel", "input"}, "public browser")
+        _validate_public_websocket(
+            deps.observed_public_websocket(public_browser), selection, config.public_signaling_url
+        )
+        if not public["video"] or not public["data_channel"] or not public["input"]:
             raise CutoverError("public browser did not use exact viewer query auth/video/input")
         if not _manual_gate(
             deps,
@@ -698,8 +803,11 @@ def run_cutover_verification(config: CutoverConfig, deps: Any) -> CutoverResult:
             result.mark(current_gate, "INCOMPLETE", "shortened soak; eight hours required")
         else:
             soak = deps.run_soak(config.serials, config.soak_hours, config.sample_interval_seconds)
-            _validate_soak(soak, config)
-            result.mark(current_gate, "PASS", "eight-hour minute-sampled five-instance soak")
+            soak_status = _validate_soak(soak, config)
+            if soak_status == "INCOMPLETE":
+                result.mark(current_gate, "INCOMPLETE", "actual soak ended before eight hours")
+            else:
+                result.mark(current_gate, "PASS", "eight-hour minute-sampled five-instance soak")
 
         current_gate = "installer"
         installer = _require_fields(
@@ -803,11 +911,20 @@ class RealCutoverDeps:
         self._active_browsers: list[_BrowserProcess] = []
         self._last_selection: dict[str, Any] | None = None
         self._owned_app: OwnedProcess | None = None
+        self._owned_engines: dict[str, OwnedProcess] = {}
         self._evidence_active = False
         self._pending_events: list[str] = []
 
     def platform_name(self) -> str:
         return platform.system()
+
+    @staticmethod
+    def monotonic() -> float:
+        return time.monotonic()
+
+    @staticmethod
+    def sleep(seconds: float) -> None:
+        time.sleep(seconds)
 
     def validate_required_environment(self) -> None:
         missing = [name for name in self._REQUIRED_ENV if not os.environ.get(name)]
@@ -1065,6 +1182,9 @@ class RealCutoverDeps:
 (() => {
   const Native = window.RTCPeerConnection;
   window.__wcCutoverPeers = [];
+  window.__wcCutoverResources = [];
+  window.__wcCutoverDeletes = [];
+  window.__wcCutoverWebSockets = [];
   window.RTCPeerConnection = function(...args) {
     const pc = new Native(...args);
     pc.__wcCutoverId = crypto.randomUUID();
@@ -1072,15 +1192,44 @@ class RealCutoverDeps:
     return pc;
   };
   window.RTCPeerConnection.prototype = Native.prototype;
-  LOCAL_ONLY_FETCH
-})();
-"""
-        local_fetch = """
+
+  const NativeWebSocket = window.WebSocket;
+  window.WebSocket = function(url, protocols) {
+    window.__wcCutoverWebSockets.push(String(url));
+    return protocols === undefined
+      ? new NativeWebSocket(url)
+      : new NativeWebSocket(url, protocols);
+  };
+  window.WebSocket.prototype = NativeWebSocket.prototype;
+  for (const key of ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED']) {
+    Object.defineProperty(window.WebSocket, key, { value: NativeWebSocket[key] });
+  }
+
   const nativeFetch = window.fetch.bind(window);
   window.fetch = async (...args) => {
-    const response = await nativeFetch(...args);
     const input = args[0];
+    const init = args[1] || {};
     const requestUrl = typeof input === 'string' ? input : input.url;
+    const method = String(init.method || (typeof input === 'object' && input.method) || 'GET').toUpperCase();
+    const response = await nativeFetch(...args);
+    if (method === 'POST' && /\\/whep(?:[?#]|$)/.test(requestUrl) && response.ok) {
+      const resourceLocation = response.headers && response.headers.get('Location');
+      if (resourceLocation) {
+        window.__wcCutoverResources.push(new URL(resourceLocation, requestUrl).href);
+      }
+    }
+    if (method === 'DELETE' && /\\/whep\\//.test(requestUrl)) {
+      window.__wcCutoverDeletes.push({
+        url: new URL(requestUrl, window.location.href).href,
+        ok: response.ok,
+      });
+    }
+    LOCAL_ONLY_RESPONSE
+    return response;
+  };
+})();
+"""
+        local_response = """
     if (/\\/instances\\/[^/]+\\/select(?:[?#]|$)/.test(requestUrl) && response.ok) {
       const selection = await response.clone().json();
       selection.signaling_url = null;
@@ -1091,10 +1240,8 @@ class RealCutoverDeps:
         headers: response.headers,
       });
     }
-    return response;
-  };
 """ if local_only else ""
-        tracker = tracker.replace("  LOCAL_ONLY_FETCH", local_fetch)
+        tracker = tracker.replace("    LOCAL_ONLY_RESPONSE", local_response)
         self._cdp(handle, "Page.addScriptToEvaluateOnNewDocument", {"source": tracker})
         self._cdp(handle, "Page.navigate", {"url": url})
         time.sleep(1)
@@ -1165,6 +1312,79 @@ class RealCutoverDeps:
             raise CutoverError("browser stats require exactly one active peer identity")
         return peer_ids[0]
 
+    def _browser_transport_observation(self, handle: _BrowserProcess) -> dict[str, Any]:
+        expression = """
+(() => ({
+  resource_ids: [...new Set(window.__wcCutoverResources || [])],
+  delete_urls: [...new Set((window.__wcCutoverDeletes || [])
+    .filter(item => item && item.ok).map(item => item.url))],
+  websocket_urls: [...(window.__wcCutoverWebSockets || [])],
+}))()
+"""
+        result = self._cdp(
+            handle,
+            "Runtime.evaluate",
+            {"expression": expression, "returnByValue": True},
+        )
+        value = _require_fields(
+            result.get("result", {}).get("value"),
+            {"resource_ids", "delete_urls", "websocket_urls"},
+            "browser transport observation",
+        )
+        for field in ("resource_ids", "delete_urls", "websocket_urls"):
+            if not isinstance(value[field], list) or not all(
+                isinstance(item, str) and item for item in value[field]
+            ):
+                raise CutoverError("browser transport observation contained invalid identities")
+        return value
+
+    def _active_resource_id(self, handle: _BrowserProcess) -> str:
+        observed = self._browser_transport_observation(handle)
+        deleted = set(observed["delete_urls"])
+        resources = [
+            resource for resource in observed["resource_ids"] if resource not in deleted
+        ]
+        if len(resources) != 1:
+            raise CutoverError("browser did not expose exactly one WHEP resource Location")
+        return resources[0]
+
+    def close_local_session(self, handle: _BrowserProcess) -> dict[str, bool]:
+        resource_id = self._active_resource_id(handle)
+        expression = """
+(async () => {
+  if (typeof closeEngineInstance !== 'function') return false;
+  await closeEngineInstance();
+  return true;
+})()
+"""
+        result = self._cdp(
+            handle,
+            "Runtime.evaluate",
+            {"expression": expression, "awaitPromise": True, "returnByValue": True},
+        )
+        invoked = result.get("result", {}).get("value") is True
+        deletes = self._browser_transport_observation(handle)["delete_urls"]
+        return {"delete_observed": invoked and resource_id in deletes}
+
+    def observed_public_websocket(self, handle: _BrowserProcess) -> str:
+        deadline = self.monotonic() + self.config.handshake_timeout_seconds
+        while True:
+            urls = self._browser_transport_observation(handle)["websocket_urls"]
+            candidates = []
+            for url in urls:
+                query = dict(parse_qsl(urlsplit(url).query, keep_blank_values=True))
+                if query.get("role") == "viewer" and {"session", "token"}.issubset(query):
+                    candidates.append(url)
+            candidates = list(dict.fromkeys(candidates))
+            if candidates:
+                if len(candidates) != 1:
+                    raise CutoverError("public browser opened multiple signaling requests")
+                return candidates[0]
+            remaining = deadline - self.monotonic()
+            if remaining <= 0:
+                raise CutoverError("public browser signaling request was not observed")
+            self.sleep(min(0.25, remaining))
+
     def open_local_browser(self, _selection: dict[str, Any], name: str):
         handle = self._start_browser(
             name,
@@ -1183,7 +1403,7 @@ class RealCutoverDeps:
             "scroll_delta": 1 if response == "PASS" else 0,
         }
 
-    def open_public_browser(self, _selection: dict[str, Any], public_url: str, viewer_query: str):
+    def open_public_browser(self, _selection: dict[str, Any], public_url: str):
         if public_url != self.config.public_signaling_url:
             raise CutoverError("public browser did not receive configured signaling VPS")
         handle = self._start_browser("public", os.environ["PUBLIC_UI_URL"])
@@ -1196,7 +1416,6 @@ class RealCutoverDeps:
             "video": response == "PASS" and stats["frames_decoded"] > 0,
             "data_channel": response == "PASS",
             "input": response == "PASS",
-            "viewer_query": viewer_query if response == "PASS" else "",
         }
 
     def close_browser(self, handle: _BrowserProcess) -> None:
@@ -1214,13 +1433,16 @@ class RealCutoverDeps:
         if handle in self._active_browsers:
             self._active_browsers.remove(handle)
 
-    def _engine_process(self, serial: str):
+    @staticmethod
+    def _engine_instance_name(serial: str) -> str:
+        if serial.startswith("emulator-"):
+            return f"instance{(int(serial.split('-', 1)[1]) - 5554) // 2}"
+        return "instance_" + serial.replace(":", "_")
+
+    def _find_engine_candidates(self, serial: str) -> list[Any]:
         import psutil
 
-        if serial.startswith("emulator-"):
-            instance_name = f"instance{(int(serial.split('-', 1)[1]) - 5554) // 2}"
-        else:
-            instance_name = "instance_" + serial.replace(":", "_")
+        instance_name = self._engine_instance_name(serial)
         matches = []
         for process in psutil.process_iter(["name", "cmdline"]):
             try:
@@ -1231,9 +1453,98 @@ class RealCutoverDeps:
                     matches.append(process)
             except psutil.Error:
                 continue
-        if len(matches) != 1:
-            raise CutoverError(f"expected one owned engine for {serial}, found {len(matches)}")
-        return matches[0]
+        return matches
+
+    def _app_descendant_pids(self) -> set[int]:
+        import psutil
+
+        owned = self._owned_app
+        if owned is None or _pid_started_at(owned.pid) != owned.started_at:
+            raise CutoverError("owned app identity disappeared before engine registration")
+        try:
+            root = psutil.Process(owned.pid)
+            return {process.pid for process in root.children(recursive=True)}
+        except psutil.Error as error:
+            raise CutoverError("could not resolve the owned app process tree") from error
+
+    def register_owned_engines(self, serials: tuple[str, ...]) -> None:
+        pending = set(serials)
+        deadline = self.monotonic() + 90
+        while pending:
+            for serial in list(pending):
+                descendants = self._app_descendant_pids()
+                matches = [
+                    process
+                    for process in self._find_engine_candidates(serial)
+                    if process.pid in descendants
+                ]
+                if len(matches) > 1:
+                    raise CutoverError(
+                        f"could not register exact app-spawned engine for {serial}"
+                    )
+                if len(matches) == 1:
+                    process = matches[0]
+                    try:
+                        started_at = process.create_time()
+                    except Exception as error:
+                        raise CutoverError(
+                            f"could not register engine identity for {serial}: {_safe_detail(error)}"
+                        ) from error
+                    self._owned_engines[serial] = OwnedProcess(
+                        "engine", process.pid, started_at
+                    )
+                    pending.remove(serial)
+            if not pending:
+                return
+            remaining = deadline - self.monotonic()
+            if remaining <= 0:
+                raise CutoverError("app-spawned engine registration timed out")
+            self.sleep(min(0.25, remaining))
+
+    def _engine_process(self, serial: str):
+        import psutil
+
+        owned = self._owned_engines.get(serial)
+        if owned is None:
+            raise CutoverError(f"engine identity was not registered for {serial}")
+        current_started_at = _pid_started_at(owned.pid)
+        if current_started_at is None:
+            raise CutoverError(f"registered engine disappeared for {serial}")
+        if current_started_at != owned.started_at:
+            raise CutoverError(f"registered engine PID was replaced for {serial}")
+        try:
+            process = psutil.Process(owned.pid)
+            name = process.name()
+            command = [str(item) for item in process.cmdline()]
+        except psutil.Error as error:
+            raise CutoverError(f"registered engine disappeared for {serial}") from error
+        if (
+            name.casefold() != "engine.exe"
+            or self._engine_instance_name(serial) not in command[1:]
+        ):
+            raise CutoverError(f"registered engine identity changed for {serial}")
+        return process
+
+    def _register_replacement_engine(
+        self, serial: str, previous: OwnedProcess
+    ) -> Any | None:
+        matches = []
+        descendants = self._app_descendant_pids()
+        for process in self._find_engine_candidates(serial):
+            try:
+                started_at = process.create_time()
+            except Exception:
+                continue
+            if process.pid == previous.pid or process.pid not in descendants:
+                continue
+            matches.append((process, started_at))
+        if len(matches) > 1:
+            raise CutoverError(f"engine respawn for {serial} was ambiguous")
+        if not matches:
+            return None
+        process, started_at = matches[0]
+        self._owned_engines[serial] = OwnedProcess("engine", process.pid, started_at)
+        return self._engine_process(serial)
 
     def engine_health(self, serial: str) -> dict[str, Any]:
         process = self._engine_process(serial)
@@ -1329,10 +1640,9 @@ class RealCutoverDeps:
         if not self._active_browsers:
             raise CutoverError("quality ladder requires the retained race browser")
         handle = self._active_browsers[0]
-        resource_id = self._last_selection["whep_url"] if self._last_selection else ""
         observations = []
         previous_generation = -1
-        for tier in tiers:
+        for index, tier in enumerate(tiers):
             response = httpx.post(
                 f"http://127.0.0.1:{self.config.app_port}/instances/{quote(serial, safe='')}/quality",
                 headers=self._auth_headers(),
@@ -1345,12 +1655,28 @@ class RealCutoverDeps:
             while time.monotonic() < deadline:
                 health = self.engine_health(serial)
                 stats = self._decode_stats(handle)
-                if health["generation"] > previous_generation and stats["width"] > 0 and stats["height"] > 0:
+                longest = max(health["width"], health["height"])
+                dimensions_follow_ladder = (
+                    not observations
+                    or (index < len(tiers) - 1 and longest > max(
+                        observations[-1]["width"], observations[-1]["height"]
+                    ))
+                    or (index == len(tiers) - 1 and longest == max(
+                        observations[0]["width"], observations[0]["height"]
+                    ))
+                )
+                if (
+                    health["generation"] > previous_generation
+                    and stats["width"] == health["width"]
+                    and stats["height"] == health["height"]
+                    and 0 < longest <= int(tier)
+                    and dimensions_follow_ladder
+                ):
                     previous_generation = health["generation"]
                     observations.append(
                         {
                             "tier": tier,
-                            "resource_id": resource_id,
+                            "resource_id": self._active_resource_id(handle),
                             "peer_id": self._one_peer_id(stats),
                             "generation": health["generation"],
                             "width": health["width"],
@@ -1404,18 +1730,21 @@ class RealCutoverDeps:
 
     def recover_engine(self, serial: str) -> dict[str, Any]:
         before_process = self._engine_process(serial)
-        before_started = before_process.create_time()
+        before_owned = self._owned_engines[serial]
         before_selection = dict(self._last_selection or self.select(serial))
-        if _pid_started_at(before_process.pid) != before_started:
+        if _pid_started_at(before_owned.pid) != before_owned.started_at:
             raise CutoverError("owned engine PID was reused before recovery kill")
         before_process.terminate()
         deadline = time.monotonic() + 90
         while time.monotonic() < deadline:
+            if _pid_started_at(before_owned.pid) == before_owned.started_at:
+                time.sleep(0.5)
+                continue
+            after_process = self._register_replacement_engine(serial, before_owned)
+            if after_process is None:
+                time.sleep(0.5)
+                continue
             try:
-                after_process = self._engine_process(serial)
-                if after_process.pid == before_process.pid:
-                    time.sleep(0.5)
-                    continue
                 after_selection = self.select(serial)
                 if after_selection["whep_url"] != before_selection["whep_url"]:
                     response = self.confirm(
@@ -1449,8 +1778,6 @@ class RealCutoverDeps:
         return app_count + len(engines)
 
     def run_soak(self, serials: tuple[str, ...], hours: float, interval: int) -> dict[str, Any]:
-        import psutil
-
         while len(self._active_browsers) < len(serials):
             serial = serials[len(self._active_browsers)]
             handle = self._start_browser(f"soak-{len(self._active_browsers)}", f"http://127.0.0.1:{self.config.app_port}/")
@@ -1460,17 +1787,31 @@ class RealCutoverDeps:
                 f"In the new production browser select {serial}; confirm changing video and an open DataChannel.",
             ) != "PASS":
                 raise CutoverError(f"soak browser for {serial} not ready")
-        started = time.monotonic()
-        deadline = started + hours * 3600
+        started = self.monotonic()
+        duration = hours * 3600
+        deadline = started + duration
+        expected_samples = int(duration // interval)
         samples = []
-        while time.monotonic() < deadline:
+        collection_finished = started
+        for index in range(expected_samples):
+            target = started + index * interval
+            remaining = target - self.monotonic()
+            if remaining > 0:
+                self.sleep(remaining)
+            sampled_at = self.monotonic()
+            if sampled_at >= deadline:
+                break
             engines = [self._engine_process(serial) for serial in serials]
-            peer_count = sum(self.engine_health(serial)["local_peers"] + int(self.engine_health(serial)["public_peer"]) for serial in serials)
+            health = [self.engine_health(serial) for serial in serials]
+            peer_count = sum(
+                item["local_peers"] + int(item["public_peer"]) for item in health
+            )
             decode = sum(self._decode_stats(browser)["frames_decoded"] for browser in self._active_browsers)
             cpu = sum(process.cpu_percent(interval=None) for process in engines)
             rss = sum(process.memory_info().rss for process in engines)
             samples.append(
                 {
+                    "sampled_at_seconds": sampled_at - started,
                     "process_count": self._runtime_process_count(engines),
                     "peer_count": peer_count,
                     "forward_count": self._forward_count(serials),
@@ -1483,9 +1824,19 @@ class RealCutoverDeps:
                 self.config.evidence_dir / "soak-samples.json",
                 {"schema_version": 1, "samples": samples},
             )
-            time.sleep(min(interval, max(0, deadline - time.monotonic())))
+            collection_finished = self.monotonic()
+        remaining = deadline - self.monotonic()
+        if remaining > 0:
+            self.sleep(remaining)
+        elapsed = self.monotonic() - started
+        complete = (
+            elapsed >= duration
+            and len(samples) == expected_samples
+            and collection_finished <= deadline
+        )
         return {
-            "elapsed_seconds": time.monotonic() - started,
+            "status": "PASS" if complete else "INCOMPLETE",
+            "elapsed_seconds": elapsed,
             "sample_interval_seconds": interval,
             "samples": samples,
         }
