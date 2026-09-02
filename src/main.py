@@ -2,11 +2,17 @@
 import sys
 import os
 import secrets
+import logging
 
 # Load .env (repo root, gitignored) before anything reads os.environ —
 # config.py's os.environ.get() calls run at import time below.
 from dotenv import load_dotenv
 load_dotenv()
+
+# Without this, the root logger defaults to WARNING and every module's
+# log.info() (tunnel connect/disconnect, engine lifecycle, etc.) is silently
+# dropped even when stdout/stderr are captured to a file.
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 
 import config
 

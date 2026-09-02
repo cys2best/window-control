@@ -1141,6 +1141,42 @@ def test_real_preflight_diagnostics_do_not_create_evidence_before_mutation(tmp_p
     assert "read-only preflight" in (run_config.evidence_dir / "verification.log").read_text()
 
 
+def test_real_start_app_captures_stdout_and_stderr_to_evidence_dir(tmp_path, monkeypatch):
+    import subprocess as subprocess_module
+
+    run_config = config(tmp_path)
+    deps = RealCutoverDeps(run_config)
+    run_config.evidence_dir.mkdir(parents=True)
+
+    captured = {}
+
+    class FakeProcess:
+        def __init__(self):
+            self.pid = 4321
+
+    def fake_popen(_command, **kwargs):
+        captured.update(kwargs)
+        return FakeProcess()
+
+    monkeypatch.setattr(subprocess_module, "Popen", fake_popen)
+
+    class FakePsutilProcess:
+        def __init__(self, _pid):
+            pass
+
+        def create_time(self):
+            return 200.0
+
+    monkeypatch.setattr("psutil.Process", FakePsutilProcess)
+
+    deps.start_app({})
+
+    assert captured["stderr"] == subprocess_module.STDOUT
+    log_stream = captured["stdout"]
+    assert Path(log_stream.name) == run_config.evidence_dir / "app.log"
+    assert log_stream.closed, "parent must close its handle after spawning so the child owns the fd"
+
+
 def test_real_scrcpy_recovery_uses_the_launcher_exact_process_pattern(tmp_path):
     from server.scrcpy_server import scrcpy_server_process_pattern
 

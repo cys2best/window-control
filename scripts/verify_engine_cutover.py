@@ -1093,14 +1093,16 @@ class RealCutoverDeps:
     def start_app(self, environment: dict[str, str]) -> OwnedProcess:
         command = ["uv", "run", "python", "src/main.py"]
         self.record_event("starting owned WindowControl source app")
+        app_log = open(self.config.evidence_dir / "app.log", "a", encoding="utf-8")
         process = subprocess.Popen(
             command,
             cwd=self.config.repo_root,
             env=environment,
             stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=app_log,
+            stderr=subprocess.STDOUT,
         )
+        app_log.close()
         import psutil
 
         started_at = psutil.Process(process.pid).create_time()
