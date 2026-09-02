@@ -1278,6 +1278,7 @@ class RealCutoverDeps:
     }
 """ if local_only else ""
         tracker = tracker.replace("    LOCAL_ONLY_RESPONSE", local_response)
+        self._cdp(handle, "Page.enable", {})
         self._cdp(handle, "Page.addScriptToEvaluateOnNewDocument", {"source": tracker})
         self._cdp(handle, "Page.navigate", {"url": url})
         time.sleep(1)

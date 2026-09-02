@@ -1174,6 +1174,51 @@ def test_real_local_browser_forces_local_transport_while_using_production_assets
     }
 
 
+def test_real_start_browser_enables_page_domain_before_injecting_tracker(tmp_path, monkeypatch):
+    import subprocess as subprocess_module
+
+    deps = RealCutoverDeps(config(tmp_path))
+    monkeypatch.setattr(deps, "_find_browser", lambda: Path("msedge.exe"))
+    monkeypatch.setattr(deps, "_free_port", lambda: 51999)
+
+    class FakeProcess:
+        def __init__(self, *_args, **_kwargs):
+            self.pid = 4242
+
+    monkeypatch.setattr(subprocess_module, "Popen", FakeProcess)
+
+    class FakePsutilProcess:
+        def __init__(self, pid):
+            self.pid = pid
+
+        def create_time(self):
+            return 100.0
+
+        def children(self, recursive=True):
+            return []
+
+    monkeypatch.setattr("psutil.Process", FakePsutilProcess)
+
+    class FakeResponse:
+        def json(self):
+            return [{
+                "type": "page",
+                "id": "target-1",
+                "webSocketDebuggerUrl": "ws://127.0.0.1:51999/devtools/page/target-1",
+            }]
+
+    monkeypatch.setattr("httpx.get", lambda *_args, **_kwargs: FakeResponse())
+    monkeypatch.setattr(time, "sleep", lambda _seconds: None)
+
+    calls = []
+    monkeypatch.setattr(deps, "_cdp", lambda _handle, method, _params: calls.append(method))
+
+    deps._start_browser("local-1", "http://127.0.0.1:8000/")
+
+    assert calls.index("Page.enable") < calls.index("Page.addScriptToEvaluateOnNewDocument")
+    assert calls.index("Page.addScriptToEvaluateOnNewDocument") < calls.index("Page.navigate")
+
+
 def test_real_rapid_switch_gate_checks_each_abandoned_engine(tmp_path, monkeypatch):
     deps = RealCutoverDeps(config(tmp_path))
     prompts = []
