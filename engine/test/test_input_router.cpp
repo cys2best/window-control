@@ -177,6 +177,24 @@ TEST(InputRouter, ClickSendsDownThenUpTouchPair) {
     fake.Stop();
 }
 
+TEST(InputRouter, ShutdownPeersClearsCallbacksAndDrainsRegistry) {
+    PeerRegistry registry;
+    ScrcpySource source(registry);
+    InputRouter router(source);
+    auto local = registry.Create(PeerKind::Local, "shutdown-local", {});
+    auto publicPeer = registry.Create(PeerKind::Public, "shutdown-public", {});
+    ASSERT_NE(local, nullptr);
+    ASSERT_NE(publicPeer, nullptr);
+    router.AttachToPeer(*local);
+    router.AttachToPeer(*publicPeer);
+
+    router.ShutdownPeers(registry);
+
+    EXPECT_TRUE(registry.Snapshot().empty());
+    EXPECT_EQ(registry.LocalCount(), 0u);
+    EXPECT_FALSE(registry.HasPublicPeer());
+}
+
 TEST(InputRouter, UnknownKeyNameIsIgnoredWithoutCrashing) {
     FakeScrcpyServer fake;
     fake.Serve();

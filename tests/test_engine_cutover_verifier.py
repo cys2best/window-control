@@ -65,6 +65,8 @@ class FakeDeps:
         self.mutations = []
         self.events = []
         self.stopped = []
+        self.owned_app = None
+        self.owned_engines = []
         self.confirmations = {}
         self.health_values = [
             {"local_peers": 1, "public_peer": False},
@@ -81,15 +83,18 @@ class FakeDeps:
         }
         self.selection_count = 0
         self.selection = {
-            "request_path": f"/instances/{SERIALS[0]}/select",
+            "ok": True,
+            "id": f"adb:{SERIALS[0]}",
+            "serial": SERIALS[0],
             "name": "instance0",
+            "w": 1280,
+            "h": 720,
             "whep_url": "http://100.64.1.4:51000/whep",
             "whep_token": "whep-secret",
             "signaling_url": "wss://signal.example.com",
             "signaling_token": "viewer-secret",
+            "ice_servers": [],
             "generation": 4,
-            "width": 1280,
-            "height": 720,
         }
         self.evidence_text = "all evidence is redacted"
         self.local_results = [
@@ -200,13 +205,18 @@ class FakeDeps:
     def start_app(self, environment):
         self.mutations.append("start_app")
         self.started_environment = dict(environment)
-        return OwnedProcess("app", 200, 20.0)
+        self.owned_app = OwnedProcess("app", 200, 20.0)
+        return self.owned_app
 
     def wait_for_app(self, _app):
         return True
 
     def register_owned_engines(self, serials):
         self.events.append(("engine-register", tuple(serials)))
+        self.owned_engines = [
+            OwnedProcess("engine", 300 + index, 30.0 + index)
+            for index, _serial in enumerate(serials)
+        ]
 
     def select(self, serial):
         self.selection_count += 1
@@ -291,6 +301,12 @@ class FakeDeps:
 
     def stop_owned(self, process):
         self.stopped.append((process.kind, process.pid, process.started_at))
+
+    def cleanup_owned_helpers(self):
+        for process in [*reversed(self.owned_engines), self.owned_app]:
+            if process is not None:
+                self.stop_owned(process)
+        return len(self.stopped)
 
     def record_event(self, message):
         self.evidence_text += "\n" + message
@@ -462,6 +478,46 @@ def test_uses_production_select_and_validates_local_peer_lifecycle(tmp_path):
         ("session-close", "local-2"),
         ("browser-close", "local-2"),
     ]
+
+
+def test_real_select_rejects_non_exact_production_response_before_adding_metadata(
+    tmp_path, monkeypatch
+):
+    import scripts.verify_engine_cutover as verifier
+
+    raw = {
+        "ok": True,
+        "id": "adb:emulator-5554",
+        "serial": "emulator-5554",
+        "name": "instance0",
+        "w": 1280,
+        "h": 720,
+        "whep_url": "http://100.64.1.4:51000/whep",
+        "whep_token": "whep-secret",
+        "signaling_url": "wss://signal.example.com",
+        "signaling_token": "viewer-secret",
+        "ice_servers": [],
+        "generation": 4,
+    }
+
+    class Response:
+        status_code = 200
+
+        def json(self):
+            return dict(raw)
+
+    monkeypatch.setenv("AUTH_TOKEN", "auth-secret")
+    monkeypatch.setattr(verifier.httpx, "post", lambda *_args, **_kwargs: Response())
+    deps = RealCutoverDeps(config(tmp_path))
+
+    observed = deps.select(SERIALS[0])
+    assert observed["w"] == 1280
+    assert observed["h"] == 720
+    assert observed["request_path"] == f"/instances/{SERIALS[0]}/select"
+
+    raw["width"] = 1280
+    with pytest.raises(CutoverError, match="exact 12-field"):
+        deps.select(SERIALS[0])
 
 
 def test_local_close_awaits_delete_and_polls_peer_count_before_browser_termination(tmp_path):
@@ -739,6 +795,31 @@ def test_failure_writes_redacted_partial_json_and_cleans_only_started_helpers(tm
     assert "whep-secret" not in json.dumps(saved)
     assert all(kind != "app" for kind, _pid, _started in deps.stopped)
     assert result.summary["retained_on_failure"]["keep_on_failure"] is True
+
+
+@pytest.mark.parametrize("outcome", ["FAIL", "INCOMPLETE"])
+def test_failed_or_incomplete_run_cleans_exact_owned_helpers_unless_retention_requested(
+    tmp_path, outcome
+):
+    deps = FakeDeps()
+    if outcome == "FAIL":
+        deps.local_results[0]["video"] = False
+    else:
+        deps.confirmations["public browser"] = "SKIP"
+
+    result = run_cutover_verification(config(tmp_path), deps)
+
+    assert result.status == outcome
+    assert deps.stopped == [
+        ("engine", 304, 34.0),
+        ("engine", 303, 33.0),
+        ("engine", 302, 32.0),
+        ("engine", 301, 31.0),
+        ("engine", 300, 30.0),
+        ("app", 200, 20.0),
+    ]
+    assert "retained_on_failure" not in result.summary
+    assert result.summary["cleanup_on_failure"]["exact_owned_helpers_stopped"] == 6
 
 
 def test_child_processes_receive_one_sanitized_environment_without_parent_mutation(tmp_path, monkeypatch):
@@ -1137,3 +1218,41 @@ def test_real_installer_gate_requires_source_tray_exit_before_install(tmp_path, 
     deps._require_source_tray_exit_for_installer()
 
     assert prompts == ["source tray exit before installer"]
+
+
+def test_real_cleanup_terminates_only_exact_registered_pid_start_time_pairs(
+    tmp_path, monkeypatch
+):
+    import psutil
+    import scripts.verify_engine_cutover as verifier
+
+    deps = RealCutoverDeps(config(tmp_path))
+    deps._owned_app = OwnedProcess("app", 200, 20.0)
+    deps._owned_engines = {
+        SERIALS[0]: OwnedProcess("engine", 300, 30.0),
+        SERIALS[1]: OwnedProcess("engine", 301, 31.0),
+    }
+    live_started = {200: 20.0, 300: 30.0, 301: 99.0}
+    events = []
+
+    class Process:
+        def __init__(self, pid):
+            self.pid = pid
+
+        def terminate(self):
+            events.append(("terminate", self.pid))
+            live_started[self.pid] = None
+
+        def wait(self, timeout):
+            events.append(("wait", self.pid, timeout))
+
+    monkeypatch.setattr(verifier, "_pid_started_at", lambda pid: live_started.get(pid))
+    monkeypatch.setattr(psutil, "Process", Process)
+
+    assert deps.cleanup_owned_helpers() == 2
+    assert events == [
+        ("terminate", 300),
+        ("wait", 300, 10),
+        ("terminate", 200),
+        ("wait", 200, 10),
+    ]

@@ -41,6 +41,9 @@ public:
     // send must not stall peer add/remove for every other peer).
     std::vector<std::shared_ptr<PeerSession>> Snapshot() const;
 
+    // Atomically removes registry ownership, then closes every former peer.
+    void CloseAll();
+
     // Removes any peer whose State() is Failed/Closed/Disconnected, or
     // whose handshake has exceeded handshakeTimeout without reaching
     // Connected. Call periodically from a housekeeping loop.

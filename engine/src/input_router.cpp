@@ -3,6 +3,7 @@
 // calls and src/server/app.py's WebSocket input handler exactly, ported
 // to per-peer WebRTC DataChannels instead of one shared WebSocket.
 #include "input_router.h"
+#include "peer_registry.h"
 #include <algorithm>
 #include <cmath>
 #include <nlohmann/json.hpp>
@@ -49,27 +50,44 @@ void InputRouter::AttachToPeer(PeerSession& peer) {
             state != rtc::PeerConnection::State::Closed) {
             return;
         }
-        // Best-effort UP so one abruptly-disconnected viewer's held-down
-        // finger doesn't stay stuck for whoever connects next.
-        FingerState finger;
-        bool releaseFinger = false;
-        {
-            std::lock_guard<std::mutex> lock(fingerMutex_);
-            auto it = fingerStates_.find(&peer);
-            if (it != fingerStates_.end()) {
-                finger = it->second;
-                releaseFinger = finger.down;
-                fingerStates_.erase(it);
-            }
-        }
-        if (releaseFinger) {
-            if (auto control = source_.Control()) {
-                auto status = source_.Status();
-                control->SendTouch(ScrcpyControlClient::ACTION_UP, finger.x, finger.y,
-                                    status.width, status.height, finger.pointerId);
-            }
-        }
+        ReleasePeer(peer);
     });
+}
+
+void InputRouter::ReleasePeer(PeerSession& peer) {
+    // Best-effort UP so one abruptly-disconnected viewer's held-down finger
+    // doesn't stay stuck for whoever connects next.
+    FingerState finger;
+    bool releaseFinger = false;
+    {
+        std::lock_guard<std::mutex> lock(fingerMutex_);
+        auto it = fingerStates_.find(&peer);
+        if (it != fingerStates_.end()) {
+            finger = it->second;
+            releaseFinger = finger.down;
+            fingerStates_.erase(it);
+        }
+    }
+    if (releaseFinger) {
+        if (auto control = source_.Control()) {
+            auto status = source_.Status();
+            control->SendTouch(ScrcpyControlClient::ACTION_UP, finger.x, finger.y,
+                               status.width, status.height, finger.pointerId);
+        }
+    }
+}
+
+void InputRouter::ShutdownPeers(PeerRegistry& registry) {
+    auto peers = registry.Snapshot();
+    for (const auto& peer : peers) {
+        // Clearing under PeerSession's callback mutex waits for any callback
+        // already using this router, then prevents close from calling it back.
+        peer->ClearCallbacks();
+    }
+    for (const auto& peer : peers) {
+        ReleasePeer(*peer);
+    }
+    registry.CloseAll();
 }
 
 void InputRouter::HandleMessageForTest(const std::string& jsonMessage) {

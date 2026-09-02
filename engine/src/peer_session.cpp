@@ -67,12 +67,8 @@ PeerSession::PeerSession(std::string id, const std::vector<std::string>& iceServ
     });
 
     impl_->pc->onStateChange([this](rtc::PeerConnection::State state) {
-        StateCallback callback;
-        {
-            std::lock_guard<std::mutex> lock(impl_->callbackMutex);
-            callback = impl_->onStateChange;
-        }
-        if (callback) callback(state);
+        std::lock_guard<std::mutex> lock(impl_->callbackMutex);
+        if (impl_->onStateChange) impl_->onStateChange(state);
     });
 
     // The viewer creates "input" (see engine/test/test_peer_session.cpp); this side only
@@ -82,12 +78,8 @@ PeerSession::PeerSession(std::string id, const std::vector<std::string>& iceServ
         impl_->inputChannel = dc;
         impl_->inputChannel->onMessage([this](rtc::message_variant data) {
             if (!std::holds_alternative<std::string>(data)) return;
-            InputCallback callback;
-            {
-                std::lock_guard<std::mutex> lock(impl_->callbackMutex);
-                callback = impl_->onInput;
-            }
-            if (callback) callback(std::get<std::string>(data));
+            std::lock_guard<std::mutex> lock(impl_->callbackMutex);
+            if (impl_->onInput) impl_->onInput(std::get<std::string>(data));
         });
     });
 
@@ -204,6 +196,12 @@ void PeerSession::SetInputCallback(InputCallback onInput) {
 void PeerSession::SetOnStateChange(StateCallback onStateChange) {
     std::lock_guard<std::mutex> lock(impl_->callbackMutex);
     impl_->onStateChange = std::move(onStateChange);
+}
+
+void PeerSession::ClearCallbacks() {
+    std::lock_guard<std::mutex> lock(impl_->callbackMutex);
+    impl_->onInput = {};
+    impl_->onStateChange = {};
 }
 
 void PeerSession::Close() {

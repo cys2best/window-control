@@ -7,6 +7,8 @@
 #include <mutex>
 #include <string>
 
+class PeerRegistry;
+
 class InputRouter {
 public:
     explicit InputRouter(ScrcpySource& source,
@@ -14,6 +16,7 @@ public:
                               std::chrono::milliseconds(2000));
 
     void AttachToPeer(PeerSession& peer);
+    void ShutdownPeers(PeerRegistry& registry);
 
     // Test-only direct entry point equivalent to what a real DataChannel
     // message delivers — avoids requiring a full WebRTC negotiation in
@@ -30,6 +33,7 @@ private:
     };
 
     void HandleMessage(PeerSession* peer, const std::string& jsonMessage);
+    void ReleasePeer(PeerSession& peer);
     std::int32_t KeycodeForKey(const std::string& key) const;
 
     ScrcpySource& source_;

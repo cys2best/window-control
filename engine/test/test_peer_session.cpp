@@ -255,3 +255,37 @@ TEST(PeerSession, ConcurrentInputCallbackReplacementAndDispatchRemainSafe) {
     EXPECT_TRUE(gotSentinel);
     session.Close();
 }
+
+TEST(PeerSession, ClearCallbacksSuppressesLaterInputDispatch) {
+    rtc::PeerConnection viewerPc(ManualNegotiationConfig());
+    auto videoTrack = AddRecvOnlyH264Video(viewerPc);
+    auto inputChannel = viewerPc.createDataChannel("input");
+    std::atomic<bool> gathered{false};
+    viewerPc.onGatheringStateChange([&](rtc::PeerConnection::GatheringState state) {
+        if (state == rtc::PeerConnection::GatheringState::Complete) gathered = true;
+    });
+    viewerPc.setLocalDescription();
+    for (int i = 0; i < 200 && !gathered; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    }
+
+    PeerSession session("test-peer-clear-callbacks", {});
+    std::atomic<int> delivered{0};
+    session.SetInputCallback([&](const std::string&) { ++delivered; });
+    std::string answer = session.AnswerOffer(std::string(*viewerPc.localDescription()));
+    viewerPc.setRemoteDescription(rtc::Description(answer, "answer"));
+
+    std::atomic<bool> dcOpen{false};
+    inputChannel->onOpen([&]() { dcOpen = true; });
+    for (int i = 0; i < 200 && !dcOpen; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    }
+    ASSERT_TRUE(dcOpen);
+
+    session.ClearCallbacks();
+    inputChannel->send(std::string("after-clear"));
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    EXPECT_EQ(delivered.load(), 0);
+    session.Close();
+}

@@ -46,7 +46,7 @@ function element(id) {
   return el;
 }
 
-function createHarness() {
+function createHarness(options = {}) {
   const elements = new Map();
   for (const id of [
     'stream-container', 'stream-video', 'stream-img', 'unavailable-overlay', 'net-status',
@@ -76,8 +76,12 @@ function createHarness() {
     setInterval() { return 1; }, clearInterval() {},
     performance: { now: () => Date.now() },
     document,
+    navigator: { maxTouchPoints: 0 },
     location: { protocol: 'http:', host: 'test' },
-    localStorage: { getItem() { return null; }, setItem() {} },
+    localStorage: {
+      getItem(key) { return key === 'wc_tier' ? (options.savedTier || null) : null; },
+      setItem() {},
+    },
     screen: { orientation: { lock() { return Promise.resolve(); }, unlock() {} } },
     Event: class Event { constructor(type) { this.type = type; } },
     fetch: async (url, options = {}) => {
@@ -106,17 +110,20 @@ function createHarness() {
       return {
         async connect(selected, callbacks) {
           connectedSelections.push(selected);
+          const inputChannel = eventTarget({
+            readyState: 'open', bufferedAmount: 0, sent: [],
+            send(payload) { this.sent.push(payload); },
+            close() { this.readyState = 'closed'; },
+          });
+          const input = context.WindowControlInput.createSender(inputChannel, {
+            schedule(callback) { callback(); return null; },
+            cancel() {},
+          });
           const session = {
             selected, closed: false,
             pc: { connectionState: 'connected', getStats: async () => new Map() },
-            input: {
-              channel: { readyState: 'open' }, sent: [],
-              send(message) { this.sent.push(message); return true; },
-              dragStart(x, y) { this.sent.push({ type: 'drag_start', x, y }); },
-              dragMove(x, y) { this.sent.push({ type: 'drag_move', x, y }); },
-              dragEnd(x, y) { this.sent.push({ type: 'drag_end', x, y }); },
-              scroll(x, y, dy) { this.sent.push({ type: 'scroll', x, y, dy }); },
-            },
+            input,
+            inputMessages() { return inputChannel.sent.map(payload => JSON.parse(payload)); },
             async close() {
               this.closed = true;
               const gate = closeGates.get(selected.serial);
@@ -249,7 +256,8 @@ test('selection opens no input WebSocket or WHEP prewarm and sends keys, IDR, an
   await harness.context._pollDecodeHealth(session);
   harness.context._sendInput({ type: 'echo', t: 12 });
 
-  assert.deepEqual(session.input.sent.map(message => message.type), ['key', 'idr', 'echo']);
+  assert.equal(Object.hasOwn(session.input, 'channel'), false);
+  assert.deepEqual(session.inputMessages().map(message => message.type), ['key', 'idr', 'echo']);
   assert.equal(harness.fetchCalls.some(call => String(call.url).includes('/whep-url')), false);
   assert.equal(harness.fetchCalls.some(call => String(call.url).includes('/input')), false);
 });
@@ -267,10 +275,29 @@ test('pointer gestures use sender drag methods and normalize two-finger scroll p
   stream.dispatch('touchstart', event([touch(30, 20), touch(50, 20)], []));
   stream.dispatch('touchmove', event([touch(30, 60), touch(50, 60)], []));
 
-  assert.deepEqual(harness.sessionFor('emulator-5554').input.sent, [
+  assert.deepEqual(harness.sessionFor('emulator-5554').inputMessages(), [
     { type: 'drag_start', x: 0.05, y: 0.1 },
     { type: 'drag_move', x: 0.15, y: 0.1 },
+    { type: 'drag_move', x: 0.2, y: 0.1 },
     { type: 'drag_end', x: 0.2, y: 0.1 },
+    { type: 'scroll', x: 0.1, y: 0.3, dy: -0.2 },
+  ]);
+});
+
+test('_startApp installs two-finger touch scrolling on PointerEvent-capable touch devices', async () => {
+  const harness = createHarness();
+  harness.context.PointerEvent = function PointerEvent() {};
+  harness.context.navigator.maxTouchPoints = 5;
+  await harness.select('emulator-5554');
+  await harness.context._startApp();
+
+  const stream = harness.context.document.getElementById('stream-container');
+  const event = (touches) => ({ touches, changedTouches: [], preventDefault() {} });
+  const touch = (x, y) => ({ clientX: x, clientY: y });
+  stream.dispatch('touchstart', event([touch(30, 20), touch(50, 20)]));
+  stream.dispatch('touchmove', event([touch(30, 60), touch(50, 60)]));
+
+  assert.deepEqual(harness.sessionFor('emulator-5554').inputMessages(), [
     { type: 'scroll', x: 0.1, y: 0.3, dy: -0.2 },
   ]);
 });
@@ -284,7 +311,7 @@ test('touch, mouse, and pointer taps send drag start/end without click messages'
     const stream = harness.context.document.getElementById('stream-container');
     stream.dispatch(down, { button: 0, pointerId: 7, clientX: 40, clientY: 60, touches: [{ clientX: 40, clientY: 60 }], preventDefault() {} });
     stream.dispatch(up, { button: 0, pointerId: 7, clientX: 40, clientY: 60, touches: [], changedTouches: [{ clientX: 40, clientY: 60 }], preventDefault() {} });
-    return harness.sessionFor('emulator-5554').input.sent.map(message => message.type);
+    return harness.sessionFor('emulator-5554').inputMessages().map(message => message.type);
   };
 
   assert.deepEqual(await tap('initTouch', 'touchstart', 'touchend'), ['drag_start', 'drag_end']);
@@ -312,4 +339,35 @@ test('a starting engine retries fresh select metadata with the bounded retry sch
   await harness.select('emulator-5554');
   assert.equal(harness.selectPosts.length, 5);
   assert.equal(harness.connectedSelections.length, 1);
+});
+
+test('a saved pinned tier is applied to each ready replacement but never a stale selection', async () => {
+  const harness = createHarness({ savedTier: '1080' });
+  await harness.select('emulator-5554');
+  await harness.select('emulator-5556');
+
+  const stale = harness.selectDeferred('emulator-5558');
+  const staleConnect = harness.select('emulator-5558');
+  await harness.select('emulator-5560');
+  stale.resolve(selection('emulator-5558'));
+  await Promise.all([staleConnect, harness.flush()]);
+
+  const qualityCalls = harness.fetchCalls.filter(call => String(call.url).endsWith('/quality'));
+  assert.deepEqual(qualityCalls.map(call => ({
+    url: call.url,
+    tier: JSON.parse(call.options.body).tier,
+  })), [
+    { url: '/instances/emulator-5554/quality', tier: '1080' },
+    { url: '/instances/emulator-5556/quality', tier: '1080' },
+    { url: '/instances/emulator-5560/quality', tier: '1080' },
+  ]);
+});
+
+test('the saved 720 pin is still sent because a replacement runtime tier is unknown', async () => {
+  const harness = createHarness({ savedTier: '720' });
+  await harness.select('emulator-5554');
+
+  const qualityCall = harness.fetchCalls.find(call => String(call.url).endsWith('/quality'));
+  assert.equal(qualityCall.url, '/instances/emulator-5554/quality');
+  assert.equal(JSON.parse(qualityCall.options.body).tier, '720');
 });

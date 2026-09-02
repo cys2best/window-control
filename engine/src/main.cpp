@@ -33,6 +33,32 @@ std::string GetEnvOrEmpty(const char* name) {
     const char* value = std::getenv(name);
     return value ? std::string(value) : std::string();
 }
+
+class InputPeerShutdownGuard {
+public:
+    InputPeerShutdownGuard(PeerRegistry& registry, InputRouter& inputRouter)
+        : registry_(registry), inputRouter_(inputRouter) {}
+
+    ~InputPeerShutdownGuard() {
+        try {
+            Run();
+        } catch (...) {
+            // Destructor cleanup is best-effort; the explicit normal-path Run
+            // reports failures through main's exception handling.
+        }
+    }
+
+    void Run() {
+        if (complete_) return;
+        inputRouter_.ShutdownPeers(registry_);
+        complete_ = true;
+    }
+
+private:
+    PeerRegistry& registry_;
+    InputRouter& inputRouter_;
+    bool complete_ = false;
+};
 }
 
 int main(int argc, char** argv) {
@@ -54,6 +80,7 @@ int main(int argc, char** argv) {
         source.ConnectInitial(scrcpyPort);
 
         InputRouter inputRouter(source);
+        InputPeerShutdownGuard inputPeerShutdown(registry, inputRouter);
 
         WhepCapabilityConfig whepAuth{GetEnvOrEmpty("ENGINE_WHEP_CAPABILITY_SECRET"), instanceName};
         auto localIceServers = ParseCommaSeparatedList(GetEnvOrEmpty("ENGINE_LOCAL_ICE_SERVERS"));
@@ -101,6 +128,7 @@ int main(int argc, char** argv) {
         whepServer.Stop();
         adminServer.Stop();
         if (signaling) signaling->Disconnect();
+        inputPeerShutdown.Run();
         std::cout << "Stopped.\n";
         return 0;
     } catch (const std::exception& e) {

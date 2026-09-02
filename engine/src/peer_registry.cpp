@@ -112,6 +112,17 @@ std::vector<std::shared_ptr<PeerSession>> PeerRegistry::Snapshot() const {
     return result;
 }
 
+void PeerRegistry::CloseAll() {
+    std::vector<std::shared_ptr<PeerSession>> victims;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        victims.reserve(peers_.size());
+        for (const auto& [_, entry] : peers_) victims.push_back(entry.session);
+        peers_.clear();
+    }
+    for (const auto& victim : victims) victim->Close();
+}
+
 void PeerRegistry::ReapDeadAndStalePeers() {
     std::vector<std::shared_ptr<PeerSession>> victims;
     {

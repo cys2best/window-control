@@ -38,6 +38,20 @@ TEST(PeerRegistry, RemoveDropsPeerAndFreesCapacity) {
     EXPECT_NE(p2, nullptr);
 }
 
+TEST(PeerRegistry, CloseAllDrainsEveryOwnedPeer) {
+    PeerRegistry registry;
+    auto local = registry.Create(PeerKind::Local, "local", {});
+    auto publicPeer = registry.Create(PeerKind::Public, "public", {});
+    ASSERT_NE(local, nullptr);
+    ASSERT_NE(publicPeer, nullptr);
+
+    registry.CloseAll();
+
+    EXPECT_TRUE(registry.Snapshot().empty());
+    EXPECT_EQ(registry.LocalCount(), 0u);
+    EXPECT_FALSE(registry.HasPublicPeer());
+}
+
 TEST(PeerRegistry, ReapDeadAndStalePeersRemovesTimedOutHandshake) {
     PeerRegistry registry(/*localCapacity=*/4, /*handshakeTimeout=*/std::chrono::milliseconds(50));
     auto p1 = registry.Create(PeerKind::Local, "l1", {});

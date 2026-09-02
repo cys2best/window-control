@@ -9,22 +9,29 @@ import type { IceServer } from "../api/client";
 
 export function waitForIceGatheringComplete(pc: any, capMs = 4000): Promise<void> {
   if (pc.iceGatheringState === "complete") return Promise.resolve();
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     let done = false;
+    let timer: any = null;
+    const cleanup = () => {
+      if (timer !== null) clearTimeout(timer);
+      pc.removeEventListener("icegatheringstatechange", check);
+    };
     const finish = () => {
       if (done) return;
       done = true;
-      pc.removeEventListener("icegatheringstatechange", check);
-      pc.removeEventListener("icecandidate", onCand);
+      cleanup();
       resolve();
     };
     const check = () => { if (pc.iceGatheringState === "complete") finish(); };
-    const onCand = (e: any) => {
-      if (e.candidate && e.candidate.candidate && e.candidate.candidate.includes("typ srflx")) finish();
+    const expire = () => {
+      if (done) return;
+      done = true;
+      cleanup();
+      reject(whepError("ice-gathering-timeout", "ICE gathering timed out"));
     };
     pc.addEventListener("icegatheringstatechange", check);
-    pc.addEventListener("icecandidate", onCand);
-    setTimeout(finish, capMs);
+    timer = setTimeout(expire, Math.max(0, capMs));
+    check();
   });
 }
 
@@ -56,6 +63,7 @@ export function connectWhep(opts: ConnectWhepOpts): Promise<WhepSession> {
   const RTC = opts.RTCImpl || RN_RTC;
   const doFetch = opts.fetchImpl || fetch;
   const timeoutMs = opts.timeoutMs === undefined ? 8000 : opts.timeoutMs;
+  const deadline = Date.now() + timeoutMs;
   const pc: any = new RTC({ iceServers: opts.iceServers || [] });
 
   let closed = false;
@@ -182,7 +190,7 @@ export function connectWhep(opts: ConnectWhepOpts): Promise<WhepSession> {
       const offer = await pc.createOffer();
       if (closed) return;
       await pc.setLocalDescription(offer);
-      await waitForIceGatheringComplete(pc, 300);
+      await waitForIceGatheringComplete(pc, Math.max(0, deadline - Date.now()));
       if (closed) return;
       const response: any = await doFetch(opts.whepUrl, {
         method: "POST",
@@ -196,10 +204,11 @@ export function connectWhep(opts: ConnectWhepOpts): Promise<WhepSession> {
         throw whepError("whep-failed", `WHEP POST failed (${response ? response.status : "no response"})`);
       }
       const location = response.headers && (response.headers.get?.("Location") ?? response.headers.get?.("location"));
-      if (location) {
-        try { resourceUrl = new URL(location, opts.whepUrl).toString(); }
-        catch { resourceUrl = location; }
+      if (!location) {
+        throw whepError("missing-location", "WHEP response omitted Location");
       }
+      try { resourceUrl = new URL(location, opts.whepUrl).toString(); }
+      catch { resourceUrl = location; }
       if (closed) {
         // A superseded switch may have closed us while the POST was in
         // flight, before resourceUrl was known. Finish cleanup now instead

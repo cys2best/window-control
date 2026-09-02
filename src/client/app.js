@@ -57,7 +57,7 @@ function getStreamRect() { return _activeStreamEl().getBoundingClientRect(); }
 
 function _activeInput() {
   const input = _activeEngineSession && _activeEngineSession.input;
-  return input && input.channel && input.channel.readyState === 'open' ? input : null;
+  return input || null;
 }
 
 function _sendInput(message) {
@@ -140,6 +140,21 @@ function startAdaptiveQuality(serial) {
   _adaptiveTimer = setInterval(_sampleAndAdapt, 5000);
 }
 
+async function _applyPersistedTier(serial, generation) {
+  const tier = _preferredTier;
+  if (tier === 'auto' || generation !== _activeSelectionGeneration || _adaptiveSerial !== serial) return;
+  _tierManualUntil = Date.now() + 60000;
+  try {
+    await fetch(`/instances/${serial}/quality`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tier }),
+    });
+  } catch (_) { return; }
+  if (generation !== _activeSelectionGeneration || _adaptiveSerial !== serial || _preferredTier !== tier) return;
+  _currentTier = tier;
+  _lastTierChange = Date.now();
+  _tierSwitchUntil = Date.now() + 8000;
+}
+
 function _onInputMessage(data) {
   try {
     const message = JSON.parse(data);
@@ -198,12 +213,14 @@ async function _connectEngineSelection(windowId, serial, selection, generation) 
     _activeEngineSession = session;
     _activeWindowId = windowId;
     startAdaptiveQuality(serial);
+    const persistedTier = _applyPersistedTier(serial, generation);
     _setVideoStream(session.stream || stream);
     _idrPrev = { pli: 0, freeze: 0, dropped: 0 };
     _startInputHealth(session);
     clearUnavailable();
     setNetStatus('good', 'Connected');
     if (previous && previous !== session) await previous.close();
+    await persistedTier;
     return true;
   } catch (error) {
     if (generation !== _activeSelectionGeneration) return;
@@ -488,7 +505,9 @@ async function _sampleStats() {
 }
 
 async function _startApp() {
-  if (!initPointer()) { initTouch(); initMouse(); }
+  const touchCapable = (window.navigator && window.navigator.maxTouchPoints > 0) || 'ontouchstart' in window;
+  if (touchCapable) { initTouch(); initMouse(); }
+  else if (!initPointer()) initMouse();
   initKeyboard(); initDrawer(); startWindowsPolling();
   const settingsButton = document.getElementById('settings-btn');
   const settingsOverlay = document.getElementById('settings-overlay');

@@ -25,6 +25,9 @@ public:
     void SendInputMessage(const std::string& jsonMessage);
     void SetInputCallback(InputCallback onInput);
     void SetOnStateChange(StateCallback onStateChange);
+    // Waits for any callback already executing, then removes both callbacks.
+    // Call from an owning shutdown thread, never from inside either callback.
+    void ClearCallbacks();
     void Close();
 
     const std::string& Id() const;

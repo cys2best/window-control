@@ -34,6 +34,20 @@ RECORDED_PERFORMANCE_OVERRIDE = (
 )
 _REQUIRED_SOAK_HOURS = 8
 _REQUIRED_TIERS = ("480", "720", "1080", "1440", "480")
+_SELECTION_RESPONSE_FIELDS = {
+    "ok",
+    "id",
+    "serial",
+    "name",
+    "w",
+    "h",
+    "whep_url",
+    "whep_token",
+    "signaling_url",
+    "signaling_token",
+    "ice_servers",
+    "generation",
+}
 _SOAK_FIELDS = {
     "sampled_at_seconds",
     "process_count",
@@ -430,20 +444,20 @@ def _write_result(config: CutoverConfig, result: CutoverResult) -> None:
 
 
 def _validate_selection(selection: Any, serial: str) -> dict[str, Any]:
-    required = {
-        "request_path",
-        "name",
-        "whep_url",
-        "whep_token",
-        "signaling_url",
-        "signaling_token",
-        "generation",
-        "width",
-        "height",
-    }
+    required = _SELECTION_RESPONSE_FIELDS | {"request_path"}
     value = _require_fields(selection, required, "selection")
+    if set(value) != required:
+        raise CutoverError("selection did not preserve the exact 12-field production contract")
     if value["request_path"] != f"/instances/{serial}/select":
         raise CutoverError("selection did not use production /instances/{id}/select")
+    if value["ok"] is not True or value["serial"] != serial:
+        raise CutoverError("selection identity did not match the requested production instance")
+    for field in ("w", "h"):
+        dimension = value[field]
+        if isinstance(dimension, bool) or not isinstance(dimension, int) or dimension <= 0:
+            raise CutoverError("selection returned invalid production dimensions")
+    if not isinstance(value["ice_servers"], list):
+        raise CutoverError("selection returned invalid ICE server metadata")
     for url_field, token_field in (
         ("whep_url", "whep_token"),
         ("signaling_url", "signaling_token"),
@@ -454,6 +468,12 @@ def _validate_selection(selection: Any, serial: str) -> dict[str, Any]:
             raise CutoverError("selection omitted required endpoint capability")
         if token in url or "token=" in url.lower():
             raise CutoverError("WHEP/viewer token appeared in a selected URL")
+    return value
+
+
+def _require_exact_selection_response(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != _SELECTION_RESPONSE_FIELDS:
+        raise CutoverError("production selection did not return the exact 12-field contract")
     return value
 
 
@@ -865,11 +885,26 @@ def run_cutover_verification(config: CutoverConfig, deps: Any) -> CutoverResult:
             except Exception as error:
                 deps.record_event(f"prompt cleanup unavailable: {_safe_detail(error)}")
         if result.status in {"FAIL", "INCOMPLETE"}:
-            result.summary["retained_on_failure"] = {
-                "keep_on_failure": config.keep_on_failure,
-                "owned_app_pid": app.pid if isinstance(app, OwnedProcess) else None,
-                "app_not_force_killed": True,
-            }
+            if config.keep_on_failure:
+                result.summary["retained_on_failure"] = {
+                    "keep_on_failure": True,
+                    "owned_app_pid": app.pid if isinstance(app, OwnedProcess) else None,
+                    "app_not_force_killed": True,
+                }
+            else:
+                stopped = 0
+                cleanup_error = None
+                try:
+                    stopped = int(deps.cleanup_owned_helpers())
+                except Exception as error:
+                    cleanup_error = _safe_detail(error)
+                    deps.record_event(f"owned helper cleanup unavailable: {cleanup_error}")
+                result.summary["cleanup_on_failure"] = {
+                    "keep_on_failure": False,
+                    "exact_owned_helpers_stopped": stopped,
+                }
+                if cleanup_error is not None:
+                    result.summary["cleanup_on_failure"]["error"] = cleanup_error
         _write_result(config, result)
 
 
@@ -1104,9 +1139,10 @@ class RealCutoverDeps:
         )
         if response.status_code != 200:
             raise CutoverError(f"production selection returned HTTP {response.status_code}")
-        value = response.json()
+        response_value = _require_exact_selection_response(response.json())
+        self._last_selection = dict(response_value)
+        value = dict(response_value)
         value["request_path"] = f"/instances/{serial}/select"
-        self._last_selection = dict(value)
         self.record_event(
             f"production select serial={serial} generation={value.get('generation')}"
         )
@@ -1941,6 +1977,47 @@ class RealCutoverDeps:
             self._prompt_channel.cleanup()
         for browser in list(self._active_browsers):
             self.close_browser(browser)
+
+    @staticmethod
+    def _stop_exact_owned_process(owned: OwnedProcess) -> bool:
+        import psutil
+
+        if _pid_started_at(owned.pid) != owned.started_at:
+            return False
+        try:
+            process = psutil.Process(owned.pid)
+            process.terminate()
+            try:
+                process.wait(timeout=10)
+            except psutil.TimeoutExpired:
+                if _pid_started_at(owned.pid) != owned.started_at:
+                    return True
+                process.kill()
+                process.wait(timeout=5)
+        except psutil.NoSuchProcess:
+            return True
+        except psutil.Error as error:
+            raise CutoverError(
+                f"could not stop exact owned {owned.kind} process: {_safe_detail(error)}"
+            ) from error
+        if _pid_started_at(owned.pid) == owned.started_at:
+            raise CutoverError(f"exact owned {owned.kind} process did not exit")
+        return True
+
+    def cleanup_owned_helpers(self) -> int:
+        stopped = 0
+        seen: set[tuple[int, float]] = set()
+        owned = [*reversed(tuple(self._owned_engines.values()))]
+        if self._owned_app is not None:
+            owned.append(self._owned_app)
+        for process in owned:
+            identity = (process.pid, process.started_at)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            if self._stop_exact_owned_process(process):
+                stopped += 1
+        return stopped
 
     def record_event(self, message: str) -> None:
         safe = _safe_detail(message)

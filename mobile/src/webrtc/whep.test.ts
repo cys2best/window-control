@@ -101,6 +101,49 @@ test("applies iceServers from selection directly", async () => {
   expect(capturedConfig).toEqual({ iceServers });
 });
 
+test("does not POST a partial offer before ICE gathering is complete", async () => {
+  jest.useFakeTimers();
+  try {
+    const pc = fakePc();
+    pc.iceGatheringState = "gathering";
+    const fetchImpl = jest.fn(async () => whepResponse()) as any;
+    const promise = connectWhep({
+      whepUrl: "http://host/whep",
+      whepToken: "tok",
+      iceServers: [],
+      onStream: () => {},
+      onInputRtt: () => {},
+      onState: () => {},
+      RTCImpl: function () { return pc; } as any,
+      fetchImpl,
+      timeoutMs: 8000,
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    pc._fire("icecandidate", {
+      candidate: { candidate: "candidate:1 1 UDP 1 203.0.113.2 5000 typ srflx" },
+    });
+    jest.advanceTimersByTime(300);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(fetchImpl).not.toHaveBeenCalled();
+
+    pc.iceGatheringState = "complete";
+    pc._fire("icegatheringstatechange", {});
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "http://host/whep",
+      expect.objectContaining({ method: "POST", body: "OFFER" }),
+    );
+    fireReady(pc);
+    await promise;
+  } finally {
+    jest.useRealTimers();
+  }
+});
+
 test("resolves relative Location against whepUrl and DELETEs without bearer on close", async () => {
   const pc = fakePc();
   const fetchImpl = jest.fn(async (url: string, init: any) => {
@@ -125,6 +168,27 @@ test("resolves relative Location against whepUrl and DELETEs without bearer on c
   expect(fetchImpl).toHaveBeenCalledWith("http://host/whep/abc123", expect.objectContaining({ method: "DELETE" }));
   const deleteCall = fetchImpl.mock.calls.find((c: any) => c[1] && c[1].method === "DELETE");
   expect(deleteCall[1].headers).toBeUndefined();
+});
+
+test("rejects a successful WHEP response without Location", async () => {
+  const pc = fakePc();
+  const fetchImpl = jest.fn(async () => whepResponse({
+    headers: { get: () => null },
+  })) as any;
+  const promise = connectWhep({
+    whepUrl: "http://host/whep",
+    whepToken: "tok",
+    iceServers: [],
+    onStream: () => {},
+    onInputRtt: () => {},
+    onState: () => {},
+    RTCImpl: function () { return pc; } as any,
+    fetchImpl,
+    timeoutMs: 20,
+  });
+
+  await expect(promise).rejects.toMatchObject({ code: "missing-location" });
+  expect(pc.close).toHaveBeenCalledTimes(1);
 });
 
 test("readiness requires ICE, video track, and input channel conjunction", async () => {
