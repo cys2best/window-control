@@ -554,8 +554,8 @@ def _validate_quality(items: Any) -> None:
         ):
             raise CutoverError("quality generation decoded dimensions did not advance together")
         longest = max(item["width"], item["height"])
-        if longest > int(item["tier"]):
-            raise CutoverError("quality dimensions exceeded the requested tier ceiling")
+        if longest != int(item["tier"]):
+            raise CutoverError("quality dimensions did not equal the requested tier")
         longest_dimensions.append(longest)
     if len(resource_ids) != 1 or len(peer_ids) != 1:
         raise CutoverError("quality ladder replaced the WHEP resource or peer")
@@ -1642,7 +1642,7 @@ class RealCutoverDeps:
         handle = self._active_browsers[0]
         observations = []
         previous_generation = -1
-        for index, tier in enumerate(tiers):
+        for tier in tiers:
             response = httpx.post(
                 f"http://127.0.0.1:{self.config.app_port}/instances/{quote(serial, safe='')}/quality",
                 headers=self._auth_headers(),
@@ -1656,21 +1656,11 @@ class RealCutoverDeps:
                 health = self.engine_health(serial)
                 stats = self._decode_stats(handle)
                 longest = max(health["width"], health["height"])
-                dimensions_follow_ladder = (
-                    not observations
-                    or (index < len(tiers) - 1 and longest > max(
-                        observations[-1]["width"], observations[-1]["height"]
-                    ))
-                    or (index == len(tiers) - 1 and longest == max(
-                        observations[0]["width"], observations[0]["height"]
-                    ))
-                )
                 if (
                     health["generation"] > previous_generation
                     and stats["width"] == health["width"]
                     and stats["height"] == health["height"]
-                    and 0 < longest <= int(tier)
-                    and dimensions_follow_ladder
+                    and longest == int(tier)
                 ):
                     previous_generation = health["generation"]
                     observations.append(

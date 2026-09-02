@@ -604,6 +604,22 @@ def test_quality_ladder_stays_on_one_resource_and_advances_generation_and_dimens
     failed = run_cutover_verification(config(tmp_path), deps)
     assert failed.summary["failed_gate"] == "quality ladder"
 
+
+def test_quality_ladder_requires_each_requested_tier_dimension(tmp_path):
+    deps = FakeDeps()
+    for item, dimension in zip(deps.quality, (1, 2, 3, 4, 1)):
+        item.update(
+            width=dimension,
+            height=dimension,
+            decoded_width=dimension,
+            decoded_height=dimension,
+        )
+
+    result = run_cutover_verification(config(tmp_path), deps)
+
+    assert result.status == "FAIL"
+    assert result.summary["failed_gate"] == "quality ladder"
+
     deps = FakeDeps()
     deps.quality[3]["resource_id"] = "replacement-resource"
     failed = run_cutover_verification(config(tmp_path), deps)

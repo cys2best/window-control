@@ -106,9 +106,11 @@ also validates the machine-readable invariants:
 4. The local/public race leaves exactly one winner. Twenty rapid switches reap
    every abandoned peer within the handshake timeout.
 5. `480 -> 720 -> 1080 -> 1440 -> 480` advances generation and matching
-   engine/browser decoded dimensions, including the return to the initial 480
-   dimensions, without replacing the CDP-observed WHEP `Location` resource or
-   RTCPeerConnection identity.
+   engine/browser decoded dimensions whose long side equals each requested
+   tier exactly, including the return to 480, without replacing the
+   CDP-observed WHEP `Location` resource or RTCPeerConnection identity. The
+   acceptance devices must therefore have a native source size of at least
+   1440; a source-clamped result cannot PASS this ladder gate.
 6. Killing only the selected scrcpy server advances generation while keeping
    the engine PID, WHEP port, and peer. Killing only the PID/start-time-scoped
    owned engine produces a new PID, dynamic WHEP URL/token, fresh selection,
