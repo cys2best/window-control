@@ -96,7 +96,7 @@ async function _applyTier(tier) {
   _lastTierChange = Date.now();
   _tierSwitchUntil = Date.now() + 8000;
   try {
-    await fetch(`/instances/${_adaptiveSerial}/quality`, {
+    await window.wcFetch(`/instances/${_adaptiveSerial}/quality`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tier }),
     });
   } catch (_) {}
@@ -145,7 +145,7 @@ async function _applyPersistedTier(serial, generation) {
   if (tier === 'auto' || generation !== _activeSelectionGeneration || _adaptiveSerial !== serial) return;
   _tierManualUntil = Date.now() + 60000;
   try {
-    await fetch(`/instances/${serial}/quality`, {
+    await window.wcFetch(`/instances/${serial}/quality`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tier }),
     });
   } catch (_) { return; }
@@ -256,7 +256,7 @@ async function fetchEngineSelection(serial) {
   let response = null;
   for (const delay of delays) {
     if (delay) await _wait(delay);
-    response = await fetch(`/instances/${serial}/select`, { method: 'POST' });
+    response = await window.wcFetch(`/instances/${serial}/select`, { method: 'POST' });
     if (response.status === 401) {
       if (window.wcShowAuthGate) window.wcShowAuthGate();
       const error = new Error('Selection requires authentication');

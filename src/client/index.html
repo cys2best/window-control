@@ -11,13 +11,15 @@
 </head>
 <body>
 
-  <!-- Auth gate: shown when the server returns 401 (AUTH_TOKEN is set) -->
+  <!-- Auth gate: shown when the server returns 401 (Supabase auth is on) -->
   <div id="login-overlay" style="display:none">
     <form id="login-form">
       <div id="login-title">WindowControl</div>
-      <input id="login-token" type="password" placeholder="Access token" autocomplete="current-password" autocapitalize="off" autocorrect="off">
-      <button type="submit">Unlock</button>
-      <div id="login-error" style="display:none">Invalid token</div>
+      <input id="login-email" type="email" placeholder="Email" autocomplete="username" autocapitalize="off" autocorrect="off">
+      <input id="login-password" type="password" placeholder="Password" autocomplete="current-password">
+      <button type="submit" id="login-submit">Sign in</button>
+      <button type="button" id="login-toggle-mode">Need an account? Register</button>
+      <div id="login-error" style="display:none"></div>
     </form>
   </div>
 
