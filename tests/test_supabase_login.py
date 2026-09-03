@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gui.supabase_login import sign_in, AuthError
+from gui.supabase_login import sign_in, save_session, AuthError
 
 
 @patch("gui.supabase_login.httpx.post")
@@ -33,3 +33,11 @@ def test_sign_in_raises_auth_error_on_rejection(mock_post):
 def test_sign_in_raises_auth_error_on_network_failure(mock_post):
     with pytest.raises(AuthError):
         sign_in("https://project.supabase.co", "anon-key", "a@example.com", "pw")
+
+
+@patch("gui.supabase_login.os.makedirs", side_effect=OSError("Permission denied"))
+def test_save_session_swallows_os_error(mock_makedirs):
+    # Caching the session locally is a "don't prompt again next launch"
+    # convenience. A disk/permission failure here must never propagate and
+    # block or crash an otherwise-successful sign-in.
+    save_session({"access_token": "jwt-123"})  # must not raise

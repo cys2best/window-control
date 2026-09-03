@@ -7,6 +7,7 @@ call — see the spec's deferred "tray auto-attribution" item.
 
 import json
 import os
+import sys
 
 import httpx
 
@@ -54,9 +55,16 @@ def load_cached_session() -> dict | None:
 
 def save_session(session: dict) -> None:
     path = _session_path()
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w") as f:
-        json.dump(session, f)
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            json.dump(session, f)
+    except OSError as e:
+        # Non-fatal: caching is a "don't prompt again next launch"
+        # convenience. Sign-in itself already succeeded — don't let a
+        # disk/permission error block or scare an already-authenticated
+        # user. Note to stderr for debuggability only.
+        print(f"[supabase_login] failed to cache session: {e}", file=sys.stderr)
 
 
 class LoginDialog(QDialog):
