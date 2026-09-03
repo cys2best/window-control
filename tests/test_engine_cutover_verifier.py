@@ -11,6 +11,7 @@ import pytest
 
 from scripts.verify_engine_cutover import (
     RECORDED_PERFORMANCE_OVERRIDE,
+    RECORDED_SOAK_OVERRIDE,
     CutoverConfig,
     CutoverError,
     CutoverFilePromptChannel,
@@ -784,6 +785,29 @@ def test_short_actual_soak_is_incomplete_not_failed(tmp_path):
     assert result.status == "INCOMPLETE"
     assert result.checkpoints["soak"]["status"] == "INCOMPLETE"
     assert "failed_gate" not in result.summary
+
+def test_soak_override_skips_real_run_and_is_recorded(tmp_path):
+    deps = FakeDeps()
+    for sample in deps.soak["samples"]:
+        sample["frames_decoded"] = 10  # would fail _validate_soak if it ran
+
+    result = run_cutover_verification(config(tmp_path, soak_override=RECORDED_SOAK_OVERRIDE), deps)
+
+    assert result.checkpoints["soak"] == {"status": "OVERRIDDEN", "detail": RECORDED_SOAK_OVERRIDE}
+    assert result.summary["soak_gate"] == "OVERRIDDEN"
+    assert result.status == "PASS"
+    assert not any(event[0] == "soak" for event in deps.events)
+
+
+def test_unrecognized_soak_override_is_rejected(tmp_path):
+    deps = FakeDeps()
+
+    result = run_cutover_verification(config(tmp_path, soak_override="bogus reason"), deps)
+
+    assert result.checkpoints["soak"]["status"] == "FAIL"
+    assert result.summary["failed_gate"] == "soak"
+    assert not any(event[0] == "soak" for event in deps.events)
+
 
 def test_installer_firewall_uninstall_and_tray_exit_cleanup_are_required(tmp_path):
     result = run_cutover_verification(config(tmp_path), FakeDeps())

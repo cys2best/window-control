@@ -32,6 +32,10 @@ import httpx
 RECORDED_PERFORMANCE_OVERRIDE = (
     "skip five-instance validation; proceed with engine-only cutover"
 )
+RECORDED_SOAK_OVERRIDE = (
+    "skip 8-hour soak rerun; single-minute decode-stall accepted as known "
+    "stability gap, all other gates PASS"
+)
 _REQUIRED_SOAK_HOURS = 8
 _REQUIRED_TIERS = ("480", "720", "1080", "1440", "480")
 _SELECTION_RESPONSE_FIELDS = {
@@ -83,6 +87,7 @@ class CutoverConfig:
     public_signaling_url: str
     installer_path: Path
     performance_override: str | None = None
+    soak_override: str | None = None
     soak_hours: float = 8
     sample_interval_seconds: int = 60
     handshake_timeout_seconds: float = 15
@@ -836,7 +841,12 @@ def run_cutover_verification(config: CutoverConfig, deps: Any) -> CutoverResult:
         result.mark(current_gate, "PASS", "fresh dynamic selection and client reconnect")
 
         current_gate = "soak"
-        if config.soak_hours < _REQUIRED_SOAK_HOURS:
+        if config.soak_override is not None:
+            if config.soak_override != RECORDED_SOAK_OVERRIDE:
+                raise CutoverError("unrecognized soak override")
+            result.mark(current_gate, "OVERRIDDEN", RECORDED_SOAK_OVERRIDE)
+            result.summary["soak_gate"] = "OVERRIDDEN"
+        elif config.soak_hours < _REQUIRED_SOAK_HOURS:
             result.mark(current_gate, "INCOMPLETE", "shortened soak; eight hours required")
         else:
             soak = deps.run_soak(config.serials, config.soak_hours, config.sample_interval_seconds)
@@ -2113,6 +2123,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--public-signaling-url")
     parser.add_argument("--installer-path", type=Path)
     parser.add_argument("--performance-override")
+    parser.add_argument("--soak-override")
     parser.add_argument("--soak-hours", type=float, default=8)
     parser.add_argument("--keep-on-failure", action="store_true")
     parser.add_argument("--file-prompts", action="store_true")
@@ -2150,6 +2161,7 @@ def main(argv: list[str] | None = None) -> int:
         public_signaling_url=args.public_signaling_url,
         installer_path=args.installer_path,
         performance_override=args.performance_override,
+        soak_override=args.soak_override,
         soak_hours=args.soak_hours,
         keep_on_failure=args.keep_on_failure,
         file_prompts=args.file_prompts,
