@@ -49,6 +49,54 @@ def make_capturing_instance(*, env_overrides: dict[str, str]) \
     return instance, captured
 
 
+def test_spawn_suppresses_console_window_on_windows(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "win32")
+    captured: dict[str, object] = {}
+
+    def capturing_popen(args, **kwargs):
+        captured["kwargs"] = kwargs
+        kwargs = dict(kwargs)
+        kwargs.pop("creationflags", None)
+        return subprocess.Popen([sys.executable, FAKE_ENGINE, *args[1:]], **kwargs)
+
+    env = os.environ.copy()
+    env["FAKE_ENGINE_MODE"] = "ready"
+    instance = EngineInstance(
+        "test-instance", "engine.exe", 27183,
+        env_overrides=env,
+        popen=capturing_popen,
+        ready_timeout_seconds=1.0,
+    )
+    try:
+        instance.start()
+        assert captured["kwargs"]["creationflags"] == 0x08000000
+    finally:
+        instance.stop()
+
+
+def test_spawn_omits_creationflags_off_windows(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "darwin")
+    captured: dict[str, object] = {}
+
+    def capturing_popen(args, **kwargs):
+        captured["kwargs"] = kwargs
+        return subprocess.Popen([sys.executable, FAKE_ENGINE, *args[1:]], **kwargs)
+
+    env = os.environ.copy()
+    env["FAKE_ENGINE_MODE"] = "ready"
+    instance = EngineInstance(
+        "test-instance", "engine.exe", 27183,
+        env_overrides=env,
+        popen=capturing_popen,
+        ready_timeout_seconds=1.0,
+    )
+    try:
+        instance.start()
+        assert "creationflags" not in captured["kwargs"]
+    finally:
+        instance.stop()
+
+
 def test_spawn_excludes_auth_token_and_preserves_engine_environment(monkeypatch):
     monkeypatch.setenv("WINDOWCONTROL_PARENT_SENTINEL", "present")
     monkeypatch.setenv("AUTH_TOKEN", "raw-native-control-secret")

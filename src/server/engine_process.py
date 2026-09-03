@@ -6,10 +6,18 @@ import json
 import os
 import queue
 import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass
 from typing import Callable
+
+
+def _no_window_flags():
+    """Return CREATE_NO_WINDOW flag on Windows to suppress console flashes."""
+    if sys.platform == "win32":
+        return {"creationflags": 0x08000000}  # CREATE_NO_WINDOW
+    return {}
 
 
 def _log(msg: str):
@@ -104,6 +112,7 @@ class EngineInstance:
             stderr=subprocess.PIPE,
             text=True,
             bufsize=1,
+            **_no_window_flags(),
         )
 
         stdout_queue: queue.Queue[str | None] = queue.Queue()
