@@ -75,11 +75,9 @@
     supabaseUrl = cfg.supabase_url;
     supabaseAnonKey = cfg.supabase_anon_key;
 
-    if (!cfg.auth_enabled) {
-      window.wcAuthReady = Promise.resolve(true);
-      return;
-    }
-    window.wcAuthReady = window.wcFetch('/instances', { method: 'GET' })
+    if (!cfg.auth_enabled) return true;
+
+    return window.wcFetch('/instances', { method: 'GET' })
       .then(r => {
         if (r.status === 401) { showGate(); return false; }
         return true;
