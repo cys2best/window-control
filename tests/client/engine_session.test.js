@@ -570,6 +570,46 @@ test('session close is idempotent and closes every owned resource once', async (
   assert.equal(deps.fetch.calls.filter((call) => call.options.method === 'DELETE').length, 1);
 });
 
+test('ice disconnected that does not recover within the grace period is treated as failed', async () => {
+  const api = loadApi();
+  const deps = fakeDeps();
+  const manager = api.createManager(Object.assign(deps, { disconnectedGraceMs: 10 }));
+  const callbacksUsed = callbacks();
+  const connecting = manager.connect(localSelection(), callbacksUsed);
+  await deps.flush();
+  deps.local.resolvePost('/resource');
+  await deps.flush();
+  deps.local.becomeReady();
+  await connecting;
+  deps.local.pc.iceConnectionState = 'disconnected';
+  deps.local.pc.dispatch('iceconnectionstatechange');
+  await new Promise((resolve) => setTimeout(resolve, 30));
+
+  assert.ok(callbacksUsed.states.includes('failed'));
+});
+
+test('ice disconnected that recovers within the grace period is not treated as failed', async () => {
+  const api = loadApi();
+  const deps = fakeDeps();
+  const manager = api.createManager(Object.assign(deps, { disconnectedGraceMs: 200 }));
+  const callbacksUsed = callbacks();
+  const connecting = manager.connect(localSelection(), callbacksUsed);
+  await deps.flush();
+  deps.local.resolvePost('/resource');
+  await deps.flush();
+  deps.local.becomeReady();
+  await connecting;
+  deps.local.pc.iceConnectionState = 'disconnected';
+  deps.local.pc.dispatch('iceconnectionstatechange');
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  deps.local.pc.iceConnectionState = 'connected';
+  deps.local.pc.dispatch('iceconnectionstatechange');
+  await new Promise((resolve) => setTimeout(resolve, 250));
+
+  assert.ok(!callbacksUsed.states.includes('failed'));
+  assert.equal(deps.local.pc.closed, false);
+});
+
 test('input-channel failure after adoption notifies failure and closes the session', async () => {
   const api = loadApi();
   const deps = fakeDeps();

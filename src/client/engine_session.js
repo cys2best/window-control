@@ -25,6 +25,7 @@
     const WebSocketImpl = deps.WebSocketImpl || global.WebSocket;
     const inputApi = deps.inputApi || global.WindowControlInput;
     const timeoutMs = deps.timeoutMs === undefined ? 8000 : deps.timeoutMs;
+    const disconnectedGraceMs = deps.disconnectedGraceMs === undefined ? 6000 : deps.disconnectedGraceMs;
     let active = null;
     let pending = null;
     let managerClosed = false;
@@ -46,6 +47,7 @@
       let readyResolve;
       let readyReject;
       let timeout = null;
+      let disconnectedTimer = null;
       const ready = new Promise(function (resolve, reject) { readyResolve = resolve; readyReject = reject; });
 
       attempt = {
@@ -78,6 +80,7 @@
         if (closed) return deleteResource();
         closed = true;
         if (timeout !== null) global.clearTimeout(timeout);
+        if (disconnectedTimer !== null) global.clearTimeout(disconnectedTimer);
         if (input && typeof input.close === 'function') input.close();
         if (channel && typeof channel.close === 'function') channel.close();
         if (ws && typeof ws.close === 'function') ws.close();
@@ -120,10 +123,31 @@
         if (closed) return;
         const state = pc.iceConnectionState;
         if (state === 'connected' || state === 'completed') {
+          if (disconnectedTimer !== null) {
+            global.clearTimeout(disconnectedTimer);
+            disconnectedTimer = null;
+          }
           iceReady = true;
           checkReady();
         } else if (state === 'failed' || state === 'closed') {
+          if (disconnectedTimer !== null) {
+            global.clearTimeout(disconnectedTimer);
+            disconnectedTimer = null;
+          }
           fail(sessionError('ice-failed', `ICE connection ${state}`));
+        } else if (state === 'disconnected') {
+          // Spec/implementation-dependent: a dead remote peer often sits in
+          // 'disconnected' rather than transitioning to 'failed' on its own
+          // (e.g. the engine process was killed, so nothing ever signals
+          // ICE failure). Give it a grace period to self-heal (a brief
+          // network blip) before treating it the same as 'failed'.
+          if (disconnectedTimer === null) {
+            disconnectedTimer = global.setTimeout(function () {
+              disconnectedTimer = null;
+              if (closed || pc.iceConnectionState !== 'disconnected') return;
+              fail(sessionError('ice-failed', 'ICE connection disconnected'));
+            }, disconnectedGraceMs);
+          }
         }
       });
 
