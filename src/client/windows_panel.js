@@ -15,25 +15,6 @@ function showScreen(id) {
   document.getElementById(id).classList.add('active');
 }
 
-// Mirrors mobile's landscape-lock-on-enter behavior: browsers require a
-// user gesture to grant fullscreen, and every caller here (card click,
-// drawer row click, prev/next) is already gesture-triggered. Safari <16.4
-// has no Fullscreen API for arbitrary elements -- that's fine, #screen-stream
-// is `position: fixed; inset: 0` regardless, so the stream still fills the
-// viewport without it.
-function enterFullscreen(el) {
-  const req = el.requestFullscreen || el.webkitRequestFullscreen;
-  if (!req) return;
-  const p = req.call(el);
-  // Orientation lock requires an active fullscreen context on the browsers
-  // that support it at all (Android Chrome) -- iOS Safari has no Screen
-  // Orientation lock, forced-landscape there falls to the CSS rule in
-  // style.css instead, which only fires while physically portrait.
-  (p && p.then ? p : Promise.resolve())
-    .then(() => screen.orientation && screen.orientation.lock('landscape'))
-    .catch(() => {});
-}
-
 function exitFullscreen() {
   if (screen.orientation && screen.orientation.unlock) {
     try { screen.orientation.unlock(); } catch (_) {}
@@ -105,7 +86,6 @@ async function selectWindow(id, serial) {
   _requestedId = id;
   const w = _windows.find(w => w.id === id);
   showScreen('screen-stream');
-  enterFullscreen(document.getElementById('screen-stream'));
   try {
     const adopted = await selectEngineInstance(id, _serial);
     if (adopted) {
