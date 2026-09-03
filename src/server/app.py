@@ -188,8 +188,37 @@ def create_app(instance_manager: InstanceManager) -> FastAPI:
         raise RuntimeError("PUBLIC_UI_URL requires SUPABASE_URL to be set")
     if PUBLIC_UI_URL and not TUNNEL_SECRET:
         raise RuntimeError("PUBLIC_UI_URL requires TUNNEL_SECRET to be set")
+    if os.environ.get("AUTH_TOKEN") and not auth.auth_enabled():
+        log.warning(
+            "AUTH_TOKEN is set but SUPABASE_URL is not — AUTH_TOKEN no longer "
+            "does anything (it was replaced by Supabase auth); this deployment "
+            "is now UNAUTHENTICATED. Set SUPABASE_URL (and SUPABASE_JWT_SECRET) "
+            "to re-enable auth, or unset AUTH_TOKEN to acknowledge LAN-only mode."
+        )
     app = FastAPI()
     supabase = SupabaseClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY) if auth.auth_enabled() else None
+
+    async def _supabase_call(func, *args):
+        """Run a blocking SupabaseClient call off the loop, turning an
+        unreachable Supabase into a uniform fail-closed 401 (was duplicated
+        inline at each call site)."""
+        try:
+            return await asyncio.to_thread(func, *args)
+        except SupabaseUnavailable:
+            raise HTTPException(status_code=401, detail="Supabase unreachable")
+
+    async def _authorize_instance_access(request: Request, instance_id: str) -> None:
+        """Raise 403 unless this request's user has linked instance_id via
+        device_links. No-op when auth is disabled — matches every other
+        route's LAN-only escape hatch. Callers must run this AFTER any
+        existing "instance not found" 404 check, so an unknown instance
+        still 404s before an authz check runs."""
+        if not auth.auth_enabled():
+            return
+        user = request.state.user
+        linked = await _supabase_call(supabase.list_linked_instance_ids, user.user_id)
+        if instance_id not in linked:
+            raise HTTPException(status_code=403, detail="Instance not linked to this account")
 
     @app.middleware("http")
     async def _auth_gate(request: Request, call_next):
@@ -276,12 +305,7 @@ def create_app(instance_manager: InstanceManager) -> FastAPI:
         if not auth.auth_enabled():
             return instances
         user = request.state.user
-        try:
-            linked = await asyncio.to_thread(
-                supabase.list_linked_instance_ids, user.user_id
-            )
-        except SupabaseUnavailable:
-            raise HTTPException(status_code=401, detail="Supabase unreachable")
+        linked = await _supabase_call(supabase.list_linked_instance_ids, user.user_id)
         linked_ids = set(linked)
         return [i for i in instances if i["id"] in linked_ids]
 
@@ -290,12 +314,7 @@ def create_app(instance_manager: InstanceManager) -> FastAPI:
         if instance_manager.get(instance_id) is None:
             raise HTTPException(status_code=404, detail="Instance not found")
         user = request.state.user
-        try:
-            linked = await asyncio.to_thread(
-                supabase.link_instance, user.user_id, instance_id
-            )
-        except SupabaseUnavailable:
-            raise HTTPException(status_code=401, detail="Supabase unreachable")
+        linked = await _supabase_call(supabase.link_instance, user.user_id, instance_id)
         if not linked:
             raise HTTPException(status_code=409, detail="Instance already linked")
         return {"ok": True}
@@ -303,10 +322,7 @@ def create_app(instance_manager: InstanceManager) -> FastAPI:
     @app.delete("/instances/{instance_id}/link")
     async def unlink_instance(instance_id: str, request: Request):
         user = request.state.user
-        try:
-            await asyncio.to_thread(supabase.unlink_instance, user.user_id, instance_id)
-        except SupabaseUnavailable:
-            raise HTTPException(status_code=401, detail="Supabase unreachable")
+        await _supabase_call(supabase.unlink_instance, user.user_id, instance_id)
         return {"ok": True}
 
     @app.post("/instances/{instance_id}/select")
@@ -314,6 +330,7 @@ def create_app(instance_manager: InstanceManager) -> FastAPI:
         inst = instance_manager.get(instance_id)
         if inst is None:
             raise HTTPException(status_code=404, detail="Instance not found")
+        await _authorize_instance_access(request, instance_id)
         host = get_best_ip() or (request.client.host if request.client else "127.0.0.1")
         user = request.state.user
         selection = await asyncio.to_thread(
@@ -339,7 +356,7 @@ def create_app(instance_manager: InstanceManager) -> FastAPI:
         }
 
     @app.post("/instances/{instance_id}/keyframe")
-    async def request_keyframe(instance_id: str):
+    async def request_keyframe(instance_id: str, request: Request):
         """Ask an instance's encoder to emit an IDR now (switch prefetch).
 
         The list page fires this on touchstart/hover of a tile — before the user
@@ -350,14 +367,20 @@ def create_app(instance_manager: InstanceManager) -> FastAPI:
         control socket is a silent no-op (the 2s heartbeat and select()'s own
         request_idr still cover it).
         """
+        await _authorize_instance_access(request, instance_id)
         await asyncio.to_thread(instance_manager.request_keyframe, instance_id)
         return {"ok": True}
 
     @app.post("/instances/{instance_id}/quality")
-    async def set_instance_quality(instance_id: str, req: QualityTierRequest):
+    async def set_instance_quality(
+        instance_id: str, req: QualityTierRequest, request: Request
+    ):
         """Set stream quality tier for an instance."""
         if req.tier not in TIER_ORDER:
             raise HTTPException(status_code=400, detail="Invalid tier")
+        if instance_manager.get(instance_id) is None:
+            raise HTTPException(status_code=404, detail="Instance not found")
+        await _authorize_instance_access(request, instance_id)
         # set_tier does ~1.8s of blocking scrcpy restart — offload off the loop.
         ok = await asyncio.to_thread(instance_manager.set_tier, instance_id, req.tier)
         if not ok:
@@ -365,19 +388,30 @@ def create_app(instance_manager: InstanceManager) -> FastAPI:
         return {"ok": True, "tier": req.tier}
 
     @app.get("/instances/{instance_id}/preview")
-    async def instance_preview(instance_id: str):
+    async def instance_preview(instance_id: str, request: Request):
+        await _authorize_instance_access(request, instance_id)
         return await _capture_preview(instance_id)
 
     # ── Legacy /windows + /select (kept for backward compat) ────────────────
 
     @app.get("/windows")
-    async def get_windows():
-        return instance_manager.list_instances()
+    async def get_windows(request: Request):
+        instances = instance_manager.list_instances()
+        if not auth.auth_enabled():
+            return instances
+        user = request.state.user
+        linked = await _supabase_call(supabase.list_linked_instance_ids, user.user_id)
+        linked_ids = set(linked)
+        return [i for i in instances if i["id"] in linked_ids]
 
     @app.post("/select")
     async def select_window(req: SelectRequest, request: Request):
         if not req.id.startswith("adb:"):
             raise HTTPException(status_code=400, detail="Invalid id — must be adb:SERIAL")
+        # device_links stores the raw "adb:SERIAL"-shaped id (same "id" field
+        # /instances and /instances/{id}/link use) -- authorize on req.id
+        # unmodified, not the stripped serial used for the actual selection.
+        await _authorize_instance_access(request, req.id)
         serial = req.id[4:]
         host = get_best_ip() or (request.client.host if request.client else "127.0.0.1")
         # Selection and refresh do blocking network/subprocess work — offload.
@@ -402,7 +436,8 @@ def create_app(instance_manager: InstanceManager) -> FastAPI:
     # ── Preview (legacy URL) ─────────────────────────────────────────────────
 
     @app.get("/window/{window_id}/preview")
-    async def preview(window_id: str):
+    async def preview(window_id: str, request: Request):
+        await _authorize_instance_access(request, window_id)
         return await _capture_preview(window_id)
 
     if os.path.isdir(CLIENT_DIR):

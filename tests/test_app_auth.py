@@ -165,6 +165,95 @@ def test_supabase_unavailable_on_instances_fails_closed_401():
     assert r.status_code == 401
 
 
+def test_select_instance_403s_when_not_linked():
+    client, im, supabase = _make_authed_client()
+    im.get.return_value = MagicMock(id="adb:a", serial="a", name="i0")
+    supabase.list_linked_instance_ids.return_value = ["adb:other"]
+
+    r = client.post("/instances/adb:a/select", headers={"Authorization": f"Bearer {_jwt()}"})
+
+    assert r.status_code == 403
+    im.select.assert_not_called()
+
+
+def test_set_instance_quality_403s_when_not_linked():
+    client, im, supabase = _make_authed_client()
+    im.get.return_value = MagicMock(id="adb:a")
+    supabase.list_linked_instance_ids.return_value = ["adb:other"]
+
+    r = client.post(
+        "/instances/adb:a/quality",
+        json={"tier": "720"},
+        headers={"Authorization": f"Bearer {_jwt()}"},
+    )
+
+    assert r.status_code == 403
+    im.set_tier.assert_not_called()
+
+
+def test_request_keyframe_403s_when_not_linked():
+    client, im, supabase = _make_authed_client()
+    supabase.list_linked_instance_ids.return_value = ["adb:other"]
+
+    r = client.post("/instances/adb:a/keyframe", headers={"Authorization": f"Bearer {_jwt()}"})
+
+    assert r.status_code == 403
+    im.request_keyframe.assert_not_called()
+
+
+def test_instance_preview_403s_when_not_linked():
+    client, im, supabase = _make_authed_client()
+    supabase.list_linked_instance_ids.return_value = ["adb:other"]
+
+    r = client.get("/instances/adb:a/preview", headers={"Authorization": f"Bearer {_jwt()}"})
+
+    assert r.status_code == 403
+
+
+def test_scoped_routes_allow_access_when_instance_is_linked():
+    client, im, supabase = _make_authed_client()
+    im.get.return_value = MagicMock(id="adb:a", serial="a", name="i0")
+    im.select.return_value = None  # short-circuit to 503 after passing authz
+    supabase.list_linked_instance_ids.return_value = ["adb:a"]
+
+    r = client.post("/instances/adb:a/select", headers={"Authorization": f"Bearer {_jwt()}"})
+
+    # 503 (engine not ready), not 403/401 -- proves authz passed and the
+    # route reached its normal not-ready path.
+    assert r.status_code == 503
+
+
+def test_legacy_select_403s_when_not_linked_using_raw_id():
+    client, im, supabase = _make_authed_client()
+    supabase.list_linked_instance_ids.return_value = ["adb:other"]
+
+    r = client.post(
+        "/select", json={"id": "adb:a"}, headers={"Authorization": f"Bearer {_jwt()}"}
+    )
+
+    assert r.status_code == 403
+    im.select.assert_not_called()
+    # Authorized against the raw "adb:a" id, not the stripped "a" serial.
+    supabase.list_linked_instance_ids.assert_called_once_with("user-1")
+
+
+def test_scoped_route_unaffected_by_ownership_when_auth_disabled():
+    from unittest.mock import MagicMock as _MM
+    im = _MM()
+    im.list_instances.return_value = []
+    im.get.return_value = None
+    from server.app import create_app
+    with patch("server.app.get_best_ip", return_value="127.0.0.1"):
+        app = create_app(im)
+    client = TestClient(app)
+
+    # No auth configured: an unknown/unlinked instance still gets the
+    # normal 404 (from the route's own existence check), never a 403 --
+    # proves the LAN-only escape hatch in _authorize_instance_access.
+    r = client.post("/instances/adb:a/select")
+    assert r.status_code == 404
+
+
 def test_public_ui_url_without_supabase_url_refuses_to_start():
     os.environ["PUBLIC_UI_URL"] = "wss://tunnel.example.com/__tunnel/register"
     os.environ.pop("SUPABASE_URL", None)

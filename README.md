@@ -39,6 +39,29 @@ Grab the latest `WindowControlInstaller.exe` from the [Releases](../../releases)
 
 Works on the same Wi-Fi network. Use the LAN IP shown in the launcher.
 
+## Multi-user authentication (optional)
+
+By default (no `SUPABASE_URL` set) auth is fully disabled — LAN-only mode,
+open to anyone who can reach the app. To require sign-in and scope each
+user to only the instances they've linked, create a
+[Supabase](https://supabase.com) project and set:
+
+- `SUPABASE_URL` — the project URL; unset means auth disabled
+- `SUPABASE_ANON_KEY` — public, safe to ship to browser/mobile/tray
+  clients; used only to talk to Supabase's Auth REST API directly for
+  login/register
+- `SUPABASE_JWT_SECRET` — server-only, Supabase's legacy JWT secret;
+  verifies the HS256 signature on every access token locally, no network
+  round trip
+- `SUPABASE_SERVICE_ROLE_KEY` — server-only, full-access Postgres REST
+  credential used solely for the `device_links` table, after FastAPI has
+  already authenticated the caller and is enforcing ownership itself
+
+Before setting these in production, apply
+[infra/supabase/device_links.sql](infra/supabase/device_links.sql) once
+against the project's Supabase Postgres — via the Supabase SQL editor, or
+`supabase db push`. It is not run by any automated migration.
+
 ## Troubleshooting
 
 Stream won't play, or the engine won't start? See
