@@ -19,6 +19,27 @@ Plan/task identifiers belong here and in workflow state, not in commit subjects.
 
 ---
 
+### 2026-09-04 01:55 — claude
+- Finished: fixed a visible-console-window bug found while rerunning
+  task-11's matrix on the Host PC after the installer fixes (screenshot
+  showed multiple stacked terminal windows, one per spawned engine
+  instance). Root cause: `src/server/engine_process.py`'s
+  `EngineInstance.start()` never set `CREATE_NO_WINDOW` on its
+  `subprocess.Popen` call for `engine.exe` (a console-subsystem binary),
+  unlike `adb_manager.py`/`scrcpy_server.py`'s existing
+  `no_window_flags()` pattern which this file predates and missed.
+  Added the same pattern locally (commit 21870a9). TDD: 2 new tests
+  (win32 → creationflags present; darwin → absent), 15/15
+  `test_engine_process.py` pass. Full suite: 398 passed, same 2
+  pre-existing unrelated `test_windows_verifier.py` failures and 2
+  documented collection errors.
+- Next: rebuild (`build\build_installer.bat`) and rerun task-11's
+  matrix on the Host PC — this should stop the console-window spam
+  during multi-instance gates (rapid switches, soak if unoverridden,
+  quality ladder). Not yet confirmed on real Windows.
+- Blockers: none identified; fixed by code inspection from a screenshot,
+  not yet confirmed by a rerun.
+
 ### 2026-09-04 01:10 — claude
 - Ruling: continued 64-bit installer fix (93c3282) did NOT resolve
   task-11's installer gate — root-caused with real Windows evidence
