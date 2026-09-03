@@ -19,6 +19,39 @@ Plan/task identifiers belong here and in workflow state, not in commit subjects.
 
 ---
 
+### 2026-09-04 01:10 — claude
+- Ruling: continued 64-bit installer fix (93c3282) did NOT resolve
+  task-11's installer gate — root-caused with real Windows evidence
+  (not guessed): PyInstaller 6.21.0's onedir mode moves everything
+  except the top-level .exe into `_internal\`, so
+  `C:\Program Files\WindowControl\assets\engine\engine.exe` never
+  existed; the real file is at
+  `C:\Program Files\WindowControl\_internal\assets\engine\engine.exe`
+  (confirmed via `dir` on the Host PC). `src/config.py`/`main.py`
+  already handle this correctly for the running app via
+  `sys._MEIPASS`, but two other places assumed the old flat layout.
+- Finished: fixed both (commit b5cb61d). (1)
+  `scripts/verify_engine_cutover.py`'s `verify_installer()` engine
+  path. (2) More importantly, `build/installer.iss`'s
+  `AddEngineFirewallRule()` — the Windows Firewall allow-rule for the
+  engine was pointing at a nonexistent path, so it never matched the
+  real `engine.exe` process. This was a real production bug (silently
+  broken firewall allow-rule), not just a verifier/test-tooling bug —
+  worth calling out since it predates this session's task-11 work and
+  would have shipped as-is. 71/71 focused tests pass
+  (`test_engine_cutover_verifier.py` + `test_build_files.py`); full
+  suite 396 passed, same 2 pre-existing unrelated `test_windows_verifier.py`
+  failures (env-var pollution from this shell) and the same 2
+  documented pre-existing collection errors.
+- Next: rerun `build\build_installer.bat` then the installer gate on
+  the Host PC. If it fails again, check
+  `C:\Program Files\WindowControl\_internal\assets\engine\engine.exe`
+  directly and the `netsh advfirewall firewall show rule name="WindowControl-Engine"`
+  output before assuming another guess.
+- Blockers: none identified; unverified on real Windows since fixed by
+  code inspection + the Host PC evidence gathered this round, not by
+  an actual rerun yet.
+
 ### 2026-09-04 00:20 — claude
 - Finished: two more local-build fixes hit while rerunning
   2026-09-01-engine-client-cutover/task-11's installer gate on the
