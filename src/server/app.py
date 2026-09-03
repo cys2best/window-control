@@ -10,22 +10,24 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from starlette.routing import Match
 
-from config import CLIENT_DIR, COOKIE_SECURE, STUN_PORT, TIER_ORDER
+from config import CLIENT_DIR, STUN_PORT, TIER_ORDER
 from server import adb_manager
 from server import auth
 from server.ice_config import get_ice_servers
 from server.instance_manager import InstanceManager
 from server.http_tunnel import run_tunnel_with_reconnect
+from server.supabase_client import SupabaseClient, SupabaseUnavailable
 from server.tailscale import get_best_ip
 
 log = logging.getLogger(__name__)
 
 _tunnel_task: "asyncio.Task | None" = None
 
-# Routes reachable without a session cookie even when AUTH_TOKEN is set —
-# just enough to load the login gate and let it authenticate.
-_AUTH_EXEMPT_PATHS = {"/", "/login"}
+# Routes reachable without a JWT even when Supabase auth is enabled —
+# just enough to load the login/register UI and its Supabase config.
+_AUTH_EXEMPT_PATHS = {"/", "/auth/config"}
 
 
 def _log(msg: str):
@@ -45,10 +47,6 @@ class SelectRequest(BaseModel):
 
 class QualityTierRequest(BaseModel):
     tier: str
-
-
-class LoginRequest(BaseModel):
-    token: str
 
 
 def _make_exception_handler(default_handler):
@@ -148,10 +146,9 @@ async def _capture_preview(serial: str) -> Response:
     return Response(content=data, media_type="image/jpeg")
 
 
-def request_is_authenticated(request: Request) -> bool:
-    return (
-        auth.verify_session_cookie(request.cookies.get(auth.COOKIE_NAME))
-        or auth.check_token(auth.bearer_token(request.headers.get("authorization")))
+def current_user(request: Request) -> auth.UserClaims | None:
+    return auth.verify_supabase_jwt(
+        auth.bearer_token(request.headers.get("authorization"))
     )
 
 
@@ -183,34 +180,38 @@ def _selection_ice_servers(host: str) -> list[dict]:
 
 def create_app(instance_manager: InstanceManager) -> FastAPI:
     import asyncio
-    from config import PUBLIC_UI_URL, TUNNEL_SECRET
+    from config import (
+        PUBLIC_UI_URL, TUNNEL_SECRET, SUPABASE_URL, SUPABASE_ANON_KEY,
+        SUPABASE_SERVICE_ROLE_KEY,
+    )
     if PUBLIC_UI_URL and not auth.auth_enabled():
-        raise RuntimeError("PUBLIC_UI_URL requires AUTH_TOKEN to be set")
+        raise RuntimeError("PUBLIC_UI_URL requires SUPABASE_URL to be set")
     if PUBLIC_UI_URL and not TUNNEL_SECRET:
         raise RuntimeError("PUBLIC_UI_URL requires TUNNEL_SECRET to be set")
     app = FastAPI()
+    supabase = SupabaseClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY) if auth.auth_enabled() else None
 
     @app.middleware("http")
     async def _auth_gate(request: Request, call_next):
-        if auth.auth_enabled() and request.url.path not in _AUTH_EXEMPT_PATHS \
-                and not request.url.path.startswith("/static/"):
-            if not request_is_authenticated(request):
+        request.state.user = None
+        path = request.url.path
+        # This middleware runs before Starlette's router does path matching,
+        # so a naive "not exempt -> require auth" check would 401 requests
+        # to *nonexistent* routes too (e.g. the removed POST /login) instead
+        # of letting them fall through to the router's normal 404. Only gate
+        # paths that actually resolve to a registered route.
+        if auth.auth_enabled() and path not in _AUTH_EXEMPT_PATHS \
+                and not path.startswith("/static/") \
+                and any(route.matches(request.scope)[0] != Match.NONE
+                         for route in app.router.routes):
+            user = current_user(request)
+            if user is None:
                 return JSONResponse(
                     {"detail": "Not authenticated"}, status_code=401,
                     headers={"WWW-Authenticate": "Bearer"},
                 )
+            request.state.user = user
         return await call_next(request)
-
-    @app.post("/login")
-    async def login(req: LoginRequest, response: Response):
-        if not auth.check_token(req.token):
-            raise HTTPException(status_code=401, detail="Invalid token")
-        response.set_cookie(
-            auth.COOKIE_NAME, auth.make_session_cookie(),
-            max_age=auth.SESSION_MAX_AGE_SECONDS, httponly=True, samesite="lax",
-            secure=COOKIE_SECURE,
-        )
-        return {"ok": True}
 
     @app.on_event("startup")
     async def _startup():
@@ -259,11 +260,54 @@ def create_app(instance_manager: InstanceManager) -> FastAPI:
             )
         return HTMLResponse("<h1>Client not found</h1>", status_code=500)
 
+    @app.get("/auth/config")
+    async def auth_config():
+        return {
+            "auth_enabled": auth.auth_enabled(),
+            "supabase_url": SUPABASE_URL or "",
+            "supabase_anon_key": SUPABASE_ANON_KEY,
+        }
+
     # ── Instance management ──────────────────────────────────────────────────
 
     @app.get("/instances")
-    async def get_instances():
-        return instance_manager.list_instances()
+    async def get_instances(request: Request):
+        instances = instance_manager.list_instances()
+        if not auth.auth_enabled():
+            return instances
+        user = request.state.user
+        try:
+            linked = await asyncio.to_thread(
+                supabase.list_linked_instance_ids, user.user_id
+            )
+        except SupabaseUnavailable:
+            raise HTTPException(status_code=401, detail="Supabase unreachable")
+        linked_ids = set(linked)
+        return [i for i in instances if i["id"] in linked_ids]
+
+    @app.post("/instances/{instance_id}/link")
+    async def link_instance(instance_id: str, request: Request):
+        if instance_manager.get(instance_id) is None:
+            raise HTTPException(status_code=404, detail="Instance not found")
+        user = request.state.user
+        try:
+            linked = await asyncio.to_thread(
+                supabase.link_instance, user.user_id, instance_id
+            )
+        except SupabaseUnavailable:
+            raise HTTPException(status_code=401, detail="Supabase unreachable")
+        if not linked:
+            raise HTTPException(status_code=409, detail="Instance already linked")
+        return {"ok": True}
+
+    @app.delete("/instances/{instance_id}/link")
+    async def unlink_instance(instance_id: str, request: Request):
+        user = request.state.user
+        try:
+            await asyncio.to_thread(supabase.unlink_instance, user.user_id, instance_id)
+        except SupabaseUnavailable:
+            raise HTTPException(status_code=401, detail="Supabase unreachable")
+        return {"ok": True}
 
     @app.post("/instances/{instance_id}/select")
     async def select_instance(instance_id: str, request: Request):
@@ -271,8 +315,10 @@ def create_app(instance_manager: InstanceManager) -> FastAPI:
         if inst is None:
             raise HTTPException(status_code=404, detail="Instance not found")
         host = get_best_ip() or (request.client.host if request.client else "127.0.0.1")
+        user = request.state.user
         selection = await asyncio.to_thread(
-            instance_manager.select, instance_id, host
+            instance_manager.select, instance_id, host,
+            user.user_id if user else None,
         )
         if selection is None:
             raise HTTPException(status_code=503, detail="Engine runtime not ready")
