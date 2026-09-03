@@ -1955,7 +1955,9 @@ class RealCutoverDeps:
         self._run([str(installer_path), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"], "installer install", timeout=300)
         install_root = Path(os.environ.get("PROGRAMFILES", r"C:\Program Files")) / "WindowControl"
         executable = install_root / "WindowControl.exe"
-        engine = install_root / "assets" / "engine" / "engine.exe"
+        # PyInstaller 6+ onedir builds place everything except the top-level
+        # .exe under _internal\ (see src/config.py's sys._MEIPASS handling).
+        engine = install_root / "_internal" / "assets" / "engine" / "engine.exe"
         installed = executable.is_file() and engine.is_file()
         if not installed:
             raise CutoverError("installer did not stage the executable and bundled engine")

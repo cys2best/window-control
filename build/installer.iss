@@ -66,9 +66,11 @@ var
   ResultCode: Integer;
 begin
   RemoveEngineFirewallRule();
+  // PyInstaller 6+ onedir builds place everything except the top-level
+  // .exe under _internal\ (see src/config.py's sys._MEIPASS handling).
   Exec(ExpandConstant('{sys}\netsh.exe'),
     'advfirewall firewall add rule name="WindowControl-Engine" dir=in action=allow ' +
-    'program="' + ExpandConstant('{app}\assets\engine\engine.exe') + '" enable=yes',
+    'program="' + ExpandConstant('{app}\_internal\assets\engine\engine.exe') + '" enable=yes',
     '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;
 
