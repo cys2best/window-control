@@ -45,6 +45,8 @@ def _b64url_decode(segment: str) -> bytes:
 def verify_supabase_jwt(token: str | None) -> UserClaims | None:
     if not auth_enabled() or not token:
         return None
+    if not config.SUPABASE_JWT_SECRET:
+        return None
 
     parts = token.split(".")
     if len(parts) != 3:
@@ -63,6 +65,8 @@ def verify_supabase_jwt(token: str | None) -> UserClaims | None:
     try:
         payload = json.loads(_b64url_decode(payload_b64))
     except (ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
         return None
 
     sub = payload.get("sub")

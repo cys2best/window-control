@@ -128,3 +128,22 @@ def test_verify_supabase_jwt_claims_email_optional():
     claims = auth.verify_supabase_jwt(token)
     assert claims.user_id == "user-123"
     assert claims.email is None
+
+
+def test_verify_supabase_jwt_rejects_when_secret_is_empty():
+    _reload("https://project.supabase.co", secret="")
+    token = _make_jwt(
+        {"sub": "user-123", "exp": int(time.time()) + 3600}, secret=""
+    )
+    assert auth.verify_supabase_jwt(token) is None
+
+
+def test_verify_supabase_jwt_rejects_non_dict_json_payload():
+    _reload("https://project.supabase.co")
+    # Manually construct a JWT with a non-dict payload (array)
+    header_b64 = _b64url(json.dumps({"alg": "HS256", "typ": "JWT"}).encode())
+    payload_b64 = _b64url(json.dumps([1, 2, 3]).encode())  # Array, not object
+    signing_input = f"{header_b64}.{payload_b64}".encode()
+    sig = _b64url(hmac.new(SECRET.encode(), signing_input, hashlib.sha256).digest())
+    token = f"{header_b64}.{payload_b64}.{sig}"
+    assert auth.verify_supabase_jwt(token) is None
