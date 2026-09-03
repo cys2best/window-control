@@ -36,7 +36,7 @@ test("rejects a malformed URL with an inline error", async () => {
   expect(nav.replace).not.toHaveBeenCalled();
 });
 
-test("probes through the authenticated client, not raw fetch", async () => {
+test("probes reachability with an unauthenticated request, not the API client", async () => {
   global.fetch = jest.fn(async () => ({ ok: false, status: 500, json: async () => ({}) })) as any;
   const nav = { replace: jest.fn() } as any;
   const { getByPlaceholderText, getByText } = await render(
@@ -45,18 +45,16 @@ test("probes through the authenticated client, not raw fetch", async () => {
     fireEvent.changeText(getByPlaceholderText(/http:\/\//), "http://host:8080");
   });
   await act(async () => {
-    fireEvent.changeText(getByPlaceholderText("Access token"), "s3cret");
-  });
-  await act(async () => {
     fireEvent.press(getByText("Start streaming"));
   });
   await waitFor(() => expect((fetch as jest.Mock).mock.calls.length).toBeGreaterThan(0));
-  const [, init] = (fetch as jest.Mock).mock.calls[0];
-  expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer s3cret");
+  const [calledUrl, init] = (fetch as jest.Mock).mock.calls[0];
+  expect(calledUrl).toBe("http://host:8080/auth/config");
+  expect(new Headers(init?.headers).get("Authorization")).toBeNull();
 });
 
-test("distinguishes a rejected token (401) from a network failure", async () => {
-  global.fetch = jest.fn(async () => ({ ok: false, status: 401, json: async () => ({}) })) as any;
+test("shows an unreachable-server error on probe failure", async () => {
+  global.fetch = jest.fn(async () => ({ ok: false, status: 500, json: async () => ({}) })) as any;
   const nav = { replace: jest.fn() } as any;
   const { getByPlaceholderText, getByText } = await render(
     <ServerProvider><ServerSetup navigation={nav} /></ServerProvider>);
@@ -64,17 +62,14 @@ test("distinguishes a rejected token (401) from a network failure", async () => 
     fireEvent.changeText(getByPlaceholderText(/http:\/\//), "http://host:8080");
   });
   await act(async () => {
-    fireEvent.changeText(getByPlaceholderText("Access token"), "bad-token");
-  });
-  await act(async () => {
     fireEvent.press(getByText("Start streaming"));
   });
-  await waitFor(() => getByText(/Access token rejected/i));
+  await waitFor(() => getByText(/Can't reach server/i));
   expect(nav.replace).not.toHaveBeenCalled();
 });
 
-test("navigates to InstanceList on a successful authenticated probe", async () => {
-  global.fetch = jest.fn(async () => ({ ok: true, status: 200, json: async () => [] })) as any;
+test("navigates to Login on a successful reachability probe", async () => {
+  global.fetch = jest.fn(async () => ({ ok: true, status: 200, json: async () => ({}) })) as any;
   const nav = { replace: jest.fn() } as any;
   const { getByPlaceholderText, getByText } = await render(
     <ServerProvider><ServerSetup navigation={nav} /></ServerProvider>);
@@ -84,5 +79,5 @@ test("navigates to InstanceList on a successful authenticated probe", async () =
   await act(async () => {
     fireEvent.press(getByText("Start streaming"));
   });
-  await waitFor(() => expect(nav.replace).toHaveBeenCalledWith("InstanceList"));
+  await waitFor(() => expect(nav.replace).toHaveBeenCalledWith("Login"));
 });

@@ -12,6 +12,8 @@ type Ctx = {
   client: ApiClient | null;
   setServer: (base: string, token: string) => Promise<ApiClient>;
   ready: boolean;
+  supabaseUrl: string;
+  supabaseAnonKey: string;
 };
 const ServerCtx = createContext<Ctx | null>(null);
 const BASE_KEY = "wc_base";
@@ -49,9 +51,24 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
     () => (base ? makeClient(base, authToken) : null),
     [base, authToken]
   );
+
+  const [supabaseUrl, setSupabaseUrl] = useState("");
+  const [supabaseAnonKey, setSupabaseAnonKey] = useState("");
+
+  useEffect(() => {
+    if (!base) return;
+    fetch(`${base}/auth/config`)
+      .then((r) => r.json())
+      .then((cfg) => {
+        setSupabaseUrl(cfg.supabase_url || "");
+        setSupabaseAnonKey(cfg.supabase_anon_key || "");
+      })
+      .catch(() => {});
+  }, [base]);
+
   const ready = baseLoaded && tokenLoaded;
   return (
-    <ServerCtx.Provider value={{ base, authToken, client, setServer, ready }}>
+    <ServerCtx.Provider value={{ base, authToken, client, setServer, ready, supabaseUrl, supabaseAnonKey }}>
       {children}
     </ServerCtx.Provider>
   );
