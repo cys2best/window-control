@@ -19,6 +19,46 @@ Plan/task identifiers belong here and in workflow state, not in commit subjects.
 
 ---
 
+### 2026-09-03 23:50 — claude
+- Ruling: owner explicitly authorized `OVERRIDE: skip 8-hour soak rerun;
+  single-minute decode-stall accepted as known stability gap, all other
+  gates PASS` for 2026-09-01-engine-client-cutover/task-11. Latest Windows
+  run: performance overridden (pre-existing), local browser, public
+  browser, mobile, local/public race, rapid switches, quality ladder,
+  scrcpy recovery, and engine recovery all PASS; only soak FAILED —
+  `frames_decoded` plateaued for one minute somewhere in the 8h run (no
+  zero/black-frame samples, connection stayed alive). Owner has not yet
+  checked `app.log`/`verification.log` in that run's evidence dir for the
+  stall timestamp and does not have time to rerun the full 8h soak now.
+- Finished: `--soak-override` added to `scripts/verify_engine_cutover.py`
+  (commit a36192c) mirroring the existing `--performance-override`
+  pattern exactly — requires the exact recorded string, marks the
+  checkpoint OVERRIDDEN (not PASS), skips the real 8h run entirely; wired
+  through `main()` CLI arg and `engine/verify-engine-cutover.ps1`'s new
+  `-SoakOverride` switch (opt-in, unlike the always-on performance
+  override). TDD: 60/60 `tests/test_engine_cutover_verifier.py` pass
+  (2 new: override skips the real run and is recorded OVERRIDDEN; an
+  unrecognized override string still fails the gate). Full local suite:
+  395 passed, 2 pre-existing unrelated failures in
+  `tests/test_windows_verifier.py` (env-var pollution from this shell,
+  confirmed pre-existing via stash-and-rerun, not caused by this change),
+  same 2 documented pre-existing collection errors
+  (`test_auto_unlock.py`, `test_window_manager.py`).
+- Next: on the Windows Host PC, rerun
+  `.\engine\verify-engine-cutover.ps1 ... -SoakOverride` (plus the same
+  args as before) to get a final result with soak OVERRIDDEN instead of
+  FAIL. The underlying decode-stall bug is NOT diagnosed or fixed — it is
+  an accepted, recorded risk. Root-cause investigation is blocked on: (1)
+  the exact minute/sample index frames_decoded stalled in the failed
+  run's `soak-samples.json`, (2) `app.log`/`verification.log` from that
+  evidence dir around that timestamp, (3) whether it correlates with an
+  ICE 'disconnected' transition (recent commit `7f9b712` added grace-period
+  handling for that state — worth checking if detection fires but no
+  reconnect follows). Revisit before shipping if the stall recurs in
+  production.
+- Blockers: none for completing Task 11's acceptance run with the
+  override; the decode-stall root cause remains open and un-investigated.
+
 ### 2026-09-02 20:25 — codex
 - Claiming: 2026-09-01-engine-client-cutover/task-11 WSS acceptance fix
 - Ruling: the Windows Host failure is a confirmed production defect, not an
