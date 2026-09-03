@@ -37,6 +37,7 @@ RECORDED_SOAK_OVERRIDE = (
     "stability gap, all other gates PASS"
 )
 _REQUIRED_SOAK_HOURS = 8
+_REQUIRED_RAPID_SWITCH_COUNT = 20
 _REQUIRED_TIERS = ("480", "720", "1080", "1440", "480")
 _SELECTION_RESPONSE_FIELDS = {
     "ok",
@@ -89,6 +90,7 @@ class CutoverConfig:
     performance_override: str | None = None
     soak_override: str | None = None
     soak_hours: float = 8
+    rapid_switch_count: int = 20
     sample_interval_seconds: int = 60
     handshake_timeout_seconds: float = 15
     app_port: int = 8080
@@ -541,9 +543,9 @@ def _validate_public_websocket(
         raise CutoverError("public browser signaling request did not match exact viewer query auth")
 
 
-def _validate_switches(items: Any, timeout: float) -> None:
-    if not isinstance(items, list) or len(items) != 20:
-        raise CutoverError("rapid switch gate did not perform exactly 20 switches")
+def _validate_switches(items: Any, timeout: float, expected_count: int) -> None:
+    if not isinstance(items, list) or len(items) != expected_count:
+        raise CutoverError(f"rapid switch gate did not perform exactly {expected_count} switches")
     for index, item in enumerate(items):
         item = _require_fields(item, {"index", "abandoned_reaped", "elapsed_seconds"}, "rapid switch")
         if item["index"] != index or not item["abandoned_reaped"]:
@@ -815,10 +817,18 @@ def run_cutover_verification(config: CutoverConfig, deps: Any) -> CutoverResult:
 
         current_gate = "rapid switches"
         _validate_switches(
-            deps.rapid_switches(config.serials, 20, config.handshake_timeout_seconds),
+            deps.rapid_switches(config.serials, config.rapid_switch_count, config.handshake_timeout_seconds),
             config.handshake_timeout_seconds,
+            config.rapid_switch_count,
         )
-        result.mark(current_gate, "PASS", "20 abandoned peers reaped within timeout")
+        if config.rapid_switch_count < _REQUIRED_RAPID_SWITCH_COUNT:
+            result.mark(
+                current_gate, "INCOMPLETE",
+                f"shortened rapid-switch run ({config.rapid_switch_count} switches); "
+                f"{_REQUIRED_RAPID_SWITCH_COUNT} required",
+            )
+        else:
+            result.mark(current_gate, "PASS", f"{config.rapid_switch_count} abandoned peers reaped within timeout")
 
         current_gate = "quality ladder"
         _validate_quality(deps.transition_quality(serial, _REQUIRED_TIERS))
@@ -2125,6 +2135,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--performance-override")
     parser.add_argument("--soak-override")
     parser.add_argument("--soak-hours", type=float, default=8)
+    parser.add_argument("--rapid-switch-count", type=int, default=20)
     parser.add_argument("--keep-on-failure", action="store_true")
     parser.add_argument("--file-prompts", action="store_true")
     parser.add_argument("--confirm", choices=("PASS", "FAIL"))
@@ -2163,6 +2174,7 @@ def main(argv: list[str] | None = None) -> int:
         performance_override=args.performance_override,
         soak_override=args.soak_override,
         soak_hours=args.soak_hours,
+        rapid_switch_count=args.rapid_switch_count,
         keep_on_failure=args.keep_on_failure,
         file_prompts=args.file_prompts,
         skip_manual_gates=args.skip_manual_gates,

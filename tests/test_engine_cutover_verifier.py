@@ -680,6 +680,21 @@ def test_race_and_twenty_switches_require_bounded_loser_cleanup(tmp_path):
     assert run_cutover_verification(config(tmp_path), deps).summary["failed_gate"] == "rapid switches"
 
 
+def test_reduced_rapid_switch_count_is_incomplete_not_failed(tmp_path):
+    deps = FakeDeps()
+    deps.switches = [
+        {"index": index, "abandoned_reaped": True, "elapsed_seconds": 2}
+        for index in range(5)
+    ]
+
+    result = run_cutover_verification(config(tmp_path, rapid_switch_count=5), deps)
+
+    assert result.status == "INCOMPLETE"
+    assert result.checkpoints["rapid switches"]["status"] == "INCOMPLETE"
+    assert "failed_gate" not in result.summary
+    assert any(event[0] == "switches" and event[2] == 5 for event in deps.events)
+
+
 def test_quality_ladder_stays_on_one_resource_and_advances_generation_and_dimensions(tmp_path):
     result = run_cutover_verification(config(tmp_path), FakeDeps())
     assert result.checkpoints["quality ladder"]["status"] == "PASS"

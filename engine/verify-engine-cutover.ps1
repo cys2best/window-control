@@ -8,6 +8,7 @@ param(
     [string]$PublicSignalingUrl = "",
     [string]$InstallerPath = "",
     [double]$SoakHours = 8,
+    [int]$RapidSwitchCount = 20,
     [switch]$KeepOnFailure,
     [switch]$FilePrompts,
     [ValidateSet("", "PASS", "FAIL")]
@@ -60,6 +61,7 @@ $arguments = @(
     "--public-signaling-url", $PublicSignalingUrl,
     "--installer-path", $InstallerPath,
     "--soak-hours", "$SoakHours",
+    "--rapid-switch-count", "$RapidSwitchCount",
     "--performance-override", $recordedOverride
 )
 if ($KeepOnFailure) { $arguments += "--keep-on-failure" }
@@ -74,6 +76,9 @@ if ($SkipManualGates) {
 }
 if ($SoakOverride) {
     Write-Warning "-SoakOverride is set: the 8-hour soak gate is OVERRIDDEN by the recorded owner ruling and will not be reported as a measured PASS."
+}
+if ($RapidSwitchCount -lt 20) {
+    Write-Warning "-RapidSwitchCount $RapidSwitchCount is below the required 20: the rapid-switch gate will report INCOMPLETE, not PASS."
 }
 & uv @arguments
 exit $LASTEXITCODE
