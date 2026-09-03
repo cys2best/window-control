@@ -13,6 +13,12 @@ AppPublisher={#MyAppPublisher}
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
+; WindowControl.exe (PyInstaller) and the bundled engine.exe/DLLs
+; (x64-windows vcpkg triplet) are both 64-bit only; without these, Inno
+; Setup defaults to a 32-bit installer and {autopf} resolves to
+; "Program Files (x86)" instead of "Program Files".
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=..\release
 OutputBaseFilename=WindowControlInstaller
 SetupIconFile=..\src\assets\icon.ico
