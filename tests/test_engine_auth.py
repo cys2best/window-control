@@ -22,6 +22,11 @@ def decode_and_verify_hs256(token: str, secret: str) -> dict:
     return json.loads(base64.urlsafe_b64decode(padded))
 
 
+def _b64url_decode(segment: str) -> bytes:
+    padding = "=" * (-len(segment) % 4)
+    return base64.urlsafe_b64decode(segment + padding)
+
+
 def test_whep_token_matches_cpp_fixture():
     issuer = EngineTokenIssuer("secret", clock=lambda: 1_700_000_000)
     token = issuer.whep("instance0")
@@ -70,6 +75,7 @@ def test_signaling_payload_contains_session_role_and_expiry():
     payload = decode_and_verify_hs256(issuer.signaling("instance0", "engine"), "signal")
     assert payload == {
         "session": "instance0", "role": "engine", "exp": 605800, "jti": "1",
+        "user_id": None,
     }
 
 
@@ -97,3 +103,19 @@ def test_empty_signaling_secret_returns_empty_token_for_trusted_dev():
 def test_empty_whep_secret_is_invalid():
     with pytest.raises(ValueError):
         EngineTokenIssuer("", clock=lambda: 1000.0)
+
+
+def test_signaling_viewer_token_embeds_user_id():
+    issuer = EngineTokenIssuer(whep_secret="w", signaling_secret="s")
+    token = issuer.signaling("inst-1", "viewer", user_id="user-42")
+    header_b64, payload_b64, _ = token.split(".")
+    payload = json.loads(_b64url_decode(payload_b64))
+    assert payload["user_id"] == "user-42"
+
+
+def test_signaling_engine_token_user_id_defaults_to_none():
+    issuer = EngineTokenIssuer(whep_secret="w", signaling_secret="s")
+    token = issuer.signaling("inst-1", "engine")
+    header_b64, payload_b64, _ = token.split(".")
+    payload = json.loads(_b64url_decode(payload_b64))
+    assert payload["user_id"] is None

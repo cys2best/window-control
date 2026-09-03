@@ -60,7 +60,12 @@ class EngineTokenIssuer:
         ).hexdigest()
         return f"{payload}.{signature}"
 
-    def signaling(self, instance_name: str, role: Literal["engine", "viewer"]) -> str:
+    def signaling(
+        self,
+        instance_name: str,
+        role: Literal["engine", "viewer"],
+        user_id: str | None = None,
+    ) -> str:
         if role not in _VALID_ROLES:
             raise ValueError(f"invalid role: {role!r}")
 
@@ -80,6 +85,7 @@ class EngineTokenIssuer:
             jti = str(self._jwt_issuance)
         payload = {
             "session": instance_name, "role": role, "exp": expiry, "jti": jti,
+            "user_id": user_id,
         }
 
         header_b64 = _b64url_no_pad(
