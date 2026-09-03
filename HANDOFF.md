@@ -19,6 +19,29 @@ Plan/task identifiers belong here and in workflow state, not in commit subjects.
 
 ---
 
+### 2026-09-04 00:20 — claude
+- Finished: two more local-build fixes hit while rerunning
+  2026-09-01-engine-client-cutover/task-11's installer gate on the
+  Windows Host PC. (1) `build/build_installer.bat` now auto-downloads
+  `vc_redist.x64.exe` if missing (commit 8fa5596) — installer.iss needs
+  it but only CI's workflow ever fetched it, so every local
+  `build_installer.bat` run failed at ISCC compile. (2) `installer.iss`
+  now sets `ArchitecturesAllowed`/`ArchitecturesInstallIn64BitMode=x64compatible`
+  (commit 93c3282) — without it Inno Setup defaults 32-bit and `{autopf}`
+  resolves to `Program Files (x86)`, while the verifier checks
+  `%PROGRAMFILES%` (`Program Files`); root-caused by inspection (no
+  Windows access this session), not yet confirmed by an actual rerun.
+  Both WindowControl.exe and the bundled engine.exe/DLLs are x64-only, so
+  32-bit placement was wrong independent of the verifier mismatch.
+- Next: rerun `build\build_installer.bat` then the cutover verifier's
+  installer gate on the Host PC to confirm the 64-bit fix actually
+  resolves "installer did not stage the executable and bundled engine".
+  If it still fails, check the actual install location by hand
+  (`C:\Program Files\WindowControl\` vs `C:\Program Files (x86)\WindowControl\`)
+  before assuming the architecture fix was sufficient.
+- Blockers: none identified; unverified on real Windows since fixed by
+  code inspection only.
+
 ### 2026-09-03 23:50 — claude
 - Ruling: owner explicitly authorized `OVERRIDE: skip 8-hour soak rerun;
   single-minute decode-stall accepted as known stability gap, all other
