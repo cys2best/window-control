@@ -11,7 +11,8 @@ param(
     [switch]$KeepOnFailure,
     [switch]$FilePrompts,
     [ValidateSet("", "PASS", "FAIL")]
-    [string]$Confirm = ""
+    [string]$Confirm = "",
+    [switch]$SkipManualGates
 )
 
 $ErrorActionPreference = "Stop"
@@ -61,8 +62,12 @@ $arguments = @(
 )
 if ($KeepOnFailure) { $arguments += "--keep-on-failure" }
 if ($FilePrompts) { $arguments += "--file-prompts" }
+if ($SkipManualGates) { $arguments += "--skip-manual-gates" }
 
 Write-Host "Evidence directory: $evidenceDir"
 Write-Warning "Performance gate is OVERRIDDEN by the recorded owner ruling; it will not be reported as a measured PASS."
+if ($SkipManualGates) {
+    Write-Warning "-SkipManualGates is set: operator confirmations are auto-answered. This run can never report PASS and is not acceptance evidence."
+}
 & uv @arguments
 exit $LASTEXITCODE

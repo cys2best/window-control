@@ -91,6 +91,12 @@ class CutoverConfig:
     enforce_windows: bool = True
     file_prompts: bool = False
     file_prompt_poll_seconds: float = 0.25
+    # Debugging convenience only: auto-answers the three human-operator
+    # confirmations (local browser, public browser, mobile) instead of
+    # waiting for a real one, so a later automated gate (e.g. scrcpy
+    # recovery) can be reached faster while investigating it. A run using
+    # this can never report PASS — see run_cutover_verification.
+    skip_manual_gates: bool = False
 
 
 @dataclass
@@ -668,6 +674,13 @@ def _validate_soak(value: Any, config: CutoverConfig) -> str:
 def run_cutover_verification(config: CutoverConfig, deps: Any) -> CutoverResult:
     """Run the full direct-cutover matrix and persist bounded partial evidence."""
     result = CutoverResult()
+    if config.skip_manual_gates:
+        # Caps result.status at INCOMPLETE for the rest of this run: mark()
+        # only ever escalates status toward FAIL, never back down to PASS.
+        result.mark(
+            "debug-skip", "INCOMPLETE",
+            "skip_manual_gates was set: operator confirmations were auto-answered, not real evidence",
+        )
     _validate_serials(config.serials)
     platform_name = deps.platform_name()
     if config.enforce_windows and platform_name != "Windows":
@@ -2016,6 +2029,11 @@ class RealCutoverDeps:
         }
 
     def confirm(self, checkpoint: str, message: str) -> str:
+        if self.config.skip_manual_gates:
+            # Debugging convenience only: never a real operator confirmation,
+            # so a run using this can't report PASS — see
+            # run_cutover_verification and CutoverConfig.skip_manual_gates.
+            return "PASS"
         if self._prompt_channel is not None:
             return self._prompt_channel.prompt(message, checkpoint)
         return input(f"CHECKPOINT: {checkpoint}\n{message}\nType PASS or FAIL: ").strip().upper()
@@ -2099,6 +2117,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--keep-on-failure", action="store_true")
     parser.add_argument("--file-prompts", action="store_true")
     parser.add_argument("--confirm", choices=("PASS", "FAIL"))
+    parser.add_argument(
+        "--skip-manual-gates",
+        action="store_true",
+        help=(
+            "Debugging only: auto-answer every operator confirmation instead "
+            "of waiting for a real one, to reach a later automated gate "
+            "faster. The result can never report PASS."
+        ),
+    )
     args = parser.parse_args(argv)
     if args.confirm:
         try:
@@ -2126,6 +2153,7 @@ def main(argv: list[str] | None = None) -> int:
         soak_hours=args.soak_hours,
         keep_on_failure=args.keep_on_failure,
         file_prompts=args.file_prompts,
+        skip_manual_gates=args.skip_manual_gates,
     )
     deps = RealCutoverDeps(config)
     try:

@@ -577,6 +577,22 @@ def test_local_peer_count_must_reach_two_then_return_to_zero(tmp_path, health_va
     assert result.summary["failed_gate"] == "local browser"
 
 
+def test_skip_manual_gates_caps_status_at_incomplete_even_when_every_gate_passes(tmp_path):
+    deps = FakeDeps()
+
+    result = run_cutover_verification(config(tmp_path, skip_manual_gates=True), deps)
+
+    assert result.status != "PASS"
+    assert result.checkpoints["debug-skip"]["status"] == "INCOMPLETE"
+
+
+def test_real_confirm_auto_answers_pass_when_skip_manual_gates_is_set(tmp_path):
+    run_config = config(tmp_path, skip_manual_gates=True)
+    deps = RealCutoverDeps(run_config)
+
+    assert deps.confirm("any checkpoint", "any message") == "PASS"
+
+
 def test_public_browser_uses_real_vps_and_exact_viewer_query_auth(tmp_path):
     deps = FakeDeps()
     result = run_cutover_verification(config(tmp_path), deps)
