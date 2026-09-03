@@ -1,29 +1,30 @@
-"""Shared-token auth gate for exposing the app past a trusted LAN.
+"""Supabase JWT auth gate.
 
-Set AUTH_TOKEN (env var) to require it. The browser exchanges the token once
-for a signed, time-limited session cookie (POST /login) so the token itself
-never needs to travel with every request. Unset AUTH_TOKEN and every check
-here is a no-op — LAN-only deployments are unaffected.
+Set SUPABASE_URL (+ SUPABASE_JWT_SECRET) to require authentication.
+Verification is entirely local: an HS256 signature check against
+SUPABASE_JWT_SECRET plus an `exp` check, so it never depends on Supabase
+being reachable. Unset SUPABASE_URL and every check here is a no-op —
+LAN-only deployments are unaffected.
 """
 
+import base64
 import hashlib
 import hmac
+import json
 import time
+from dataclasses import dataclass
 
 import config
 
-COOKIE_NAME = "wc_session"
-SESSION_MAX_AGE_SECONDS = 30 * 24 * 3600  # 30 days
+
+@dataclass(frozen=True)
+class UserClaims:
+    user_id: str
+    email: str | None
 
 
 def auth_enabled() -> bool:
-    return bool(config.AUTH_TOKEN)
-
-
-def check_token(token: str) -> bool:
-    if not auth_enabled():
-        return False
-    return hmac.compare_digest(token or "", config.AUTH_TOKEN)
+    return bool(config.SUPABASE_URL)
 
 
 def bearer_token(authorization: str | None) -> str | None:
@@ -36,27 +37,41 @@ def bearer_token(authorization: str | None) -> str | None:
     return token
 
 
-def _sign(issued_at: str) -> str:
-    return hmac.new(
-        config.AUTH_TOKEN.encode(), issued_at.encode(), hashlib.sha256
-    ).hexdigest()
+def _b64url_decode(segment: str) -> bytes:
+    padding = "=" * (-len(segment) % 4)
+    return base64.urlsafe_b64decode(segment + padding)
 
 
-def make_session_cookie(issued_at: float | None = None) -> str:
-    ts = str(int(issued_at if issued_at is not None else time.time()))
-    return f"{ts}.{_sign(ts)}"
+def verify_supabase_jwt(token: str | None) -> UserClaims | None:
+    if not auth_enabled() or not token:
+        return None
 
+    parts = token.split(".")
+    if len(parts) != 3:
+        return None
+    header_b64, payload_b64, signature_b64 = parts
 
-def verify_session_cookie(cookie: str | None) -> bool:
-    if not auth_enabled() or not cookie:
-        return False
-    ts, _, sig = cookie.partition(".")
-    if not ts or not sig:
-        return False
-    if not hmac.compare_digest(sig, _sign(ts)):
-        return False
+    signing_input = f"{header_b64}.{payload_b64}".encode("utf-8")
+    expected_sig = base64.urlsafe_b64encode(
+        hmac.new(
+            config.SUPABASE_JWT_SECRET.encode(), signing_input, hashlib.sha256
+        ).digest()
+    ).rstrip(b"=").decode()
+    if not hmac.compare_digest(signature_b64, expected_sig):
+        return None
+
     try:
-        issued_at = int(ts)
-    except ValueError:
-        return False
-    return time.time() - issued_at <= SESSION_MAX_AGE_SECONDS
+        payload = json.loads(_b64url_decode(payload_b64))
+    except (ValueError, json.JSONDecodeError):
+        return None
+
+    sub = payload.get("sub")
+    exp = payload.get("exp")
+    if not sub or not isinstance(sub, str):
+        return None
+    if not isinstance(exp, (int, float)) or isinstance(exp, bool):
+        return None
+    if time.time() >= exp:
+        return None
+
+    return UserClaims(user_id=sub, email=payload.get("email"))

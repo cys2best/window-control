@@ -51,15 +51,20 @@ TURN_CREDENTIAL = os.environ.get("TURN_CREDENTIAL")
 # enumerable and there is no auth on that path yet — not safe to expose
 # publicly without the planned follow-up auth work.
 
-# App-wide access token. Unset = auth disabled (LAN-only / trusted-network
-# deployments). Set it before exposing the app past a trusted LAN — every
-# route is otherwise open to anyone with the URL.
-AUTH_TOKEN = os.environ.get("AUTH_TOKEN")
-# Mark the session cookie Secure (HTTPS-only) once the app sits behind TLS
-# (e.g. the VPS tunnel in this plan). Leave unset/false for plain-HTTP LAN
-# access — a Secure cookie would never be sent back and login would appear
-# to silently fail.
-COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "").lower() in ("1", "true", "yes")
+# Supabase project — unset SUPABASE_URL = auth disabled (LAN-only /
+# trusted-network deployments). Set before exposing the app past a
+# trusted LAN — every route is otherwise open to anyone with the URL.
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+# Public, safe to ship to browser/mobile/tray clients — used only to talk
+# to Supabase's Auth REST API directly for login/register.
+SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY", "")
+# Server-only. Supabase's legacy JWT secret — verifies the HS256
+# signature on every access token locally, no network round trip.
+SUPABASE_JWT_SECRET = os.environ.get("SUPABASE_JWT_SECRET", "")
+# Server-only. Full-access Postgres REST credential used solely by
+# supabase_client.py for the device_links table, after FastAPI has
+# already authenticated the caller and is enforcing ownership itself.
+SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
 
 # Public-internet UI tunnel (VPS relay). Unset = tunnel disabled, matching
 # the VPS_SIGNALING_URL auto-start-only-if-configured pattern above. Full
