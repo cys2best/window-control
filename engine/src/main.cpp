@@ -66,7 +66,8 @@ int main(int argc, char** argv) {
         std::cerr << "Usage: engine.exe <instance_name> <scrcpy_port>\n"
                      "Environment: ENGINE_WHEP_CAPABILITY_SECRET, "
                      "ENGINE_LOCAL_ICE_SERVERS, ENGINE_SIGNALING_URL, "
-                     "ENGINE_SIGNALING_TOKEN, ENGINE_PUBLIC_ICE_SERVERS\n";
+                     "ENGINE_SIGNALING_TOKEN, ENGINE_SESSION, "
+                     "ENGINE_PUBLIC_ICE_SERVERS\n";
         return 1;
     }
 
@@ -102,8 +103,10 @@ int main(int argc, char** argv) {
         std::string signalingUrl = GetEnvOrEmpty("ENGINE_SIGNALING_URL");
         if (!signalingUrl.empty()) {
             std::string signalingToken = GetEnvOrEmpty("ENGINE_SIGNALING_TOKEN");
+            std::string session = GetEnvOrEmpty("ENGINE_SESSION");
+            if (session.empty()) session = instanceName;
             signaling = std::make_unique<SignalingClient>(
-                signalingUrl, instanceName, "engine", signalingToken);
+                signalingUrl, session, "engine", signalingToken);
             auto publicIceServers = ParseCommaSeparatedList(GetEnvOrEmpty("ENGINE_PUBLIC_ICE_SERVERS"));
             publicBridge = std::make_unique<PublicSignalingBridge>(*signaling, registry, publicIceServers, inputRouter);
             publicBridge->Start();
