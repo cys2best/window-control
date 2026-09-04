@@ -48,7 +48,7 @@ export type WhepSession = {
   close(): Promise<void>;
 };
 
-type ConnectWhepOpts = {
+export type ConnectWhepOpts = {
   whepUrl: string;
   whepToken: string;
   iceServers: IceServer[];
