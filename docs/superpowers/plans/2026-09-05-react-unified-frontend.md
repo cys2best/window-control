@@ -672,6 +672,8 @@ import { plainStorage, secureStorage } from "./src/platform/storage";
 
 In each of `apps/mobile/src/screens/Login.tsx`, `ServerSetup.tsx`, `InstanceList.tsx`: replace `import { useServer } from "../api/ServerContext";` with `import { useServer } from "@wc/core";`. `Login.tsx` also replace `import { signInWithPassword, signUpWithPassword } from "../api/supabaseAuth";` with `import { signInWithPassword, signUpWithPassword } from "@wc/core";`. `ServerSetup.tsx` also replace `import { normalizeBase } from "../api/urls";` with `import { normalizeBase } from "@wc/core";`. `InstanceList.tsx` also replace `import type { Instance } from "../api/client";` with `import type { Instance } from "@wc/core";`.
 
+**Also fix `apps/mobile/src/navigation/Root.tsx`'s own `useServer` import** (it's a `useServer` consumer, not just the `ServerProvider` mount point handled in Step 4 — this is a separate, easy-to-miss call site): replace `import { useServer } from "../api/ServerContext";` with `import { useServer } from "@wc/core";`. Miss this and Root.tsx keeps reading the old local `ServerContext` module — which after Step 4 has no matching `ServerProvider` mounted above it — and `useServer()` throws `"useServer outside ServerProvider"` at runtime.
+
 - [ ] **Step 6: Update `Stream.tsx` — the one screen needing an explicit `RTCImpl`**
 
 In `apps/mobile/src/screens/Stream.tsx`:
@@ -884,32 +886,53 @@ git mv apps/mobile/src/screens/Stream.test.tsx packages/ui/src/screens/Stream.te
 
 Create the file exactly as shown above under Interfaces.
 
-- [ ] **Step 3: Edit `Stream.tsx` — remove the direct `RTCView` import, accept it as a prop**
+- [ ] **Step 3: Edit `Stream.tsx` — remove the direct `RTCView`/`RTCPeerConnection` import, accept both as props**
+
+**Note on starting state:** Task 4 Step 6 already repointed this file's `useServer`/`connectWhep`/`normalizeCoords`/`makeAdaptive` imports at `@wc/core` and added an `RTCPeerConnection` import (used inline as `RTCImpl: RTCPeerConnection,` in the `connectWhep` call) — before this task moves the file. So by the time you read the moved file at `packages/ui/src/screens/Stream.tsx`, its import block looks like this (not like the original `mobile/src/screens/Stream.tsx` shown in the design spec):
+
+```tsx
+import React, { useEffect, useRef, useState, useCallback } from "react";
+import { View, TextInput, PanResponder } from "react-native";
+import * as ScreenOrientation from "expo-screen-orientation";
+import { RTCView, RTCPeerConnection } from "react-native-webrtc";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import { runOnJS } from "react-native-reanimated";
+import { useServer } from "@wc/core";
+import { theme } from "../theme/tokens";
+import { connectWhep, WhepSession, normalizeCoords, makeAdaptive } from "@wc/core";
+import { StreamToolbar } from "../components/StreamToolbar";
+import { SettingsModal } from "../components/SettingsModal";
+import { SwitchDrawer } from "../components/SwitchDrawer";
+import { StatsOverlay } from "../components/StatsOverlay";
+import { ErrorOverlay } from "../components/ErrorOverlay";
+```
+
+Read the actual file first and confirm against this before editing — if it doesn't match (e.g. a prior task's step was done differently), treat the real file as authoritative and adapt this step's edits accordingly.
 
 Replace:
 ```tsx
-import { RTCView } from "react-native-webrtc";
+import { RTCView, RTCPeerConnection } from "react-native-webrtc";
 ```
-with nothing (deleted) — add instead:
+with:
 ```tsx
 import type { VideoViewComponent } from "../video/VideoView";
 ```
 
-Replace:
+Replace the two separate `@wc/core` import lines:
 ```tsx
-import { useServer } from "../api/ServerContext";
+import { useServer } from "@wc/core";
 import { theme } from "../theme/tokens";
-import { connectWhep, WhepSession } from "../webrtc/whep";
-import { normalizeCoords } from "../input/coords";
-import { makeAdaptive } from "../quality/adaptive";
+import { connectWhep, WhepSession, normalizeCoords, makeAdaptive } from "@wc/core";
 ```
-with:
+with one combined import:
 ```tsx
 import { useServer, connectWhep, WhepSession, normalizeCoords, makeAdaptive } from "@wc/core";
 import { theme } from "../theme/tokens";
 ```
 
 (`StreamToolbar`, `SettingsModal`, `SwitchDrawer`, `StatsOverlay`, `ErrorOverlay` relative imports from `../components/*` stay unchanged — same `packages/ui/src` layout.)
+
+In the `connectWhep({...})` call inside `start()`, Task 4 left `RTCImpl: RTCPeerConnection,` in the options object. Change it to `RTCImpl,` — it's now a destructured prop of the same name, not the imported constructor.
 
 Change the component signature:
 ```tsx
