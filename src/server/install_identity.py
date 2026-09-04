@@ -10,6 +10,7 @@ never leaves this machine.
 
 import base64
 import os
+import tempfile
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -51,14 +52,40 @@ def _find_existing_dir(filename: str) -> str | None:
 
 
 def _write_to_dir(directory: str, filename: str, data: bytes) -> bool:
+    """Write `data` to `directory/filename` atomically.
+
+    A plain truncating write can be interrupted (crash, power loss, kill)
+    partway through, leaving a short or zero-length file that the next boot
+    reads back as present-but-corrupt. For the keypair that used to mean an
+    unhandled exception out of get_or_create_install_keypair() and a dead
+    app. So: write a uniquely-named temp file in the *same* directory (a
+    rename is only atomic within one filesystem), fsync it so the bytes are
+    really on disk, then os.replace() it onto the destination -- atomic on
+    both POSIX and Windows. The destination therefore only ever holds the
+    complete old value or the complete new one.
+    """
+    tmp_path = None
     try:
         os.makedirs(directory, exist_ok=True)
         path = os.path.join(directory, filename)
-        with open(path, "wb") as f:
+        fd, tmp_path = tempfile.mkstemp(prefix=f".{filename}.", suffix=".tmp", dir=directory)
+        with os.fdopen(fd, "wb") as f:
             f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)
+        tmp_path = None  # ownership transferred; nothing left to clean up
         return True
     except Exception:
         return False
+    finally:
+        if tmp_path is not None:
+            # The swap never happened -- don't litter the directory with a
+            # temp file that no later call would ever clean up.
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
 
 
 def _write_first_writable(filename: str, data: bytes) -> str | None:
@@ -76,11 +103,22 @@ def get_or_create_install_keypair() -> tuple[Ed25519PrivateKey, str]:
     in-memory keypair (not persisted) if no candidate directory is
     writable -- the public path just won't survive a restart until a
     writable path exists.
+
+    An unusable existing key file (corrupt, truncated, wrong length) is
+    treated exactly like a missing one: a fresh keypair is generated and
+    written over it. Raising here would propagate through create_app() /
+    build_engine_orchestrator() and kill app startup outright, which is
+    the opposite of the graceful degradation this module promises.
     """
+    private_key = None
     existing = _read_first_existing(_KEY_FILENAME)
     if existing is not None:
-        private_key = Ed25519PrivateKey.from_private_bytes(existing)
-    else:
+        try:
+            private_key = Ed25519PrivateKey.from_private_bytes(existing)
+        except Exception:
+            private_key = None
+
+    if private_key is None:
         private_key = Ed25519PrivateKey.generate()
         raw = private_key.private_bytes(
             encoding=serialization.Encoding.Raw,
