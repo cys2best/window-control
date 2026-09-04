@@ -948,8 +948,9 @@ def test_skip_public_mobile_strips_public_ui_url_and_tunnel_secret_from_child_en
 
     run_cutover_verification(config(tmp_path, skip_public_mobile=True), deps)
 
-    assert "PUBLIC_UI_URL" not in deps.started_environment
-    assert "TUNNEL_SECRET" not in deps.started_environment
+    # set (not absent) so main.py's load_dotenv() can't refill it from .env
+    assert deps.started_environment["PUBLIC_UI_URL"] == ""
+    assert deps.started_environment["TUNNEL_SECRET"] == ""
     assert deps.started_environment["AUTH_TOKEN"] == "auth-secret"
     assert os.environ == before
 

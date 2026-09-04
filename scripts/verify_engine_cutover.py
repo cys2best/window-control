@@ -420,8 +420,11 @@ def _sanitized_environment(config: CutoverConfig) -> dict[str, str]:
     if config.skip_public_mobile:
         # No Supabase project configured for this run: PUBLIC_UI_URL alone
         # makes the spawned app refuse to start (requires SUPABASE_URL).
-        environment.pop("PUBLIC_UI_URL", None)
-        environment.pop("TUNNEL_SECRET", None)
+        # Set (not pop) empty: src/main.py's load_dotenv() fills in any
+        # *missing* key from a gitignored .env at repo root (override=False),
+        # so simply popping it just let dotenv hand it right back from disk.
+        environment["PUBLIC_UI_URL"] = ""
+        environment["TUNNEL_SECRET"] = ""
     else:
         environment["VPS_SIGNALING_URL"] = config.public_signaling_url
     return environment
