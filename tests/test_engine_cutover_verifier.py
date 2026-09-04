@@ -94,7 +94,7 @@ class FakeDeps:
             "whep_url": "http://100.64.1.4:51000/whep",
             "whep_token": "whep-secret",
             "signaling_url": "wss://signal.example.com",
-            "signaling_token": "viewer-secret",
+            "public_session": "owner-1.instance0",
             "ice_servers": [],
             "generation": 4,
         }
@@ -497,7 +497,7 @@ def test_real_select_rejects_non_exact_production_response_before_adding_metadat
         "whep_url": "http://100.64.1.4:51000/whep",
         "whep_token": "whep-secret",
         "signaling_url": "wss://signal.example.com",
-        "signaling_token": "viewer-secret",
+        "public_session": "owner-1.instance0",
         "ice_servers": [],
         "generation": 4,
     }
@@ -683,9 +683,9 @@ def test_skip_public_mobile_skips_both_gates_and_caps_incomplete(tmp_path):
 def test_real_required_environment_excludes_public_when_skip_public_mobile(tmp_path, monkeypatch):
     run_config = config(tmp_path, skip_public_mobile=True)
     deps = RealCutoverDeps(run_config)
-    for name in ("AUTH_TOKEN", "TUNNEL_SECRET", "ENGINE_SIGNALING_SECRET", "TURN_CREDENTIAL", "PUBLIC_UI_URL"):
+    for name in ("AUTH_TOKEN", "TUNNEL_SECRET", "TURN_CREDENTIAL", "PUBLIC_UI_URL"):
         monkeypatch.delenv(name, raising=False)
-    for name in ("AUTH_TOKEN", "ENGINE_SIGNALING_SECRET", "TURN_CREDENTIAL"):
+    for name in ("AUTH_TOKEN", "TURN_CREDENTIAL"):
         monkeypatch.setenv(name, f"{name.lower()}-value")
     engine = tmp_path / "engine" / "build" / "Release" / "engine.exe"
     engine.parent.mkdir(parents=True)
@@ -921,7 +921,6 @@ def test_child_processes_receive_one_sanitized_environment_without_parent_mutati
     monkeypatch.setenv("PYTHONPATH", "unsafe-parent-path")
     monkeypatch.setenv("AUTH_TOKEN", "auth-secret")
     monkeypatch.setenv("TUNNEL_SECRET", "tunnel-secret")
-    monkeypatch.setenv("ENGINE_SIGNALING_SECRET", "signaling-secret")
     monkeypatch.setenv("TURN_CREDENTIAL", "turn-secret")
     before = dict(os.environ)
     deps = FakeDeps()
@@ -940,7 +939,6 @@ def test_child_processes_receive_one_sanitized_environment_without_parent_mutati
 def test_skip_public_mobile_strips_public_ui_url_and_tunnel_secret_from_child_env(tmp_path, monkeypatch):
     monkeypatch.setenv("AUTH_TOKEN", "auth-secret")
     monkeypatch.setenv("TUNNEL_SECRET", "tunnel-secret")
-    monkeypatch.setenv("ENGINE_SIGNALING_SECRET", "signaling-secret")
     monkeypatch.setenv("TURN_CREDENTIAL", "turn-secret")
     monkeypatch.setenv("PUBLIC_UI_URL", "wss://tunnel.example.com/__tunnel/register")
     before = dict(os.environ)
@@ -1048,12 +1046,11 @@ def test_real_run_omits_creationflags_off_windows(tmp_path, monkeypatch):
     assert "creationflags" not in captured["kwargs"]
 
 
-def test_real_adapter_requires_auth_tunnel_signaling_and_turn_secrets(tmp_path, monkeypatch):
+def test_real_adapter_requires_auth_tunnel_and_turn_secrets(tmp_path, monkeypatch):
     deps = RealCutoverDeps(config(tmp_path))
     for name in (
         "AUTH_TOKEN",
         "TUNNEL_SECRET",
-        "ENGINE_SIGNALING_SECRET",
         "TURN_CREDENTIAL",
         "PUBLIC_UI_URL",
     ):
@@ -1065,7 +1062,6 @@ def test_real_adapter_requires_auth_tunnel_signaling_and_turn_secrets(tmp_path, 
     for name in (
         "AUTH_TOKEN",
         "TUNNEL_SECRET",
-        "ENGINE_SIGNALING_SECRET",
         "TURN_CREDENTIAL",
         "PUBLIC_UI_URL",
     ):

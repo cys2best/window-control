@@ -170,7 +170,7 @@ class FakeDeps:
             "w": int(self.current_tier),
             "h": 1280,
             "signaling_url": None,
-            "signaling_token": None,
+            "public_session": None,
         }
 
     def api_quality(self, serial, tier):
@@ -526,7 +526,6 @@ def test_derives_scrcpy_port_and_scid_from_discovered_ldplayer_index():
 
     assert result.status == "INCOMPLETE"
     assert ("kill scrcpy", "emulator-5556", 7) in deps.calls
-    assert any(env.get("ENGINE_SIGNALING_SECRET") == "" for env in deps.started_env)
     assert any(env.get("ENGINE_LOCAL_ICE_SERVERS") == "" for env in deps.started_env)
     assert any(env.get("ENGINE_PUBLIC_ICE_SERVERS") == "" for env in deps.started_env)
 
@@ -880,17 +879,15 @@ def test_fragment_browser_url_contains_no_query_api_or_token_log_payload(tmp_pat
     assert "Authorization" not in url
 
 
-def test_engine_ice_and_signaling_environment_is_cleared_then_restored(monkeypatch):
+def test_engine_ice_environment_is_cleared_then_restored(monkeypatch):
     monkeypatch.setenv("ENGINE_LOCAL_ICE_SERVERS", "stale-local")
     monkeypatch.setenv("ENGINE_PUBLIC_ICE_SERVERS", "stale-public")
-    monkeypatch.setenv("ENGINE_SIGNALING_SECRET", "stale-secret")
     deps = FakeDeps()
 
     run_verification(config(), deps)
 
     assert os.environ["ENGINE_LOCAL_ICE_SERVERS"] == "stale-local"
     assert os.environ["ENGINE_PUBLIC_ICE_SERVERS"] == "stale-public"
-    assert os.environ["ENGINE_SIGNALING_SECRET"] == "stale-secret"
 
 
 def test_real_adb_forward_listing_is_global_and_exactly_filtered(monkeypatch, tmp_path):

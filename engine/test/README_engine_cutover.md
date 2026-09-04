@@ -14,7 +14,6 @@ redacts bounded diagnostics:
 ```powershell
 $env:AUTH_TOKEN = "<mobile-and-browser-login-secret>"
 $env:TUNNEL_SECRET = "<PC-to-VPS-tunnel-secret>"
-$env:ENGINE_SIGNALING_SECRET = "<must-match-the-VPS-JWT-secret>"
 $env:TURN_CREDENTIAL = "<TURN-credential>"
 $env:TURN_HOST = "<TURN-host>"
 $env:TURN_USERNAME = "<TURN-user>"

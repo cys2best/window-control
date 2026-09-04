@@ -460,7 +460,6 @@ def run_verification(config: VerificationConfig, deps: Any) -> VerificationResul
     env.update({
         "ENGINE_EXE_PATH": str(config.engine_exe),
         "ENGINE_WHEP_CAPABILITY_SECRET": __import__("secrets").token_hex(32),
-        "ENGINE_SIGNALING_SECRET": "",
         "ENGINE_LOCAL_ICE_SERVERS": "",
         "ENGINE_PUBLIC_ICE_SERVERS": "",
         "VPS_SIGNALING_URL": f"ws://127.0.0.1:{config.relay_port}",

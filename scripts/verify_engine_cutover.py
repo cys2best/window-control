@@ -49,7 +49,7 @@ _SELECTION_RESPONSE_FIELDS = {
     "whep_url",
     "whep_token",
     "signaling_url",
-    "signaling_token",
+    "public_session",
     "ice_servers",
     "generation",
 }
@@ -493,7 +493,7 @@ def _validate_selection(selection: Any, serial: str) -> dict[str, Any]:
         raise CutoverError("selection returned invalid ICE server metadata")
     for url_field, token_field in (
         ("whep_url", "whep_token"),
-        ("signaling_url", "signaling_token"),
+        ("signaling_url", "public_session"),
     ):
         url = value[url_field]
         token = value[token_field]
@@ -932,7 +932,10 @@ def run_cutover_verification(config: CutoverConfig, deps: Any) -> CutoverResult:
         result.mark(current_gate, "PASS", "tray-only exit left zero app/engine/forwards")
 
         evidence_text = str(getattr(deps, "evidence_text", ""))
-        secrets_to_check = [selection["whep_token"], selection["signaling_token"]]
+        # public_session is deliberately absent: it is now an account-id +
+        # instance-name session identifier, not a bearer credential, so it
+        # is not a secret whose appearance in logs is a leak.
+        secrets_to_check = [selection["whep_token"]]
         if any(secret and secret in evidence_text for secret in secrets_to_check):
             raise CutoverError("secret hygiene gate detected WHEP/viewer token in logs/evidence")
         return result
@@ -995,7 +998,6 @@ class RealCutoverDeps:
     _REQUIRED_ENV = (
         "AUTH_TOKEN",
         "TUNNEL_SECRET",
-        "ENGINE_SIGNALING_SECRET",
         "TURN_CREDENTIAL",
         "PUBLIC_UI_URL",
     )
@@ -1369,7 +1371,7 @@ class RealCutoverDeps:
     if (/\\/instances\\/[^/]+\\/select(?:[?#]|$)/.test(requestUrl) && response.ok) {
       const selection = await response.clone().json();
       selection.signaling_url = null;
-      selection.signaling_token = null;
+      selection.public_session = null;
       return new Response(JSON.stringify(selection), {
         status: response.status,
         statusText: response.statusText,
