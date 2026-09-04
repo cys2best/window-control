@@ -193,17 +193,20 @@ def test_public_ui_url_without_supabase_url_refuses_to_start():
         importlib.reload(config)
 
 
-def test_login_upserts_install_public_key_once_per_distinct_owner():
+def test_login_claims_install_once_then_locks_to_that_owner():
     client, _, supabase = _make_authed_client()
 
-    client.get("/instances", headers={"Authorization": f"Bearer {_jwt(sub='user-1')}"})
-    client.get("/instances", headers={"Authorization": f"Bearer {_jwt(sub='user-1')}"})
-    client.get("/instances", headers={"Authorization": f"Bearer {_jwt(sub='user-2')}"})
+    first = client.get("/instances", headers={"Authorization": f"Bearer {_jwt(sub='user-1')}"})
+    again = client.get("/instances", headers={"Authorization": f"Bearer {_jwt(sub='user-1')}"})
+    different = client.get("/instances", headers={"Authorization": f"Bearer {_jwt(sub='user-2')}"})
 
-    assert supabase.upsert_install.call_count == 2
-    first_call, second_call = supabase.upsert_install.call_args_list
-    assert first_call.args[0] == "user-1"
-    assert second_call.args[0] == "user-2"
+    assert first.status_code == 200
+    assert again.status_code == 200
+    # A second, different account must NOT be able to seize this install's
+    # ownership just by authenticating against it.
+    assert different.status_code == 403
+    assert supabase.upsert_install.call_count == 1
+    assert supabase.upsert_install.call_args.args[0] == "user-1"
 
 
 def test_login_upsert_failure_does_not_fail_the_request(monkeypatch):

@@ -58,8 +58,12 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL")
 # to Supabase's Auth REST API directly for login/register.
 SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY", "")
 # Server-only. Full-access Postgres REST credential used solely by
-# supabase_client.py for the device_links table, after FastAPI has
-# already authenticated the caller and is enforcing ownership itself.
+# supabase_client.py for the installs table, after FastAPI has already
+# authenticated the caller — it registers this install's Ed25519 public
+# key against the owning account so the public signaling relay can verify
+# the engine. An install locks to the first account that authenticates
+# against it; releasing it for a different account means deleting
+# install_owner.txt locally (see server/install_identity.py).
 SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
 
 # Public-internet UI tunnel (VPS relay). Unset = tunnel disabled, matching

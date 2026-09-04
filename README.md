@@ -42,8 +42,9 @@ Works on the same Wi-Fi network. Use the LAN IP shown in the launcher.
 ## Multi-user authentication (optional)
 
 By default (no `SUPABASE_URL` set) auth is fully disabled — LAN-only mode,
-open to anyone who can reach the app. To require sign-in and scope each
-user to only the instances they've linked, create a
+open to anyone who can reach the app. To require sign-in with a real
+account — and to bind this install to a single owning account, so only
+that account's logins can drive it or use its public-relay path — create a
 [Supabase](https://supabase.com) project and set:
 
 - `SUPABASE_URL` — the project URL; unset means auth disabled. Also the
@@ -54,13 +55,28 @@ user to only the instances they've linked, create a
   clients; used only to talk to Supabase's Auth REST API directly for
   login/register
 - `SUPABASE_SERVICE_ROLE_KEY` — server-only, full-access Postgres REST
-  credential used solely for the `device_links` table, after FastAPI has
-  already authenticated the caller and is enforcing ownership itself
+  credential used solely for the `installs` table, after FastAPI has
+  already authenticated the caller — it registers this install's
+  Ed25519 public key against the owning account so the public signaling
+  relay can verify the engine's identity
 
 Before setting these in production, apply
-[infra/supabase/device_links.sql](infra/supabase/device_links.sql) once
-against the project's Supabase Postgres — via the Supabase SQL editor, or
+[infra/supabase/installs.sql](infra/supabase/installs.sql) once against
+the project's Supabase Postgres — via the Supabase SQL editor, or
 `supabase db push`. It is not run by any automated migration.
+
+### Install ownership
+
+Ownership is per *install*, not per instance: whichever account
+authenticates first against a fresh install claims it (trust-on-first-use),
+and every subsequent login by that account sees all of that PC's
+instances. After the claim the install is locked — a request from any
+other authenticated account is rejected with `403`, so no self-registered
+account can seize an install it doesn't own. Transferring an install to a
+different account therefore requires local access to the machine: delete
+`install_owner.txt` from the writable data directory
+(`C:\ProgramData\WindowControl\` on Windows) before the new account's
+first login, and it will be claimed again by whoever logs in next.
 
 ## Troubleshooting
 

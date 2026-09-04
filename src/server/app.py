@@ -226,7 +226,9 @@ def create_app(instance_manager: InstanceManager) -> FastAPI:
             request.state.user = user
 
             nonlocal _cached_owner_user_id
-            if user.user_id != _cached_owner_user_id:
+            if _cached_owner_user_id is None:
+                # First-use claim: this install has no owner yet, adopt
+                # whoever successfully authenticates first.
                 # Best-effort: a Supabase hiccup here must not fail this
                 # unrelated request. The cache only advances on success, so
                 # the next request naturally retries.
@@ -237,6 +239,20 @@ def create_app(instance_manager: InstanceManager) -> FastAPI:
                 else:
                     install_identity.set_cached_owner_user_id(user.user_id)
                     _cached_owner_user_id = user.user_id
+            elif user.user_id != _cached_owner_user_id:
+                # A different account than this install's already-claimed
+                # owner. Deliberately does NOT re-upsert or adopt -- an
+                # authenticated HTTP request alone must never be able to
+                # transfer ownership of an already-claimed install away
+                # from its real owner. Switching owners requires local
+                # filesystem access to this machine (delete
+                # install_owner.txt, see install_identity.py), matching the
+                # "attacker needs filesystem access to this specific PC"
+                # bar the rest of this design already assumes.
+                return JSONResponse(
+                    {"detail": "This install belongs to a different account"},
+                    status_code=403,
+                )
         return await call_next(request)
 
     @app.on_event("startup")
