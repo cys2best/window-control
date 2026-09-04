@@ -1,8 +1,8 @@
 """Supabase email/password sign-in for the desktop tray.
 
 Caches the returned session locally so the tray doesn't prompt on every
-launch (see LoginDialog). Does not yet drive any /instances/{id}/link
-call — see the spec's deferred "tray auto-attribution" item.
+launch (see LoginDialog). Once authenticated, all discovered instances are
+automatically accessible — no per-instance linking required.
 """
 
 import json
