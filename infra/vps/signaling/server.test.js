@@ -255,6 +255,34 @@ test('engine whose signature matches the registered install key is accepted', as
   assert.ok(true);
 });
 
+test('engine whose signature matches the second registered install key is accepted', async () => {
+  const { publicKey: firstKey } = await generateEdKeyPair('EdDSA');
+  const firstJwk = await exportEdJWK(firstKey);
+  const { publicKey: secondKey, privateKey: secondPrivateKey } = await generateEdKeyPair('EdDSA');
+  const secondJwk = await exportEdJWK(secondKey);
+  const { server, port } = await createSignalingServer({
+    port: 0,
+    installLookup: async (userId) =>
+      (userId === 'user-1'
+        ? [
+          { public_key: firstJwk.x, user_id: 'user-1' },
+          { public_key: secondJwk.x, user_id: 'user-1' },
+        ]
+        : []),
+  });
+  const token = await makeEngineToken({ session: 'user-1.instance0', privateKey: secondPrivateKey });
+
+  const ws = await openClientWithToken(port, 'user-1.instance0', 'engine', token);
+  // openClientWithToken resolves on 'open', which fires before the server's
+  // async connection handler has a chance to reject and close the socket, so
+  // assert the connection is actually kept alive (not closed with 1008).
+  const closeCode = await waitForCloseCode(ws, 200);
+  assert.strictEqual(closeCode, null);
+
+  ws.close();
+  server.close();
+});
+
 test('engine whose signature does not match the registered install key is rejected', async () => {
   const { privateKey } = await generateEdKeyPair('EdDSA');
   const { publicKey: someoneElsesKey } = await generateEdKeyPair('EdDSA');

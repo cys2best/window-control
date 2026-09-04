@@ -94,16 +94,15 @@ export async function createSignalingServer({
             || claims.exp < Date.now() / 1000) {
           throw new Error('claims mismatch');
         }
-        const publicKeyObject = crypto.createPublicKey({
-          key: { kty: 'OKP', crv: 'Ed25519', x: rows[0].public_key },
-          format: 'jwk',
+        const signedData = Buffer.from(`${header}.${payload}`);
+        const signatureBuffer = Buffer.from(signature, 'base64url');
+        const verified = rows.some((row) => {
+          const publicKeyObject = crypto.createPublicKey({
+            key: { kty: 'OKP', crv: 'Ed25519', x: row.public_key },
+            format: 'jwk',
+          });
+          return crypto.verify(null, signedData, publicKeyObject, signatureBuffer);
         });
-        const verified = crypto.verify(
-          null,
-          Buffer.from(`${header}.${payload}`),
-          publicKeyObject,
-          Buffer.from(signature, 'base64url'),
-        );
         if (!verified) throw new Error('bad signature');
       } catch {
         ws.close(1008, 'invalid engine registration token');
