@@ -382,7 +382,7 @@ git commit -m "feat(auth): add per-install Ed25519 keypair and owner cache"
 
 **Interfaces:**
 - Consumes: `install_identity.get_or_create_install_keypair()` (Task 2).
-- Produces: `EngineTokenIssuer(whep_secret, signaling_private_key=None, ...)`. `EngineTokenIssuer.engine_token(session: str) -> str` (replaces `signaling(instance_name, role, user_id=None)`). `EngineRuntimeConfig.signaling_private_key: Ed25519PrivateKey | None` (replaces `signaling_secret: str`). Task 4 builds the `session` string this consumes; for now `_build_env_locked()` still passes `self.instance_name` as the session (Task 4 upgrades it to `f"{owner}.{instance_name}"`).
+- Produces: `EngineTokenIssuer(whep_secret, signaling_private_key=None, ...)`. `EngineTokenIssuer.engine_token(session: str) -> str` (replaces `signaling(instance_name, role, user_id=None)`). `EngineRuntimeConfig.signaling_private_key: Ed25519PrivateKey | None` (replaces `signaling_secret: str`). Task 5 builds the `session` string this consumes; for now `_build_env_locked()` still passes `self.instance_name` as the session (Task 5 upgrades it to `f"{owner}.{instance_name}"`).
 
 - [ ] **Step 1: Read the current files**
 
@@ -609,7 +609,7 @@ with:
 
 ```python
             "ENGINE_SIGNALING_TOKEN": self._token_issuer.engine_token(
-                self.instance_name  # Task 4 upgrades this to "{owner}.{instance_name}"
+                self.instance_name  # Task 5 upgrades this to "{owner}.{instance_name}"
             ),
 ```
 
@@ -652,7 +652,7 @@ and add the import at the top of the file: `from cryptography.hazmat.primitives.
 
 - [ ] **Step 8: Fix the tests that referenced the old viewer-token API**
 
-`decode_role` (line 54-56) still works unchanged (splits on the first `:`). Update `test_start_launches_generation_zero_before_engine_and_mints_engine_jwt` (line 323-330) — no change needed, it already only asserts `decode_role(...) == "engine"`. Delete `test_select_passes_user_id_to_signaling_token` (lines 345-352) — viewer tokens no longer exist; this test's behavior is superseded by Task 4. Leave `test_select_mints_fresh_whep_and_viewer_tokens_without_admin_port` (lines 333-342) as-is for now — Task 4 rewrites it when it removes viewer-token minting from `select()` entirely.
+`decode_role` (line 54-56) still works unchanged (splits on the first `:`). Update `test_start_launches_generation_zero_before_engine_and_mints_engine_jwt` (line 323-330) — no change needed, it already only asserts `decode_role(...) == "engine"`. Delete `test_select_passes_user_id_to_signaling_token` (lines 345-352) — viewer tokens no longer exist; this test's behavior is superseded by Task 5. Leave `test_select_mints_fresh_whep_and_viewer_tokens_without_admin_port` (lines 333-342) as-is for now — Task 5 rewrites it when it removes viewer-token minting from `select()` entirely.
 
 - [ ] **Step 9: Update `engine_orchestrator.py` and its test**
 
@@ -963,16 +963,16 @@ git commit -m "feat(auth): register this install's public key with the owning ac
 ## Task 5: Session naming — `{owner_user_id}.{instance_name}`, drop viewer FastAPI token
 
 **Files:**
-- Modify: `src/server/engine_runtime.py:78-88,157-188,344-353`, `src/server/app.py` (`select_instance` handler)
+- Modify: `src/server/engine_runtime.py:78-88,157-188,344-353`, `src/server/instance_manager.py:124-129`, `src/server/engine_orchestrator.py:71-78`, `src/server/app.py` (`select_instance` handler and its call into `instance_manager.select`)
 - Test: `tests/test_engine_runtime.py`, `tests/test_app_auth.py` or wherever the `/select` HTTP response shape is tested
 
 **Interfaces:**
 - Consumes: `EngineTokenIssuer.engine_token(session)` (Task 3), `install_identity.get_cached_owner_user_id()` (Task 2).
-- Produces: `EngineSelection.public_session: str | None` (replaces `signaling_token`). Task 6 (client) and Task 7 (Node relay) both depend on this exact field/format.
+- Produces: `EngineSelection.public_session: str | None` (replaces `signaling_token`). Task 7 (client) and Task 8 (Node relay) both depend on this exact field/format.
 
-- [ ] **Step 1: Read the current `engine_runtime.py` and `app.py` select handler**
+- [ ] **Step 1: Read the current `engine_runtime.py`, `instance_manager.py`, `engine_orchestrator.py`, and `app.py` select handler**
 
-Read `src/server/engine_runtime.py:78-188` and `:344-353`, and `src/server/app.py`'s `select_instance` handler to confirm line numbers post-Task-4.
+Read `src/server/engine_runtime.py:78-188` and `:344-353`, `src/server/instance_manager.py:124-129`, `src/server/engine_orchestrator.py:71-78`, and `src/server/app.py`'s `select_instance` handler (and its legacy counterparts around lines 418/422) to confirm line numbers post-Task-4.
 
 - [ ] **Step 2: Update `EngineSelection` and `EngineRuntime.__init__`/`select()`**
 
@@ -987,9 +987,7 @@ from server import install_identity
 Replace `select()` (around line 157-188):
 
 ```python
-    def select(
-        self, advertised_host: str, user_id: str | None = None
-    ) -> EngineSelection | None:
+    def select(self, advertised_host: str) -> EngineSelection | None:
         """Mint a fresh, short-lived credential set for one client.
 
         Returns None when no engine endpoint is currently published (never
@@ -1019,9 +1017,26 @@ Replace `select()` (around line 157-188):
             )
 ```
 
-(The browser now presents its own Supabase access token directly to the relay — it already holds one for calling FastAPI itself — so this no longer mints a viewer-role token at all. `user_id` stays a parameter for now since `app.py`'s caller still passes it; it's unused here now — remove it from the signature and update the one call site in `app.py` if nothing else in this method needs it. Check `app.py`'s call to `instance_manager.select(...)` — if `user_id` was only ever threaded through to this now-deleted viewer-token mint, drop the parameter from `select()` and from `InstanceManager.select()`/`EngineOrchestrator.select()` above it; if anything else still needs it, keep it and just stop using it here.)
+(The browser now presents its own Supabase access token directly to the relay — it already holds one for calling FastAPI itself — so this no longer mints a viewer-role token at all. `user_id` is dropped from the signature entirely: grepped `instance_manager.py` and `engine_orchestrator.py` — `user_id` was threaded through `InstanceManager.select()` → `EngineOrchestrator.select()` → here purely to feed the now-deleted viewer-token mint, nothing else in either intermediate method reads it.)
 
-- [ ] **Step 3: Update `_build_env_locked()` to use the install-scoped session**
+- [ ] **Step 3: Remove the now-dead `user_id` parameter from the two callers above `select()`**
+
+In `src/server/instance_manager.py:124-129`, replace:
+
+```python
+        self, serial: str, advertised_host: str, user_id: str | None = None
+    ) -> EngineSelection | None:
+        ...
+            serial, advertised_host, user_id=user_id
+```
+
+(the exact surrounding method is `InstanceManager.select`) with the `user_id` parameter and its pass-through removed — signature becomes `def select(self, serial: str, advertised_host: str) -> EngineSelection | None:` and the inner call becomes `... .select(serial, advertised_host)` (read the full method first so the edit lands correctly around its existing body).
+
+In `src/server/engine_orchestrator.py:71-78`, apply the same removal to `EngineOrchestrator.select`.
+
+In `src/server/app.py`'s `select_instance` handler, remove the `user.user_id if user else None` argument from the `instance_manager.select(...)` call (around line 337-338) — it becomes a two-argument call, `instance_manager.select, instance_id, host`. Do the same for the legacy `/select`/`/windows`-adjacent call sites around lines 418 and 422 if they still reference a user id there (read them first — they may already omit it).
+
+- [ ] **Step 4: Update `_build_env_locked()` to use the install-scoped session**
 
 Replace (around line 344-353):
 
@@ -1056,7 +1071,7 @@ with:
 
 (`ENGINE_SESSION` is new — Task 6 wires the C++ engine to forward it verbatim instead of building the session id itself. No cached owner yet at boot — see the spec's §6 — falls back to the bare instance name, same fail-closed behavior as before this task: the engine registers under a session no live viewer will ever request, so it simply doesn't get selected, not selected-by-the-wrong-party.)
 
-- [ ] **Step 4: Update `tests/test_engine_runtime.py`**
+- [ ] **Step 5: Update `tests/test_engine_runtime.py`**
 
 Add a fixture-level default so `install_identity.get_cached_owner_user_id()` returns a known value in these tests — add near the top of the file:
 
@@ -1111,23 +1126,24 @@ def test_select_returns_null_signaling_url_and_session_together_when_disabled():
 
 Update `test_start_passes_every_configured_env_overlay_to_the_engine` (lines 403-418) to include `ENGINE_SESSION` in the expected `set(env)`.
 
-- [ ] **Step 5: Update `app.py`'s `select_instance` response**
+- [ ] **Step 6: Update `app.py`'s `select_instance` response**
 
 Find the response dict inside `select_instance` (built from `EngineSelection`) — replace the `"signaling_token": selection.signaling_token,` line with `"public_session": selection.public_session,`. Do the same for the legacy `/select` handler's response, if it mirrors the same fields.
 
-- [ ] **Step 6: Update any HTTP-level test asserting the select response shape**
+- [ ] **Step 7: Update any HTTP-level test asserting the select response shape**
 
 Search `tests/test_app_auth.py` (and `tests/test_app.py` if it also asserts this) for `signaling_token` in a JSON response assertion and rename to `public_session`.
 
-- [ ] **Step 7: Run the full test suite**
+- [ ] **Step 8: Run the full test suite**
 
 Run: `uv run pytest tests/ -v`
 Expected: PASS (aside from the two documented pre-existing unrelated failures).
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
-git add src/server/engine_runtime.py src/server/app.py tests/test_engine_runtime.py tests/test_app_auth.py
+git add src/server/engine_runtime.py src/server/instance_manager.py src/server/engine_orchestrator.py \
+        src/server/app.py tests/test_engine_runtime.py tests/test_app_auth.py
 git commit -m "feat(auth): scope public signaling sessions to the owning account"
 ```
 
