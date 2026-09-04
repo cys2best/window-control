@@ -19,6 +19,59 @@ Plan/task identifiers belong here and in workflow state, not in commit subjects.
 
 ---
 
+### 2026-09-04 19:30 — claude
+- Finished: owner confirmed on the Windows Host PC that Supabase auth
+  now works end-to-end after both fixes below (530c83b ES256/JWKS,
+  f4a38a6 audience claim) — login succeeds and `/instances` no longer
+  401s. Both were root-caused from real evidence (decoded JWT header,
+  then a direct local repro script), not guessed.
+- Discovered (real gap, not a bug in what exists): there is no UI
+  anywhere — web, mobile, or desktop tray — that calls
+  `POST /instances/{id}/link`. `GET /instances` only ever returns
+  instances already linked to the caller, so a freshly-registered user
+  has no way to discover or claim an unlinked device through the app
+  itself; the backend route from
+  2026-09-03-supabase-multi-user-auth exists and is tested, but nothing
+  client-side was ever wired to it. Gave the owner a DevTools-console
+  workaround (`window.wcFetch('/instances/adb:<serial>/link', {method:
+  'POST'})`, confirmed id format is `adb:<serial>` from
+  `src/server/adb_manager.py:207`) to keep testing unblocked; did not
+  build the real "claim this instance" UI this session — offered, not
+  yet decided.
+- Next:
+  1. Owner to finish the manual Supabase gate now that auth actually
+     works: confirm linked instance appears in the list, confirm a
+     second account does NOT see it, confirm mobile login shows the
+     same linked list as web. If that passes,
+     2026-09-01-engine-client-cutover's public/mobile gap (recorded
+     13:50 below) can close for real — rerun
+     `verify-engine-cutover.ps1` WITHOUT `-SkipPublicMobile` once ready.
+  2. Decide on and build the missing "claim/link instance" UI (real
+     feature work — probably needs a new endpoint to list
+     discovered-but-unclaimed instances, since `/instances` filters
+     those out entirely for an authed caller).
+  3. The user explicitly asked to merge feature/engine into main and
+     delete feature/authenticate + feature/engine — started via
+     superpowers:finishing-a-development-branch, paused before any
+     merge/delete happened (nothing destructive done) when priorities
+     shifted to Supabase testing. Found along the way:
+     origin/feature/authenticate has one commit
+     (a3a8d3, a HANDOFF-only doc update) not reachable from
+     feature/engine — confirmed pure duplicate content of what's
+     already in feature/engine's own HANDOFF, safe to lose when that
+     branch is deleted. origin/main has also moved independently
+     (b870c9c, unrelated WHEP-prewarm work) since feature/engine
+     forked, so the merge needs a fresh `git pull origin main` first,
+     not a fast-forward assumption. Still needs: full test suite on
+     the merged result, then `git branch -d`/`git push --delete` for
+     both branches, per the skill's normal flow.
+  4. Also still open: the parked legacy-route id-format mismatch from
+     the 2026-09-03-supabase merge (POST /select, GET /windows
+     403-everyone under auth — fails closed, no client calls them, but
+     unresolved); soak's decode-stall root cause (13:50 below).
+- Blockers: none of the above are blocking — all are queued follow-ups
+  for whoever picks this up next.
+
 ### 2026-09-04 18:00 — claude
 - Ruling: real Supabase testing (owner creating a fresh project to close
   the public/mobile gap left open in the 13:50 entry below) found login
