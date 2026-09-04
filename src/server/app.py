@@ -15,9 +15,11 @@ from starlette.routing import Match
 from config import CLIENT_DIR, STUN_PORT, TIER_ORDER
 from server import adb_manager
 from server import auth
+from server import install_identity
 from server.ice_config import get_ice_servers
 from server.instance_manager import InstanceManager
 from server.http_tunnel import run_tunnel_with_reconnect
+from server.supabase_client import SupabaseClient, SupabaseUnavailable
 from server.tailscale import get_best_ip
 
 log = logging.getLogger(__name__)
@@ -196,6 +198,12 @@ def create_app(instance_manager: InstanceManager) -> FastAPI:
         )
     app = FastAPI()
 
+    supabase = SupabaseClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY) if auth.auth_enabled() else None
+    _install_public_key = None
+    if auth.auth_enabled():
+        _, _install_public_key = install_identity.get_or_create_install_keypair()
+    _cached_owner_user_id = install_identity.get_cached_owner_user_id()
+
     @app.middleware("http")
     async def _auth_gate(request: Request, call_next):
         request.state.user = None
@@ -216,6 +224,19 @@ def create_app(instance_manager: InstanceManager) -> FastAPI:
                     headers={"WWW-Authenticate": "Bearer"},
                 )
             request.state.user = user
+
+            nonlocal _cached_owner_user_id
+            if user.user_id != _cached_owner_user_id:
+                # Best-effort: a Supabase hiccup here must not fail this
+                # unrelated request. The cache only advances on success, so
+                # the next request naturally retries.
+                try:
+                    await asyncio.to_thread(supabase.upsert_install, user.user_id, _install_public_key)
+                except SupabaseUnavailable:
+                    pass
+                else:
+                    install_identity.set_cached_owner_user_id(user.user_id)
+                    _cached_owner_user_id = user.user_id
         return await call_next(request)
 
     @app.on_event("startup")
