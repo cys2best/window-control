@@ -165,6 +165,23 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     );
   }
 
+  // Viewer verification arms on SUPABASE_URL alone; engine verification also
+  // needs SUPABASE_SERVICE_ROLE_KEY. Setting only one leaves the relay
+  // half-protected -- with SUPABASE_URL alone, viewers are verified but any
+  // client can still claim role=engine for any account's session and steal
+  // that account's traffic. Refuse to start rather than run in that state;
+  // setting neither is still allowed and stays the trusted dev/local relay.
+  if ([supabaseUrl, serviceRoleKey].some(Boolean)
+      && ![supabaseUrl, serviceRoleKey].every(Boolean)) {
+    throw new Error(
+      'SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set together: '
+      + 'SUPABASE_URL alone verifies viewers but leaves engine registration '
+      + 'unverified, so anyone could claim role=engine for any account. Set '
+      + 'both to verify viewers and engines, or neither for an unverified '
+      + 'dev/local relay.',
+    );
+  }
+
   const servers = [createSignalingServer({ port, supabaseUrl, serviceRoleKey })];
   if (tlsPort) {
     servers.push(createSignalingServer({
@@ -182,9 +199,13 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     const actualPort = plain.port;
     console.log(`Signaling server listening on port ${actualPort}`);
     if (secure) console.log(`Secure signaling server listening on port ${secure.port}`);
-    if (!supabaseUrl || !serviceRoleKey) {
-      console.warn('WARNING: SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY not set, engine auth disabled');
+    // The half-configured case throws above, so reaching here without
+    // supabaseUrl means neither was set: viewer AND engine auth are off.
+    if (!supabaseUrl) {
+      console.warn(
+        'WARNING: SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY not set, '
+        + 'viewer and engine auth disabled',
+      );
     }
-    if (!supabaseUrl) console.warn('WARNING: SUPABASE_URL not set, viewer auth disabled');
   });
 }

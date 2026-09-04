@@ -2,6 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
 import { readFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
 import { WebSocketServer, WebSocket } from 'ws';
 import {
   generateKeyPair, SignJWT, jwtVerify,
@@ -353,4 +354,58 @@ test('expired engine token is rejected even with a valid signature', async () =>
 
   assert.strictEqual(closeCode, 1008);
   server.close();
+});
+
+// The standalone-run guards live behind `import.meta.url === argv[1]`, so they
+// are unreachable from an in-process import. Spawn the real entrypoint to
+// exercise them. Both throw before any listener binds, so the child exits
+// immediately and never holds a port.
+function runStandalone(env) {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [new URL('./server.js', import.meta.url).pathname], {
+      env: { ...process.env, PORT: '0', ...env },
+      stdio: ['ignore', 'ignore', 'pipe'],
+    });
+    let stderr = '';
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    const timer = setTimeout(() => child.kill('SIGKILL'), 5000);
+    child.once('close', (code, signal) => {
+      clearTimeout(timer);
+      resolve({ code, signal, stderr });
+    });
+  });
+}
+
+test('standalone relay refuses to start with SUPABASE_URL but no service role key', async () => {
+  const { code, stderr } = await runStandalone({
+    SUPABASE_URL: 'https://project.supabase.co',
+    SUPABASE_SERVICE_ROLE_KEY: '',
+  });
+
+  // Half-configured is the dangerous case: viewers verified, engine
+  // registration wide open. It must fail closed at startup.
+  assert.notStrictEqual(code, 0);
+  assert.match(stderr, /SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set together/);
+});
+
+test('standalone relay refuses to start with a service role key but no SUPABASE_URL', async () => {
+  const { code, stderr } = await runStandalone({
+    SUPABASE_URL: '',
+    SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
+  });
+
+  assert.notStrictEqual(code, 0);
+  assert.match(stderr, /SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set together/);
+});
+
+test('standalone relay still starts unverified when neither Supabase variable is set', async () => {
+  const { signal, stderr } = await runStandalone({
+    SUPABASE_URL: '', SUPABASE_SERVICE_ROLE_KEY: '',
+  });
+
+  // Not a startup error: it binds and runs as the trusted dev/local relay,
+  // so the 5s guard has to kill it. That it was killed (rather than exiting
+  // on its own) is the proof it started.
+  assert.strictEqual(signal, 'SIGKILL');
+  assert.doesNotMatch(stderr, /must be set together/);
 });
