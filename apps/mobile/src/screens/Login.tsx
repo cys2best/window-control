@@ -2,8 +2,7 @@ import React, { useState } from "react";
 import { View, Text, TextInput, KeyboardAvoidingView, Platform } from "react-native";
 import { theme } from "../theme/tokens";
 import { Button } from "../components/Button";
-import { useServer } from "../api/ServerContext";
-import { signInWithPassword, signUpWithPassword } from "../api/supabaseAuth";
+import { useServer, signInWithPassword, signUpWithPassword } from "@wc/core";
 
 export function Login({ navigation }: { navigation: any }) {
   const { base, setServer, supabaseUrl, supabaseAnonKey } = useServer() as any;

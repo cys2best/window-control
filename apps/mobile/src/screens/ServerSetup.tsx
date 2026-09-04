@@ -3,8 +3,7 @@ import { View, Text, TextInput, ScrollView, KeyboardAvoidingView, Platform, Imag
 import Svg, { Rect, Path, Circle } from "react-native-svg";
 import { theme } from "../theme/tokens";
 import { Button } from "../components/Button";
-import { useServer } from "../api/ServerContext";
-import { normalizeBase } from "../api/urls";
+import { useServer, normalizeBase } from "@wc/core";
 
 // v3: light warm ground, rounded hero, logo + wordmark, rounded input (coral
 // caret, red border on error), rounded coral error card, "Start streaming" pill.

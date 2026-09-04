@@ -1,14 +1,11 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { View, TextInput, PanResponder } from "react-native";
 import * as ScreenOrientation from "expo-screen-orientation";
-import { RTCView } from "react-native-webrtc";
+import { RTCView, RTCPeerConnection } from "react-native-webrtc";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { runOnJS } from "react-native-reanimated";
-import { useServer } from "../api/ServerContext";
+import { useServer, connectWhep, WhepSession, normalizeCoords, makeAdaptive } from "@wc/core";
 import { theme } from "../theme/tokens";
-import { connectWhep, WhepSession } from "../webrtc/whep";
-import { normalizeCoords } from "../input/coords";
-import { makeAdaptive } from "../quality/adaptive";
 import { StreamToolbar } from "../components/StreamToolbar";
 import { SettingsModal } from "../components/SettingsModal";
 import { SwitchDrawer } from "../components/SwitchDrawer";
@@ -72,6 +69,7 @@ export function Stream({ route, navigation }: { route: any; navigation: any }) {
         whepUrl: sel.whep_url,
         whepToken: sel.whep_token,
         iceServers: sel.ice_servers,
+        RTCImpl: RTCPeerConnection,
         onStream: (stream) => {
           if (gen !== startGen.current) return;
           nextStream = stream;

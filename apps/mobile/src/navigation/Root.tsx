@@ -4,7 +4,7 @@ import { ServerSetup } from "../screens/ServerSetup";
 import { Login } from "../screens/Login";
 import { InstanceList } from "../screens/InstanceList";
 import { Stream } from "../screens/Stream";
-import { useServer } from "../api/ServerContext";
+import { useServer } from "@wc/core";
 
 const Stack = createNativeStackNavigator();
 

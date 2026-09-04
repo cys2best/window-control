@@ -1,7 +1,7 @@
 import React from "react";
 import { Pressable, View, Text, Image } from "react-native";
 import { theme } from "../theme/tokens";
-import type { Instance } from "../api/client";
+import type { Instance } from "@wc/core";
 
 export function InstanceRow({ instance, active, previewSource, onPress }:
   { instance: Instance; active: boolean; previewSource: { uri: string; headers?: { Authorization: string } }; onPress: () => void }) {

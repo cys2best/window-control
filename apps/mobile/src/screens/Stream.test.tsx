@@ -2,9 +2,19 @@ import React from "react";
 import { render, waitFor, act } from "@testing-library/react-native";
 import { PanResponder } from "react-native";
 import { Stream } from "./Stream";
-import * as SC from "../api/ServerContext";
-import * as Whep from "../webrtc/whep";
-import * as Adaptive from "../quality/adaptive";
+import * as SC from "@wc/core";
+import * as Whep from "@wc/core";
+import * as Adaptive from "@wc/core";
+
+jest.mock("@wc/core", () => {
+  const actual = jest.requireActual("@wc/core");
+  return {
+    ...actual,
+    useServer: jest.fn(),
+    connectWhep: jest.fn(),
+    makeAdaptive: jest.fn(),
+  };
+});
 
 jest.mock("@react-native-async-storage/async-storage", () =>
   require("@react-native-async-storage/async-storage/jest/async-storage-mock"));
@@ -58,7 +68,10 @@ function selectResp(overrides: any = {}) {
   };
 }
 
-afterEach(() => jest.restoreAllMocks());
+afterEach(() => {
+  jest.restoreAllMocks();
+  jest.clearAllMocks();
+});
 
 function touch(x: number, y: number, count = 1) {
   return {
@@ -72,14 +85,14 @@ function touch(x: number, y: number, count = 1) {
 
 test("connects via client.select() + connectWhep() on mount, not the old input socket", async () => {
   const session = makeFakeSession();
-  const connectWhepSpy = jest.spyOn(Whep, "connectWhep").mockResolvedValue(session as any);
+  const connectWhepSpy = (Whep.connectWhep as jest.Mock).mockResolvedValue(session as any);
   const client = {
     select: jest.fn().mockResolvedValue(selectResp()),
     instances: jest.fn().mockResolvedValue([]),
     setQuality: jest.fn(),
     keyframe: jest.fn(),
   };
-  jest.spyOn(SC, "useServer").mockReturnValue({ base: "http://h", client, setBase: jest.fn(), ready: true } as any);
+  (SC.useServer as jest.Mock).mockReturnValue({ base: "http://h", client, setBase: jest.fn(), ready: true } as any);
 
   await act(async () => {
     render(<Stream route={{ params: { serial: "A" } }} navigation={{ navigate: jest.fn(), setParams: jest.fn() }} />);
@@ -98,7 +111,7 @@ test("a disconnected WHEP state (closed input channel) triggers a fresh select/r
   const firstSession = makeFakeSession();
   const secondSession = makeFakeSession();
   let callCount = 0;
-  const connectWhepSpy = jest.spyOn(Whep, "connectWhep").mockImplementation((opts: any) => {
+  const connectWhepSpy = (Whep.connectWhep as jest.Mock).mockImplementation((opts: any) => {
     callCount += 1;
     if (callCount === 1) {
       // Fire the disconnected state asynchronously, like a real closed
@@ -114,7 +127,7 @@ test("a disconnected WHEP state (closed input channel) triggers a fresh select/r
     setQuality: jest.fn(),
     keyframe: jest.fn(),
   };
-  jest.spyOn(SC, "useServer").mockReturnValue({ base: "http://h", client, setBase: jest.fn(), ready: true } as any);
+  (SC.useServer as jest.Mock).mockReturnValue({ base: "http://h", client, setBase: jest.fn(), ready: true } as any);
 
   await act(async () => {
     render(<Stream route={{ params: { serial: "A" } }} navigation={{ navigate: jest.fn(), setParams: jest.fn() }} />);
@@ -128,7 +141,7 @@ test("terminal input failure releases an active drag before reconnecting", async
   const session = makeFakeSession();
   const createPanResponder = jest.spyOn(PanResponder, "create").mockImplementation(() => ({ panHandlers: {} }) as any);
   let onState!: (state: "connecting" | "connected" | "disconnected") => void;
-  jest.spyOn(Whep, "connectWhep").mockImplementation((opts: any) => {
+  (Whep.connectWhep as jest.Mock).mockImplementation((opts: any) => {
     onState = opts.onState;
     return Promise.resolve(session as any);
   });
@@ -138,7 +151,7 @@ test("terminal input failure releases an active drag before reconnecting", async
     setQuality: jest.fn(),
     keyframe: jest.fn(),
   };
-  jest.spyOn(SC, "useServer").mockReturnValue({ base: "http://h", client, setBase: jest.fn(), ready: true } as any);
+  (SC.useServer as jest.Mock).mockReturnValue({ base: "http://h", client, setBase: jest.fn(), ready: true } as any);
 
   await render(<Stream route={{ params: { serial: "A" } }} navigation={{ navigate: jest.fn(), setParams: jest.fn() }} />);
   await waitFor(() => expect(session.input.send).toHaveBeenCalledWith({ type: "idr" }));
@@ -154,18 +167,18 @@ test("terminal input failure releases an active drag before reconnecting", async
 test("adaptive stall leaves the connected peer in place", async () => {
   const session = makeFakeSession();
   let adaptiveOptions: any;
-  jest.spyOn(Adaptive, "makeAdaptive").mockImplementation((opts: any) => {
+  (Adaptive.makeAdaptive as jest.Mock).mockImplementation((opts: any) => {
     adaptiveOptions = opts;
     return { start: jest.fn(), stop: jest.fn(), pin: jest.fn(), setAuto: jest.fn() } as any;
   });
-  jest.spyOn(Whep, "connectWhep").mockResolvedValue(session as any);
+  (Whep.connectWhep as jest.Mock).mockResolvedValue(session as any);
   const client = {
     select: jest.fn().mockResolvedValue(selectResp()),
     instances: jest.fn().mockResolvedValue([]),
     setQuality: jest.fn(),
     keyframe: jest.fn(),
   };
-  jest.spyOn(SC, "useServer").mockReturnValue({ base: "http://h", client, setBase: jest.fn(), ready: true } as any);
+  (SC.useServer as jest.Mock).mockReturnValue({ base: "http://h", client, setBase: jest.fn(), ready: true } as any);
 
   await render(<Stream route={{ params: { serial: "A" } }} navigation={{ navigate: jest.fn(), setParams: jest.fn() }} />);
   await waitFor(() => expect(adaptiveOptions).toBeDefined());
@@ -178,7 +191,7 @@ test("adaptive stall leaves the connected peer in place", async () => {
 
 test("does not reconnect after unmount closes the active session", async () => {
   const session = makeFakeSession();
-  jest.spyOn(Whep, "connectWhep").mockImplementation((opts: any) => {
+  (Whep.connectWhep as jest.Mock).mockImplementation((opts: any) => {
     session.close.mockImplementation(async () => { opts.onState("disconnected"); });
     return Promise.resolve(session as any);
   });
@@ -188,7 +201,7 @@ test("does not reconnect after unmount closes the active session", async () => {
     setQuality: jest.fn(),
     keyframe: jest.fn(),
   };
-  jest.spyOn(SC, "useServer").mockReturnValue({ base: "http://h", client, setBase: jest.fn(), ready: true } as any);
+  (SC.useServer as jest.Mock).mockReturnValue({ base: "http://h", client, setBase: jest.fn(), ready: true } as any);
 
   const result = await render(<Stream route={{ params: { serial: "A" } }} navigation={{ navigate: jest.fn(), setParams: jest.fn() }} />);
   await waitFor(() => expect(Whep.connectWhep).toHaveBeenCalledTimes(1));
@@ -199,14 +212,14 @@ test("does not reconnect after unmount closes the active session", async () => {
 test("unmount releases an active drag before closing its session", async () => {
   const session = makeFakeSession();
   const createPanResponder = jest.spyOn(PanResponder, "create").mockImplementation(() => ({ panHandlers: {} }) as any);
-  jest.spyOn(Whep, "connectWhep").mockResolvedValue(session as any);
+  (Whep.connectWhep as jest.Mock).mockResolvedValue(session as any);
   const client = {
     select: jest.fn().mockResolvedValue(selectResp()),
     instances: jest.fn().mockResolvedValue([]),
     setQuality: jest.fn(),
     keyframe: jest.fn(),
   };
-  jest.spyOn(SC, "useServer").mockReturnValue({ base: "http://h", client, setBase: jest.fn(), ready: true } as any);
+  (SC.useServer as jest.Mock).mockReturnValue({ base: "http://h", client, setBase: jest.fn(), ready: true } as any);
 
   const result = await render(<Stream route={{ params: { serial: "A" } }} navigation={{ navigate: jest.fn(), setParams: jest.fn() }} />);
   await waitFor(() => expect(session.input.send).toHaveBeenCalledWith({ type: "idr" }));
@@ -225,7 +238,7 @@ test("keeps the current video visible until a replacement session is ready", asy
   let resolveSecond!: (session: any) => void;
   const secondReady = new Promise<any>((resolve) => { resolveSecond = resolve; });
   let calls = 0;
-  jest.spyOn(Whep, "connectWhep").mockImplementation((opts: any) => {
+  (Whep.connectWhep as jest.Mock).mockImplementation((opts: any) => {
     calls += 1;
     if (calls === 1) {
       opts.onStream({ toURL: () => "old-stream" });
@@ -240,7 +253,7 @@ test("keeps the current video visible until a replacement session is ready", asy
     setQuality: jest.fn(),
     keyframe: jest.fn(),
   };
-  jest.spyOn(SC, "useServer").mockReturnValue({ base: "http://h", client, setBase: jest.fn(), ready: true } as any);
+  (SC.useServer as jest.Mock).mockReturnValue({ base: "http://h", client, setBase: jest.fn(), ready: true } as any);
 
   const result = await render(<Stream route={{ params: { serial: "A" } }} navigation={{ navigate: jest.fn(), setParams: jest.fn() }} />);
   await waitFor(() => expect(result.getByTestId("stream-video").props.children).toBe("old-stream"));
@@ -254,14 +267,14 @@ test("keeps the current video visible until a replacement session is ready", asy
 
 test("keys route through the session's input sender, not a socket", async () => {
   const session = makeFakeSession();
-  jest.spyOn(Whep, "connectWhep").mockResolvedValue(session as any);
+  (Whep.connectWhep as jest.Mock).mockResolvedValue(session as any);
   const client = {
     select: jest.fn().mockResolvedValue(selectResp()),
     instances: jest.fn().mockResolvedValue([]),
     setQuality: jest.fn(),
     keyframe: jest.fn(),
   };
-  jest.spyOn(SC, "useServer").mockReturnValue({ base: "http://h", client, setBase: jest.fn(), ready: true } as any);
+  (SC.useServer as jest.Mock).mockReturnValue({ base: "http://h", client, setBase: jest.fn(), ready: true } as any);
 
   let result: any;
   await act(async () => {
@@ -280,14 +293,14 @@ test("starts input health over the ready session sender", async () => {
   jest.useFakeTimers();
   try {
     const session = makeFakeSession();
-    jest.spyOn(Whep, "connectWhep").mockResolvedValue(session as any);
+    (Whep.connectWhep as jest.Mock).mockResolvedValue(session as any);
     const client = {
       select: jest.fn().mockResolvedValue(selectResp()),
       instances: jest.fn().mockResolvedValue([]),
       setQuality: jest.fn(),
       keyframe: jest.fn(),
     };
-    jest.spyOn(SC, "useServer").mockReturnValue({ base: "http://h", client, setBase: jest.fn(), ready: true } as any);
+    (SC.useServer as jest.Mock).mockReturnValue({ base: "http://h", client, setBase: jest.fn(), ready: true } as any);
 
     await act(async () => {
       await render(<Stream route={{ params: { serial: "A" } }} navigation={{ navigate: jest.fn(), setParams: jest.fn() }} />);
@@ -304,14 +317,14 @@ test("starts input health over the ready session sender", async () => {
 test("starts a drag at touch begin, ends it when a second finger starts scrolling, and releases it on cancellation", async () => {
   const session = makeFakeSession();
   const createPanResponder = jest.spyOn(PanResponder, "create").mockImplementation(() => ({ panHandlers: {} }) as any);
-  jest.spyOn(Whep, "connectWhep").mockResolvedValue(session as any);
+  (Whep.connectWhep as jest.Mock).mockResolvedValue(session as any);
   const client = {
     select: jest.fn().mockResolvedValue(selectResp()),
     instances: jest.fn().mockResolvedValue([]),
     setQuality: jest.fn(),
     keyframe: jest.fn(),
   };
-  jest.spyOn(SC, "useServer").mockReturnValue({ base: "http://h", client, setBase: jest.fn(), ready: true } as any);
+  (SC.useServer as jest.Mock).mockReturnValue({ base: "http://h", client, setBase: jest.fn(), ready: true } as any);
 
   await render(<Stream route={{ params: { serial: "A" } }} navigation={{ navigate: jest.fn(), setParams: jest.fn() }} />);
   await waitFor(() => expect(Whep.connectWhep).toHaveBeenCalled());

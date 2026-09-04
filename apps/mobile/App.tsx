@@ -5,7 +5,8 @@ import { NavigationContainer } from "@react-navigation/native";
 import { useFonts, Archivo_400Regular, Archivo_500Medium, Archivo_600SemiBold, Archivo_700Bold } from "@expo-google-fonts/archivo";
 import { View } from "react-native";
 import * as ScreenOrientation from "expo-screen-orientation";
-import { ServerProvider, useServer } from "./src/api/ServerContext";
+import { ServerProvider, useServer } from "@wc/core";
+import { plainStorage, secureStorage } from "./src/platform/storage";
 import { RootNavigator } from "./src/navigation/Root";
 import { theme } from "./src/theme/tokens";
 
@@ -21,7 +22,7 @@ export default function App() {
   if (!fontsLoaded) return <View style={{ flex: 1, backgroundColor: theme.color.bg }} />;
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <ServerProvider><Gate /></ServerProvider>
+      <ServerProvider plainStorage={plainStorage} secureStorage={secureStorage}><Gate /></ServerProvider>
     </GestureHandlerRootView>
   );
 }

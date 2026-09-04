@@ -1,7 +1,7 @@
 import React from "react";
 import { View, Text, Pressable, ScrollView } from "react-native";
 import { theme } from "../theme/tokens";
-import type { Instance } from "../api/client";
+import type { Instance } from "@wc/core";
 // v3: floating rounded white card (not a full-height ink drawer).
 export function SwitchDrawer({ instances, activeSerial, onPick, onClose }:
   { instances: Instance[]; activeSerial: string; onPick: (i: Instance) => void; onClose: () => void }) {

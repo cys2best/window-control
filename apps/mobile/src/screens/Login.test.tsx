@@ -1,11 +1,10 @@
 import React from "react";
 import { act, render, fireEvent, waitFor, cleanup } from "@testing-library/react-native";
 import { Login } from "./Login";
-import * as supabaseAuth from "../api/supabaseAuth";
-import { useServer } from "../api/ServerContext";
+import * as supabaseAuth from "@wc/core";
+import { useServer } from "@wc/core";
 
-jest.mock("../api/supabaseAuth");
-jest.mock("../api/ServerContext");
+jest.mock("@wc/core");
 
 afterEach(cleanup);
 

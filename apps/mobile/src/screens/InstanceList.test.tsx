@@ -1,10 +1,17 @@
 import React from "react";
 import { render, fireEvent, waitFor } from "@testing-library/react-native";
 import { InstanceList } from "./InstanceList";
-import * as SC from "../api/ServerContext";
+import * as SC from "@wc/core";
+
+jest.mock("@wc/core", () => {
+  const actual = jest.requireActual("@wc/core");
+  return { ...actual, useServer: jest.fn() };
+});
 
 jest.mock("@react-native-async-storage/async-storage", () =>
   require("@react-native-async-storage/async-storage/jest/async-storage-mock"));
+
+afterEach(() => jest.clearAllMocks());
 
 test("renders instances and navigates on tap", async () => {
   const client = {
@@ -15,7 +22,7 @@ test("renders instances and navigates on tap", async () => {
     previewSource: (s: string) => ({ uri: `http://h/preview/${s}` }),
     keyframe: jest.fn().mockResolvedValue(undefined),
   };
-  jest.spyOn(SC, "useServer").mockReturnValue({ base: "http://h", client, setBase: jest.fn(), ready: true } as any);
+  (SC.useServer as jest.Mock).mockReturnValue({ base: "http://h", client, setBase: jest.fn(), ready: true } as any);
   const nav = { navigate: jest.fn() } as any;
   const { getByText } = await render(<InstanceList navigation={nav} />);
   await waitFor(() => getByText("LDP-01"));

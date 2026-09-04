@@ -1,12 +1,12 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { View, Text, FlatList, ScrollView, RefreshControl } from "react-native";
 import Svg, { Rect, Path, Circle } from "react-native-svg";
-import { useServer } from "../api/ServerContext";
+import { useServer } from "@wc/core";
 import { theme } from "../theme/tokens";
 import { InstanceRow } from "../components/InstanceRow";
 import { NetChip } from "../components/NetChip";
 import { BottomNav } from "../components/BottomNav";
-import type { Instance } from "../api/client";
+import type { Instance } from "@wc/core";
 
 export function InstanceList({ navigation }: { navigation: any }) {
   const { client, base } = useServer();
