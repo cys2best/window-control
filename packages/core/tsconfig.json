@@ -8,7 +8,8 @@
     "outDir": "dist",
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "types": ["jest"]
+    "jsx": "react-jsx",
+    "types": ["jest", "node"]
   },
   "include": ["src"]
 }
