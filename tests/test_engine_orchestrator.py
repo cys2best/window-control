@@ -2,6 +2,8 @@
 
 import threading
 
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
 from server.engine_orchestrator import EngineOrchestrator
 from server.engine_runtime import EngineRuntimeConfig
 
@@ -79,7 +81,7 @@ def make_config() -> EngineRuntimeConfig:
         exe_path=r"C:\engine\engine.exe",
         whep_secret="whep-secret",
         signaling_url="wss://signal.example",
-        signaling_secret="signaling-secret",
+        signaling_private_key=Ed25519PrivateKey.generate(),
         local_ice_servers=("stun:100.64.1.4:3478",),
         public_ice_servers=("stun:vps.example:3478",),
     )

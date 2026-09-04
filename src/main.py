@@ -106,11 +106,25 @@ def build_engine_orchestrator() -> "EngineOrchestrator":
     from server.engine_orchestrator import EngineOrchestrator
     from server.engine_runtime import EngineRuntimeConfig
 
+    from server import install_identity
+
+    signaling_url = config.VPS_SIGNALING_URL or ""
+    signaling_private_key = None
+    if signaling_url and not config.SUPABASE_URL:
+        _log(
+            "[config] VPS_SIGNALING_URL is set but SUPABASE_URL isn't -- "
+            "the public signaling path needs a real account to route by, "
+            "keeping it disabled. Set SUPABASE_URL to enable it."
+        )
+        signaling_url = ""
+    elif signaling_url:
+        signaling_private_key, _ = install_identity.get_or_create_install_keypair()
+
     runtime_config = EngineRuntimeConfig(
         exe_path=exe_path,
         whep_secret=secrets.token_hex(32),
-        signaling_url=config.VPS_SIGNALING_URL or "",
-        signaling_secret=config.ENGINE_SIGNALING_SECRET,
+        signaling_url=signaling_url,
+        signaling_private_key=signaling_private_key,
         local_ice_servers=config.ENGINE_LOCAL_ICE_SERVERS,
         public_ice_servers=config.ENGINE_PUBLIC_ICE_SERVERS,
     )

@@ -26,7 +26,7 @@ class EngineOrchestrator:
         self._closed = False
         self._admin = EngineAdminClient()
         self._token_issuer = EngineTokenIssuer(
-            config.whep_secret, config.signaling_secret
+            config.whep_secret, config.signaling_private_key
         )
 
     def add_instance(self, serial: str, instance_name: str,

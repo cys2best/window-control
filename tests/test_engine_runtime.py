@@ -8,6 +8,7 @@ import threading
 import types
 
 import pytest
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from server.engine_admin import (
     EngineAdminProtocolError,
@@ -28,13 +29,13 @@ from server.scrcpy_server import ScrcpyLaunch
 class CountingTokenIssuer:
     """Mints distinguishable, monotonically-numbered tokens.
 
-    whep() -> "whep:<instance>:<n>"; signaling() -> "<role>:<instance>:<n>".
+    whep() -> "whep:<instance>:<n>"; engine_token() -> "engine:<session>:<n>".
     """
 
     def __init__(self):
         self.counter = 0
         self.whep_calls: list[str] = []
-        self.signaling_calls: list[tuple[str, str, str | None]] = []
+        self.engine_token_calls: list[str] = []
 
     def _next(self) -> int:
         self.counter += 1
@@ -44,11 +45,9 @@ class CountingTokenIssuer:
         self.whep_calls.append(instance_name)
         return f"whep:{instance_name}:{self._next()}"
 
-    def signaling(
-        self, instance_name: str, role: str, user_id: str | None = None
-    ) -> str:
-        self.signaling_calls.append((instance_name, role, user_id))
-        return f"{role}:{instance_name}:{self._next()}"
+    def engine_token(self, session: str) -> str:
+        self.engine_token_calls.append(session)
+        return f"engine:{session}:{self._next()}"
 
 
 def decode_role(token: str) -> str:
@@ -224,7 +223,7 @@ def make_config(**overrides) -> EngineRuntimeConfig:
         exe_path=r"C:\engine\engine.exe",
         whep_secret="whep-secret",
         signaling_url="wss://signal.example",
-        signaling_secret="signal-secret",
+        signaling_private_key=Ed25519PrivateKey.generate(),
         local_ice_servers=("stun:100.64.1.4:3478",),
         public_ice_servers=("stun:vps.example:3478", "turn:vps.example:3478"),
     )
@@ -330,7 +329,10 @@ def test_start_launches_generation_zero_before_engine_and_mints_engine_jwt():
     assert decode_role(fakes.engine_env["ENGINE_SIGNALING_TOKEN"]) == "engine"
 
 
-def test_select_mints_fresh_whep_and_viewer_tokens_without_admin_port():
+def test_select_mints_fresh_whep_tokens_without_admin_port():
+    # Viewer signaling tokens are retired in this task -- select() no longer
+    # mints one locally (Task 5 wires viewers to present their own Supabase
+    # access token to the relay instead); whep tokens are unaffected.
     issuer = CountingTokenIssuer()
     runtime, fakes = make_runtime(token_issuer=issuer)
     runtime.start()
@@ -338,17 +340,8 @@ def test_select_mints_fresh_whep_and_viewer_tokens_without_admin_port():
     second = runtime.select("100.64.1.4")
     assert first.whep_url == "http://100.64.1.4:51000/whep"
     assert first.whep_token != second.whep_token
-    assert decode_role(first.signaling_token) == "viewer"
+    assert first.signaling_token is None
     assert not hasattr(first, "admin_port")
-
-
-def test_select_passes_user_id_to_signaling_token():
-    issuer = CountingTokenIssuer()
-    runtime, fakes = make_runtime(token_issuer=issuer)
-    runtime.start()
-    selection = runtime.select("100.64.1.4", user_id="user-42")
-    assert selection is not None
-    assert issuer.signaling_calls[-1] == ("instance0", "viewer", "user-42")
 
 
 def test_tier_change_serializes_launch_then_generation_checked_reconnect():

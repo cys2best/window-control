@@ -7,24 +7,22 @@ import hmac
 import json
 
 import pytest
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from server.engine_auth import EngineTokenIssuer
-
-
-def decode_and_verify_hs256(token: str, secret: str) -> dict:
-    header, payload, signature = token.split(".")
-    signing_input = f"{header}.{payload}".encode()
-    expected = base64.urlsafe_b64encode(
-        hmac.new(secret.encode(), signing_input, hashlib.sha256).digest()
-    ).rstrip(b"=").decode()
-    assert hmac.compare_digest(signature, expected)
-    padded = payload + "=" * (-len(payload) % 4)
-    return json.loads(base64.urlsafe_b64decode(padded))
 
 
 def _b64url_decode(segment: str) -> bytes:
     padding = "=" * (-len(segment) % 4)
     return base64.urlsafe_b64decode(segment + padding)
+
+
+def decode_and_verify_eddsa(token: str, public_key) -> dict:
+    header_b64, payload_b64, signature_b64 = token.split(".")
+    signing_input = f"{header_b64}.{payload_b64}".encode()
+    public_key.verify(_b64url_decode(signature_b64), signing_input)  # raises on mismatch
+    return json.loads(_b64url_decode(payload_b64))
 
 
 def test_whep_token_matches_cpp_fixture():
@@ -35,87 +33,53 @@ def test_whep_token_matches_cpp_fixture():
     assert token == f"{payload}.{expected}"
 
 
-def test_tokens_are_minted_from_the_current_clock_each_time():
+def test_whep_tokens_are_minted_from_the_current_clock_each_time():
     now = iter([1000.0, 1010.0])
-    issuer = EngineTokenIssuer("whep", "signal", clock=lambda: next(now))
+    issuer = EngineTokenIssuer("whep", clock=lambda: next(now))
     first = issuer.whep("instance0")
     second = issuer.whep("instance0")
     assert first.split(".", 1)[0] == "1300"
     assert second.split(".", 1)[0] == "1310"
 
 
-def test_fixed_clock_issuances_are_unique_and_keep_verifiable_claims():
-    issuer = EngineTokenIssuer("whep", "signal", clock=lambda: 1000.0)
-
-    first_whep = issuer.whep("instance0")
-    second_whep = issuer.whep("instance0")
-    first_viewer = issuer.signaling("instance0", "viewer")
-    second_viewer = issuer.signaling("instance0", "viewer")
-
-    assert first_whep != second_whep
-    for token in (first_whep, second_whep):
-        expiry, instance_name, signature = token.split(".")
-        assert instance_name == "instance0"
-        expected = hmac.new(
-            b"whep", f"{expiry}.{instance_name}".encode(), hashlib.sha256
-        ).hexdigest()
-        assert hmac.compare_digest(signature, expected)
-        assert int(expiry) >= 1300
-
-    first_claims = decode_and_verify_hs256(first_viewer, "signal")
-    second_claims = decode_and_verify_hs256(second_viewer, "signal")
-    assert first_claims["session"] == second_claims["session"] == "instance0"
-    assert first_claims["role"] == second_claims["role"] == "viewer"
-    assert first_claims["exp"] == second_claims["exp"] == 1300
-    assert first_claims["jti"] != second_claims["jti"]
-
-
-def test_signaling_payload_contains_session_role_and_expiry():
-    issuer = EngineTokenIssuer("whep", "signal", clock=lambda: 1000.0)
-    payload = decode_and_verify_hs256(issuer.signaling("instance0", "engine"), "signal")
+def test_engine_token_payload_contains_session_role_and_expiry():
+    private_key = Ed25519PrivateKey.generate()
+    issuer = EngineTokenIssuer("whep", private_key, clock=lambda: 1000.0)
+    payload = decode_and_verify_eddsa(issuer.engine_token("user-1.instance0"), private_key.public_key())
     assert payload == {
-        "session": "instance0", "role": "engine", "exp": 605800, "jti": "1",
-        "user_id": None,
+        "session": "user-1.instance0", "role": "engine", "exp": 605800, "jti": "1",
     }
 
 
-def test_signaling_viewer_role_uses_short_ttl_distinct_from_engine():
-    issuer = EngineTokenIssuer("whep", "signal", clock=lambda: 1000.0)
-    viewer_payload = decode_and_verify_hs256(issuer.signaling("instance0", "viewer"), "signal")
-    engine_payload = decode_and_verify_hs256(issuer.signaling("instance0", "engine"), "signal")
-    assert viewer_payload["exp"] == 1300
-    assert engine_payload["exp"] == 605800
-    assert viewer_payload["exp"] != engine_payload["exp"]
+def test_engine_token_issuances_are_unique_and_verifiable():
+    private_key = Ed25519PrivateKey.generate()
+    issuer = EngineTokenIssuer("whep", private_key, clock=lambda: 1000.0)
+
+    first = issuer.engine_token("user-1.instance0")
+    second = issuer.engine_token("user-1.instance0")
+
+    assert first != second
+    first_claims = decode_and_verify_eddsa(first, private_key.public_key())
+    second_claims = decode_and_verify_eddsa(second, private_key.public_key())
+    assert first_claims["jti"] != second_claims["jti"]
 
 
-def test_signaling_rejects_invalid_role():
-    issuer = EngineTokenIssuer("whep", "signal", clock=lambda: 1000.0)
-    with pytest.raises(ValueError):
-        issuer.signaling("instance0", "admin")
+def test_engine_token_rejects_tampering():
+    private_key = Ed25519PrivateKey.generate()
+    issuer = EngineTokenIssuer("whep", private_key, clock=lambda: 1000.0)
+    token = issuer.engine_token("user-1.instance0")
+    header_b64, payload_b64, signature_b64 = token.split(".")
+    tampered_payload = base64.urlsafe_b64encode(b'{"session":"attacker.instance0","role":"engine","exp":605800,"jti":"1"}').rstrip(b"=").decode()
+    tampered = f"{header_b64}.{tampered_payload}.{signature_b64}"
+    with pytest.raises(InvalidSignature):
+        decode_and_verify_eddsa(tampered, private_key.public_key())
 
 
-def test_empty_signaling_secret_returns_empty_token_for_trusted_dev():
-    issuer = EngineTokenIssuer("whep", "", clock=lambda: 1000.0)
-    assert issuer.signaling("instance0", "engine") == ""
-    assert issuer.signaling("instance0", "viewer") == ""
+def test_no_signaling_key_returns_empty_token_for_trusted_dev():
+    issuer = EngineTokenIssuer("whep", None, clock=lambda: 1000.0)
+    assert issuer.engine_token("instance0") == ""
 
 
 def test_empty_whep_secret_is_invalid():
     with pytest.raises(ValueError):
         EngineTokenIssuer("", clock=lambda: 1000.0)
-
-
-def test_signaling_viewer_token_embeds_user_id():
-    issuer = EngineTokenIssuer(whep_secret="w", signaling_secret="s")
-    token = issuer.signaling("inst-1", "viewer", user_id="user-42")
-    header_b64, payload_b64, _ = token.split(".")
-    payload = json.loads(_b64url_decode(payload_b64))
-    assert payload["user_id"] == "user-42"
-
-
-def test_signaling_engine_token_user_id_defaults_to_none():
-    issuer = EngineTokenIssuer(whep_secret="w", signaling_secret="s")
-    token = issuer.signaling("inst-1", "engine")
-    header_b64, payload_b64, _ = token.split(".")
-    payload = json.loads(_b64url_decode(payload_b64))
-    assert payload["user_id"] is None

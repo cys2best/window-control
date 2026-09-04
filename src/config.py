@@ -25,7 +25,6 @@ SYSTEM_WINDOW_TITLES = {
 # Engine / scrcpy
 STUN_PORT = 3478       # embedded STUN server, bound to Tailscale IP (see stun_server.py)
 VPS_SIGNALING_URL = os.environ.get("VPS_SIGNALING_URL")  # e.g. "ws://VPS_IP:8443"; None disables the public bridge path
-ENGINE_SIGNALING_SECRET = os.environ.get("ENGINE_SIGNALING_SECRET", "")
 ENGINE_LOCAL_ICE_SERVERS = tuple(filter(None, os.environ.get(
     "ENGINE_LOCAL_ICE_SERVERS", ""
 ).split(",")))

@@ -370,7 +370,7 @@ def test_watchdog_removal_waits_for_recovery_then_stops_engine_and_forward(monke
         def whep(self, _instance_name):
             return "whep"
 
-        def signaling(self, _instance_name, _role):
+        def engine_token(self, _session):
             return "signal"
 
     engine = Engine()
@@ -385,7 +385,7 @@ def test_watchdog_removal_waits_for_recovery_then_stops_engine_and_forward(monke
         exe_path=r"C:\engine\engine.exe",
         whep_secret="whep-secret",
         signaling_url="",
-        signaling_secret="signal-secret",
+        signaling_private_key=None,
         local_ice_servers=(),
         public_ice_servers=(),
     )

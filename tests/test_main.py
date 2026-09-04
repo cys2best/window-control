@@ -38,23 +38,62 @@ def test_build_engine_orchestrator_uses_fresh_generated_launch_secret(monkeypatc
 
 def test_build_engine_orchestrator_passes_configured_runtime_values(monkeypatch):
     import main as main_mod
+    from server import install_identity
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    generated_key = Ed25519PrivateKey.generate()
 
     monkeypatch.setattr(main_mod.config, "engine_exe_path", lambda: "C:/app/engine.exe")
     monkeypatch.setattr(main_mod.os.path, "isfile", lambda _: True)
     monkeypatch.setattr(main_mod.secrets, "token_hex", lambda size: "generated-whep")
     monkeypatch.setattr(main_mod.config, "VPS_SIGNALING_URL", "wss://signal.example/ws")
-    monkeypatch.setattr(main_mod.config, "ENGINE_SIGNALING_SECRET", "signal-secret", raising=False)
+    monkeypatch.setattr(main_mod.config, "SUPABASE_URL", "https://project.supabase.co", raising=False)
     monkeypatch.setattr(main_mod.config, "ENGINE_LOCAL_ICE_SERVERS", ("stun:local", "turn:local"), raising=False)
     monkeypatch.setattr(main_mod.config, "ENGINE_PUBLIC_ICE_SERVERS", ("stun:public", "turn:public"), raising=False)
+    monkeypatch.setattr(
+        install_identity,
+        "get_or_create_install_keypair",
+        lambda: (generated_key, "pubkey-b64"),
+    )
 
     orchestrator = main_mod.build_engine_orchestrator()
 
     assert orchestrator.config.exe_path == "C:/app/engine.exe"
     assert orchestrator.config.whep_secret == "generated-whep"
     assert orchestrator.config.signaling_url == "wss://signal.example/ws"
-    assert orchestrator.config.signaling_secret == "signal-secret"
+    assert orchestrator.config.signaling_private_key is generated_key
     assert orchestrator.config.local_ice_servers == ("stun:local", "turn:local")
     assert orchestrator.config.public_ice_servers == ("stun:public", "turn:public")
+
+
+def test_build_engine_orchestrator_disables_signaling_without_a_supabase_project(monkeypatch):
+    """VPS_SIGNALING_URL alone isn't enough to enable the public path -- with
+    no SUPABASE_URL there is no account to route the session by, so signaling
+    stays off entirely rather than starting the engine with a dead relay URL.
+    """
+    import main as main_mod
+    from server import install_identity
+
+    keypair_calls = []
+
+    monkeypatch.setattr(main_mod.config, "engine_exe_path", lambda: "C:/app/engine.exe")
+    monkeypatch.setattr(main_mod.os.path, "isfile", lambda _: True)
+    monkeypatch.setattr(main_mod.secrets, "token_hex", lambda size: "generated-whep")
+    monkeypatch.setattr(main_mod.config, "VPS_SIGNALING_URL", "wss://signal.example/ws")
+    monkeypatch.setattr(main_mod.config, "SUPABASE_URL", None, raising=False)
+    monkeypatch.setattr(main_mod.config, "ENGINE_LOCAL_ICE_SERVERS", (), raising=False)
+    monkeypatch.setattr(main_mod.config, "ENGINE_PUBLIC_ICE_SERVERS", (), raising=False)
+    monkeypatch.setattr(
+        install_identity,
+        "get_or_create_install_keypair",
+        lambda: keypair_calls.append(1),
+    )
+
+    orchestrator = main_mod.build_engine_orchestrator()
+
+    assert orchestrator.config.signaling_url == ""
+    assert orchestrator.config.signaling_private_key is None
+    assert keypair_calls == []
 
 
 class _FakeThread:

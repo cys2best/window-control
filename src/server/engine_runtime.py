@@ -27,6 +27,8 @@ import time
 from dataclasses import dataclass
 from typing import Callable, Literal, Optional
 
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
 from config import QUALITY_TIERS
 
 from server.engine_admin import (
@@ -70,7 +72,7 @@ class EngineRuntimeConfig:
     exe_path: str
     whep_secret: str
     signaling_url: str
-    signaling_secret: str
+    signaling_private_key: Ed25519PrivateKey | None
     local_ice_servers: tuple[str, ...]
     public_ice_servers: tuple[str, ...]
 
@@ -169,13 +171,17 @@ class EngineRuntime:
             endpoint = self._endpoint
             host = _format_host(advertised_host)
 
+            # Viewers no longer get a locally-minted signaling token: the
+            # relay's only remaining local secret is this install's Ed25519
+            # key, and that signs engine registration tokens only (role is
+            # always "engine" -- see EngineTokenIssuer.engine_token). A
+            # viewer authenticates to the relay with its own Supabase access
+            # token instead; wiring that through is Task 5's job. `user_id`
+            # is accepted here but unused until then.
             signaling_url: str | None = None
             signaling_token: str | None = None
             if self.config.signaling_url:
                 signaling_url = self.config.signaling_url
-                signaling_token = self._token_issuer.signaling(
-                    self.instance_name, "viewer", user_id=user_id
-                )
 
             return EngineSelection(
                 whep_url=f"http://{host}:{endpoint.whep_port}/whep",
@@ -346,8 +352,8 @@ class EngineRuntime:
             "ENGINE_WHEP_CAPABILITY_SECRET": self.config.whep_secret,
             "ENGINE_LOCAL_ICE_SERVERS": ",".join(self.config.local_ice_servers),
             "ENGINE_SIGNALING_URL": self.config.signaling_url,
-            "ENGINE_SIGNALING_TOKEN": self._token_issuer.signaling(
-                self.instance_name, "engine"
+            "ENGINE_SIGNALING_TOKEN": self._token_issuer.engine_token(
+                self.instance_name  # Task 5 upgrades this to "{owner}.{instance_name}"
             ),
             "ENGINE_PUBLIC_ICE_SERVERS": ",".join(self.config.public_ice_servers),
         }
