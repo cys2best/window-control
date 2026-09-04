@@ -19,6 +19,52 @@ Plan/task identifiers belong here and in workflow state, not in commit subjects.
 
 ---
 
+### 2026-09-04 13:50 — claude
+- Finished: 2026-09-01-engine-client-cutover/task-11 — final Windows Host
+  PC run with commit c0015fe. Real PASS on every gate that can run
+  without a Supabase project: local browser, local/public race, rapid
+  switches (20/20), quality ladder, scrcpy recovery, engine recovery,
+  installer (64-bit path/firewall rule/uninstall cleanup), tray exit.
+  Overall `status: INCOMPLETE`, from exactly three intentional
+  non-PASS markers, nothing else:
+  - `performance`: OVERRIDDEN — pre-existing recorded owner decision
+    (2026-09-01 17:59 entry, before archival), five-instance workload
+    never measured.
+  - `soak`: OVERRIDDEN — the 8h run failed once (decode-stall bug,
+    frames_decoded plateaued for a minute mid-run, connection stayed
+    alive, no black frames); accepted as a known risk via
+    `--soak-override` rather than re-run. Root cause never
+    investigated (blocked on: exact stall sample index in
+    `soak-samples.json`, `app.log`/`verification.log` around that
+    timestamp, possible correlation with the ICE-disconnected
+    grace-period fix in `7f9b712`).
+  - `public browser` + `mobile`: SKIP via `--skip-public-mobile` — zero
+    evidence this session. Blocked on a real Supabase project
+    (SUPABASE_URL/ANON_KEY/JWT_SECRET/SERVICE_ROLE_KEY) and applying
+    `infra/supabase/device_links.sql`, neither done yet.
+- Ruling: owner accepted this as closing 2026-09-01-engine-client-cutover
+  with those two gaps explicitly recorded (soak: known bug, public/mobile:
+  unconfigured Supabase), rather than requiring either before closing.
+- Finished this session, en route to the above: fixed a chain of real
+  bugs surfaced only by actually running the Windows matrix (not
+  guessable from macOS) — see commits a36192c, fd9da08, 8fa5596,
+  93c3282, b5cb61d, 21870a9, 5c87b18, 774918e, 16209eb, c0015fe.
+  Notably: installer.iss was missing 64-bit mode (silently installed
+  to `Program Files (x86)`), the engine firewall allow-rule pointed at
+  a path that never existed under PyInstaller 6's `_internal\` layout
+  (a real pre-existing production bug, not just test tooling), and the
+  verifier's own console-spawn/dotenv/env-sanitization gaps (found via
+  real screenshots and tracebacks from the Host PC, not guessed).
+- Next: if/when a Supabase project gets configured, rerun without
+  `-SkipPublicMobile` to close that gap for real. Soak's decode-stall
+  root cause remains open — revisit if it recurs in production. The
+  parked legacy-route id-format mismatch from the 2026-09-03-supabase
+  merge (POST /select, GET /windows under auth) is still unresolved
+  too.
+- Blockers: none for closing as-is; both remaining gaps require
+  explicit follow-up work (Supabase project setup; soak bug
+  investigation) whenever someone picks them up.
+
 ### 2026-09-04 02:10 — claude
 - Finished: 2026-09-03-supabase-multi-user-auth (all 10 tasks, executed
   via superpowers:subagent-driven-development from spec
