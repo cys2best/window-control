@@ -19,6 +19,38 @@ Plan/task identifiers belong here and in workflow state, not in commit subjects.
 
 ---
 
+### 2026-09-04 18:00 — claude
+- Ruling: real Supabase testing (owner creating a fresh project to close
+  the public/mobile gap left open in the 13:50 entry below) found login
+  succeeding but every subsequent authenticated request 401ing
+  ("Not authenticated") with a correctly-copied Legacy JWT Secret.
+  Root-caused by decoding the issued token's header (`{"alg":"ES256",
+  "kid":"..."}`)): this Supabase project signs access tokens with an
+  asymmetric key (ES256, Supabase's current default), not the legacy
+  shared HS256 secret `auth.py` was written against. No correct secret
+  value could ever have passed that check — an algorithm mismatch, not
+  a config error, and not something the 2026-09-03-supabase-multi-user-auth
+  plan's own test suite caught (its hand-rolled JWT test fixtures always
+  self-signed HS256, so they never exercised what a real Supabase
+  project actually issues).
+- Finished: replaced the HS256/shared-secret check with PyJWT's
+  PyJWKClient (fetches + caches Supabase's public JWKS, verifies ES256,
+  refetches only on an unrecognized kid) — commit 530c83b.
+  SUPABASE_JWT_SECRET is gone entirely, not just unused: asymmetric
+  verification needs a public key, not a shared secret. TDD: rewrote
+  tests/test_auth.py and tests/test_app_auth.py to sign real ES256
+  tokens with an in-test EC key pair and stub only the network JWKS
+  fetch, so the actual verification logic runs for real in every test,
+  not just against self-consistent fake HS256 tokens. 433 passed / 2
+  pre-existing unrelated failures (env-var pollution) / 1 skipped.
+- Next: owner to pull and retest the full Supabase manual gate (register
+  → empty list → link → appears; second account isolation; mobile same
+  list as web). If that passes, 2026-09-01-engine-client-cutover's
+  public/mobile gap (recorded 13:50 below) can close for real without
+  `-SkipPublicMobile`.
+- Blockers: none for the fix itself; unverified until the owner reruns
+  the manual gate with this commit live.
+
 ### 2026-09-04 13:50 — claude
 - Finished: 2026-09-01-engine-client-cutover/task-11 — final Windows Host
   PC run with commit c0015fe. Real PASS on every gate that can run
