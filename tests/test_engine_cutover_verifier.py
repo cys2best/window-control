@@ -1002,6 +1002,52 @@ def test_file_prompts_are_nonce_pid_and_start_time_scoped(tmp_path, monkeypatch)
     assert not list(evidence_dir.glob("prompt-response-*.json"))
 
 
+def test_real_run_suppresses_console_window_on_windows(tmp_path, monkeypatch):
+    import scripts.verify_engine_cutover as verifier
+
+    deps = RealCutoverDeps(config(tmp_path))
+    monkeypatch.setattr(verifier.sys, "platform", "win32")
+    captured: dict[str, object] = {}
+
+    class FakeCompleted:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_run(command, **kwargs):
+        captured["kwargs"] = kwargs
+        return FakeCompleted()
+
+    monkeypatch.setattr(verifier.subprocess, "run", fake_run)
+
+    deps._run(["adb", "devices"], "ADB readiness")
+
+    assert captured["kwargs"]["creationflags"] == 0x08000000
+
+
+def test_real_run_omits_creationflags_off_windows(tmp_path, monkeypatch):
+    import scripts.verify_engine_cutover as verifier
+
+    deps = RealCutoverDeps(config(tmp_path))
+    monkeypatch.setattr(verifier.sys, "platform", "darwin")
+    captured: dict[str, object] = {}
+
+    class FakeCompleted:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_run(command, **kwargs):
+        captured["kwargs"] = kwargs
+        return FakeCompleted()
+
+    monkeypatch.setattr(verifier.subprocess, "run", fake_run)
+
+    deps._run(["adb", "devices"], "ADB readiness")
+
+    assert "creationflags" not in captured["kwargs"]
+
+
 def test_real_adapter_requires_auth_tunnel_signaling_and_turn_secrets(tmp_path, monkeypatch):
     deps = RealCutoverDeps(config(tmp_path))
     for name in (

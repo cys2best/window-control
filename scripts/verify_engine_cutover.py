@@ -411,21 +411,27 @@ def _audit_surface(config: CutoverConfig, deps: Any) -> None:
         raise CutoverError("legacy cutover surface remains: " + ", ".join(forbidden[:12]))
 
 
+def _without_public_ui_url(environment: dict[str, str], config: CutoverConfig) -> dict[str, str]:
+    """Blank PUBLIC_UI_URL/TUNNEL_SECRET in-place when running without Supabase.
+
+    Set (not pop) empty: a bundled or source main.py's load_dotenv() fills in
+    any *missing* key from a nearby .env file (override=False), so simply
+    popping the key just lets dotenv hand it right back.
+    """
+    if config.skip_public_mobile:
+        environment["PUBLIC_UI_URL"] = ""
+        environment["TUNNEL_SECRET"] = ""
+    return environment
+
+
 def _sanitized_environment(config: CutoverConfig) -> dict[str, str]:
     environment = dict(os.environ)
     environment.pop("PYTHONPATH", None)
     environment["ENGINE_EXE_PATH"] = str(
         config.repo_root / "engine" / "build" / "Release" / "engine.exe"
     )
-    if config.skip_public_mobile:
-        # No Supabase project configured for this run: PUBLIC_UI_URL alone
-        # makes the spawned app refuse to start (requires SUPABASE_URL).
-        # Set (not pop) empty: src/main.py's load_dotenv() fills in any
-        # *missing* key from a gitignored .env at repo root (override=False),
-        # so simply popping it just let dotenv hand it right back from disk.
-        environment["PUBLIC_UI_URL"] = ""
-        environment["TUNNEL_SECRET"] = ""
-    else:
+    _without_public_ui_url(environment, config)
+    if not config.skip_public_mobile:
         environment["VPS_SIGNALING_URL"] = config.public_signaling_url
     return environment
 
@@ -1043,6 +1049,7 @@ class RealCutoverDeps:
 
     def _run(self, command: list[str], label: str, *, timeout: float = 60) -> subprocess.CompletedProcess[str]:
         self.record_event(f"{label}: {' '.join(command)}")
+        no_window = {"creationflags": 0x08000000} if sys.platform == "win32" else {}
         try:
             completed = subprocess.run(
                 command,
@@ -1051,6 +1058,7 @@ class RealCutoverDeps:
                 capture_output=True,
                 check=False,
                 timeout=timeout,
+                **no_window,
             )
         except (OSError, subprocess.TimeoutExpired) as error:
             raise CutoverError(f"{label} could not complete: {_safe_detail(error)}") from error
@@ -2014,7 +2022,7 @@ class RealCutoverDeps:
         installed = executable.is_file() and engine.is_file()
         if not installed:
             raise CutoverError("installer did not stage the executable and bundled engine")
-        installed_environment = dict(os.environ)
+        installed_environment = _without_public_ui_url(dict(os.environ), self.config)
         installed_process = subprocess.Popen(
             [str(executable)],
             env=installed_environment,
