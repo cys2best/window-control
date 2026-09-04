@@ -19,6 +19,58 @@ Plan/task identifiers belong here and in workflow state, not in commit subjects.
 
 ---
 
+### 2026-09-04 01:55 — claude
+- Finished: 2026-09-03-supabase-multi-user-auth (all 10 tasks, executed
+  via superpowers:subagent-driven-development from spec
+  docs/superpowers/specs/2026-09-03-supabase-auth-design.md, plan
+  docs/superpowers/plans/2026-09-03-supabase-multi-user-auth.md,
+  commits dc97427..a2ba125 on feature/authenticate). Replaces the
+  shared-secret AUTH_TOKEN scheme with real Supabase email/password
+  accounts: local (no-network) JWT verification, a device_links
+  ownership table, /auth/config, POST/DELETE /instances/{id}/link, and
+  login/register GUIs across web PWA, mobile, and the desktop tray.
+  Final whole-branch review caught a Critical IDOR (instance-scoped
+  routes weren't checking device_links ownership, only the list view
+  was filtered) — fixed and re-reviewed clean in commit a2ba125.
+- Ruling (residual, not fixed — no second fix wave permitted at that
+  point): that same fix introduced an id-format mismatch on the 2
+  legacy routes (POST /select, GET /windows) — they check ownership
+  against "adb:SERIAL" but device_links only ever stores bare serial
+  (the real InstanceManager's key format), so under auth-enabled mode
+  these two routes now 403-everyone / return-empty regardless of real
+  links. Fails closed (no cross-tenant access, not a security hole),
+  and no client in this repo calls either legacy route — parked rather
+  than blocking on a disallowed second fix wave. Fix (whenever someone
+  gets to it): normalize the id in _authorize_instance_access's two
+  legacy call sites (src/server/app.py), or remove the legacy routes.
+- Finished: merged feature/authenticate into feature/engine (clean
+  merge, no conflicts, commit 7520cfd in the
+  /Users/cys2best/orca/workspaces/window-control/feature-engine
+  worktree) and pushed to origin/feature/engine. Verified on the
+  merged result: Python 428 passed / 2 pre-existing-unrelated failures
+  (test_windows_verifier.py, ambient AUTH_TOKEN env var leakage) / 1
+  skipped; Node signaling 14/14; mobile 67/67 (needed a fresh
+  `npm install --legacy-peer-deps` in that worktree — mobile/'s
+  node_modules had never been installed there before).
+- Next: Windows Host PC should pull feature/engine and run the usual
+  gates (engine_tests.exe, verify-engine-cutover.ps1) plus a manual
+  Supabase-auth pass — needs a real Supabase project configured
+  (SUPABASE_URL/SUPABASE_ANON_KEY/SUPABASE_JWT_SECRET/
+  SUPABASE_SERVICE_ROLE_KEY) and infra/supabase/device_links.sql
+  applied manually via the Supabase SQL editor first (not run by any
+  test suite — see README.md's new Supabase section). Manual gate per
+  spec: register a new account via web, confirm empty device list,
+  link an instance, confirm it appears; log in as a second account,
+  confirm it does NOT see the first account's linked instance; repeat
+  login (not register) on mobile with the same account, confirm same
+  list. Also worth deciding on the parked legacy-route ruling above —
+  fix now or accept as known dead-route breakage.
+- Blockers: none for the merge itself; Windows-side manual E2E and a
+  real Supabase project are required before this can be called fully
+  verified, same shape as every other plan in this repo.
+
+---
+
 ### 2026-09-02 20:25 — codex
 - Claiming: 2026-09-01-engine-client-cutover/task-11 WSS acceptance fix
 - Ruling: the Windows Host failure is a confirmed production defect, not an
