@@ -58,9 +58,6 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL")
 # Public, safe to ship to browser/mobile/tray clients — used only to talk
 # to Supabase's Auth REST API directly for login/register.
 SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY", "")
-# Server-only. Supabase's legacy JWT secret — verifies the HS256
-# signature on every access token locally, no network round trip.
-SUPABASE_JWT_SECRET = os.environ.get("SUPABASE_JWT_SECRET", "")
 # Server-only. Full-access Postgres REST credential used solely by
 # supabase_client.py for the device_links table, after FastAPI has
 # already authenticated the caller and is enforcing ownership itself.

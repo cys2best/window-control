@@ -192,8 +192,8 @@ def create_app(instance_manager: InstanceManager) -> FastAPI:
         log.warning(
             "AUTH_TOKEN is set but SUPABASE_URL is not — AUTH_TOKEN no longer "
             "does anything (it was replaced by Supabase auth); this deployment "
-            "is now UNAUTHENTICATED. Set SUPABASE_URL (and SUPABASE_JWT_SECRET) "
-            "to re-enable auth, or unset AUTH_TOKEN to acknowledge LAN-only mode."
+            "is now UNAUTHENTICATED. Set SUPABASE_URL to re-enable auth, or "
+            "unset AUTH_TOKEN to acknowledge LAN-only mode."
         )
     app = FastAPI()
     supabase = SupabaseClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY) if auth.auth_enabled() else None

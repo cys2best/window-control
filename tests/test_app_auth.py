@@ -5,29 +5,22 @@ import importlib
 import time
 from unittest.mock import MagicMock, patch
 
+import jwt as pyjwt
 import pytest
+from cryptography.hazmat.primitives.asymmetric import ec
 from fastapi.testclient import TestClient
+from jwt import PyJWKClient
 
-SECRET = "test-jwt-secret"
+_PRIVATE_KEY = ec.generate_private_key(ec.SECP256R1())
 
 
-def _jwt(sub="user-1", email="a@example.com", exp_delta=3600, secret=SECRET):
-    import base64, hashlib, hmac, json
-
-    def b64url(data: bytes) -> str:
-        return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
-
-    header_b64 = b64url(json.dumps({"alg": "HS256", "typ": "JWT"}).encode())
+def _jwt(sub="user-1", email="a@example.com", exp_delta=3600):
     payload = {"sub": sub, "email": email, "exp": int(time.time()) + exp_delta}
-    payload_b64 = b64url(json.dumps(payload).encode())
-    signing_input = f"{header_b64}.{payload_b64}".encode()
-    sig = b64url(hmac.new(secret.encode(), signing_input, hashlib.sha256).digest())
-    return f"{header_b64}.{payload_b64}.{sig}"
+    return pyjwt.encode(payload, _PRIVATE_KEY, algorithm="ES256", headers={"kid": "test-kid"})
 
 
 def _make_authed_client(instances=None, supabase=None):
     os.environ["SUPABASE_URL"] = "https://project.supabase.co"
-    os.environ["SUPABASE_JWT_SECRET"] = SECRET
     import config
     importlib.reload(config)
     from server import auth
@@ -45,10 +38,22 @@ def _make_authed_client(instances=None, supabase=None):
     return TestClient(app), im, supabase
 
 
+class _FakeSigningKey:
+    def __init__(self, key):
+        self.key = key
+
+
 @pytest.fixture(autouse=True)
-def _clear_supabase_env():
+def _clear_supabase_env(monkeypatch):
+    # Verification logic (auth.verify_supabase_jwt) runs for real in every
+    # test here -- only the network JWKS fetch is stubbed, to our own
+    # known test key pair.
+    monkeypatch.setattr(
+        PyJWKClient, "get_signing_key_from_jwt",
+        lambda self, token: _FakeSigningKey(_PRIVATE_KEY.public_key()),
+    )
     yield
-    for key in ("SUPABASE_URL", "SUPABASE_JWT_SECRET", "PUBLIC_UI_URL", "TUNNEL_SECRET"):
+    for key in ("SUPABASE_URL", "PUBLIC_UI_URL", "TUNNEL_SECRET"):
         os.environ.pop(key, None)
     import config
     importlib.reload(config)
