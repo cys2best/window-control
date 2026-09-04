@@ -1,11 +1,12 @@
-import {
-  RTCPeerConnection as RN_RTC,
-  type MediaStream,
-  type RTCPeerConnection,
-} from "react-native-webrtc";
 import { createInputSender } from "../input/inputChannel";
 import type { InputSender } from "../input/inputChannel";
 import type { IceServer } from "../api/client";
+
+// Platform-supplied constructor/types — mobile passes react-native-webrtc's
+// RTCPeerConnection, web passes the browser global. @wc/core has no native
+// or DOM dependency of its own.
+type MediaStream = any;
+type RTCPeerConnection = any;
 
 export function waitForIceGatheringComplete(pc: any, capMs = 4000): Promise<void> {
   if (pc.iceGatheringState === "complete") return Promise.resolve();
@@ -54,13 +55,13 @@ type ConnectWhepOpts = {
   onStream: (stream: MediaStream) => void;
   onInputRtt: (ms: number) => void;
   onState: (state: "connecting" | "connected" | "disconnected") => void;
+  RTCImpl: any;
   fetchImpl?: typeof fetch;
-  RTCImpl?: any;
   timeoutMs?: number;
 };
 
 export function connectWhep(opts: ConnectWhepOpts): Promise<WhepSession> {
-  const RTC = opts.RTCImpl || RN_RTC;
+  const RTC = opts.RTCImpl;
   const doFetch = opts.fetchImpl || fetch;
   const timeoutMs = opts.timeoutMs === undefined ? 8000 : opts.timeoutMs;
   const deadline = Date.now() + timeoutMs;
