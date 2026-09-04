@@ -36,17 +36,36 @@ def _read_first_existing(filename: str) -> bytes | None:
     return None
 
 
-def _write_first_writable(filename: str, data: bytes) -> bool:
+def _find_existing_dir(filename: str) -> str | None:
+    """Return the highest-priority candidate directory that currently holds
+    a readable copy of `filename`, or None if no candidate has one.
+    """
     for directory in _CANDIDATE_DIRS:
+        path = os.path.join(directory, filename)
         try:
-            os.makedirs(directory, exist_ok=True)
-            path = os.path.join(directory, filename)
-            with open(path, "wb") as f:
-                f.write(data)
-            return True
+            with open(path, "rb"):
+                return directory
         except Exception:
             continue
-    return False
+    return None
+
+
+def _write_to_dir(directory: str, filename: str, data: bytes) -> bool:
+    try:
+        os.makedirs(directory, exist_ok=True)
+        path = os.path.join(directory, filename)
+        with open(path, "wb") as f:
+            f.write(data)
+        return True
+    except Exception:
+        return False
+
+
+def _write_first_writable(filename: str, data: bytes) -> str | None:
+    for directory in _CANDIDATE_DIRS:
+        if _write_to_dir(directory, filename, data):
+            return directory
+    return None
 
 
 def get_or_create_install_keypair() -> tuple[Ed25519PrivateKey, str]:
@@ -86,4 +105,30 @@ def get_cached_owner_user_id() -> str | None:
 
 
 def set_cached_owner_user_id(user_id: str) -> None:
-    _write_first_writable(_OWNER_FILENAME, user_id.encode("utf-8"))
+    """Write the cached owner user id, keeping it in the same directory a
+    later get_cached_owner_user_id() call will read from.
+
+    If an existing copy is found and its directory is still writable, the
+    new value overwrites it in place -- the common case. Otherwise, falls
+    back to writing the first writable candidate directory (in priority
+    order) and, best-effort, deletes any stale copy(ies) left behind in
+    higher-priority directories, so a subsequent read doesn't pick up the
+    old value first.
+    """
+    data = user_id.encode("utf-8")
+
+    existing_dir = _find_existing_dir(_OWNER_FILENAME)
+    if existing_dir is not None and _write_to_dir(existing_dir, _OWNER_FILENAME, data):
+        return
+
+    written_dir = _write_first_writable(_OWNER_FILENAME, data)
+    if written_dir is None:
+        return
+
+    for directory in _CANDIDATE_DIRS:
+        if directory == written_dir:
+            break
+        try:
+            os.remove(os.path.join(directory, _OWNER_FILENAME))
+        except Exception:
+            pass
