@@ -183,10 +183,14 @@ test('viewer with a valid Supabase JWT whose sub matches the session is accepted
   const token = await makeSupabaseToken({ sub: 'user-1', privateKey });
 
   const ws = await openClientWithToken(port, 'user-1.instance0', 'viewer', token);
+  // openClientWithToken resolves on 'open', which fires before the server's
+  // async connection handler has a chance to reject and close the socket, so
+  // assert the connection is actually kept alive (not closed with 1008).
+  const closeCode = await waitForCloseCode(ws, 200);
+  assert.strictEqual(closeCode, null);
 
   ws.close();
   server.close();
-  assert.ok(true); // openClientWithToken resolves only on 'open'
 });
 
 test('viewer whose sub does not match the session user id is rejected', async () => {
@@ -249,10 +253,14 @@ test('engine whose signature matches the registered install key is accepted', as
   const token = await makeEngineToken({ session: 'user-1.instance0', privateKey });
 
   const ws = await openClientWithToken(port, 'user-1.instance0', 'engine', token);
+  // openClientWithToken resolves on 'open', which fires before the server's
+  // async connection handler has a chance to reject and close the socket, so
+  // assert the connection is actually kept alive (not closed with 1008).
+  const closeCode = await waitForCloseCode(ws, 200);
+  assert.strictEqual(closeCode, null);
 
   ws.close();
   server.close();
-  assert.ok(true);
 });
 
 test('engine whose signature matches the second registered install key is accepted', async () => {
