@@ -50,6 +50,7 @@ def _mock_jwks(monkeypatch, *, public_key=None):
 
 def _make_jwt(payload: dict, *, private_key=None, headers=None) -> str:
     key = private_key if private_key is not None else _PRIVATE_KEY
+    payload = {"aud": "authenticated", **payload}
     return jwt.encode(payload, key, algorithm="ES256", headers=headers or {"kid": _KEY_ID})
 
 
@@ -142,6 +143,20 @@ def test_verify_supabase_jwt_claims_email_optional(monkeypatch):
     claims = auth.verify_supabase_jwt(token)
     assert claims.user_id == "user-123"
     assert claims.email is None
+
+
+def test_verify_supabase_jwt_rejects_wrong_or_missing_audience(monkeypatch):
+    _reload("https://project.supabase.co")
+    _mock_jwks(monkeypatch)
+    wrong_aud = _make_jwt({
+        "sub": "user-123", "exp": int(time.time()) + 3600, "aud": "something-else",
+    })
+    assert auth.verify_supabase_jwt(wrong_aud) is None
+    no_aud = jwt.encode(
+        {"sub": "user-123", "exp": int(time.time()) + 3600},
+        _PRIVATE_KEY, algorithm="ES256", headers={"kid": _KEY_ID},
+    )
+    assert auth.verify_supabase_jwt(no_aud) is None
 
 
 def test_verify_supabase_jwt_rejects_when_jwks_lookup_fails(monkeypatch):

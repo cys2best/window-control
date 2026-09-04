@@ -15,7 +15,10 @@ _PRIVATE_KEY = ec.generate_private_key(ec.SECP256R1())
 
 
 def _jwt(sub="user-1", email="a@example.com", exp_delta=3600):
-    payload = {"sub": sub, "email": email, "exp": int(time.time()) + exp_delta}
+    payload = {
+        "sub": sub, "email": email, "aud": "authenticated",
+        "exp": int(time.time()) + exp_delta,
+    }
     return pyjwt.encode(payload, _PRIVATE_KEY, algorithm="ES256", headers={"kid": "test-kid"})
 
 

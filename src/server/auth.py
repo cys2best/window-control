@@ -9,12 +9,15 @@ SUPABASE_URL and every check here is a no-op — LAN-only deployments are
 unaffected.
 """
 
+import logging
 from dataclasses import dataclass
 
 import jwt
 from jwt import PyJWKClient
 
 import config
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -64,11 +67,15 @@ def verify_supabase_jwt(token: str | None) -> UserClaims | None:
             token,
             signing_key.key,
             algorithms=["ES256"],
+            audience="authenticated",  # Supabase's fixed aud claim for session tokens
             options={"require": ["exp", "sub"]},
         )
-    except Exception:
+    except Exception as error:
         # Fail closed on anything: unreachable JWKS endpoint, unknown kid,
-        # bad/expired signature, malformed token, missing claims.
+        # bad/expired signature, malformed token, missing claims. Logged
+        # (not silent) so a misconfiguration is diagnosable from the app's
+        # own log instead of a manual repro session.
+        log.info("Supabase JWT verification failed: %s: %s", type(error).__name__, error)
         return None
 
     sub = payload.get("sub")
