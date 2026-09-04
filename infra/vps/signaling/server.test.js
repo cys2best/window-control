@@ -3,8 +3,10 @@ import { test } from 'node:test';
 import assert from 'node:assert';
 import { readFileSync } from 'node:fs';
 import { WebSocketServer, WebSocket } from 'ws';
-import jwt from 'jsonwebtoken';
-import { generateKeyPair, SignJWT, jwtVerify } from 'jose';
+import {
+  generateKeyPair, SignJWT, jwtVerify,
+  generateKeyPair as generateEdKeyPair, SignJWT as SignEdJWT, exportJWK as exportEdJWK,
+} from 'jose';
 import { createSignalingServer } from './server.js';
 
 const tlsCa = readFileSync(new URL('../../../engine/test/tls/ca-cert.pem', import.meta.url));
@@ -107,85 +109,6 @@ test('does not leak messages across different sessions', async () => {
   assert.strictEqual(viewerBGotMessage, false);
 
   engineA.close(); viewerA.close(); engineB.close(); viewerB.close();
-  server.close();
-});
-
-test('rejects connection with missing token', async () => {
-  const { server, port } = await createSignalingServer({ port: 0, jwtSecret: 'test-secret' });
-  const ws = new WebSocket(`ws://localhost:${port}/?session=sess-1&role=engine`);
-  const closeCode = await new Promise((resolve) => {
-    ws.once('close', (code) => resolve(code));
-  });
-  assert.strictEqual(closeCode, 1008);
-  server.close();
-});
-
-test('rejects connection with token for a different session', async () => {
-  const { server, port } = await createSignalingServer({ port: 0, jwtSecret: 'test-secret' });
-  const token = jwt.sign({
-    session: 'sess-OTHER',
-    role: 'engine',
-    exp: Math.floor(Date.now() / 1000) + 60,
-  }, 'test-secret');
-  const ws = new WebSocket(`ws://localhost:${port}/?session=sess-1&role=engine&token=${token}`);
-  const closeCode = await new Promise((resolve) => {
-    ws.once('close', (code) => resolve(code));
-  });
-  assert.strictEqual(closeCode, 1008);
-  server.close();
-});
-
-test('accepts connection with valid token matching session', async () => {
-  const { server, port } = await createSignalingServer({ port: 0, jwtSecret: 'test-secret' });
-  const token = jwt.sign({
-    session: 'sess-1',
-    role: 'engine',
-    exp: Math.floor(Date.now() / 1000) + 60,
-  }, 'test-secret');
-  const ws = await openClientWithToken(port, 'sess-1', 'engine', token);
-  ws.close();
-  server.close();
-  // openClientWithToken resolves only on 'open' — if we got here, connection was accepted.
-  assert.ok(true);
-});
-
-test('rejects connection where token role does not match requested role param', async () => {
-  const { server, port } = await createSignalingServer({ port: 0, jwtSecret: 'test-secret' });
-  const token = jwt.sign({
-    session: 'sess-1',
-    role: 'viewer',
-    exp: Math.floor(Date.now() / 1000) + 60,
-  }, 'test-secret');
-  const ws = new WebSocket(`ws://localhost:${port}/?session=sess-1&role=engine&token=${token}`);
-  const closeCode = await new Promise((resolve) => {
-    ws.once('close', (code) => resolve(code));
-  });
-  assert.strictEqual(closeCode, 1008);
-  server.close();
-});
-
-test('rejects an otherwise matching token without an expiry claim', async () => {
-  const { server, port } = await createSignalingServer({ port: 0, jwtSecret: 'test-secret' });
-  const token = jwt.sign({ session: 'sess-1', role: 'engine' }, 'test-secret');
-  const ws = new WebSocket(`ws://localhost:${port}/?session=sess-1&role=engine&token=${token}`);
-  const closeCode = await waitForCloseCode(ws);
-  ws.close();
-  await server.close();
-  assert.strictEqual(closeCode, 1008);
-});
-
-test('rejects an expired token with otherwise matching claims', async () => {
-  const { server, port } = await createSignalingServer({ port: 0, jwtSecret: 'test-secret' });
-  const token = jwt.sign({
-    session: 'sess-1',
-    role: 'engine',
-    exp: Math.floor(Date.now() / 1000) - 1,
-  }, 'test-secret');
-  const ws = new WebSocket(`ws://localhost:${port}/?session=sess-1&role=engine&token=${token}`);
-  const closeCode = await new Promise((resolve) => {
-    ws.once('close', (code) => resolve(code));
-  });
-  assert.strictEqual(closeCode, 1008);
   server.close();
 });
 
@@ -295,9 +218,9 @@ test('viewer with an expired Supabase JWT is rejected', async () => {
 });
 
 test('viewer connection is still trusted with no verification configured (dev/local relay)', async () => {
-  // Matches the existing "no jwtSecret = trusted" behavior for engine role:
-  // an operator who hasn't configured SUPABASE_URL gets the old trusted-relay
-  // behavior, not a hard failure.
+  // Matches the existing "no installLookup = trusted" behavior for engine
+  // role: an operator who hasn't configured SUPABASE_URL gets the old
+  // trusted-relay behavior, not a hard failure.
   const { server, port } = await createSignalingServer({ port: 0 });
 
   const ws = await openClient(port, 'sess-1', 'viewer');
@@ -305,4 +228,93 @@ test('viewer connection is still trusted with no verification configured (dev/lo
   ws.close();
   server.close();
   assert.ok(true);
+});
+
+async function makeEngineToken({ session, privateKey, expiresInSeconds = 3600 }) {
+  return new SignEdJWT({ session, role: 'engine' })
+    .setProtectedHeader({ alg: 'EdDSA' })
+    .setJti('1')
+    .setExpirationTime(Math.floor(Date.now() / 1000) + expiresInSeconds)
+    .sign(privateKey);
+}
+
+test('engine whose signature matches the registered install key is accepted', async () => {
+  const { publicKey, privateKey } = await generateEdKeyPair('EdDSA');
+  const jwk = await exportEdJWK(publicKey);
+  const { server, port } = await createSignalingServer({
+    port: 0,
+    installLookup: async (userId) =>
+      userId === 'user-1' ? [{ public_key: jwk.x, user_id: 'user-1' }] : [],
+  });
+  const token = await makeEngineToken({ session: 'user-1.instance0', privateKey });
+
+  const ws = await openClientWithToken(port, 'user-1.instance0', 'engine', token);
+
+  ws.close();
+  server.close();
+  assert.ok(true);
+});
+
+test('engine whose signature does not match the registered install key is rejected', async () => {
+  const { privateKey } = await generateEdKeyPair('EdDSA');
+  const { publicKey: someoneElsesKey } = await generateEdKeyPair('EdDSA');
+  const someoneElsesJwk = await exportEdJWK(someoneElsesKey);
+  const { server, port } = await createSignalingServer({
+    port: 0,
+    installLookup: async () => [{ public_key: someoneElsesJwk.x, user_id: 'user-1' }],
+  });
+  const token = await makeEngineToken({ session: 'user-1.instance0', privateKey });
+
+  const ws = new WebSocket(`ws://localhost:${port}/?session=user-1.instance0&role=engine&token=${token}`);
+  const closeCode = await waitForCloseCode(ws);
+
+  assert.strictEqual(closeCode, 1008);
+  server.close();
+});
+
+test('engine for a user_id with no installs row is rejected', async () => {
+  const { privateKey } = await generateEdKeyPair('EdDSA');
+  const { server, port } = await createSignalingServer({
+    port: 0,
+    installLookup: async () => [],
+  });
+  const token = await makeEngineToken({ session: 'user-1.instance0', privateKey });
+
+  const ws = new WebSocket(`ws://localhost:${port}/?session=user-1.instance0&role=engine&token=${token}`);
+  const closeCode = await waitForCloseCode(ws);
+
+  assert.strictEqual(closeCode, 1008);
+  server.close();
+});
+
+test('engine token with a mismatched session claim is rejected even with a valid signature', async () => {
+  const { publicKey, privateKey } = await generateEdKeyPair('EdDSA');
+  const jwk = await exportEdJWK(publicKey);
+  const { server, port } = await createSignalingServer({
+    port: 0,
+    installLookup: async () => [{ public_key: jwk.x, user_id: 'user-1' }],
+  });
+  const token = await makeEngineToken({ session: 'user-1.some-other-instance', privateKey });
+
+  const ws = new WebSocket(`ws://localhost:${port}/?session=user-1.instance0&role=engine&token=${token}`);
+  const closeCode = await waitForCloseCode(ws);
+
+  assert.strictEqual(closeCode, 1008);
+  server.close();
+});
+
+test('expired engine token is rejected even with a valid signature', async () => {
+  const { publicKey, privateKey } = await generateEdKeyPair('EdDSA');
+  const jwk = await exportEdJWK(publicKey);
+  const { server, port } = await createSignalingServer({
+    port: 0,
+    installLookup: async () => [{ public_key: jwk.x, user_id: 'user-1' }],
+  });
+  const token = await makeEngineToken({ session: 'user-1.instance0', privateKey, expiresInSeconds: -10 });
+
+  const ws = new WebSocket(`ws://localhost:${port}/?session=user-1.instance0&role=engine&token=${token}`);
+  const closeCode = await waitForCloseCode(ws);
+
+  assert.strictEqual(closeCode, 1008);
+  server.close();
 });
