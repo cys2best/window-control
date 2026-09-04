@@ -176,6 +176,35 @@ test('accepts connection where token role matches requested role param', async (
   assert.ok(true);
 });
 
+test('accepts a token carrying a user_id claim and does not treat it as a new authorization check', async () => {
+  const { server, port } = await createSignalingServer({ port: 0, jwtSecret: 'test-secret' });
+  const token = jwt.sign({
+    session: 'sess-1',
+    role: 'viewer',
+    user_id: 'user-42',
+    exp: Math.floor(Date.now() / 1000) + 60,
+  }, 'test-secret');
+  const ws = await openClientWithToken(port, 'sess-1', 'viewer', token);
+  ws.close();
+  server.close();
+  // openClientWithToken resolves only on 'open' — the presence of
+  // user_id neither blocks nor is required for a valid role/session token.
+  assert.ok(true);
+});
+
+test('accepts a token missing the user_id claim exactly as before', async () => {
+  const { server, port } = await createSignalingServer({ port: 0, jwtSecret: 'test-secret' });
+  const token = jwt.sign({
+    session: 'sess-1',
+    role: 'viewer',
+    exp: Math.floor(Date.now() / 1000) + 60,
+  }, 'test-secret');
+  const ws = await openClientWithToken(port, 'sess-1', 'viewer', token);
+  ws.close();
+  server.close();
+  assert.ok(true);
+});
+
 test('rejects an otherwise matching token without an expiry claim', async () => {
   const { server, port } = await createSignalingServer({ port: 0, jwtSecret: 'test-secret' });
   const token = jwt.sign({ session: 'sess-1', role: 'engine' }, 'test-secret');

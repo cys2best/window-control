@@ -140,7 +140,7 @@ def test_instance_select_returns_exact_engine_contract():
         {"urls": "stun:100.64.1.4:3478"},
         {"urls": "stun:stun.l.google.com:19302"},
     ]
-    manager.select.assert_called_once_with("emulator-5554", "100.64.1.4")
+    manager.select.assert_called_once_with("emulator-5554", "100.64.1.4", None)
 
 
 def test_instance_select_statuses_are_distinct():

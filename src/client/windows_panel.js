@@ -73,7 +73,7 @@ function renderWindowsGrid() {
 
 async function fetchWindows() {
   try {
-    const r = await fetch('/instances');
+    const r = await window.wcFetch('/instances');
     _windows = await r.json();
     renderWindowsGrid();
   } catch (_) {}

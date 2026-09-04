@@ -34,7 +34,7 @@ class CountingTokenIssuer:
     def __init__(self):
         self.counter = 0
         self.whep_calls: list[str] = []
-        self.signaling_calls: list[tuple[str, str]] = []
+        self.signaling_calls: list[tuple[str, str, str | None]] = []
 
     def _next(self) -> int:
         self.counter += 1
@@ -44,8 +44,10 @@ class CountingTokenIssuer:
         self.whep_calls.append(instance_name)
         return f"whep:{instance_name}:{self._next()}"
 
-    def signaling(self, instance_name: str, role: str) -> str:
-        self.signaling_calls.append((instance_name, role))
+    def signaling(
+        self, instance_name: str, role: str, user_id: str | None = None
+    ) -> str:
+        self.signaling_calls.append((instance_name, role, user_id))
         return f"{role}:{instance_name}:{self._next()}"
 
 
@@ -338,6 +340,15 @@ def test_select_mints_fresh_whep_and_viewer_tokens_without_admin_port():
     assert first.whep_token != second.whep_token
     assert decode_role(first.signaling_token) == "viewer"
     assert not hasattr(first, "admin_port")
+
+
+def test_select_passes_user_id_to_signaling_token():
+    issuer = CountingTokenIssuer()
+    runtime, fakes = make_runtime(token_issuer=issuer)
+    runtime.start()
+    selection = runtime.select("100.64.1.4", user_id="user-42")
+    assert selection is not None
+    assert issuer.signaling_calls[-1] == ("instance0", "viewer", "user-42")
 
 
 def test_tier_change_serializes_launch_then_generation_checked_reconnect():

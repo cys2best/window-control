@@ -51,7 +51,7 @@ try:
     from config import PORT
     from server.app import create_app
     from server.instance_manager import InstanceManager
-    from gui.launcher import LauncherWindow
+    from gui.launcher import LauncherWindow, maybe_show_login
     from gui.tray import TrayIcon
     _log_early("[gui-imports] app modules OK")
 except Exception:
@@ -218,6 +218,10 @@ def main():
                     import traceback as _tb
                     _log(f"[GUI] watchdog restart failed: {_tb.format_exc()[:300]}")
     threading.Thread(target=_watchdog, daemon=True).start()
+
+    if not maybe_show_login():
+        _log("[GUI] login cancelled — exiting without showing launcher")
+        return
 
     launcher = LauncherWindow()
 

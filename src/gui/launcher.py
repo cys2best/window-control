@@ -3,16 +3,28 @@ import sys
 import subprocess
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout,
-    QPushButton, QLabel, QGroupBox, QScrollArea
+    QPushButton, QLabel, QGroupBox, QScrollArea, QDialog
 )
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QPixmap, QImage
 import qrcode
 import io
 
-from config import PORT, VERSION
+from config import PORT, VERSION, SUPABASE_URL, SUPABASE_ANON_KEY
 from server.tailscale import get_best_ip, has_tailscale
 from updater import check_for_update
+
+
+def maybe_show_login(parent=None) -> bool:
+    """Return True if it's OK to proceed to the main window (auth disabled,
+    or the user completed sign-in / had a cached session)."""
+    if not SUPABASE_URL:
+        return True
+    from gui.supabase_login import LoginDialog, load_cached_session
+    if load_cached_session() is not None:
+        return True
+    dialog = LoginDialog(SUPABASE_URL, SUPABASE_ANON_KEY, parent)
+    return dialog.exec_() == QDialog.Accepted
 
 
 class LauncherWindow(QMainWindow):

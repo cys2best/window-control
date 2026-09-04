@@ -154,7 +154,9 @@ class EngineRuntime:
                 return
             self._fresh_start_locked()
 
-    def select(self, advertised_host: str) -> EngineSelection | None:
+    def select(
+        self, advertised_host: str, user_id: str | None = None
+    ) -> EngineSelection | None:
         """Mint a fresh, short-lived credential set for one client.
 
         Returns None when no engine endpoint is currently published (never
@@ -172,7 +174,7 @@ class EngineRuntime:
             if self.config.signaling_url:
                 signaling_url = self.config.signaling_url
                 signaling_token = self._token_issuer.signaling(
-                    self.instance_name, "viewer"
+                    self.instance_name, "viewer", user_id=user_id
                 )
 
             return EngineSelection(
