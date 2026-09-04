@@ -104,6 +104,11 @@ class CutoverConfig:
     # recovery) can be reached faster while investigating it. A run using
     # this can never report PASS — see run_cutover_verification.
     skip_manual_gates: bool = False
+    # Debugging convenience only: skips the public browser and mobile gates
+    # entirely (no PUBLIC_UI_URL/TUNNEL_SECRET required either), for a
+    # local-only run when Supabase auth isn't configured yet. A run using
+    # this can never report PASS — see run_cutover_verification.
+    skip_public_mobile: bool = False
 
 
 @dataclass
@@ -762,43 +767,55 @@ def run_cutover_verification(config: CutoverConfig, deps: Any) -> CutoverResult:
             return result
 
         current_gate = "public browser"
-        if selection["signaling_url"] != config.public_signaling_url:
-            raise CutoverError("selection signaling URL does not match the configured public VPS")
-        public_browser, public = deps.open_public_browser(
-            selection, config.public_signaling_url
-        )
-        browsers.append(public_browser)
-        public = _require_fields(public, {"video", "data_channel", "input"}, "public browser")
-        _validate_public_websocket(
-            deps.observed_public_websocket(public_browser), selection, config.public_signaling_url
-        )
-        if not public["video"] or not public["data_channel"] or not public["input"]:
-            raise CutoverError("public browser did not use exact viewer query auth/video/input")
-        if not _manual_gate(
-            deps,
-            result,
-            current_gate,
-            "Confirm the production public UI used the configured VPS, exact viewer token query auth, changing video, and DataChannel input.",
-        ):
-            return result
-        deps.close_browser(public_browser)
-        browsers.remove(public_browser)
+        if config.skip_public_mobile:
+            result.mark(
+                current_gate, "SKIP",
+                "skip_public_mobile was set: Supabase auth not configured for this run",
+            )
+        else:
+            if selection["signaling_url"] != config.public_signaling_url:
+                raise CutoverError("selection signaling URL does not match the configured public VPS")
+            public_browser, public = deps.open_public_browser(
+                selection, config.public_signaling_url
+            )
+            browsers.append(public_browser)
+            public = _require_fields(public, {"video", "data_channel", "input"}, "public browser")
+            _validate_public_websocket(
+                deps.observed_public_websocket(public_browser), selection, config.public_signaling_url
+            )
+            if not public["video"] or not public["data_channel"] or not public["input"]:
+                raise CutoverError("public browser did not use exact viewer query auth/video/input")
+            if not _manual_gate(
+                deps,
+                result,
+                current_gate,
+                "Confirm the production public UI used the configured VPS, exact viewer token query auth, changing video, and DataChannel input.",
+            ):
+                return result
+            deps.close_browser(public_browser)
+            browsers.remove(public_browser)
 
         current_gate = "mobile"
-        mobile = _require_fields(
-            deps.verify_mobile(selection),
-            {"bearer_auth_enabled", "whep_authenticated", "video", "input"},
-            "mobile",
-        )
-        if not all(mobile.values()):
-            raise CutoverError("mobile bearer/WHEP/video/input confirmation incomplete")
-        if not _manual_gate(
-            deps,
-            result,
-            current_gate,
-            "Confirm a real mobile device used bearer auth, authenticated WHEP, decoded video, and delivered input.",
-        ):
-            return result
+        if config.skip_public_mobile:
+            result.mark(
+                current_gate, "SKIP",
+                "skip_public_mobile was set: Supabase auth not configured for this run",
+            )
+        else:
+            mobile = _require_fields(
+                deps.verify_mobile(selection),
+                {"bearer_auth_enabled", "whep_authenticated", "video", "input"},
+                "mobile",
+            )
+            if not all(mobile.values()):
+                raise CutoverError("mobile bearer/WHEP/video/input confirmation incomplete")
+            if not _manual_gate(
+                deps,
+                result,
+                current_gate,
+                "Confirm a real mobile device used bearer auth, authenticated WHEP, decoded video, and delivered input.",
+            ):
+                return result
 
         current_gate = "local/public race"
         race = _require_fields(
@@ -998,8 +1015,15 @@ class RealCutoverDeps:
     def sleep(seconds: float) -> None:
         time.sleep(seconds)
 
+    def _required_env(self) -> tuple[str, ...]:
+        if self.config.skip_public_mobile:
+            return tuple(
+                name for name in self._REQUIRED_ENV if name not in {"PUBLIC_UI_URL", "TUNNEL_SECRET"}
+            )
+        return self._REQUIRED_ENV
+
     def validate_required_environment(self) -> None:
-        missing = [name for name in self._REQUIRED_ENV if not os.environ.get(name)]
+        missing = [name for name in self._required_env() if not os.environ.get(name)]
         if missing:
             raise CutoverError(
                 "required environment secrets/config are missing: " + ", ".join(missing)
@@ -2150,6 +2174,15 @@ def main(argv: list[str] | None = None) -> int:
             "faster. The result can never report PASS."
         ),
     )
+    parser.add_argument(
+        "--skip-public-mobile",
+        action="store_true",
+        help=(
+            "Debugging only: skip the public browser and mobile gates "
+            "entirely (no PUBLIC_UI_URL/TUNNEL_SECRET required either), "
+            "for a local-only run. The result can never report PASS."
+        ),
+    )
     args = parser.parse_args(argv)
     if args.confirm:
         try:
@@ -2159,9 +2192,12 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         print(f"Submitted {args.confirm} confirmation to {path.parent.name}")
         return 0
+    required_fields = ["serials", "performance_evidence_dir", "evidence_dir", "installer_path"]
+    if not args.skip_public_mobile:
+        required_fields.append("public_signaling_url")
     missing = [
         name
-        for name in ("serials", "performance_evidence_dir", "evidence_dir", "public_signaling_url", "installer_path")
+        for name in required_fields
         if getattr(args, name) is None or getattr(args, name) == []
     ]
     if missing:
@@ -2171,7 +2207,7 @@ def main(argv: list[str] | None = None) -> int:
         serials=tuple(args.serials),
         performance_evidence_dir=args.performance_evidence_dir,
         evidence_dir=args.evidence_dir,
-        public_signaling_url=args.public_signaling_url,
+        public_signaling_url=args.public_signaling_url or "",
         installer_path=args.installer_path,
         performance_override=args.performance_override,
         soak_override=args.soak_override,
@@ -2180,6 +2216,7 @@ def main(argv: list[str] | None = None) -> int:
         keep_on_failure=args.keep_on_failure,
         file_prompts=args.file_prompts,
         skip_manual_gates=args.skip_manual_gates,
+        skip_public_mobile=args.skip_public_mobile,
     )
     deps = RealCutoverDeps(config)
     try:

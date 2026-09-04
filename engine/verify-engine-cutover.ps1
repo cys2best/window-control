@@ -14,7 +14,8 @@ param(
     [ValidateSet("", "PASS", "FAIL")]
     [string]$Confirm = "",
     [switch]$SkipManualGates,
-    [switch]$SoakOverride
+    [switch]$SoakOverride,
+    [switch]$SkipPublicMobile
 )
 
 $ErrorActionPreference = "Stop"
@@ -33,8 +34,8 @@ if ($Serials.Count -ne 5 -or ($Serials | Select-Object -Unique).Count -ne 5) {
 if (-not $PerformanceEvidenceDir) {
     throw "-PerformanceEvidenceDir is required"
 }
-if (-not $PublicSignalingUrl) {
-    throw "-PublicSignalingUrl is required"
+if (-not $PublicSignalingUrl -and -not $SkipPublicMobile) {
+    throw "-PublicSignalingUrl is required (or pass -SkipPublicMobile to skip the public/mobile gates)"
 }
 if (-not $InstallerPath) {
     $InstallerPath = Join-Path $repoRoot "release\WindowControlInstaller.exe"
@@ -58,16 +59,17 @@ $arguments = @(
 ) + $Serials + @(
     "--performance-evidence-dir", $PerformanceEvidenceDir,
     "--evidence-dir", $evidenceDir,
-    "--public-signaling-url", $PublicSignalingUrl,
     "--installer-path", $InstallerPath,
     "--soak-hours", "$SoakHours",
     "--rapid-switch-count", "$RapidSwitchCount",
     "--performance-override", $recordedOverride
 )
+if ($PublicSignalingUrl) { $arguments += @("--public-signaling-url", $PublicSignalingUrl) }
 if ($KeepOnFailure) { $arguments += "--keep-on-failure" }
 if ($FilePrompts) { $arguments += "--file-prompts" }
 if ($SkipManualGates) { $arguments += "--skip-manual-gates" }
 if ($SoakOverride) { $arguments += @("--soak-override", $recordedSoakOverride) }
+if ($SkipPublicMobile) { $arguments += "--skip-public-mobile" }
 
 Write-Host "Evidence directory: $evidenceDir"
 Write-Warning "Performance gate is OVERRIDDEN by the recorded owner ruling; it will not be reported as a measured PASS."
@@ -79,6 +81,9 @@ if ($SoakOverride) {
 }
 if ($RapidSwitchCount -lt 20) {
     Write-Warning "-RapidSwitchCount $RapidSwitchCount is below the required 20: the rapid-switch gate will report INCOMPLETE, not PASS."
+}
+if ($SkipPublicMobile) {
+    Write-Warning "-SkipPublicMobile is set: the public browser and mobile gates are SKIPPED, not measured. This run can never report PASS and is not full acceptance evidence."
 }
 & uv @arguments
 exit $LASTEXITCODE

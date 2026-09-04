@@ -666,6 +666,34 @@ def test_mobile_requires_bearer_whep_video_and_input(tmp_path):
     assert failed.summary["failed_gate"] == "mobile"
 
 
+def test_skip_public_mobile_skips_both_gates_and_caps_incomplete(tmp_path):
+    deps = FakeDeps()
+    # would fail if actually invoked
+    deps.open_public_browser = lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not be called"))
+    deps.verify_mobile = lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not be called"))
+
+    result = run_cutover_verification(config(tmp_path, skip_public_mobile=True), deps)
+
+    assert result.checkpoints["public browser"]["status"] == "SKIP"
+    assert result.checkpoints["mobile"]["status"] == "SKIP"
+    assert result.status == "INCOMPLETE"
+    assert not any(event[0] in ("public-open", "mobile") for event in deps.events)
+
+
+def test_real_required_environment_excludes_public_when_skip_public_mobile(tmp_path, monkeypatch):
+    run_config = config(tmp_path, skip_public_mobile=True)
+    deps = RealCutoverDeps(run_config)
+    for name in ("AUTH_TOKEN", "TUNNEL_SECRET", "ENGINE_SIGNALING_SECRET", "TURN_CREDENTIAL", "PUBLIC_UI_URL"):
+        monkeypatch.delenv(name, raising=False)
+    for name in ("AUTH_TOKEN", "ENGINE_SIGNALING_SECRET", "TURN_CREDENTIAL"):
+        monkeypatch.setenv(name, f"{name.lower()}-value")
+    engine = tmp_path / "engine" / "build" / "Release" / "engine.exe"
+    engine.parent.mkdir(parents=True)
+    engine.touch()
+
+    deps.validate_required_environment()  # must not raise despite PUBLIC_UI_URL/TUNNEL_SECRET missing
+
+
 def test_race_and_twenty_switches_require_bounded_loser_cleanup(tmp_path):
     result = run_cutover_verification(config(tmp_path), FakeDeps())
     assert result.checkpoints["local/public race"]["status"] == "PASS"
