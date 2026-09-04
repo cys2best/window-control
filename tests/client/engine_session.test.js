@@ -42,6 +42,7 @@ function fakeDeps() {
     public: { calls: [] },
     fetch: { calls: [] },
     deleteDeferred: null,
+    getAccessToken: () => 'jwt+/=?&',
     flush: async () => {
       for (let index = 0; index < 10; index += 1) await Promise.resolve();
     },
@@ -141,22 +142,33 @@ function becomeReady(scenario) {
   scenario.pc.dispatch('track', { track: { kind: 'video' }, streams: [{ id: 'stream' }] });
 }
 
+// The relay session id is now an account-scoped "<owner>.<instance name>"
+// string published by the server as `public_session` -- it is not derived
+// from `name` (kept here only because the server still returns it as a
+// display label) and it is not a bearer credential. The viewer's own
+// Supabase access token now arrives through deps.getAccessToken().
+const PUBLIC_SESSION = 'owner-1.pixel 8 & friends';
+
 function localSelection() {
   return {
     name: 'pixel 8', whep_url: 'http://host/whep', whep_token: 'fresh-whep-token',
-    signaling_url: null, signaling_token: null, ice_servers: [{ urls: 'stun:local' }],
+    signaling_url: null, public_session: null, ice_servers: [{ urls: 'stun:local' }],
   };
 }
 
 function publicSelection() {
   return {
     name: 'pixel 8 & friends', whep_url: null, whep_token: null,
-    signaling_url: 'wss://signal.example/relay', signaling_token: 'jwt+/=?&', ice_servers: [{ urls: 'turn:public' }],
+    signaling_url: 'wss://signal.example/relay', public_session: PUBLIC_SESSION,
+    ice_servers: [{ urls: 'turn:public' }],
   };
 }
 
 function fullSelection() {
-  return { ...localSelection(), signaling_url: 'wss://signal.example/relay', signaling_token: 'jwt+/=?&' };
+  return {
+    ...localSelection(),
+    signaling_url: 'wss://signal.example/relay', public_session: PUBLIC_SESSION,
+  };
 }
 
 function callbacks() {
@@ -337,7 +349,7 @@ test('encodes session, viewer role, and JWT in the public signaling URL', async 
   deps.public.ws.open();
   await deps.flush();
   const url = new URL(deps.public.ws.url);
-  assert.equal(url.searchParams.get('session'), 'pixel 8 & friends');
+  assert.equal(url.searchParams.get('session'), PUBLIC_SESSION);
   assert.equal(url.searchParams.get('role'), 'viewer');
   assert.equal(url.searchParams.get('token'), 'jwt+/=?&');
   assert.deepEqual(deps.public.ws.sent, ['public-offer']);

@@ -18,7 +18,9 @@ PWA client. Distributed as a Windows installer built via PyInstaller.
   (`engine/`, Windows CI only).
 - Test runner: `pytest` via `uv run pytest tests/ -v` (`src/`, runs on Mac
   against `src/stubs/` — Win32/mss stubbed, so a pass doesn't confirm
-  Windows behavior); `jest` via `npm test` (`mobile/`); `engine_tests.exe`
+  Windows behavior); `node --test tests/client/engine_session.test.js`
+  (browser client modules, repo root); `node:test` via `npm test`
+  (`infra/vps/signaling/`); `jest` via `npm test` (`mobile/`); `engine_tests.exe`
   (gtest, Windows-only, runs in CI's `build-engine` job, excludes
   `SignalingClient.*` — no server available there).
 - Lint / format command: not detected — fill in manually.
@@ -37,6 +39,9 @@ python scripts/bump_version.py       # sync VERSION across config.py / pyproject
 # test
 uv run pytest tests/ -v      # src/ (Mac-stubbed, doesn't confirm Windows behavior)
 npm test                     # mobile/ (jest)
+npm test                     # infra/vps/signaling/ (node:test, relay contract)
+node --test tests/client/engine_session.test.js   # browser client (node:test)
+# tests/client/browser_cutover.test.js is known-failing (pre-existing rot)
 
 # lint
 # not detected — fill in manually

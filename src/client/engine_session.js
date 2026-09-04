@@ -24,6 +24,7 @@
     const PeerConnection = deps.PeerConnection || global.RTCPeerConnection;
     const WebSocketImpl = deps.WebSocketImpl || global.WebSocket;
     const inputApi = deps.inputApi || global.WindowControlInput;
+    const getAccessToken = deps.getAccessToken || global.wcGetAccessToken;
     const timeoutMs = deps.timeoutMs === undefined ? 8000 : deps.timeoutMs;
     const disconnectedGraceMs = deps.disconnectedGraceMs === undefined ? 6000 : deps.disconnectedGraceMs;
     let active = null;
@@ -254,7 +255,7 @@
           const url = new URL(selection.signaling_url);
           url.searchParams.set('session', selection.public_session);
           url.searchParams.set('role', 'viewer');
-          url.searchParams.set('token', global.wcGetAccessToken());
+          url.searchParams.set('token', getAccessToken());
           const ws = new WebSocketImpl(url.href);
           attempt.setWebSocket(ws);
           function listen(type, listener) {
