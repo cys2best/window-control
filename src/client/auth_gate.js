@@ -9,6 +9,7 @@
   const passwordInput = document.getElementById('login-password');
   const submitBtn = document.getElementById('login-submit');
   const toggleBtn = document.getElementById('login-toggle-mode');
+  const subtitle = document.getElementById('login-subtitle');
   const error = document.getElementById('login-error');
 
   let mode = 'sign-in'; // or 'sign-up'
@@ -29,6 +30,7 @@
   function setMode(next) {
     mode = next;
     submitBtn.textContent = mode === 'sign-in' ? 'Sign in' : 'Create account';
+    subtitle.textContent = mode === 'sign-in' ? 'Sign in to continue' : 'Create your account';
     toggleBtn.textContent = mode === 'sign-in'
       ? 'Need an account? Register' : 'Have an account? Sign in';
   }

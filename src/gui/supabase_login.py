@@ -14,6 +14,7 @@ import httpx
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QLabel, QLineEdit, QPushButton,
 )
+from PyQt5.QtCore import Qt
 
 
 class AuthError(Exception):
@@ -71,20 +72,60 @@ class LoginDialog(QDialog):
     def __init__(self, supabase_url: str, anon_key: str, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Sign in")
+        self.setFixedWidth(320)
         self._supabase_url = supabase_url
         self._anon_key = anon_key
         self.session: dict | None = None
 
+        self.setStyleSheet("""
+            QDialog { background: #12141a; }
+            QLabel { color: #ef4444; font-size: 13px; background: transparent; }
+            QLineEdit {
+                background: #1b1e26;
+                border: 1px solid rgba(255,255,255,0.09);
+                border-radius: 4px;
+                color: #e8eaed;
+                font-size: 14px;
+                padding: 10px;
+            }
+            QLineEdit:focus { border: 1px solid #6fd7d1; }
+            QPushButton {
+                background: #6fd7d1;
+                color: #12141a;
+                border: none;
+                border-radius: 4px;
+                font-size: 14px;
+                font-weight: 600;
+                padding: 10px;
+            }
+            QPushButton:hover { background: #8ae0db; }
+            QPushButton:pressed { background: #5bc4be; }
+        """)
+
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(12)
+
+        title = QLabel("WindowControl")
+        title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet("color: #e8eaed; font-size: 20px; font-weight: 600; background: transparent;")
+        layout.addWidget(title)
+
+        subtitle = QLabel("Sign in to continue")
+        subtitle.setAlignment(Qt.AlignCenter)
+        subtitle.setStyleSheet("color: #8a8f98; font-size: 13px; background: transparent;")
+        layout.addWidget(subtitle)
+
         self._email = QLineEdit(placeholderText="Email")
         self._password = QLineEdit(placeholderText="Password")
         self._password.setEchoMode(QLineEdit.Password)
         self._error = QLabel("")
-        self._error.setStyleSheet("color: red;")
+        self._error.setAlignment(Qt.AlignCenter)
+        self._error.setWordWrap(True)
         submit = QPushButton("Sign in")
         submit.clicked.connect(self._submit)
 
-        for widget in (self._email, self._password, self._error, submit):
+        for widget in (self._email, self._password, submit, self._error):
             layout.addWidget(widget)
 
     def _submit(self):

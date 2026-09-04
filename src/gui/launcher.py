@@ -59,17 +59,22 @@ class LauncherWindow(QMainWindow):
 
         self._ip_label = QLabel("IP: detecting…")
         self._ip_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        self._ip_label.setStyleSheet("font-size: 14px; color: #333;")
+        self._ip_label.setStyleSheet("font-size: 14px; color: #e8eaed; background: transparent; border: none;")
         server_layout.addWidget(self._ip_label)
 
         self._url_label = QLabel("")
         self._url_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        self._url_label.setStyleSheet("font-size: 13px; color: #555;")
+        self._url_label.setStyleSheet("font-size: 13px; color: #8a8f98; background: transparent; border: none;")
         server_layout.addWidget(self._url_label)
 
+        # QR stays on a white card regardless of theme -- inverting it
+        # risks scan reliability on some phone cameras, and a code is the
+        # one element where "matches the dark UI" matters less than
+        # "a phone can actually read it".
         self._qr_label = QLabel()
         self._qr_label.setAlignment(Qt.AlignCenter)
         self._qr_label.setFixedHeight(200)
+        self._qr_label.setStyleSheet("background: #ffffff; border-radius: 4px;")
         server_layout.addWidget(self._qr_label)
 
         layout.addWidget(server_group)
@@ -77,14 +82,14 @@ class LauncherWindow(QMainWindow):
         # --- Update banner ---
         self._update_banner = QWidget()
         self._update_banner.setStyleSheet(
-            "background:#fffbe6; border:1px solid #f0c040; border-radius:6px;"
+            "background: rgba(234,179,8,0.12); border: 1px solid rgba(234,179,8,0.4); border-radius: 4px;"
         )
         banner_layout = QVBoxLayout(self._update_banner)
         banner_layout.setContentsMargins(10, 8, 10, 8)
         banner_layout.setSpacing(6)
 
         self._update_label = QLabel()
-        self._update_label.setStyleSheet("color:#7a6000; font-size:13px; background:transparent; border:none;")
+        self._update_label.setStyleSheet("color:#eab308; font-size:13px; background:transparent; border:none;")
         self._update_label.setWordWrap(True)
         banner_layout.addWidget(self._update_label)
 
@@ -99,47 +104,47 @@ class LauncherWindow(QMainWindow):
 
         # --- Status bar ---
         self._status_label = QLabel("Server running…")
-        self._status_label.setStyleSheet("font-size: 13px; color: #16a34a;")
+        self._status_label.setStyleSheet("font-size: 13px; color: #22c55e; background: transparent; border: none;")
         layout.addWidget(self._status_label)
 
 
     def _setup_style(self):
         self.setStyleSheet("""
-            QMainWindow { background: #f8fafc; }
+            QMainWindow { background: #12141a; }
             QGroupBox {
                 font-size: 14px;
                 font-weight: 600;
-                color: #1e293b;
-                border: 1px solid #e2e8f0;
-                border-radius: 8px;
+                color: #e8eaed;
+                border: 1px solid rgba(255,255,255,0.09);
+                border-radius: 4px;
                 margin-top: 8px;
                 padding-top: 8px;
-                background: white;
+                background: #1b1e26;
             }
             QGroupBox::title {
                 subcontrol-origin: margin;
                 left: 12px;
                 padding: 0 6px;
-                color: #374151;
+                color: #e8eaed;
             }
-            QScrollArea { border: none; background: #f8fafc; }
-            QWidget#qt_scrollarea_viewport { background: #f8fafc; }
+            QScrollArea { border: none; background: #12141a; }
+            QWidget#qt_scrollarea_viewport { background: #12141a; }
         """)
 
     def _btn_style(self, bg: str, hover: str) -> str:
         return f"""
             QPushButton {{
                 background: {bg};
-                color: white;
+                color: #12141a;
                 border: none;
-                border-radius: 8px;
+                border-radius: 4px;
                 font-size: 15px;
                 font-weight: 600;
                 padding: 10px;
             }}
             QPushButton:hover {{ background: {hover}; }}
             QPushButton:pressed {{ background: {hover}; }}
-            QPushButton:disabled {{ background: #94a3b8; }}
+            QPushButton:disabled {{ background: #4a4e58; color: #8a8f98; }}
         """
 
     def _refresh_ip(self):

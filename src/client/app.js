@@ -9,8 +9,6 @@ let _lastTierChange = 0;
 let _badStreak = 0;
 let _adaptiveSerial = null;
 let _adaptiveTimer = null;
-let _statsTimer = null;
-let _statsPrev = null;
 let _echoTimer = null;
 let _decodeHealthTimer = null;
 let _inputRttMs = 0;
@@ -111,9 +109,18 @@ async function setPreferredTier(tier) {
   await _applyTier(tier);
 }
 
+function _updateSignalBars(loss, rtt) {
+  // Same severity buckets adaptive quality already uses to step tiers
+  // down, just also drawn as the toolbar's signal icon -- one real
+  // measurement, two consumers, instead of a second guess at "strength".
+  if (loss > 0.08 || rtt > 400) setNetStatus('bad', 'Poor connection');
+  else if (loss > 0.03 || rtt > 200) setNetStatus('warn', 'Weak connection');
+  else setNetStatus('good', 'Strong connection');
+}
+
 async function _sampleAndAdapt() {
   const session = _activeEngineSession;
-  if (!session || !session.pc || Date.now() < _tierManualUntil || Date.now() - _lastTierChange < 10000) return;
+  if (!session || !session.pc) return;
   let loss = 0;
   let rtt = 0;
   let seen = false;
@@ -128,6 +135,8 @@ async function _sampleAndAdapt() {
     if (record.type === 'candidate-pair' && record.state === 'succeeded') rtt = (record.currentRoundTripTime || 0) * 1000;
   });
   if (!seen) return;
+  _updateSignalBars(loss, rtt);
+  if (Date.now() < _tierManualUntil || Date.now() - _lastTierChange < 10000) return;
   if (loss > 0.08 || rtt > 400) {
     _badStreak += 1;
     if (_badStreak >= 3) { _badStreak = 0; await _applyTier(_stepTier(-1)); }
@@ -473,37 +482,6 @@ function initKeyboard() {
   input.addEventListener('keydown', event => { event.preventDefault(); _sendInput({ type: 'key', key: event.key }); });
 }
 
-function _startStatsOverlay() {
-  const el = document.getElementById('stats-overlay');
-  if (el) el.style.display = 'block';
-  _statsPrev = null;
-  if (_statsTimer) clearInterval(_statsTimer);
-  _statsTimer = setInterval(_sampleStats, 1000);
-}
-
-function _stopStatsOverlay() {
-  const el = document.getElementById('stats-overlay');
-  if (el) el.style.display = 'none';
-  if (_statsTimer) clearInterval(_statsTimer);
-  _statsTimer = null;
-}
-
-async function _sampleStats() {
-  if (!_activeEngineSession || !_activeEngineSession.pc) return;
-  const el = document.getElementById('stats-overlay');
-  if (!el) return;
-  let fps = 0;
-  let kbps = 0;
-  const stats = await _activeEngineSession.pc.getStats();
-  stats.forEach(record => {
-    if (record.type !== 'inbound-rtp' || record.kind !== 'video') return;
-    fps = record.framesPerSecond || 0;
-    if (_statsPrev && record.timestamp > _statsPrev.timestamp) kbps = (record.bytesReceived - _statsPrev.bytes) * 8 / (record.timestamp - _statsPrev.timestamp);
-    _statsPrev = { bytes: record.bytesReceived || 0, timestamp: record.timestamp || 0 };
-  });
-  el.textContent = `${Math.round(fps)}fps · ${(kbps / 1000).toFixed(1)} Mbps · input ${Math.round(_inputRttMs)}ms · tier ${_currentTier}`;
-}
-
 async function _startApp() {
   const touchCapable = (window.navigator && window.navigator.maxTouchPoints > 0) || 'ontouchstart' in window;
   if (touchCapable) { initTouch(); initMouse(); }
@@ -513,7 +491,6 @@ async function _startApp() {
   const settingsOverlay = document.getElementById('settings-overlay');
   const settingsClose = document.getElementById('settings-close');
   const qualityOptions = document.getElementById('quality-opts');
-  const statsToggle = document.getElementById('stats-toggle');
   const markSelectedTier = () => {
     if (!qualityOptions || typeof qualityOptions.querySelectorAll !== 'function') return;
     qualityOptions.querySelectorAll('.q-opt').forEach(button =>
@@ -521,7 +498,6 @@ async function _startApp() {
   };
   if (settingsButton && settingsOverlay) settingsButton.addEventListener('click', () => {
     markSelectedTier();
-    if (statsToggle) statsToggle.checked = document.getElementById('stats-overlay').style.display !== 'none';
     settingsOverlay.style.display = 'flex';
   });
   if (settingsClose && settingsOverlay) settingsClose.addEventListener('click', () => { settingsOverlay.style.display = 'none'; });
@@ -536,7 +512,6 @@ async function _startApp() {
   }
   const reconnect = document.getElementById('reconnect-btn');
   if (reconnect) reconnect.addEventListener('click', () => reconnectEngineInstance().catch(() => showUnavailable()));
-  if (statsToggle) statsToggle.addEventListener('change', () => statsToggle.checked ? _startStatsOverlay() : _stopStatsOverlay());
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden && _activeWindowId) reconnectEngineInstance().catch(() => showUnavailable());
   });
