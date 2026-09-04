@@ -4,8 +4,11 @@ import { createServer as createSecureServer } from 'node:https';
 import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import jwt from 'jsonwebtoken';
+import { createRemoteJWKSet, jwtVerify } from 'jose';
 
-export async function createSignalingServer({ port = 8443, jwtSecret = null, tls = null } = {}) {
+export async function createSignalingServer({
+  port = 8443, jwtSecret = null, supabaseUrl = null, verifyViewerToken = null, tls = null,
+} = {}) {
   const httpServer = tls ? createSecureServer(tls) : createServer();
   const wss = new WebSocketServer({ server: httpServer });
 
@@ -23,7 +26,19 @@ export async function createSignalingServer({ port = 8443, jwtSecret = null, tls
     return role === 'engine' ? 'viewer' : 'engine';
   }
 
-  wss.on('connection', (ws, req) => {
+  const resolveViewerToken = verifyViewerToken || (supabaseUrl ? (() => {
+    const jwks = createRemoteJWKSet(
+      new URL(`${supabaseUrl.replace(/\/$/, '')}/auth/v1/.well-known/jwks.json`),
+    );
+    return async (token) => {
+      const { payload } = await jwtVerify(token, jwks, {
+        algorithms: ['ES256'], audience: 'authenticated',
+      });
+      return payload.sub;
+    };
+  })() : null);
+
+  wss.on('connection', async (ws, req) => {
     const url = new URL(req.url, 'http://localhost');
     const sessionId = url.searchParams.get('session');
     const role = url.searchParams.get('role');
@@ -34,7 +49,23 @@ export async function createSignalingServer({ port = 8443, jwtSecret = null, tls
       return;
     }
 
-    if (jwtSecret) {
+    if (role === 'viewer') {
+      if (resolveViewerToken) {
+        let userId;
+        try {
+          userId = await resolveViewerToken(token);
+        } catch {
+          ws.close(1008, 'invalid or expired viewer token');
+          return;
+        }
+        if (userId !== sessionId.split('.', 1)[0]) {
+          ws.close(1008, "token does not match this session's account");
+          return;
+        }
+      }
+    } else if (jwtSecret) {
+      // engine role: HMAC check replaced with Ed25519 signature verification
+      // against this session's registered install key -- see Task 9.
       try {
         const payload = jwt.verify(token, jwtSecret, { algorithms: ['HS256'] });
         if (payload.session !== sessionId || payload.role !== role
@@ -90,6 +121,7 @@ export async function createSignalingServer({ port = 8443, jwtSecret = null, tls
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const port = process.env.PORT ? Number(process.env.PORT) : 8443;
   const jwtSecret = process.env.JWT_SECRET || null;
+  const supabaseUrl = process.env.SUPABASE_URL || null;
   const tlsCertFile = process.env.SIGNALING_TLS_CERT_FILE;
   const tlsKeyFile = process.env.SIGNALING_TLS_KEY_FILE;
   const tlsPort = process.env.SIGNALING_TLS_PORT
@@ -102,11 +134,12 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     );
   }
 
-  const servers = [createSignalingServer({ port, jwtSecret })];
+  const servers = [createSignalingServer({ port, jwtSecret, supabaseUrl })];
   if (tlsPort) {
     servers.push(createSignalingServer({
       port: tlsPort,
       jwtSecret,
+      supabaseUrl,
       tls: {
         cert: readFileSync(tlsCertFile),
         key: readFileSync(tlsKeyFile),
@@ -119,5 +152,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     console.log(`Signaling server listening on port ${actualPort}`);
     if (secure) console.log(`Secure signaling server listening on port ${secure.port}`);
     if (!jwtSecret) console.warn('WARNING: JWT_SECRET not set, auth disabled');
+    if (!supabaseUrl) console.warn('WARNING: SUPABASE_URL not set, viewer auth disabled');
   });
 }

@@ -4,6 +4,7 @@ import assert from 'node:assert';
 import { readFileSync } from 'node:fs';
 import { WebSocketServer, WebSocket } from 'ws';
 import jwt from 'jsonwebtoken';
+import { generateKeyPair, SignJWT, jwtVerify } from 'jose';
 import { createSignalingServer } from './server.js';
 
 const tlsCa = readFileSync(new URL('../../../engine/test/tls/ca-cert.pem', import.meta.url));
@@ -163,48 +164,6 @@ test('rejects connection where token role does not match requested role param', 
   server.close();
 });
 
-test('accepts connection where token role matches requested role param', async () => {
-  const { server, port } = await createSignalingServer({ port: 0, jwtSecret: 'test-secret' });
-  const token = jwt.sign({
-    session: 'sess-1',
-    role: 'viewer',
-    exp: Math.floor(Date.now() / 1000) + 60,
-  }, 'test-secret');
-  const ws = await openClientWithToken(port, 'sess-1', 'viewer', token);
-  ws.close();
-  server.close();
-  assert.ok(true);
-});
-
-test('accepts a token carrying a user_id claim and does not treat it as a new authorization check', async () => {
-  const { server, port } = await createSignalingServer({ port: 0, jwtSecret: 'test-secret' });
-  const token = jwt.sign({
-    session: 'sess-1',
-    role: 'viewer',
-    user_id: 'user-42',
-    exp: Math.floor(Date.now() / 1000) + 60,
-  }, 'test-secret');
-  const ws = await openClientWithToken(port, 'sess-1', 'viewer', token);
-  ws.close();
-  server.close();
-  // openClientWithToken resolves only on 'open' — the presence of
-  // user_id neither blocks nor is required for a valid role/session token.
-  assert.ok(true);
-});
-
-test('accepts a token missing the user_id claim exactly as before', async () => {
-  const { server, port } = await createSignalingServer({ port: 0, jwtSecret: 'test-secret' });
-  const token = jwt.sign({
-    session: 'sess-1',
-    role: 'viewer',
-    exp: Math.floor(Date.now() / 1000) + 60,
-  }, 'test-secret');
-  const ws = await openClientWithToken(port, 'sess-1', 'viewer', token);
-  ws.close();
-  server.close();
-  assert.ok(true);
-});
-
 test('rejects an otherwise matching token without an expiry claim', async () => {
   const { server, port } = await createSignalingServer({ port: 0, jwtSecret: 'test-secret' });
   const token = jwt.sign({ session: 'sess-1', role: 'engine' }, 'test-secret');
@@ -273,4 +232,77 @@ test('rejects a second connection claiming an already-taken role and keeps the f
   engine1.close();
   viewer.close();
   server.close();
+});
+
+async function makeSupabaseToken({ sub, privateKey, audience = 'authenticated', expiresInSeconds = 3600 }) {
+  return new SignJWT({ sub })
+    .setProtectedHeader({ alg: 'ES256' })
+    .setIssuedAt()
+    .setAudience(audience)
+    .setExpirationTime(Math.floor(Date.now() / 1000) + expiresInSeconds)
+    .sign(privateKey);
+}
+
+function makeVerifyViewerToken(publicKey) {
+  return async (token) => {
+    const { payload } = await jwtVerify(token, publicKey, {
+      algorithms: ['ES256'], audience: 'authenticated',
+    });
+    return payload.sub;
+  };
+}
+
+test('viewer with a valid Supabase JWT whose sub matches the session is accepted', async () => {
+  const { publicKey, privateKey } = await generateKeyPair('ES256');
+  const { server, port } = await createSignalingServer({
+    port: 0, verifyViewerToken: makeVerifyViewerToken(publicKey),
+  });
+  const token = await makeSupabaseToken({ sub: 'user-1', privateKey });
+
+  const ws = await openClientWithToken(port, 'user-1.instance0', 'viewer', token);
+
+  ws.close();
+  server.close();
+  assert.ok(true); // openClientWithToken resolves only on 'open'
+});
+
+test('viewer whose sub does not match the session user id is rejected', async () => {
+  const { publicKey, privateKey } = await generateKeyPair('ES256');
+  const { server, port } = await createSignalingServer({
+    port: 0, verifyViewerToken: makeVerifyViewerToken(publicKey),
+  });
+  const token = await makeSupabaseToken({ sub: 'user-2', privateKey });
+
+  const ws = new WebSocket(`ws://localhost:${port}/?session=user-1.instance0&role=viewer&token=${token}`);
+  const closeCode = await waitForCloseCode(ws);
+
+  assert.strictEqual(closeCode, 1008);
+  server.close();
+});
+
+test('viewer with an expired Supabase JWT is rejected', async () => {
+  const { publicKey, privateKey } = await generateKeyPair('ES256');
+  const { server, port } = await createSignalingServer({
+    port: 0, verifyViewerToken: makeVerifyViewerToken(publicKey),
+  });
+  const token = await makeSupabaseToken({ sub: 'user-1', privateKey, expiresInSeconds: -10 });
+
+  const ws = new WebSocket(`ws://localhost:${port}/?session=user-1.instance0&role=viewer&token=${token}`);
+  const closeCode = await waitForCloseCode(ws);
+
+  assert.strictEqual(closeCode, 1008);
+  server.close();
+});
+
+test('viewer connection is still trusted with no verification configured (dev/local relay)', async () => {
+  // Matches the existing "no jwtSecret = trusted" behavior for engine role:
+  // an operator who hasn't configured SUPABASE_URL gets the old trusted-relay
+  // behavior, not a hard failure.
+  const { server, port } = await createSignalingServer({ port: 0 });
+
+  const ws = await openClient(port, 'sess-1', 'viewer');
+
+  ws.close();
+  server.close();
+  assert.ok(true);
 });

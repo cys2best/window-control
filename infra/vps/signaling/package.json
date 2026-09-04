@@ -8,6 +8,7 @@
     "test": "node --test server.test.js"
   },
   "dependencies": {
+    "jose": "^5.9.6",
     "jsonwebtoken": "^9.0.2",
     "ws": "^8.18.0"
   }

@@ -14,11 +14,20 @@
 
     echo "PORT=8443" | sudo tee /opt/webrtc-signaling/.env
     echo "JWT_SECRET=$(openssl rand -hex 32)" | sudo tee -a /opt/webrtc-signaling/.env
+    echo "SUPABASE_URL=https://<project>.supabase.co" | sudo tee -a /opt/webrtc-signaling/.env
     sudo chmod 600 /opt/webrtc-signaling/.env
     sudo chown webrtc:webrtc /opt/webrtc-signaling/.env
 
 Save the generated `JWT_SECRET` value — Task 7's test-page setup needs it to
 mint a matching test token.
+
+Setting `SUPABASE_URL` makes the relay verify each viewer's own
+Supabase-issued access token against that project's public JWKS (`sub` must
+match the `user_id` portion of the requested session) instead of a shared
+secret. Like the existing `JWT_SECRET` behavior for the engine role, this is
+opt-in: if `SUPABASE_URL` is left unset, viewer connections fall back to the
+old trusted local/dev-relay behavior (accepted unconditionally, no viewer
+identity check) — so always set it in production.
 
 ## Install and start
 
