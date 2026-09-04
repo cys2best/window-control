@@ -306,11 +306,7 @@ def create_app(instance_manager: InstanceManager) -> FastAPI:
         if inst is None:
             raise HTTPException(status_code=404, detail="Instance not found")
         host = get_best_ip() or (request.client.host if request.client else "127.0.0.1")
-        user = request.state.user
-        selection = await asyncio.to_thread(
-            instance_manager.select, instance_id, host,
-            user.user_id if user else None,
-        )
+        selection = await asyncio.to_thread(instance_manager.select, instance_id, host)
         if selection is None:
             raise HTTPException(status_code=503, detail="Engine runtime not ready")
 
@@ -324,7 +320,7 @@ def create_app(instance_manager: InstanceManager) -> FastAPI:
             "whep_url": selection.whep_url,
             "whep_token": selection.whep_token,
             "signaling_url": selection.signaling_url,
-            "signaling_token": selection.signaling_token,
+            "public_session": selection.public_session,
             "ice_servers": _selection_ice_servers(host),
             "generation": selection.generation,
         }

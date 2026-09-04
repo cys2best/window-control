@@ -17,7 +17,6 @@ class FakeRuntime:
         self.check_count = 0
         self.select_count = 0
         self.selected_hosts: list[str] = []
-        self.selected_user_ids: list[str | None] = []
         self.ready = False
         self.start_error: BaseException | None = None
         self.check_error: BaseException | None = None
@@ -35,10 +34,9 @@ class FakeRuntime:
         self.stop_count += 1
         self.ready = False
 
-    def select(self, advertised_host: str, user_id: str | None = None):
+    def select(self, advertised_host: str):
         self.select_count += 1
         self.selected_hosts.append(advertised_host)
-        self.selected_user_ids.append(user_id)
         return self.selection if self.ready else None
 
     def set_tier(self, tier: str) -> None:
@@ -164,15 +162,6 @@ def test_select_delegates_host_and_returns_registered_runtime_selection():
     assert selection is factory.runtimes[0].selection
     assert factory.runtimes[0].select_count == 1
     assert factory.runtimes[0].selected_hosts == ["192.0.2.10"]
-
-
-def test_select_forwards_user_id_to_runtime():
-    orchestrator, factory = make_orchestrator()
-    orchestrator.add_instance("emulator-5554", "instance0", 0, "720")
-
-    orchestrator.select("emulator-5554", "192.0.2.10", user_id="user-42")
-
-    assert factory.runtimes[0].selected_user_ids == ["user-42"]
 
 
 def test_tier_and_keyframe_delegate_to_the_registered_runtime():

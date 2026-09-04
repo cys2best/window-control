@@ -121,12 +121,8 @@ class InstanceManager:
         self._stun.start()
         self._stun_ip = ip
 
-    def select(
-        self, serial: str, advertised_host: str, user_id: str | None = None
-    ) -> EngineSelection | None:
-        selection = self._engine_orchestrator.select(
-            serial, advertised_host, user_id=user_id
-        )
+    def select(self, serial: str, advertised_host: str) -> EngineSelection | None:
+        selection = self._engine_orchestrator.select(serial, advertised_host)
         if selection is not None:
             with self._lock:
                 if serial in self._instances:

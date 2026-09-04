@@ -18,7 +18,6 @@ class FakeOrchestrator:
         self.add_calls = []
         self.remove_calls = []
         self.select_calls = []
-        self.select_user_ids = []
         self.tier_calls = []
         self.keyframe_calls = []
         self.check_count = 0
@@ -35,9 +34,8 @@ class FakeOrchestrator:
     def remove_instance(self, serial):
         self.remove_calls.append(serial)
 
-    def select(self, serial, advertised_host, user_id=None):
+    def select(self, serial, advertised_host):
         self.select_calls.append((serial, advertised_host))
-        self.select_user_ids.append(user_id)
         return self.select_result
 
     def set_tier(self, serial, tier):
@@ -286,15 +284,6 @@ def test_selection_marks_active_only_after_fresh_success():
     orchestrator.select_result = None
     assert manager.select("emulator-5554", "100.64.1.5") is None
     assert manager.active is manager.get("emulator-5554")
-
-
-def test_select_forwards_user_id_to_orchestrator():
-    orchestrator = FakeOrchestrator(select_result=object())
-    manager = manager_with_instance(orchestrator)
-
-    manager.select("emulator-5554", "100.64.1.4", user_id="user-42")
-
-    assert orchestrator.select_user_ids == ["user-42"]
 
 
 def test_quality_and_keyframe_delegate_to_engine_orchestrator():

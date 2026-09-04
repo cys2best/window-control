@@ -20,7 +20,7 @@ def _make_client(instances=None):
         whep_url="http://100.64.1.4:51000/whep",
         whep_token="whep-token",
         signaling_url=None,
-        signaling_token=None,
+        public_session=None,
         generation=0,
         width=720,
         height=1280,
@@ -116,7 +116,7 @@ def test_instance_select_returns_exact_engine_contract():
         whep_url="http://100.64.1.4:51000/whep",
         whep_token="whep-token",
         signaling_url="wss://signal.example",
-        signaling_token="viewer-token",
+        public_session="owner-1.instance0",
         generation=3,
         width=720,
         height=1280,
@@ -131,16 +131,16 @@ def test_instance_select_returns_exact_engine_contract():
     body = response.json()
     assert set(body) == {
         "ok", "id", "serial", "name", "w", "h", "whep_url",
-        "whep_token", "signaling_url", "signaling_token", "ice_servers",
+        "whep_token", "signaling_url", "public_session", "ice_servers",
         "generation",
     }
-    assert body["signaling_token"] == "viewer-token"
+    assert body["public_session"] == "owner-1.instance0"
     assert body["whep_token"] == "whep-token"
     assert body["ice_servers"] == [
         {"urls": "stun:100.64.1.4:3478"},
         {"urls": "stun:stun.l.google.com:19302"},
     ]
-    manager.select.assert_called_once_with("emulator-5554", "100.64.1.4", None)
+    manager.select.assert_called_once_with("emulator-5554", "100.64.1.4")
 
 
 def test_instance_select_statuses_are_distinct():
@@ -158,7 +158,7 @@ def test_instance_select_nulls_disabled_public_capabilities_together():
     manager.get.return_value = make_instance()
     manager.select.return_value = EngineSelection(
         whep_url="http://100.64.1.4:51000/whep", whep_token="whep-token",
-        signaling_url=None, signaling_token=None, generation=4,
+        signaling_url=None, public_session=None, generation=4,
         width=1280, height=720,
     )
 
@@ -166,7 +166,7 @@ def test_instance_select_nulls_disabled_public_capabilities_together():
 
     assert response.status_code == 200
     assert response.json()["signaling_url"] is None
-    assert response.json()["signaling_token"] is None
+    assert response.json()["public_session"] is None
 
 
 def test_instance_select_formats_ipv6_stun_and_removes_duplicate_urls():
@@ -174,7 +174,7 @@ def test_instance_select_formats_ipv6_stun_and_removes_duplicate_urls():
     manager.get.return_value = make_instance()
     manager.select.return_value = EngineSelection(
         whep_url="http://[fd7a:115c:a1e0::1]:51000/whep", whep_token="whep-token",
-        signaling_url=None, signaling_token=None, generation=4,
+        signaling_url=None, public_session=None, generation=4,
         width=1280, height=720,
     )
     with patch("server.app.get_best_ip", return_value="fd7a:115c:a1e0::1"), \

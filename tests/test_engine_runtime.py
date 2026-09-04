@@ -10,6 +10,7 @@ import types
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from server import install_identity
 from server.engine_admin import (
     EngineAdminProtocolError,
     EngineAdminUnavailable,
@@ -19,6 +20,11 @@ from server.engine_admin import (
 from server.engine_process import EngineReadyError, EngineReadyRecord
 from server.engine_runtime import EngineRuntime, EngineRuntimeConfig, EngineSelection
 from server.scrcpy_server import ScrcpyLaunch
+
+
+@pytest.fixture(autouse=True)
+def _fixed_owner(monkeypatch):
+    monkeypatch.setattr(install_identity, "get_cached_owner_user_id", lambda: "owner-1")
 
 
 # --------------------------------------------------------------------------
@@ -327,12 +333,14 @@ def test_start_launches_generation_zero_before_engine_and_mints_engine_jwt():
         ("engine.start", "instance0", 27183),
     ]
     assert decode_role(fakes.engine_env["ENGINE_SIGNALING_TOKEN"]) == "engine"
+    assert fakes.engine_env["ENGINE_SESSION"] == "owner-1.instance0"
 
 
-def test_select_mints_fresh_whep_tokens_without_admin_port():
-    # Viewer signaling tokens are retired in this task -- select() no longer
-    # mints one locally (Task 5 wires viewers to present their own Supabase
-    # access token to the relay instead); whep tokens are unaffected.
+def test_select_mints_fresh_whep_tokens_and_public_session():
+    # Viewer signaling tokens are retired -- select() no longer mints one
+    # locally (viewers present their own Supabase access token to the relay
+    # instead); whep tokens are unaffected. The public session id is
+    # deterministic (owner + instance name), not minted.
     issuer = CountingTokenIssuer()
     runtime, fakes = make_runtime(token_issuer=issuer)
     runtime.start()
@@ -340,7 +348,7 @@ def test_select_mints_fresh_whep_tokens_without_admin_port():
     second = runtime.select("100.64.1.4")
     assert first.whep_url == "http://100.64.1.4:51000/whep"
     assert first.whep_token != second.whep_token
-    assert first.signaling_token is None
+    assert first.public_session == "owner-1.instance0"
     assert not hasattr(first, "admin_port")
 
 
@@ -407,6 +415,7 @@ def test_start_passes_every_configured_env_overlay_to_the_engine():
         "ENGINE_LOCAL_ICE_SERVERS",
         "ENGINE_SIGNALING_URL",
         "ENGINE_SIGNALING_TOKEN",
+        "ENGINE_SESSION",
         "ENGINE_PUBLIC_ICE_SERVERS",
     }
 
@@ -447,12 +456,34 @@ def test_select_does_not_double_bracket_an_already_bracketed_host():
     assert selection.whep_url == "http://[fd7a:115c:a1e0::1]:51000/whep"
 
 
-def test_select_returns_null_signaling_url_and_token_together_when_disabled():
+def test_select_returns_null_signaling_url_and_session_together_when_disabled():
     runtime, fakes = make_runtime(config=make_config(signaling_url=""))
     runtime.start()
     selection = runtime.select("100.64.1.4")
     assert selection.signaling_url is None
-    assert selection.signaling_token is None
+    assert selection.public_session is None
+
+
+def test_select_returns_null_public_session_when_owner_not_yet_cached(monkeypatch):
+    # No owner is cached before any Supabase-authenticated request has ever
+    # reached this install. signaling_url is still reported (the engine did
+    # register, and did try to publish under the bare instance name), but
+    # public_session must stay None rather than crash or embed "None.".
+    monkeypatch.setattr(install_identity, "get_cached_owner_user_id", lambda: None)
+    runtime, fakes = make_runtime()
+    runtime.start()
+    selection = runtime.select("100.64.1.4")
+    assert selection.signaling_url == "wss://signal.example"
+    assert selection.public_session is None
+
+
+def test_build_env_falls_back_to_bare_instance_name_when_owner_not_yet_cached(monkeypatch):
+    monkeypatch.setattr(install_identity, "get_cached_owner_user_id", lambda: None)
+    issuer = CountingTokenIssuer()
+    runtime, fakes = make_runtime(token_issuer=issuer)
+    runtime.start()
+    assert fakes.engine_env["ENGINE_SESSION"] == "instance0"
+    assert issuer.engine_token_calls == ["instance0"]
 
 
 def test_select_never_exposes_the_admin_port_in_any_field():

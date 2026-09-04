@@ -17,9 +17,11 @@ rejection, or any transport/protocol failure, leaves the runtime degraded for
 the next watchdog tick rather than fabricating a recovery.
 
 Credentials are minted per call and never cached: `select()` issues a fresh WHEP
-capability token and a fresh viewer signaling token every time, because both are
-short-lived. Only non-expiring endpoint metadata (ports, generation, dimensions)
-is retained between calls.
+capability token every time, because it is short-lived. The public relay session
+id (`{owner_user_id}.{instance_name}`) is deterministic, not minted -- a viewer
+authenticates to the relay with its own Supabase access token, not a
+locally-issued one. Only non-expiring endpoint metadata (ports, generation,
+dimensions) is retained between calls.
 """
 
 import threading
@@ -31,6 +33,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from config import QUALITY_TIERS
 
+from server import install_identity
 from server.engine_admin import (
     EngineAdminClient,
     EngineAdminProtocolError,
@@ -67,7 +70,7 @@ class EngineRuntimeConfig:
 
     `signaling_url` empty disables the public signaling path entirely: the
     engine still runs, but `select()` reports no signaling endpoint and no
-    viewer token.
+    public session id.
     """
     exe_path: str
     whep_secret: str
@@ -84,7 +87,7 @@ class EngineSelection:
     whep_url: str
     whep_token: str
     signaling_url: str | None
-    signaling_token: str | None
+    public_session: str | None
     generation: int
     width: int
     height: int
@@ -156,9 +159,7 @@ class EngineRuntime:
                 return
             self._fresh_start_locked()
 
-    def select(
-        self, advertised_host: str, user_id: str | None = None
-    ) -> EngineSelection | None:
+    def select(self, advertised_host: str) -> EngineSelection | None:
         """Mint a fresh, short-lived credential set for one client.
 
         Returns None when no engine endpoint is currently published (never
@@ -176,18 +177,21 @@ class EngineRuntime:
             # key, and that signs engine registration tokens only (role is
             # always "engine" -- see EngineTokenIssuer.engine_token). A
             # viewer authenticates to the relay with its own Supabase access
-            # token instead; wiring that through is Task 5's job. `user_id`
-            # is accepted here but unused until then.
+            # token instead, presenting this deterministic, account-scoped
+            # session id so the relay can pair it with the right engine.
             signaling_url: str | None = None
-            signaling_token: str | None = None
+            public_session: str | None = None
             if self.config.signaling_url:
                 signaling_url = self.config.signaling_url
+                owner = install_identity.get_cached_owner_user_id()
+                if owner is not None:
+                    public_session = f"{owner}.{self.instance_name}"
 
             return EngineSelection(
                 whep_url=f"http://{host}:{endpoint.whep_port}/whep",
                 whep_token=self._token_issuer.whep(self.instance_name),
                 signaling_url=signaling_url,
-                signaling_token=signaling_token,
+                public_session=public_session,
                 generation=endpoint.generation,
                 width=endpoint.width,
                 height=endpoint.height,
@@ -348,13 +352,19 @@ class EngineRuntime:
     # ------------------------------------------------------------------
 
     def _build_env_locked(self) -> dict[str, str]:
+        # No cached owner yet at boot (e.g. before the first authenticated
+        # request reaches this install) falls back to the bare instance
+        # name: the engine registers under a session no live viewer will
+        # ever request, so it simply doesn't get selected, not
+        # selected-by-the-wrong-party.
+        owner = install_identity.get_cached_owner_user_id()
+        session = f"{owner}.{self.instance_name}" if owner is not None else self.instance_name
         return {
             "ENGINE_WHEP_CAPABILITY_SECRET": self.config.whep_secret,
             "ENGINE_LOCAL_ICE_SERVERS": ",".join(self.config.local_ice_servers),
             "ENGINE_SIGNALING_URL": self.config.signaling_url,
-            "ENGINE_SIGNALING_TOKEN": self._token_issuer.engine_token(
-                self.instance_name  # Task 5 upgrades this to "{owner}.{instance_name}"
-            ),
+            "ENGINE_SIGNALING_TOKEN": self._token_issuer.engine_token(session),
+            "ENGINE_SESSION": session,
             "ENGINE_PUBLIC_ICE_SERVERS": ",".join(self.config.public_ice_servers),
         }
 

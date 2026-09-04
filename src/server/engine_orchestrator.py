@@ -68,14 +68,12 @@ class EngineOrchestrator:
         if runtime is not None:
             runtime.stop()
 
-    def select(
-        self, serial: str, advertised_host: str, user_id: str | None = None
-    ) -> EngineSelection | None:
+    def select(self, serial: str, advertised_host: str) -> EngineSelection | None:
         with self._lock:
             runtime = self._runtimes.get(serial)
         if runtime is None:
             return None
-        return runtime.select(advertised_host, user_id=user_id)
+        return runtime.select(advertised_host)
 
     def set_tier(self, serial: str, tier: str) -> bool:
         with self._lock:
