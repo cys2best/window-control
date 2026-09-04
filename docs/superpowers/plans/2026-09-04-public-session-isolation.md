@@ -1735,13 +1735,21 @@ On the Windows Host PC: pull this branch, run the project's normal build steps (
 
 Install and run the app with `SUPABASE_URL`/`SUPABASE_ANON_KEY`/`SUPABASE_SERVICE_ROLE_KEY`/`VPS_SIGNALING_URL` configured. Log in via the web PWA. Confirm: `/instances` returns every discovered instance (no linking step needed). Select an instance from off-network (public path) and confirm video/input work.
 
+Expect one caveat on a brand-new install: engine processes spawn at app startup, when no owner is cached yet, so the session they register under is only known after that first login — and the engine does not re-register on its own once its session becomes stale. If the public path doesn't work immediately after the very first login on a fresh install, restart the app once and retry before treating it as a failure. This is pre-existing engine behavior this plan did not change. The local path is unaffected.
+
 - [ ] **Step 5: Two-PC, same-account gate**
 
 Repeat Step 4 on a second physical (or virtual) Windows install, same Supabase account. Confirm both PCs' instances are independently selectable over the public path at the same time (no collision, no cross-talk) — this is the scenario confirmed in the design doc's review.
 
 - [ ] **Step 6: Account-switch gate**
 
-On PC #1 from Step 4, log out and log in with a second, different Supabase account. Confirm: the first account's viewer sessions against this PC stop working (403/connection refused at the relay) once the second account's first authenticated request has landed (allow one respawn/restart if the engine was already running under the stale cached owner, per the design's documented staleness note).
+An install locks to the first account that authenticates against it. An HTTP login alone therefore cannot move an already-claimed install to a different account — that would let any self-registered account seize a PC it doesn't own. Switching owners requires local access to the machine. Verify both halves:
+
+*Rejection (no filesystem access):* on PC #1 from Step 4, log out and log in with a second, different Supabase account. Confirm that account's authenticated requests are rejected with `403 This install belongs to a different account`, and that the *first* account's own sessions keep working unaffected. The install must not change hands.
+
+*Deliberate transfer (with filesystem access):* stop the app, delete `install_owner.txt` from `C:\ProgramData\WindowControl\` (the first writable-path candidate; check the other candidates in `src/server/install_identity.py` if it isn't there), then start the app and log in as the second account. Confirm that login now claims the install, that the second account's instances are selectable over the public path, and that the first account is now the one getting `403`. Allow one app restart before the public path works, per Step 4's fresh-install note — the engine spawned before the new owner was cached and does not re-register on its own.
+
+*Unclaimed installs are unchanged:* a fresh install with no `install_owner.txt` still claims to whoever authenticates first (trust-on-first-use), exactly as before. Only the transfer of an *already-claimed* install now requires local access.
 
 - [ ] **Step 7: Leaked-secret scenario sanity check**
 
@@ -1749,4 +1757,4 @@ Copy PC #1's `install_key.bin` (from `C:\ProgramData\WindowControl\`) onto a thi
 
 - [ ] **Step 8: Update HANDOFF.md**
 
-Append an entry to `HANDOFF.md` per the template, recording: which of Steps 1-7 passed on real hardware, any gaps found, and next steps for whoever picks this up (e.g. if the account-switch staleness window from Step 6 was surprising in practice, or if `device_links` still needs manual dropping on a project that wasn't touched yet).
+Append an entry to `HANDOFF.md` per the template, recording: which of Steps 1-7 passed on real hardware, any gaps found, and next steps for whoever picks this up (e.g. if the delete-`install_owner.txt` transfer flow in Step 6 was awkward in practice, if the fresh-install restart from Step 4 was needed, or if `device_links` still needs manual dropping on a project that wasn't touched yet).
