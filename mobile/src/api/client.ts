@@ -18,7 +18,7 @@ export type SelectResp = {
   whep_url: string;
   whep_token: string;
   signaling_url: string | null;
-  signaling_token: string | null;
+  public_session: string | null;
   ice_servers: IceServer[];
   generation: number;
 };

@@ -41,6 +41,10 @@
     return fetch(path, { ...init, headers });
   };
 
+  window.wcGetAccessToken = function () {
+    return localStorage.getItem(JWT_KEY);
+  };
+
   form.addEventListener('submit', async e => {
     e.preventDefault();
     error.style.display = 'none';

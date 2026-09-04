@@ -252,9 +252,9 @@
           await negotiate(attempt);
           if (attempt.closed) return;
           const url = new URL(selection.signaling_url);
-          url.searchParams.set('session', selection.name);
+          url.searchParams.set('session', selection.public_session);
           url.searchParams.set('role', 'viewer');
-          url.searchParams.set('token', selection.signaling_token);
+          url.searchParams.set('token', global.wcGetAccessToken());
           const ws = new WebSocketImpl(url.href);
           attempt.setWebSocket(ws);
           function listen(type, listener) {
@@ -303,7 +303,7 @@
       if (managerClosed) return Promise.reject(sessionError('closed', 'Engine session manager is closed'));
       if (pending) pending.cancel(sessionError('superseded', 'Engine session connect superseded'));
       const localConfigured = !!(selection.whep_url && selection.whep_token);
-      const publicConfigured = !!(selection.signaling_url && selection.signaling_token);
+      const publicConfigured = !!(selection.signaling_url && selection.public_session);
       if (!localConfigured && !publicConfigured) return Promise.reject(sessionError('unconfigured', 'No engine session transport is configured'));
       const attempts = [];
       if (localConfigured) attempts.push(startLocal(selection, callbacks));
