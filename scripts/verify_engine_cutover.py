@@ -417,7 +417,13 @@ def _sanitized_environment(config: CutoverConfig) -> dict[str, str]:
     environment["ENGINE_EXE_PATH"] = str(
         config.repo_root / "engine" / "build" / "Release" / "engine.exe"
     )
-    environment["VPS_SIGNALING_URL"] = config.public_signaling_url
+    if config.skip_public_mobile:
+        # No Supabase project configured for this run: PUBLIC_UI_URL alone
+        # makes the spawned app refuse to start (requires SUPABASE_URL).
+        environment.pop("PUBLIC_UI_URL", None)
+        environment.pop("TUNNEL_SECRET", None)
+    else:
+        environment["VPS_SIGNALING_URL"] = config.public_signaling_url
     return environment
 
 
@@ -1113,7 +1119,27 @@ class RealCutoverDeps:
             def list_instances(self):
                 return []
 
-        app = create_app(AuditManager())
+        if self.config.skip_public_mobile:
+            # `config` (src/config.py) binds PUBLIC_UI_URL/TUNNEL_SECRET from
+            # os.environ once, the first time it's imported anywhere in this
+            # process (triggered by server.app's own top-level `from config
+            # import ...` above) — mutating os.environ here would be too
+            # late. create_app() re-reads the module's current attributes
+            # each call, so patch those directly instead.
+            config_module = sys.modules.get("config")
+            saved = (
+                {name: getattr(config_module, name, None) for name in ("PUBLIC_UI_URL", "TUNNEL_SECRET")}
+                if config_module is not None else {}
+            )
+            for name in saved:
+                setattr(config_module, name, None)
+            try:
+                app = create_app(AuditManager())
+            finally:
+                for name, value in saved.items():
+                    setattr(config_module, name, value)
+        else:
+            app = create_app(AuditManager())
         routes = {getattr(route, "path", "") for route in app.routes}
         forbidden_paths = {
             "/input",

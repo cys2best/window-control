@@ -937,6 +937,35 @@ def test_child_processes_receive_one_sanitized_environment_without_parent_mutati
     assert os.environ == before
 
 
+def test_skip_public_mobile_strips_public_ui_url_and_tunnel_secret_from_child_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("AUTH_TOKEN", "auth-secret")
+    monkeypatch.setenv("TUNNEL_SECRET", "tunnel-secret")
+    monkeypatch.setenv("ENGINE_SIGNALING_SECRET", "signaling-secret")
+    monkeypatch.setenv("TURN_CREDENTIAL", "turn-secret")
+    monkeypatch.setenv("PUBLIC_UI_URL", "wss://tunnel.example.com/__tunnel/register")
+    before = dict(os.environ)
+    deps = FakeDeps()
+
+    run_cutover_verification(config(tmp_path, skip_public_mobile=True), deps)
+
+    assert "PUBLIC_UI_URL" not in deps.started_environment
+    assert "TUNNEL_SECRET" not in deps.started_environment
+    assert deps.started_environment["AUTH_TOKEN"] == "auth-secret"
+    assert os.environ == before
+
+
+def test_real_audit_surface_tolerates_ambient_public_ui_url_when_skip_public_mobile(tmp_path, monkeypatch):
+    monkeypatch.setenv("PUBLIC_UI_URL", "wss://tunnel.example.com/__tunnel/register")
+    monkeypatch.delenv("SUPABASE_URL", raising=False)
+    (tmp_path / "pyproject.toml").write_text('[project]\ndependencies = []\n', encoding="utf-8")
+    run_config = config(tmp_path, skip_public_mobile=True)
+    deps = RealCutoverDeps(run_config)
+
+    surface = deps.audit_cutover_surface(tmp_path, "emulator-5554")
+
+    assert surface["selection_path"] == "/instances/emulator-5554/select"
+
+
 def test_file_prompts_are_nonce_pid_and_start_time_scoped(tmp_path, monkeypatch):
     import scripts.verify_engine_cutover as verifier
 
