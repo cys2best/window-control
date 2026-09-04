@@ -19,6 +19,91 @@ Plan/task identifiers belong here and in workflow state, not in commit subjects.
 
 ---
 
+### 2026-09-04 21:45 — claude
+- Finished: 2026-09-04-public-session-isolation (all 9 code tasks +
+  final whole-branch review + one fix wave, executed via
+  superpowers:subagent-driven-development from spec
+  docs/superpowers/specs/2026-09-04-public-session-isolation-design.md,
+  plan docs/superpowers/plans/2026-09-04-public-session-isolation.md,
+  commits 1d60f11..ed0104d on feature/engine). Replaces the shared,
+  copyable HMAC secret that authorized public-relay signaling (which
+  both let any two installs collide on the same session name AND let
+  anyone who knew the secret forge access to any install) with
+  account-verified access: viewers authenticate to the VPS relay with
+  their own real Supabase login (JWKS-verified, same ES256 check
+  `auth.py` already does), engines authenticate with a per-install
+  Ed25519 keypair whose public half is registered to the owning account
+  in a new `installs` table. Sessions are now `{owner_user_id}.
+  {instance_name}`. Also removed the unrelated `device_links`
+  per-instance-linking mechanism (this app is one-owner-per-install, so
+  per-instance ACLs inside one PC's own list didn't apply) — no client
+  ever called its link/unlink routes anyway.
+- Ruling (real, found during the final whole-branch review — not
+  hypothetical): removing `device_links` had left *no* ownership check
+  anywhere. Any self-registered Supabase account in the project could
+  seize an install's identity with one authenticated `GET /instances`
+  (the new upsert-on-login adopted whichever account authenticated most
+  recently), locking out the real owner and taking over the next engine
+  respawn — reopening the exact class of hole this plan exists to close.
+  Fixed: ownership now claims once (trust-on-first-use) then locks — a
+  different account gets `403`, never silently adopted. Switching an
+  already-claimed install's owner now requires local filesystem access
+  (delete `install_owner.txt`), matching the design's own stated threat
+  model. Independently re-verified by a second review pass (traced the
+  conditional by hand, confirmed the 403 path can't fire for the
+  matching owner or for unauthenticated/exempt requests).
+- Ruling (also found in the same final review, also real — not
+  hypothetical): Task 7's client-side rename broke
+  `tests/client/engine_session.test.js` from 25/25 to 14/25, and nobody
+  noticed because that suite is wired into no script/CI (only documented
+  in `docs/PROJECT_CONTEXT.md`'s build/verify block, run by convention).
+  Fixed and restored to 25/25; recommend adding a real npm/CI entry for
+  it — did not do so beyond documenting the command, to keep this fix
+  wave bounded.
+- Verified (myself, independently, not trusting agent reports): all 4
+  suites after the fix wave — `uv run pytest tests/ -v`: 432 passed / 2
+  pre-existing unrelated `test_windows_verifier.py` failures / 1 skipped
+  / 2 pre-existing collection errors (`test_auto_unlock.py`,
+  `test_window_manager.py`); `node --test tests/client/engine_session.test.js`:
+  25/25; `npm test` in `infra/vps/signaling/`: 18/18; `npm test` in
+  `mobile/`: 67/67. `engine/` (C++, Task 6) could not be compiled or
+  tested from this session — never built on macOS per
+  `engine/BUILD_WINDOWS.md` — verified only by careful manual reading
+  (twice, by two different reviewers) of brace balance and the actual
+  `SignalingClient` constructor signature.
+- Next: **Task 10 (this plan's own final task) is a manual checklist for
+  a human on real Windows hardware with a real Supabase project** — not
+  something any session could execute. It covers: applying
+  `infra/supabase/installs.sql` (and manually dropping the now-unused
+  `device_links` table if a project still has it), redeploying the VPS
+  relay with the new `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY` env vars
+  and the `jose` dependency, building the Windows engine and running its
+  offline `engine_tests.exe` suite, then a multi-PC/same-account gate, an
+  account-switch gate, and a leaked-private-key sanity check (copy
+  `install_key.bin` to a different machine, confirm it can only ever
+  squat on the *original* PC's own session, never forge a different
+  account's). Full details in the plan's Task 10.
+- Blockers: none for closing the code side of this plan; Task 10's
+  manual/real-hardware verification is required before calling the
+  whole plan done, same shape as every other `engine/`-touching plan in
+  this repo. Also open, not blocking: `scripts/verify_engine_cutover.py`
+  (tooling from the already-closed 2026-09-01-engine-client-cutover
+  plan) still can't complete a real run against Supabase-auth-enabled
+  mode at all — it authenticates via the old shared `AUTH_TOKEN` scheme,
+  which predates and is incompatible with Supabase JWT auth (a gap from
+  2026-09-03-supabase-multi-user-auth, not from this plan). This plan's
+  own Task 10 doesn't use that script for exactly this reason. A handful
+  of Minor findings were parked with rulings in this plan's own SDD
+  ledger (now deleted per the workflow's normal cleanup, since git
+  history is the record) — recommended follow-up, not blocking: memoize
+  the install keypair at module level (currently loaded independently at
+  two call sites, `main.py` and `app.py`, which could diverge if a
+  corrupt key sits in an unwritable directory), and self-heal a
+  regenerated key by re-running the idempotent `upsert_install` on a
+  request from the already-matching owner.
+
+---
+
 ### 2026-09-04 19:30 — claude
 - Finished: owner confirmed on the Windows Host PC that Supabase auth
   now works end-to-end after both fixes below (530c83b ES256/JWKS,
