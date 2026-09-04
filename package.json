@@ -1,0 +1,13 @@
+{
+  "name": "window-control",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "apps/web",
+    "apps/mobile"
+  ],
+  "scripts": {
+    "test:core": "npm test -w packages/core",
+    "test:ui": "npm test -w packages/ui"
+  }
+}
