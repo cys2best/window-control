@@ -18,7 +18,7 @@
 - FastAPI backend (`src/server/`) API surface, auth, and WHEP signaling endpoints do not change in this plan.
 - `src/client/` stays live and untouched (still served by FastAPI) until Task 10 — this is a single cutover, not incremental rollout. Every earlier task must leave the currently-running app working.
 - New `packages/core`, `packages/ui`, and `apps/web` test suites must be wired into a real CI job (`.github/workflows/`) in the same task that introduces them — never left as a documented-but-unrun command (see spec's CI section for why).
-- `mobile/`'s existing 67-test jest baseline must stay green after every task that touches it.
+- `mobile/`'s existing 67-test jest baseline must stay green after every task that touches `mobile/` (or, from Task 4 onward, `apps/mobile/`) **directly**. Tasks 2-3 are the deliberate exception: they extract shared logic out of `mobile/src/{api,webrtc,input,quality}` into `packages/core` via `git mv`, which leaves `mobile/src/api/ServerContext.tsx` (and other not-yet-moved files) importing paths that no longer exist — by design, since Task 4 is the task that rewires `mobile/`'s own imports onto `@wc/core`. `mobile`'s suite is expected to go red partway through Task 2 and stay red through Task 3, then return to green as part of Task 4. This constraint binds from Task 4 onward without exception.
 
 ---
 
