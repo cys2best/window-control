@@ -284,7 +284,7 @@ def gate_dev_app_health(config: FrontendCutoverConfig, deps: Any, result: Fronte
     environment.pop("AUTH_TOKEN", None)
     app = deps.start_dev_app(environment)
     if deps.wait_for_dev_app(app, config.port):
-        result.mark("dev_app_health", "PASS", reason=reason, details={"pid": app.pid})
+        result.mark("dev_app_health", "PASS", reason=reason, details={"pid": app.pid, "started_at": app.started_at})
     else:
         result.mark("dev_app_health", "FAIL", reason=reason, details={"error": "dev app did not become healthy within the timeout"})
 
@@ -337,10 +337,10 @@ def gate_instances_negotiation(config: FrontendCutoverConfig, deps: Any, result:
         "accept_text_html": {"status": html_header[0], "content_type": html_header[1]},
     }
     failures: list[str] = []
-    if "application/json" not in no_header[1]:
-        failures.append("no-Accept-header request did not return JSON")
-    if "application/json" not in json_header[1]:
-        failures.append("Accept: application/json request did not return JSON")
+    if no_header[0] not in (200, 401) or "application/json" not in no_header[1]:
+        failures.append("no-Accept-header request did not return 200/401 JSON")
+    if json_header[0] not in (200, 401) or "application/json" not in json_header[1]:
+        failures.append("Accept: application/json request did not return 200/401 JSON")
     if html_header[0] != 200 or "text/html" not in html_header[1]:
         failures.append("Accept: text/html request did not return the HTML page shell")
     if failures:
@@ -423,8 +423,14 @@ def gate_installed_app_launch(config: FrontendCutoverConfig, deps: Any, result: 
         ["netsh", "advfirewall", "firewall", "show", "rule", 'name="WindowControl-Engine"'],
     )
     expected_engine_path = r"WindowControl\_internal\assets\engine\engine.exe"
-    firewall_ok = exit_code == 0 and expected_engine_path in output
-    details = {"pid": app.pid, "healthy": healthy, "firewall_output": output[:2000], "firewall_ok": firewall_ok}
+    firewall_ok = exit_code == 0 and expected_engine_path.lower() in output.lower()
+    details = {
+        "pid": app.pid,
+        "started_at": app.started_at,
+        "healthy": healthy,
+        "firewall_output": output[:2000],
+        "firewall_ok": firewall_ok,
+    }
     if healthy and firewall_ok:
         result.mark("installed_app_launch", "PASS", reason=reason, details=details)
     else:
@@ -434,11 +440,13 @@ def gate_installed_app_launch(config: FrontendCutoverConfig, deps: Any, result: 
 def gate_frozen_selfrelaunch(config: FrontendCutoverConfig, deps: Any, result: FrontendCutoverResult, reason: str, *, parent: OwnedProcess) -> None:
     url = f"http://127.0.0.1:{config.port}"
     child = deps.start_selfrelaunch(url)
-    deps.sleep(3)
-    child_alive = deps.process_is_alive(child)
-    parent_still_healthy = deps.wait_for_dev_app(parent, config.port)
-    details = {"child_pid": child.pid, "child_alive": child_alive, "parent_still_healthy": parent_still_healthy}
-    deps.terminate(child)
+    try:
+        deps.sleep(3)
+        child_alive = deps.process_is_alive(child)
+        parent_still_healthy = deps.wait_for_dev_app(parent, config.port)
+        details = {"child_pid": child.pid, "child_alive": child_alive, "parent_still_healthy": parent_still_healthy}
+    finally:
+        deps.terminate(child)
     if child_alive and parent_still_healthy:
         result.mark("frozen_selfrelaunch", "PASS", reason=reason, details=details)
     else:
@@ -519,9 +527,13 @@ def run(config: FrontendCutoverConfig, deps: Any) -> FrontendCutoverResult:
                 gate_fn = getattr(sys.modules[__name__], f"gate_{name}", gate_dev_app_health)
                 gate_fn(config, deps, result, reason)
                 if result.gates[name]["status"] == "PASS":
-                    pid = result.gates[name].get("details", {}).get("pid")
+                    details = result.gates[name].get("details", {})
+                    pid = details.get("pid")
                     if pid is not None:
-                        started_app = OwnedProcess("dev_app", pid, 0)
+                        started_at = details.get("started_at")
+                        if started_at is None:
+                            started_at = _pid_started_at(pid) or 0
+                        started_app = OwnedProcess("dev_app", pid, started_at)
             elif name == "frozen_selfrelaunch":
                 gate_fn = getattr(sys.modules[__name__], f"gate_{name}", gate_frozen_selfrelaunch)
                 import inspect
@@ -542,9 +554,13 @@ def run(config: FrontendCutoverConfig, deps: Any) -> FrontendCutoverResult:
                 gate_fn = getattr(sys.modules[__name__], f"gate_{name}", gate_installed_app_launch)
                 gate_fn(config, deps, result, reason)
                 if result.gates[name]["status"] == "PASS":
-                    pid = result.gates[name].get("details", {}).get("pid")
+                    details = result.gates[name].get("details", {})
+                    pid = details.get("pid")
                     if pid is not None:
-                        started_installed_app = OwnedProcess("installed_app", pid, 0)
+                        started_at = details.get("started_at")
+                        if started_at is None:
+                            started_at = _pid_started_at(pid) or 0
+                        started_installed_app = OwnedProcess("installed_app", pid, started_at)
             else:
                 gate_fn = getattr(sys.modules[__name__], f"gate_{name}", _GATE_FUNCTIONS.get(name))
                 gate_fn(config, deps, result, reason)

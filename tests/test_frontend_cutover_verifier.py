@@ -174,6 +174,7 @@ def test_dev_app_health_passes_when_wait_succeeds():
     gate_dev_app_health(_config(), deps, result, "requested")
     assert deps.started_dev_app is True
     assert result.gates["dev_app_health"]["status"] == "PASS"
+    assert result.gates["dev_app_health"]["details"] == {"pid": 4242, "started_at": 1.0}
 
 
 def test_dev_app_health_fails_when_wait_times_out():
@@ -266,6 +267,44 @@ def test_instances_negotiation_fails_when_html_status_is_not_200():
     assert any("HTML" in f for f in result.gates["instances_negotiation"]["details"]["failures"])
 
 
+def test_instances_negotiation_fails_when_no_accept_status_is_not_200_or_401():
+    responses = {
+        (8080, "/instances|"): (500, "application/json", '{"error": "crash"}'),
+        (8080, "/instances|application/json"): (200, "application/json", "[]"),
+        (8080, "/instances|text/html"): (200, "text/html; charset=utf-8", "<html></html>"),
+    }
+    result = FrontendCutoverResult()
+    deps = FakeDeps(responses=responses)
+    gate_instances_negotiation(_config(), deps, result, "requested")
+    assert result.gates["instances_negotiation"]["status"] == "FAIL"
+    assert any("no-Accept" in f for f in result.gates["instances_negotiation"]["details"]["failures"])
+
+
+def test_instances_negotiation_fails_when_json_accept_status_is_not_200_or_401():
+    responses = {
+        (8080, "/instances|"): (200, "application/json", "[]"),
+        (8080, "/instances|application/json"): (500, "application/json", '{"error": "crash"}'),
+        (8080, "/instances|text/html"): (200, "text/html; charset=utf-8", "<html></html>"),
+    }
+    result = FrontendCutoverResult()
+    deps = FakeDeps(responses=responses)
+    gate_instances_negotiation(_config(), deps, result, "requested")
+    assert result.gates["instances_negotiation"]["status"] == "FAIL"
+    assert any("Accept: application/json" in f for f in result.gates["instances_negotiation"]["details"]["failures"])
+
+
+def test_instances_negotiation_passes_with_401_json_responses():
+    responses = {
+        (8080, "/instances|"): (401, "application/json", '{"detail": "Not authenticated"}'),
+        (8080, "/instances|application/json"): (401, "application/json", '{"detail": "Not authenticated"}'),
+        (8080, "/instances|text/html"): (200, "text/html; charset=utf-8", "<html></html>"),
+    }
+    result = FrontendCutoverResult()
+    deps = FakeDeps(responses=responses)
+    gate_instances_negotiation(_config(), deps, result, "requested")
+    assert result.gates["instances_negotiation"]["status"] == "PASS"
+
+
 def test_auth_gate_self_skips_when_auth_is_disabled():
     result = FrontendCutoverResult()
     deps = FakeDeps(auth_config={"auth_enabled": False, "supabase_url": "", "supabase_anon_key": ""})
@@ -315,6 +354,7 @@ def test_dev_app_health_scrubs_auth_token(monkeypatch):
     gate_dev_app_health(_config(), deps, result, "requested")
     assert "AUTH_TOKEN" not in recorded_env
     assert result.gates["dev_app_health"]["status"] == "PASS"
+    assert result.gates["dev_app_health"]["details"]["started_at"] == 1.0
 
 
 def test_real_deps_get_and_auth_config(monkeypatch):
@@ -571,6 +611,29 @@ def test_installed_app_launch_passes_when_healthy_and_firewall_rule_matches():
     result = FrontendCutoverResult()
     gate_installed_app_launch(_config(), FakeDepsForInstaller(), result, "requested")
     assert result.gates["installed_app_launch"]["status"] == "PASS"
+    assert result.gates["installed_app_launch"]["details"]["pid"] == 5555
+    assert result.gates["installed_app_launch"]["details"]["started_at"] == 2.0
+
+
+def test_installed_app_launch_passes_with_case_insensitive_firewall_rule():
+    class FakeDepsForInstaller:
+        def start_installed_app(self):
+            return __import__("scripts.verify_lib", fromlist=["OwnedProcess"]).OwnedProcess("installed_app", 5555, 2.0)
+
+        def wait_for_dev_app(self, app, port):
+            return True
+
+        def run_command(self, command, *, cwd=None, timeout=600):
+            return 0, 'Rule Name: WINDOWCONTROL-ENGINE\nProgram: C:\\PROGRAM FILES\\WINDOWCONTROL\\_INTERNAL\\ASSETS\\ENGINE\\ENGINE.EXE\n'
+
+        def terminate(self, process):
+            pass
+
+    result = FrontendCutoverResult()
+    gate_installed_app_launch(_config(), FakeDepsForInstaller(), result, "requested")
+    assert result.gates["installed_app_launch"]["status"] == "PASS"
+    assert result.gates["installed_app_launch"]["details"]["firewall_ok"] is True
+    assert result.gates["installed_app_launch"]["details"]["started_at"] == 2.0
 
 
 def test_installed_app_launch_fails_when_firewall_rule_points_elsewhere():
@@ -590,6 +653,7 @@ def test_installed_app_launch_fails_when_firewall_rule_points_elsewhere():
     result = FrontendCutoverResult()
     gate_installed_app_launch(_config(), FakeDepsForInstaller(), result, "requested")
     assert result.gates["installed_app_launch"]["status"] == "FAIL"
+    assert result.gates["installed_app_launch"]["details"]["started_at"] == 2.0
 
 
 def test_frozen_selfrelaunch_passes_when_child_survives_and_parent_still_healthy():
@@ -634,6 +698,32 @@ def test_frozen_selfrelaunch_fails_when_child_process_dies_immediately():
     result = FrontendCutoverResult()
     gate_frozen_selfrelaunch(_config(), FakeDepsForRelaunch(), result, "requested", parent=__import__("scripts.verify_lib", fromlist=["OwnedProcess"]).OwnedProcess("installed_app", 5555, 2.0))
     assert result.gates["frozen_selfrelaunch"]["status"] == "FAIL"
+
+
+def test_frozen_selfrelaunch_terminates_child_on_exception():
+    terminated = []
+
+    class FakeDepsForRelaunch:
+        def start_selfrelaunch(self, url):
+            return __import__("scripts.verify_lib", fromlist=["OwnedProcess"]).OwnedProcess("selfrelaunch", 6666, 3.0)
+
+        def sleep(self, seconds):
+            raise RuntimeError("simulated crash during sleep")
+
+        def process_is_alive(self, process):
+            return True
+
+        def wait_for_dev_app(self, app, port):
+            return True
+
+        def terminate(self, process):
+            terminated.append(process.kind)
+
+    result = FrontendCutoverResult()
+    parent = __import__("scripts.verify_lib", fromlist=["OwnedProcess"]).OwnedProcess("installed_app", 5555, 2.0)
+    with pytest.raises(RuntimeError, match="simulated crash during sleep"):
+        gate_frozen_selfrelaunch(_config(), FakeDepsForRelaunch(), result, "requested", parent=parent)
+    assert terminated == ["selfrelaunch"]
 
 
 def test_install_dir_defaults_to_program_files(monkeypatch):
@@ -976,14 +1066,15 @@ def test_run_terminates_dev_app_before_installed_app_launch(monkeypatch):
     import scripts.verify_frontend_cutover as module
 
     events: list[str] = []
+    terminated_processes = []
 
     def fake_dev_health(config, deps, result, reason):
         events.append("dev_health")
-        result.mark("dev_app_health", "PASS", reason=reason, details={"pid": 1111})
+        result.mark("dev_app_health", "PASS", reason=reason, details={"pid": 1111, "started_at": 100.5})
 
     def fake_installed_launch(config, deps, result, reason):
         events.append("installed_launch")
-        result.mark("installed_app_launch", "PASS", reason=reason, details={"pid": 2222})
+        result.mark("installed_app_launch", "PASS", reason=reason, details={"pid": 2222, "started_at": 200.5})
 
     def make_gate(name):
         def gate(config, deps, result, reason):
@@ -999,12 +1090,54 @@ def test_run_terminates_dev_app_before_installed_app_launch(monkeypatch):
     class FakeDepsWithTerminate:
         def terminate(self, process):
             events.append(f"terminate_{process.kind}")
+            terminated_processes.append(process)
 
     result = module.run(_config(), deps=FakeDepsWithTerminate())
     assert "terminate_dev_app" in events
     dev_term_idx = events.index("terminate_dev_app")
     inst_launch_idx = events.index("installed_launch")
     assert dev_term_idx < inst_launch_idx
+    dev_proc = next(p for p in terminated_processes if p.kind == "dev_app")
+    assert dev_proc.pid == 1111
+    assert dev_proc.started_at == 100.5
+    inst_proc = next(p for p in terminated_processes if p.kind == "installed_app")
+    assert inst_proc.pid == 2222
+    assert inst_proc.started_at == 200.5
+
+
+def test_run_reconstructs_owned_processes_fallback_started_at(monkeypatch):
+    import scripts.verify_frontend_cutover as module
+
+    terminated_processes = []
+
+    def fake_dev_health(config, deps, result, reason):
+        result.mark("dev_app_health", "PASS", reason=reason, details={"pid": 1111})
+
+    def fake_installed_launch(config, deps, result, reason):
+        result.mark("installed_app_launch", "PASS", reason=reason, details={"pid": 2222})
+
+    def make_gate(name):
+        def gate(config, deps, result, reason):
+            result.mark(name, "PASS", reason=reason)
+        return gate
+
+    for name in GATE_NAMES:
+        monkeypatch.setattr(module, f"gate_{name}", make_gate(name), raising=False)
+    monkeypatch.setattr(module, "gate_dev_app_health", fake_dev_health)
+    monkeypatch.setattr(module, "gate_installed_app_launch", fake_installed_launch)
+    monkeypatch.setattr(module, "_pid_started_at", lambda pid: 999.0 if pid == 1111 else None)
+
+    class FakeDepsWithTerminate:
+        def terminate(self, process):
+            terminated_processes.append(process)
+
+    result = module.run(_config(), deps=FakeDepsWithTerminate())
+    dev_proc = next(p for p in terminated_processes if p.kind == "dev_app")
+    assert dev_proc.pid == 1111
+    assert dev_proc.started_at == 999.0
+    inst_proc = next(p for p in terminated_processes if p.kind == "installed_app")
+    assert inst_proc.pid == 2222
+    assert inst_proc.started_at == 0
 
 
 
