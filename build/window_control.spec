@@ -37,6 +37,10 @@ a = Analysis(
         'starlette',
         'pystray',
         'webview',
+        # main.py imports it lazily, only on the --webview-window
+        # re-invocation path (apps/desktop/window.py spawns that), so
+        # PyInstaller's graph must be told about it explicitly.
+        'webview_main',
         'PIL',
         'qrcode',
         'numpy',

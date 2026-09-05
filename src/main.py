@@ -69,7 +69,7 @@ try:
     from server.instance_manager import InstanceManager
     from gui.launcher import LauncherWindow, maybe_show_login
     from tray import TrayIcon
-    from window import DesktopWindow
+    from window import WEBVIEW_ARG, DesktopWindow
     _log_early("[gui-imports] app modules OK")
 except Exception:
     import traceback as _tb
@@ -155,6 +155,19 @@ def main():
         from service_main import main as service_cli
         service_cli()
         return
+
+    # `WindowControl.exe --webview-window <url>` is this app re-invoking
+    # itself to host the pywebview desktop shell (apps/desktop/window.py
+    # spawns it). pywebview's blocking GUI loop only runs on a process's
+    # real main thread, which in the *main* process belongs to PyQt5's
+    # QApplication.exec_() below -- so the shell gets a process, and a
+    # main thread, of its own. Nothing else starts on this path: no
+    # server, no tray, no engine.
+    if WEBVIEW_ARG in sys.argv:
+        _idx = sys.argv.index(WEBVIEW_ARG)
+        _url = sys.argv[_idx + 1] if len(sys.argv) > _idx + 1 else ""
+        from webview_main import main as webview_window_main
+        sys.exit(webview_window_main([_url]))
 
     from config import VERSION
     _log(f"[GUI] starting v{VERSION} pid={os.getpid()} user={os.environ.get('USERNAME','?')}")
@@ -256,23 +269,14 @@ def main():
 
     # DesktopWindow embeds apps/web's served build (login/instances/stream)
     # in a pywebview window -- the same content a phone reaches over
-    # Tailscale/LAN, now viewable locally too. PyQt5's QApplication (created
-    # above) already owns this process's main GUI thread via app.exec_()
-    # below, and pywebview's own webview.start() is a second, separate
-    # blocking GUI loop -- it cannot also run on the main thread. Running it
-    # on a background thread instead is pywebview's documented way to embed
-    # alongside a host application; it is started lazily, once, the first
-    # time a webview window is actually needed, not eagerly at launch.
+    # Tailscale/LAN, now viewable locally too. It runs pywebview in a child
+    # process (see apps/desktop/window.py): PyQt5's QApplication owns this
+    # process's main thread for the whole life of the app, and pywebview
+    # refuses to start anywhere else. The child is spawned lazily, on the
+    # first "Open App" click, and at most one at a time.
     desktop_window = DesktopWindow(f"http://127.0.0.1:{PORT}")
-    _webview_loop_started = {"done": False}
 
-    def open_app_window():
-        desktop_window.show()
-        if not _webview_loop_started["done"]:
-            _webview_loop_started["done"] = True
-            threading.Thread(target=desktop_window.start, daemon=True).start()
-
-    launcher = LauncherWindow(on_open_app=open_app_window)
+    launcher = LauncherWindow(on_open_app=desktop_window.show)
 
     def show_launcher():
         launcher.show()
@@ -313,6 +317,7 @@ def main():
 
     exit_code = app.exec_()
     _log(f"[GUI] app.exec_() returned exit_code={exit_code} — process exiting")
+    desktop_window.close()
     stop_server()
     instance_manager.stop_all()
     tray.stop()

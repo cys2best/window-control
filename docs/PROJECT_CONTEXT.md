@@ -77,6 +77,19 @@ npm test                     # infra/vps/signaling/ (node:test, relay contract)
 <!-- agent-sync:project-policy:end -->
 - Code style notes: not detected — fill in manually (no ruff/black/eslint config found)
 - Things NOT to do (generated files to leave alone, dirs to avoid, etc.):
+  - Never call `webview.start()` (pywebview) from a background thread in
+    `src/main.py`'s process — it raises `WebViewException('pywebview must
+    be run on a main thread.')` before doing anything else, and PyQt5's
+    `QApplication.exec_()` holds this process's main thread for the app's
+    whole life, so there is no thread to give it. The desktop shell
+    therefore runs in its own child process
+    (`apps/desktop/webview_main.py`). This shipped broken once: the
+    background-thread version raised inside a daemon thread on every
+    "Open App" click, so no window ever opened and no error ever
+    surfaced. A unit test that patches `window.webview` wholesale cannot
+    catch this class of bug — the guard is a thread-identity check inside
+    the real library, so the test has to exercise a real `start()` call
+    (see `apps/desktop/test_window.py`).
   - Don't assert later `engine/` C++ changes build or work from macOS-only
     checks. The 2026-08-31 Windows Host PC baseline passed 81 offline tests,
     the live-signaling suite, and the real-device manual E2E gate; subsequent
@@ -186,6 +199,12 @@ npm test                     # infra/vps/signaling/ (node:test, relay contract)
   existing PyQt5 tray/launcher rather than replacing it — the launcher's
   QR-pairing/update-banner panel stayed, gaining an "Open App" button
   rather than being removed, since it does something `apps/web` doesn't).
+  The shell runs in a **child process** (`apps/desktop/webview_main.py`,
+  spawned by `DesktopWindow.show()`; the frozen app re-invokes itself
+  with `--webview-window <url>`), because `webview.start()` refuses to
+  run anywhere but a process's main thread and PyQt5's
+  `QApplication.exec_()` owns this process's for the app's whole life —
+  see "Things NOT to do".
   Single cutover: `src/client/` and `mobile/`'s local duplicated modules
   were deleted in the same task that finished wiring `apps/desktop`
   (Task 10), not staged incrementally. Real gaps found and fixed while
@@ -196,11 +215,27 @@ npm test                     # infra/vps/signaling/ (node:test, relay contract)
   GET page routes and old routes don't actually conflict in practice —
   POST /login correctly 405s instead of 404ing, and /stream now serves
   the page shell, not MJPEG); `/instances` collides with the existing
-  JSON API route of the same name and could not be given a page route at
-  all (documented limitation: a hard reload on that exact URL in a
-  regular browser tab gets JSON, not the app shell — unreachable through
-  `apps/desktop`'s pywebview shell, which has no address bar, or through
-  normal in-app client-side navigation). See
+  JSON API route of the same name. That collision was first written up
+  as a narrow, unreachable limitation ("in-app client-side navigation is
+  unaffected") — **that was wrong**, and the task's own review caught it
+  against the shipped bundle: Next 15's client router does not soft-
+  navigate on its own, it first fetches the destination's prerendered RSC
+  payload at `<route>.txt`, and falls back to a full `window.location`
+  page load whenever that fetch 404s. FastAPI served no `.txt` files, so
+  `router.replace("/instances")` — the app's default destination after
+  every login — hard-navigated onto the JSON API route and rendered raw
+  JSON. Fixed in the same plan's fix round: `app.py` serves the export's
+  `.txt` payloads (as `text/x-component`, one of the two content types
+  the router accepts) plus `manifest.json`/`icon-192.png`/`404.html`, and
+  `GET /instances` content-negotiates — `Accept: text/html` gets the page
+  shell, everything else (`packages/core`/`apps/mobile` send a plain
+  `fetch()` with no `Accept`) gets the unchanged JSON list. The auth gate
+  and that handler branch on one shared predicate deliberately, so an
+  unauthenticated HTML-shaped request can only ever reach the static
+  shell, never the list. General lesson: a static export's route table
+  is not just its `.html` files — check what the framework's own client
+  router fetches at runtime before declaring a routing gap unreachable.
+  See
   `docs/superpowers/specs/2026-09-05-react-unified-frontend-design.md`
   and this plan's Task 10 report for the full account.
 - 2026-09-04: public-relay signaling no longer trusts a secret shared

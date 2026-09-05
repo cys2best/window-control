@@ -259,6 +259,94 @@ def test_stream_route_serves_web_page_not_legacy_mjpeg(tmp_path):
     assert r.text == "<html>stream shell</html>"
 
 
+def test_instances_serves_the_web_page_shell_to_a_browser_navigation(tmp_path):
+    # apps/web's own /instances route is where the app lands after login.
+    # A browser hard-navigating/reloading there must get the app shell,
+    # not the JSON list -- the JSON API keeps the same path (below).
+    import server.app as app_module
+    (tmp_path / "instances.html").write_text("<html>instance list shell</html>")
+    with patch.object(app_module, "WEB_BUILD_DIR", str(tmp_path)):
+        client, _ = _make_client(instances=[{"id": "adb:a", "serial": "a"}])
+        r = client.get("/instances", headers={
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        })
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/html")
+    assert r.text == "<html>instance list shell</html>"
+
+
+@pytest.mark.parametrize("headers", [
+    {},                                  # packages/core + apps/mobile: plain fetch()
+    {"Accept": "*/*"},
+    {"Accept": "application/json"},
+])
+def test_instances_json_contract_is_unchanged_for_api_consumers(headers, tmp_path):
+    # packages/core's makeClient() sets no Accept header at all (only
+    # Authorization), so its request shape must still get the JSON list
+    # even with a page shell sitting on the same path.
+    import server.app as app_module
+    (tmp_path / "instances.html").write_text("<html>instance list shell</html>")
+    with patch.object(app_module, "WEB_BUILD_DIR", str(tmp_path)):
+        client, _ = _make_client(instances=[{"id": "adb:a", "serial": "a"}])
+        r = client.get("/instances", headers=headers)
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("application/json")
+    assert r.json() == [{"id": "adb:a", "serial": "a"}]
+
+
+@pytest.mark.parametrize("path,name", [
+    ("/instances.txt", "instances.txt"),
+    ("/index.txt", "index.txt"),
+    ("/login.txt", "login.txt"),
+])
+def test_rsc_payloads_are_served_so_soft_navigation_does_not_hard_reload(
+    path, name, tmp_path
+):
+    # Next 15's client router fetches "<route>.txt" for every client-side
+    # navigation in an export build and falls back to a full page load if
+    # it 404s. A 404 here is what made router.replace("/instances") turn
+    # into a hard navigation onto the JSON API route.
+    import server.app as app_module
+    (tmp_path / name).write_text("0:payload\n")
+    with patch.object(app_module, "WEB_BUILD_DIR", str(tmp_path)):
+        client, _ = _make_client()
+        r = client.get(path)
+    assert r.status_code == 200
+    assert r.text == "0:payload\n"
+    # The router only treats a payload as usable when the content type is
+    # text/x-component or text/plain; anything else hard-navigates.
+    content_type = r.headers["content-type"]
+    assert content_type.startswith("text/x-component") or content_type.startswith("text/plain")
+    # Fixed filename, new contents every build -- same staleness risk the
+    # HTML shells have, so the same no-cache treatment.
+    assert "no-cache" in r.headers.get("cache-control", "")
+
+
+def test_unknown_rsc_payload_is_a_404_not_a_traversal(tmp_path):
+    import server.app as app_module
+    with patch.object(app_module, "WEB_BUILD_DIR", str(tmp_path)):
+        client, _ = _make_client()
+        assert client.get("/nope.txt").status_code == 404
+        # Backslash is a path separator on Windows; the name filter must
+        # reject it before os.path.join ever sees it.
+        assert client.get("/..%5C..%5Csecret.txt").status_code == 404
+
+
+def test_manifest_and_icon_are_served_for_pwa_installability(tmp_path):
+    import server.app as app_module
+    (tmp_path / "manifest.json").write_text('{"name":"WindowControl"}')
+    (tmp_path / "icon-192.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    with patch.object(app_module, "WEB_BUILD_DIR", str(tmp_path)):
+        client, _ = _make_client()
+        manifest = client.get("/manifest.json")
+        icon = client.get("/icon-192.png")
+    assert manifest.status_code == 200
+    assert manifest.headers["content-type"].startswith("application/manifest+json")
+    assert manifest.json() == {"name": "WindowControl"}
+    assert icon.status_code == 200
+    assert icon.headers["content-type"].startswith("image/png")
+
+
 def test_android_mjpeg_runtime_is_absent():
     from server import adb_manager
 

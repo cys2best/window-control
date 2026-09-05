@@ -2,6 +2,7 @@ import asyncio
 import io
 import logging
 import os
+import re
 import struct
 import subprocess
 from pathlib import Path
@@ -28,11 +29,50 @@ _tunnel_task: "asyncio.Task | None" = None
 
 # Routes reachable without a JWT even when Supabase auth is enabled —
 # just enough to load the login/register UI and its Supabase config. These
-# are apps/web's page-shell HTML routes: each is a static JS bundle with no
-# embedded user data (same reasoning that exempted the old single-page
-# client's "/" wholesale) -- the actual protected data lives behind the
-# JSON API routes below, which stay gated.
-_AUTH_EXEMPT_PATHS = {"/", "/login", "/setup", "/stream", "/auth/config"}
+# are apps/web's page-shell HTML routes, the matching build-time-prerendered
+# `.txt` RSC payloads its client-side router fetches for the same shells,
+# and the PWA manifest/icon: each is static build output with no embedded
+# user data (same reasoning that exempted the old single-page client's "/"
+# wholesale) -- the actual protected data lives behind the JSON API routes
+# below, which stay gated.
+_AUTH_EXEMPT_PATHS = {
+    "/", "/login", "/setup", "/stream", "/auth/config",
+    "/index.txt", "/login.txt", "/setup.txt", "/stream.txt", "/instances.txt",
+    "/manifest.json", "/icon-192.png", "/404.html",
+}
+
+# apps/web's static export emits one `<route>.txt` file per route. Only
+# flat, alphanumeric names exist (index/login/setup/stream/instances); the
+# route below refuses anything else so a crafted name can never escape
+# WEB_BUILD_DIR through os.path.join (on Windows a backslash is a
+# separator too, and `{page}`'s default converter allows it).
+_RSC_PAYLOAD_NAME = re.compile(r"[A-Za-z0-9_-]+")
+
+
+def _prefers_html(request: Request) -> bool:
+    """True when the caller is a browser doing a top-level navigation.
+
+    Browsers send `Accept: text/html,...` for document navigations;
+    packages/core's API client and apps/mobile use plain `fetch()` with no
+    Accept header at all (default `*/*`), so this cleanly separates "load
+    the page" from "give me the JSON list" on the one path that must do
+    both. Used by BOTH the auth gate and GET /instances, deliberately the
+    same single predicate on the same request — if the two ever disagreed,
+    an unauthenticated request could be waved past the gate and then
+    answered with real instance data.
+    """
+    return "text/html" in request.headers.get("accept", "")
+
+
+def _is_public_web_asset(request: Request) -> bool:
+    """Static apps/web build output that must load before/without a login."""
+    path = request.url.path
+    if path in _AUTH_EXEMPT_PATHS or path.startswith("/_next/"):
+        return True
+    # A browser navigating to /instances gets the page shell (see
+    # get_instances) -- the identical static file every other exempt shell
+    # serves. The JSON list on that same path stays gated.
+    return request.method == "GET" and path == "/instances" and _prefers_html(request)
 
 
 def _log(msg: str):
@@ -211,14 +251,12 @@ def create_app(instance_manager: InstanceManager) -> FastAPI:
     @app.middleware("http")
     async def _auth_gate(request: Request, call_next):
         request.state.user = None
-        path = request.url.path
         # This middleware runs before Starlette's router does path matching,
         # so a naive "not exempt -> require auth" check would 401 requests
         # to *nonexistent* routes too (e.g. the removed POST /login) instead
         # of letting them fall through to the router's normal 404. Only gate
         # paths that actually resolve to a registered route.
-        if auth.auth_enabled() and path not in _AUTH_EXEMPT_PATHS \
-                and not path.startswith("/_next/") \
+        if auth.auth_enabled() and not _is_public_web_asset(request) \
                 and any(route.matches(request.scope)[0] != Match.NONE
                          for route in app.router.routes):
             user = current_user(request)
@@ -297,20 +335,11 @@ def create_app(instance_manager: InstanceManager) -> FastAPI:
     # fetch. Confirmed by inspecting a real `npm run build -w apps/web`
     # output's index.html rather than assumed.
     #
-    # NOTE: `/instances` has no page route registered here on purpose --
-    # it collides with the JSON API route of the same path below (a real
-    # gap the Next.js multi-route export introduces that the old
-    # single-page client never had, discovered while wiring this up). The
-    # JSON route wins, matching the existing tested contract that
-    # packages/core's API client and apps/mobile depend on. In-app
-    # navigation to that screen is unaffected (Next's client-side router
-    # transitions there without a fresh top-level GET to "/instances"); the
-    # only actual gap is a hard reload/direct navigation to the literal
-    # "/instances" URL in a regular browser tab, which would receive JSON
-    # instead of the app shell. Not reachable through this app's own
-    # pywebview shell (no address bar) or normal PWA use (no server-side
-    # top-level navigation there either); a real fix would need renaming
-    # one side's path, which is out of this task's scope.
+    # `/instances` is served by BOTH the page shell and the JSON API, on
+    # the one path, split by content negotiation (see get_instances) --
+    # the JSON contract packages/core and apps/mobile call stays exactly
+    # as it was, while a browser navigating there gets the app shell
+    # instead of a page of raw JSON.
 
     def _serve_web_page(filename: str) -> HTMLResponse:
         html_path = os.path.join(WEB_BUILD_DIR, filename)
@@ -321,6 +350,16 @@ def create_app(instance_manager: InstanceManager) -> FastAPI:
                 headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
             )
         return HTMLResponse("<h1>Client not found</h1>", status_code=500)
+
+    def _serve_web_file(filename: str, media_type: str, headers=None) -> Response:
+        file_path = os.path.join(WEB_BUILD_DIR, filename)
+        if not os.path.isfile(file_path):
+            raise HTTPException(status_code=404, detail="Not found")
+        return Response(
+            content=Path(file_path).read_bytes(),
+            media_type=media_type,
+            headers=headers,
+        )
 
     @app.get("/")
     async def index():
@@ -338,6 +377,47 @@ def create_app(instance_manager: InstanceManager) -> FastAPI:
     async def stream_page():
         return _serve_web_page("stream.html")
 
+    @app.get("/404.html")
+    async def not_found_page():
+        return _serve_web_page("404.html")
+
+    @app.get("/manifest.json")
+    async def web_manifest():
+        # PWA installability + the standalone/status-bar behavior the old
+        # src/client/manifest.json provided; apps/web ships it from
+        # apps/web/public/, which Next copies verbatim into out/.
+        return _serve_web_file("manifest.json", "application/manifest+json")
+
+    @app.get("/icon-192.png")
+    async def web_icon():
+        return _serve_web_file("icon-192.png", "image/png")
+
+    @app.get("/{page}.txt")
+    async def web_rsc_payload(page: str):
+        """Serve the static export's prerendered RSC payloads.
+
+        Next 15's client-side router does not fetch the HTML on a soft
+        navigation -- for `router.replace("/instances")` (and every Link
+        click) it fetches `/instances.txt`, the build-time RSC payload, and
+        falls back to a full `window.location` page load whenever that
+        response is missing or not `ok`. Without this route every in-app
+        navigation degraded into a hard reload, which for the app's own
+        default post-login destination meant landing on the JSON API.
+
+        Content type must be `text/x-component` or `text/plain`: the
+        router accepts only those two (verified in the shipped router
+        chunk) and hard-navigates otherwise.
+        """
+        if not _RSC_PAYLOAD_NAME.fullmatch(page):
+            raise HTTPException(status_code=404, detail="Not found")
+        # Fixed filenames whose contents change every build (unlike the
+        # content-hashed /_next chunks), exactly like the HTML shells --
+        # so they get the same no-cache treatment.
+        return _serve_web_file(
+            f"{page}.txt", "text/x-component; charset=utf-8",
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+        )
+
     @app.get("/auth/config")
     async def auth_config():
         return {
@@ -350,6 +430,17 @@ def create_app(instance_manager: InstanceManager) -> FastAPI:
 
     @app.get("/instances")
     async def get_instances(request: Request):
+        """JSON instance list, or apps/web's instance-list page shell.
+
+        One path, two consumers: packages/core's API client and
+        apps/mobile call this for the JSON list (plain fetch, no Accept
+        header), while apps/web's own `/instances` route is where the app
+        lands after login -- a browser reload or hard navigation there
+        must render the app, not a page of raw JSON. The JSON contract is
+        untouched; only an explicitly HTML-preferring request branches.
+        """
+        if _prefers_html(request):
+            return _serve_web_page("instances.html")
         return instance_manager.list_instances()
 
     @app.post("/instances/{instance_id}/select")

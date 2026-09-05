@@ -136,6 +136,56 @@ def test_web_page_shells_served_without_auth(path):
     assert r.status_code != 401
 
 
+@pytest.mark.parametrize(
+    "path", ["/index.txt", "/login.txt", "/setup.txt", "/stream.txt", "/instances.txt"]
+)
+def test_rsc_payloads_served_without_auth(path):
+    # Next's client router fetches these on every soft navigation with no
+    # Authorization header of its own; a 401 makes it hard-navigate
+    # instead. They are build-time-prerendered shells with no user data --
+    # the same content the exempt .html shells already carry.
+    client, _, _ = _make_authed_client()
+    r = client.get(path)
+    assert r.status_code != 401
+
+
+def test_browser_navigation_to_instances_gets_the_shell_not_a_401():
+    # The post-login landing page must render for a browser even before
+    # its JS has attached a bearer token to anything.
+    client, _, _ = _make_authed_client()
+    r = client.get("/instances", headers={"Accept": "text/html,*/*;q=0.8"})
+    assert r.status_code != 401
+
+
+def test_instances_json_still_requires_auth_for_api_shaped_requests():
+    # The exemption above must not leak the instance list: same path, no
+    # Accept: text/html, still gated.
+    client, _, _ = _make_authed_client(instances=[{"id": "adb:a", "serial": "a"}])
+    for headers in ({}, {"Accept": "*/*"}, {"Accept": "application/json"}):
+        r = client.get("/instances", headers=headers)
+        assert r.status_code == 401, headers
+
+
+def test_browser_shaped_instances_request_never_returns_instance_data():
+    # The auth gate and the route handler branch on the same predicate, so
+    # an unauthenticated HTML-preferring request can only ever receive the
+    # static shell -- never the list. Proven against a manager that would
+    # happily hand over real instances if asked.
+    import server.app as app_module
+    client, im, _ = _make_authed_client(instances=[{"id": "adb:secret", "serial": "secret"}])
+    r = client.get("/instances", headers={"Accept": "text/html,*/*;q=0.8"})
+    assert r.status_code != 401
+    assert "secret" not in r.text
+    assert not r.headers["content-type"].startswith("application/json")
+
+
+def test_manifest_served_without_auth():
+    # A PWA fetches the manifest before any login exists.
+    client, _, _ = _make_authed_client()
+    r = client.get("/manifest.json")
+    assert r.status_code != 401
+
+
 def test_next_static_assets_served_without_auth():
     client, _, _ = _make_authed_client()
     r = client.get("/_next/static/chunks/does-not-exist.js")
