@@ -1218,16 +1218,18 @@ Expected: PASS (jsdom provides `window.localStorage`).
 
 - [ ] **Step 4: Write web's `VideoView`**
 
+Per a Task 7 review finding, `VideoViewProps` already carries the raw `stream: MediaStream` (not a URL string) — Task 7's fix moved the mobile-only `.toURL()` call into mobile's own `VideoView` adapter, so the shared contract is platform-agnostic from the start and web needs no widening step here.
+
 `apps/web/src/platform/VideoView.tsx`:
 ```tsx
 import React, { useEffect, useRef } from "react";
 import type { VideoViewProps } from "@wc/ui";
 
-export function VideoView({ streamURL }: VideoViewProps) {
+export function VideoView({ stream }: VideoViewProps) {
   const ref = useRef<HTMLVideoElement>(null);
   useEffect(() => {
-    if (ref.current) ref.current.srcObject = (streamURL as unknown) as MediaProvider;
-  }, [streamURL]);
+    if (ref.current) ref.current.srcObject = stream;
+  }, [stream]);
   return (
     <video
       ref={ref}
@@ -1240,19 +1242,9 @@ export function VideoView({ streamURL }: VideoViewProps) {
 }
 ```
 
-(Note: `Stream`'s `VideoViewProps.streamURL` is typed as `string` per Task 7, matching mobile's `RTCView` which takes a stream URL string. On web, `MediaStream` objects — not URL strings — are assigned to `video.srcObject`. This is a real platform difference the `Stream` screen's `onStream` callback surfaces upstream: web's wiring in Step 6 below must pass the raw `MediaStream` through, not a `.toURL()` string. Widen `VideoViewProps.streamURL` in `packages/ui/src/video/VideoView.ts` to `string | MediaStream` before using it here, and update `apps/mobile/src/platform/VideoView.tsx`'s prop type accordingly — mobile still only ever receives a string.)
+Run: `cd apps/web && npx jest src/platform` (no test yet at this path — this step is a plain implementation step; Step 7 below adds the smoke test that exercises this file indirectly through `StreamPage`).
 
-- [ ] **Step 5: Update `VideoViewProps` for the string-or-MediaStream split**
-
-Edit `packages/ui/src/video/VideoView.ts`:
-```ts
-export type VideoViewProps = { streamURL: string | MediaStream };
-export type VideoViewComponent = React.ComponentType<VideoViewProps>;
-```
-
-Run: `npm run test:ui` — expected PASS (no test asserted on the narrower type).
-
-- [ ] **Step 6: Write the app-router pages**
+- [ ] **Step 5: Write the app-router pages**
 
 `apps/web/src/app/layout.tsx`:
 ```tsx
@@ -1341,7 +1333,7 @@ export default function StreamPage() {
 }
 ```
 
-- [ ] **Step 7: Write the failing test for the Stream page's platform wiring**
+- [ ] **Step 6: Write the failing test for the Stream page's platform wiring**
 
 `apps/web/src/app/stream/[serial]/page.test.tsx`:
 ```tsx
@@ -1359,7 +1351,7 @@ test("StreamPage renders without a platform-adapter crash", () => {
 ```
 
 Run: `cd apps/web && npx jest src/app/stream/\[serial\]/page.test.tsx`
-Expected: PASS once Steps 1-6 are in place — this is a smoke test confirming `RTCImpl`/`VideoView` wiring doesn't crash on mount, not full WHEP behavior (that's covered by `@wc/core`'s own `whep.test.ts` from Task 3).
+Expected: PASS once Steps 1-5 are in place — this is a smoke test confirming `RTCImpl`/`VideoView` wiring doesn't crash on mount, not full WHEP behavior (that's covered by `@wc/core`'s own `whep.test.ts` from Task 3).
 
 - [ ] **Step 8: Run the full web suite**
 
@@ -1540,4 +1532,5 @@ git commit -m "feat(desktop): pywebview shell, cut FastAPI over to apps/web, del
 
 - **Spec coverage:** every spec section has a task — monorepo/npm workspaces (Task 1), `packages/core` (Tasks 2-3), `apps/mobile` relocation (Task 4), `packages/ui` primitives/screens/Stream (Tasks 5-7), mobile cutover completion (Task 8), `apps/web` (Task 9), `apps/desktop` + final single-cutover deletion (Task 10). CI wiring happens in the same task that introduces each new suite (Tasks 1, 9), per the spec's explicit anti-rot requirement.
 - **Real code audited before writing steps:** `mobile/src/webrtc/whep.ts`, `mobile/src/api/ServerContext.tsx`, and `mobile/src/screens/Stream.tsx` were read in full to design the `RTCImpl`/`VideoView`/`SecureStorageAdapter` platform-adapter boundaries accurately — these three files carry all of this migration's real platform-coupling risk (react-native-webrtc, AsyncStorage/SecureStore, RTCView/gesture handling). Other files (api/urls.ts, api/client.ts, quality/*, remaining components) were confirmed via import-line greps to have no platform coupling, so their tasks specify plain moves.
-- **Known gaps flagged as in-task decisions, not deferred vaguely:** the `streamURL: string` vs. `MediaStream` type split between mobile and web (Task 9 Step 4-5), whether Next.js's content-hashed export makes the old `VERSION` cache-busting redundant (Task 10 Step 8), and whether `/static` or `/` is the right mount point for the new build (same step) are each resolved by a concrete inspection step at implementation time, not left as unexamined assumptions.
+- **Known gaps flagged as in-task decisions, not deferred vaguely:** whether Next.js's content-hashed export makes the old `VERSION` cache-busting redundant (Task 10 Step 8), and whether `/static` or `/` is the right mount point for the new build (same step) are each resolved by a concrete inspection step at implementation time, not left as unexamined assumptions.
+- **Post-hoc correction (Task 7 review, opus):** the plan originally specified `VideoViewProps = { streamURL: string }`, with a Task 9 step to later widen it to `string | MediaStream` once web's need for a raw `MediaStream` became apparent. The review caught that this left a `react-native-webrtc`-only `.toURL()` call inside the *shared* `Stream.tsx` (`packages/ui`), which no web `VideoView` could ever satisfy — the contract was mobile-shaped from the start, not genuinely platform-agnostic. Fixed at the source: `VideoViewProps` now carries `stream: MediaStream` directly, `.toURL()` moved into mobile's own `platform/VideoView.tsx` adapter, and Task 9's plan text (Steps 4-5) was simplified to match — no more later widening needed.
