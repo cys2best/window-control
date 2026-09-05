@@ -10,8 +10,16 @@ for the full design this implements.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import os
 from pathlib import Path
+import subprocess
+import sys
+import time
 from typing import Any
+
+import httpx
+
+from scripts.verify_lib import OwnedProcess, _pid_started_at
 
 
 GATE_NAMES: tuple[str, ...] = (
@@ -130,3 +138,154 @@ def resolve_gate_selection(config: FrontendCutoverConfig) -> dict[str, str]:
         else:
             selection[name] = not_selected_reason
     return selection
+
+
+_RSC_PAGES = ("index", "login", "setup", "instances", "stream")
+
+
+class RealFrontendDeps:
+    def __init__(self, config: FrontendCutoverConfig):
+        self.config = config
+        self._owned_dev_app: OwnedProcess | None = None
+        self._owned_installed_app: OwnedProcess | None = None
+
+    def start_dev_app(self, environment: dict[str, str]) -> OwnedProcess:
+        self.config.evidence_dir.mkdir(parents=True, exist_ok=True)
+        app_log = open(self.config.evidence_dir / "dev-app.log", "a", encoding="utf-8")
+        no_window = {"creationflags": 0x08000000} if sys.platform == "win32" else {}
+        process = subprocess.Popen(
+            ["uv", "run", "python", "src/main.py"],
+            cwd=self.config.repo_root,
+            env=environment,
+            stdin=subprocess.DEVNULL,
+            stdout=app_log,
+            stderr=subprocess.STDOUT,
+            **no_window,
+        )
+        app_log.close()
+        import psutil
+
+        started_at = psutil.Process(process.pid).create_time()
+        self._owned_dev_app = OwnedProcess("dev_app", process.pid, started_at)
+        return self._owned_dev_app
+
+    def wait_for_dev_app(self, app: OwnedProcess, port: int) -> bool:
+        deadline = time.monotonic() + 90
+        while time.monotonic() < deadline:
+            if _pid_started_at(app.pid) != app.started_at:
+                return False
+            try:
+                response = httpx.get(f"http://127.0.0.1:{port}/auth/config", timeout=2)
+                if response.status_code == 200:
+                    return True
+            except httpx.HTTPError:
+                pass
+            time.sleep(0.5)
+        return False
+
+    def auth_config(self, port: int) -> dict[str, Any]:
+        response = httpx.get(f"http://127.0.0.1:{port}/auth/config", timeout=5)
+        response.raise_for_status()
+        return response.json()
+
+    def get(self, port: int, path: str, *, headers: dict[str, str] | None = None) -> tuple[int, str, str]:
+        response = httpx.get(f"http://127.0.0.1:{port}{path}", headers=headers or {}, timeout=10)
+        return response.status_code, response.headers.get("content-type", ""), response.text
+
+    def terminate(self, process: OwnedProcess) -> None:
+        if _pid_started_at(process.pid) != process.started_at:
+            return  # already gone, or PID reused by something else
+        import psutil
+
+        try:
+            psutil.Process(process.pid).terminate()
+        except psutil.Error:
+            pass
+
+
+def gate_dev_app_health(config: FrontendCutoverConfig, deps: Any, result: FrontendCutoverResult, reason: str) -> None:
+    environment = dict(os.environ)
+    environment.pop("AUTH_TOKEN", None)
+    app = deps.start_dev_app(environment)
+    if deps.wait_for_dev_app(app, config.port):
+        result.mark("dev_app_health", "PASS", reason=reason, details={"pid": app.pid})
+    else:
+        result.mark("dev_app_health", "FAIL", reason=reason, details={"error": "dev app did not become healthy within the timeout"})
+
+
+def gate_web_routes(config: FrontendCutoverConfig, deps: Any, result: FrontendCutoverResult, reason: str) -> None:
+    observed: dict[str, Any] = {}
+    failures: list[str] = []
+    for path in ("/", "/login", "/setup", "/stream"):
+        status, content_type, _ = deps.get(config.port, path)
+        observed[path] = {"status": status, "content_type": content_type}
+        if status != 200 or "text/html" not in content_type:
+            failures.append(f"{path}: expected 200 text/html, got {status} {content_type!r}")
+    if failures:
+        result.mark("web_routes", "FAIL", reason=reason, details={"observed": observed, "failures": failures})
+    else:
+        result.mark("web_routes", "PASS", reason=reason, details={"observed": observed})
+
+
+_RSC_EXPECTED_CONTENT_TYPES = {
+    "manifest.json": "application/json",
+    "icon-192.png": "image/png",
+    "404.html": "text/html",
+}
+
+
+def gate_rsc_payloads(config: FrontendCutoverConfig, deps: Any, result: FrontendCutoverResult, reason: str) -> None:
+    observed: dict[str, Any] = {}
+    failures: list[str] = []
+    paths = [f"/{page}.txt" for page in _RSC_PAGES] + ["/404.html", "/manifest.json", "/icon-192.png"]
+    for path in paths:
+        status, content_type, _ = deps.get(config.port, path)
+        observed[path] = {"status": status, "content_type": content_type}
+        name = path.lstrip("/")
+        expected = _RSC_EXPECTED_CONTENT_TYPES.get(name, "text/x-component")
+        if status != 200 or expected not in content_type:
+            failures.append(f"{path}: expected 200 {expected!r}, got {status} {content_type!r}")
+    if failures:
+        result.mark("rsc_payloads", "FAIL", reason=reason, details={"observed": observed, "failures": failures})
+    else:
+        result.mark("rsc_payloads", "PASS", reason=reason, details={"observed": observed})
+
+
+def gate_instances_negotiation(config: FrontendCutoverConfig, deps: Any, result: FrontendCutoverResult, reason: str) -> None:
+    no_header = deps.get(config.port, "/instances")
+    json_header = deps.get(config.port, "/instances", headers={"Accept": "application/json"})
+    html_header = deps.get(config.port, "/instances", headers={"Accept": "text/html"})
+    observed = {
+        "no_accept_header": {"status": no_header[0], "content_type": no_header[1]},
+        "accept_application_json": {"status": json_header[0], "content_type": json_header[1]},
+        "accept_text_html": {"status": html_header[0], "content_type": html_header[1]},
+    }
+    failures: list[str] = []
+    if "application/json" not in no_header[1]:
+        failures.append("no-Accept-header request did not return JSON")
+    if "application/json" not in json_header[1]:
+        failures.append("Accept: application/json request did not return JSON")
+    if "text/html" not in html_header[1]:
+        failures.append("Accept: text/html request did not return the HTML page shell")
+    if failures:
+        result.mark("instances_negotiation", "FAIL", reason=reason, details={"observed": observed, "failures": failures})
+    else:
+        result.mark("instances_negotiation", "PASS", reason=reason, details={"observed": observed})
+
+
+def gate_auth_gate(config: FrontendCutoverConfig, deps: Any, result: FrontendCutoverResult, reason: str) -> None:
+    auth_config = deps.auth_config(config.port)
+    if not auth_config.get("auth_enabled"):
+        result.mark(
+            "auth_gate", "SKIPPED", reason=reason,
+            details={"reason": "Supabase auth not configured this run"},
+        )
+        return
+    no_token = deps.get(config.port, "/instances")
+    bad_token = deps.get(config.port, "/instances", headers={"Authorization": "Bearer not-a-real-token"})
+    observed = {"no_token_status": no_token[0], "bad_token_status": bad_token[0]}
+    if no_token[0] == 401 and bad_token[0] == 401:
+        result.mark("auth_gate", "PASS", reason=reason, details={"observed": observed})
+    else:
+        result.mark("auth_gate", "FAIL", reason=reason, details={"observed": observed, "error": "an unauthenticated or garbage-token request to /instances did not get 401"})
+

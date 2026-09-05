@@ -10,6 +10,12 @@ from scripts.verify_frontend_cutover import (
     GATE_NAMES,
     FrontendCutoverConfig,
     FrontendCutoverResult,
+    RealFrontendDeps,
+    gate_auth_gate,
+    gate_dev_app_health,
+    gate_instances_negotiation,
+    gate_rsc_payloads,
+    gate_web_routes,
     resolve_gate_selection,
 )
 
@@ -120,3 +126,283 @@ def test_to_dict_omits_selection_key_on_a_full_run():
     payload = result.to_dict()
     assert "selection" not in payload
     assert payload == {"status": "PASS", "gates": {"dev_app_health": {"status": "PASS", "reason": "requested", "details": {}}}}
+
+
+class FakeDeps:
+    def __init__(self, *, auth_config: dict | None = None, responses: dict[tuple[int, str], tuple[int, str, str]] | None = None):
+        self._auth_config = auth_config if auth_config is not None else {"auth_enabled": False, "supabase_url": "", "supabase_anon_key": ""}
+        self._responses = responses or {}
+        self.started_dev_app = False
+        self.terminated: list[str] = []
+        self.dev_app_wait_succeeds = True
+
+    def start_dev_app(self, environment):
+        self.started_dev_app = True
+        return __import__("scripts.verify_lib", fromlist=["OwnedProcess"]).OwnedProcess("app", 4242, 1.0)
+
+    def wait_for_dev_app(self, app, port):
+        return self.dev_app_wait_succeeds
+
+    def auth_config(self, port):
+        return self._auth_config
+
+    def get(self, port, path, *, headers=None):
+        accept = headers.get("Accept", "") if headers else ""
+        for key in ((port, f"{path}|{accept}"), (port, path)):
+            if key in self._responses:
+                return self._responses[key]
+        return (404, "text/plain", "not found")
+
+    def terminate(self, process):
+        self.terminated.append(process.kind)
+
+
+def test_dev_app_health_passes_when_wait_succeeds():
+    result = FrontendCutoverResult()
+    deps = FakeDeps()
+    gate_dev_app_health(_config(), deps, result, "requested")
+    assert deps.started_dev_app is True
+    assert result.gates["dev_app_health"]["status"] == "PASS"
+
+
+def test_dev_app_health_fails_when_wait_times_out():
+    result = FrontendCutoverResult()
+    deps = FakeDeps()
+    deps.dev_app_wait_succeeds = False
+    gate_dev_app_health(_config(), deps, result, "requested")
+    assert result.gates["dev_app_health"]["status"] == "FAIL"
+
+
+def test_web_routes_passes_when_every_page_is_html_200():
+    responses = {(8080, path): (200, "text/html; charset=utf-8", "<html></html>") for path in ("/", "/login", "/setup", "/stream")}
+    result = FrontendCutoverResult()
+    deps = FakeDeps(responses=responses)
+    gate_web_routes(_config(), deps, result, "requested")
+    assert result.gates["web_routes"]["status"] == "PASS"
+
+
+def test_web_routes_fails_when_one_page_is_not_html():
+    responses = {(8080, path): (200, "text/html; charset=utf-8", "<html></html>") for path in ("/", "/login", "/setup", "/stream")}
+    responses[(8080, "/stream")] = (200, "application/json", "{}")
+    result = FrontendCutoverResult()
+    deps = FakeDeps(responses=responses)
+    gate_web_routes(_config(), deps, result, "requested")
+    assert result.gates["web_routes"]["status"] == "FAIL"
+    assert "/stream" in result.gates["web_routes"]["details"]["failures"][0]
+
+
+def test_rsc_payloads_passes_for_the_five_txt_files_plus_static_assets():
+    responses = {}
+    for page in ("index", "login", "setup", "instances", "stream"):
+        responses[(8080, f"/{page}.txt")] = (200, "text/x-component; charset=utf-8", "chunk")
+    responses[(8080, "/404.html")] = (200, "text/html; charset=utf-8", "<html></html>")
+    responses[(8080, "/manifest.json")] = (200, "application/json", "{}")
+    responses[(8080, "/icon-192.png")] = (200, "image/png", "\x89PNG")
+    result = FrontendCutoverResult()
+    deps = FakeDeps(responses=responses)
+    gate_rsc_payloads(_config(), deps, result, "requested")
+    assert result.gates["rsc_payloads"]["status"] == "PASS"
+
+
+def test_rsc_payloads_fails_when_a_txt_payload_404s():
+    responses = {}
+    for page in ("index", "login", "setup", "instances", "stream"):
+        responses[(8080, f"/{page}.txt")] = (200, "text/x-component; charset=utf-8", "chunk")
+    responses[(8080, "/stream.txt")] = (404, "text/plain", "not found")
+    responses[(8080, "/404.html")] = (200, "text/html; charset=utf-8", "<html></html>")
+    responses[(8080, "/manifest.json")] = (200, "application/json", "{}")
+    responses[(8080, "/icon-192.png")] = (200, "image/png", "\x89PNG")
+    result = FrontendCutoverResult()
+    deps = FakeDeps(responses=responses)
+    gate_rsc_payloads(_config(), deps, result, "requested")
+    assert result.gates["rsc_payloads"]["status"] == "FAIL"
+
+
+def test_instances_negotiation_passes_when_json_and_html_shapes_are_correct():
+    responses = {
+        (8080, "/instances|"): (200, "application/json", "[]"),
+        (8080, "/instances|application/json"): (200, "application/json", "[]"),
+        (8080, "/instances|text/html"): (200, "text/html; charset=utf-8", "<html></html>"),
+    }
+    result = FrontendCutoverResult()
+    deps = FakeDeps(responses=responses)
+    gate_instances_negotiation(_config(), deps, result, "requested")
+    assert result.gates["instances_negotiation"]["status"] == "PASS"
+
+
+def test_instances_negotiation_fails_when_html_accept_still_returns_json():
+    responses = {
+        (8080, "/instances|"): (200, "application/json", "[]"),
+        (8080, "/instances|application/json"): (200, "application/json", "[]"),
+        (8080, "/instances|text/html"): (200, "application/json", "[]"),
+    }
+    result = FrontendCutoverResult()
+    deps = FakeDeps(responses=responses)
+    gate_instances_negotiation(_config(), deps, result, "requested")
+    assert result.gates["instances_negotiation"]["status"] == "FAIL"
+
+
+def test_auth_gate_self_skips_when_auth_is_disabled():
+    result = FrontendCutoverResult()
+    deps = FakeDeps(auth_config={"auth_enabled": False, "supabase_url": "", "supabase_anon_key": ""})
+    gate_auth_gate(_config(), deps, result, "requested")
+    assert result.gates["auth_gate"]["status"] == "SKIPPED"
+    assert "not configured" in result.gates["auth_gate"]["details"]["reason"]
+
+
+def test_auth_gate_passes_when_both_unauthenticated_requests_401(monkeypatch):
+    responses = {
+        (8080, "/instances|"): (401, "application/json", '{"detail": "Not authenticated"}'),
+    }
+    result = FrontendCutoverResult()
+    deps = FakeDeps(auth_config={"auth_enabled": True, "supabase_url": "x", "supabase_anon_key": "y"}, responses=responses)
+
+    def get(port, path, *, headers=None):
+        return (401, "application/json", '{"detail": "Not authenticated"}')
+
+    deps.get = get
+    gate_auth_gate(_config(), deps, result, "requested")
+    assert result.gates["auth_gate"]["status"] == "PASS"
+
+
+def test_auth_gate_fails_when_a_bad_token_is_accepted():
+    result = FrontendCutoverResult()
+    deps = FakeDeps(auth_config={"auth_enabled": True, "supabase_url": "x", "supabase_anon_key": "y"})
+
+    def get(port, path, *, headers=None):
+        return (200, "application/json", "[]")  # should have been 401
+
+    deps.get = get
+    gate_auth_gate(_config(), deps, result, "requested")
+    assert result.gates["auth_gate"]["status"] == "FAIL"
+
+
+def test_dev_app_health_scrubs_auth_token(monkeypatch):
+    monkeypatch.setenv("AUTH_TOKEN", "secret-test-token")
+    result = FrontendCutoverResult()
+    recorded_env = {}
+
+    class EnvFakeDeps(FakeDeps):
+        def start_dev_app(self, environment):
+            recorded_env.update(environment)
+            return super().start_dev_app(environment)
+
+    deps = EnvFakeDeps()
+    gate_dev_app_health(_config(), deps, result, "requested")
+    assert "AUTH_TOKEN" not in recorded_env
+    assert result.gates["dev_app_health"]["status"] == "PASS"
+
+
+def test_real_deps_get_and_auth_config(monkeypatch):
+    config = _config()
+    deps = RealFrontendDeps(config)
+
+    class MockResponse:
+        def __init__(self, status_code, headers, text, json_data):
+            self.status_code = status_code
+            self.headers = headers
+            self.text = text
+            self._json_data = json_data
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return self._json_data
+
+    def mock_get(url, **kwargs):
+        if url.endswith("/auth/config"):
+            return MockResponse(200, {"content-type": "application/json"}, '{"auth_enabled": true}', {"auth_enabled": True})
+        return MockResponse(200, {"content-type": "text/html"}, "<html></html>", None)
+
+    monkeypatch.setattr("httpx.get", mock_get)
+
+    assert deps.auth_config(8080) == {"auth_enabled": True}
+    status, content_type, text = deps.get(8080, "/")
+    assert status == 200
+    assert content_type == "text/html"
+    assert text == "<html></html>"
+
+
+def test_real_deps_wait_for_dev_app(monkeypatch):
+    from scripts.verify_lib import OwnedProcess
+
+    config = _config()
+    deps = RealFrontendDeps(config)
+    app = OwnedProcess("dev_app", 1234, 1.0)
+
+    monkeypatch.setattr("scripts.verify_frontend_cutover._pid_started_at", lambda pid: 1.0)
+
+    class MockResponse:
+        status_code = 200
+
+    monkeypatch.setattr("httpx.get", lambda url, **kwargs: MockResponse())
+    assert deps.wait_for_dev_app(app, 8080) is True
+
+
+def test_real_deps_wait_for_dev_app_process_died(monkeypatch):
+    from scripts.verify_lib import OwnedProcess
+
+    config = _config()
+    deps = RealFrontendDeps(config)
+    app = OwnedProcess("dev_app", 1234, 1.0)
+
+    monkeypatch.setattr("scripts.verify_frontend_cutover._pid_started_at", lambda pid: None)
+    assert deps.wait_for_dev_app(app, 8080) is False
+
+
+def test_real_deps_terminate_skips_if_pid_mismatch(monkeypatch):
+    from scripts.verify_lib import OwnedProcess
+
+    config = _config()
+    deps = RealFrontendDeps(config)
+    app = OwnedProcess("dev_app", 1234, 1.0)
+    monkeypatch.setattr("scripts.verify_frontend_cutover._pid_started_at", lambda pid: 2.0)
+    deps.terminate(app)
+
+
+def test_real_deps_terminate_kills_process(monkeypatch):
+    from scripts.verify_lib import OwnedProcess
+
+    config = _config()
+    deps = RealFrontendDeps(config)
+    app = OwnedProcess("dev_app", 1234, 1.0)
+    monkeypatch.setattr("scripts.verify_frontend_cutover._pid_started_at", lambda pid: 1.0)
+
+    terminated = []
+
+    class FakeProc:
+        def terminate(self):
+            terminated.append(True)
+
+    monkeypatch.setattr("psutil.Process", lambda pid: FakeProc())
+    deps.terminate(app)
+    assert terminated == [True]
+
+
+def test_real_deps_start_dev_app(monkeypatch, tmp_path):
+    evidence_dir = tmp_path / "evidence"
+    config = _config(evidence_dir=evidence_dir)
+    deps = RealFrontendDeps(config)
+
+    class FakePopen:
+        pid = 9999
+
+    def mock_popen(*args, **kwargs):
+        return FakePopen()
+
+    monkeypatch.setattr("subprocess.Popen", mock_popen)
+
+    class FakeProc:
+        def create_time(self):
+            return 123.456
+
+    monkeypatch.setattr("psutil.Process", lambda pid: FakeProc())
+
+    proc = deps.start_dev_app({})
+    assert proc.kind == "dev_app"
+    assert proc.pid == 9999
+    assert proc.started_at == 123.456
+    assert (evidence_dir / "dev-app.log").exists()
+
+
