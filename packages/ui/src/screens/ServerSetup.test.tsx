@@ -1,25 +1,20 @@
 import React from "react";
 import { act, render, fireEvent, waitFor, cleanup } from "@testing-library/react-native";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { ServerProvider } from "@wc/core";
-import { plainStorage, secureStorage } from "../platform/storage";
+import type { SecureStorageAdapter } from "@wc/core";
 import { ServerSetup } from "./ServerSetup";
 
-jest.mock("@react-native-async-storage/async-storage", () =>
-  require("@react-native-async-storage/async-storage/jest/async-storage-mock"));
-
-jest.mock("expo-secure-store", () => {
+function makeMemoryStorage(): SecureStorageAdapter {
   const store = new Map<string, string>();
   return {
-    getItemAsync: jest.fn(async (key: string) => store.get(key) ?? null),
-    setItemAsync: jest.fn(async (key: string, value: string) => {
-      store.set(key, value);
-    }),
-    deleteItemAsync: jest.fn(async (key: string) => {
-      store.delete(key);
-    }),
+    getItem: async (k) => store.get(k) ?? null,
+    setItem: async (k, v) => { store.set(k, v); },
+    deleteItem: async (k) => { store.delete(k); },
   };
-});
+}
+
+const plainStorage = makeMemoryStorage();
+const secureStorage = makeMemoryStorage();
 
 afterEach(cleanup);
 
