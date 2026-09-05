@@ -24,13 +24,11 @@ jest.mock("expo-screen-orientation", () => ({
   OrientationLock: { LANDSCAPE: "LANDSCAPE", PORTRAIT_UP: "PORTRAIT_UP" },
 }));
 
-jest.mock("react-native-webrtc", () => ({
-  RTCView: ({ streamURL }: any) => {
-    const { Text } = require("react-native");
-    return require("react").createElement(Text, { testID: "stream-video" }, streamURL);
-  },
-  RTCPeerConnection: function () { return {}; },
-}));
+function FakeRTCPeerConnection() { return {}; }
+function FakeVideoView({ streamURL }: any) {
+  const { Text } = require("react-native");
+  return require("react").createElement(Text, { testID: "stream-video" }, streamURL);
+}
 
 jest.mock("react-native-gesture-handler", () => {
   const actual = jest.requireActual("react-native-gesture-handler");
@@ -95,7 +93,7 @@ test("connects via client.select() + connectWhep() on mount, not the old input s
   (SC.useServer as jest.Mock).mockReturnValue({ base: "http://h", client, setBase: jest.fn(), ready: true } as any);
 
   await act(async () => {
-    render(<Stream route={{ params: { serial: "A" } }} navigation={{ navigate: jest.fn(), setParams: jest.fn() }} />);
+    render(<Stream route={{ params: { serial: "A" } }} navigation={{ navigate: jest.fn(), setParams: jest.fn() }} RTCImpl={FakeRTCPeerConnection} VideoView={FakeVideoView} />);
   });
 
   await waitFor(() => expect(client.select).toHaveBeenCalledWith("A"));
@@ -130,7 +128,7 @@ test("a disconnected WHEP state (closed input channel) triggers a fresh select/r
   (SC.useServer as jest.Mock).mockReturnValue({ base: "http://h", client, setBase: jest.fn(), ready: true } as any);
 
   await act(async () => {
-    render(<Stream route={{ params: { serial: "A" } }} navigation={{ navigate: jest.fn(), setParams: jest.fn() }} />);
+    render(<Stream route={{ params: { serial: "A" } }} navigation={{ navigate: jest.fn(), setParams: jest.fn() }} RTCImpl={FakeRTCPeerConnection} VideoView={FakeVideoView} />);
   });
 
   await waitFor(() => expect(client.select).toHaveBeenCalledTimes(2));
@@ -153,7 +151,7 @@ test("terminal input failure releases an active drag before reconnecting", async
   };
   (SC.useServer as jest.Mock).mockReturnValue({ base: "http://h", client, setBase: jest.fn(), ready: true } as any);
 
-  await render(<Stream route={{ params: { serial: "A" } }} navigation={{ navigate: jest.fn(), setParams: jest.fn() }} />);
+  await render(<Stream route={{ params: { serial: "A" } }} navigation={{ navigate: jest.fn(), setParams: jest.fn() }} RTCImpl={FakeRTCPeerConnection} VideoView={FakeVideoView} />);
   await waitFor(() => expect(session.input.send).toHaveBeenCalledWith({ type: "idr" }));
   const pan = createPanResponder.mock.calls[0][0] as any;
   await act(async () => { pan.onPanResponderGrant(touch(10, 20)); });
@@ -180,7 +178,7 @@ test("adaptive stall leaves the connected peer in place", async () => {
   };
   (SC.useServer as jest.Mock).mockReturnValue({ base: "http://h", client, setBase: jest.fn(), ready: true } as any);
 
-  await render(<Stream route={{ params: { serial: "A" } }} navigation={{ navigate: jest.fn(), setParams: jest.fn() }} />);
+  await render(<Stream route={{ params: { serial: "A" } }} navigation={{ navigate: jest.fn(), setParams: jest.fn() }} RTCImpl={FakeRTCPeerConnection} VideoView={FakeVideoView} />);
   await waitFor(() => expect(adaptiveOptions).toBeDefined());
 
   expect(adaptiveOptions.onStall).toBeUndefined();
@@ -203,7 +201,7 @@ test("does not reconnect after unmount closes the active session", async () => {
   };
   (SC.useServer as jest.Mock).mockReturnValue({ base: "http://h", client, setBase: jest.fn(), ready: true } as any);
 
-  const result = await render(<Stream route={{ params: { serial: "A" } }} navigation={{ navigate: jest.fn(), setParams: jest.fn() }} />);
+  const result = await render(<Stream route={{ params: { serial: "A" } }} navigation={{ navigate: jest.fn(), setParams: jest.fn() }} RTCImpl={FakeRTCPeerConnection} VideoView={FakeVideoView} />);
   await waitFor(() => expect(Whep.connectWhep).toHaveBeenCalledTimes(1));
   await act(async () => { await result.unmount(); });
   expect(client.select).toHaveBeenCalledTimes(1);
@@ -221,7 +219,7 @@ test("unmount releases an active drag before closing its session", async () => {
   };
   (SC.useServer as jest.Mock).mockReturnValue({ base: "http://h", client, setBase: jest.fn(), ready: true } as any);
 
-  const result = await render(<Stream route={{ params: { serial: "A" } }} navigation={{ navigate: jest.fn(), setParams: jest.fn() }} />);
+  const result = await render(<Stream route={{ params: { serial: "A" } }} navigation={{ navigate: jest.fn(), setParams: jest.fn() }} RTCImpl={FakeRTCPeerConnection} VideoView={FakeVideoView} />);
   await waitFor(() => expect(session.input.send).toHaveBeenCalledWith({ type: "idr" }));
   const pan = createPanResponder.mock.calls[0][0] as any;
   await act(async () => { pan.onPanResponderGrant(touch(10, 20)); });
@@ -255,9 +253,9 @@ test("keeps the current video visible until a replacement session is ready", asy
   };
   (SC.useServer as jest.Mock).mockReturnValue({ base: "http://h", client, setBase: jest.fn(), ready: true } as any);
 
-  const result = await render(<Stream route={{ params: { serial: "A" } }} navigation={{ navigate: jest.fn(), setParams: jest.fn() }} />);
+  const result = await render(<Stream route={{ params: { serial: "A" } }} navigation={{ navigate: jest.fn(), setParams: jest.fn() }} RTCImpl={FakeRTCPeerConnection} VideoView={FakeVideoView} />);
   await waitFor(() => expect(result.getByTestId("stream-video").props.children).toBe("old-stream"));
-  await result.rerender(<Stream route={{ params: { serial: "B" } }} navigation={{ navigate: jest.fn(), setParams: jest.fn() }} />);
+  await result.rerender(<Stream route={{ params: { serial: "B" } }} navigation={{ navigate: jest.fn(), setParams: jest.fn() }} RTCImpl={FakeRTCPeerConnection} VideoView={FakeVideoView} />);
   await waitFor(() => expect(Whep.connectWhep).toHaveBeenCalledTimes(2));
   expect(result.getByTestId("stream-video").props.children).toBe("old-stream");
 
@@ -278,7 +276,7 @@ test("keys route through the session's input sender, not a socket", async () => 
 
   let result: any;
   await act(async () => {
-    result = await render(<Stream route={{ params: { serial: "A" } }} navigation={{ navigate: jest.fn(), setParams: jest.fn() }} />);
+    result = await render(<Stream route={{ params: { serial: "A" } }} navigation={{ navigate: jest.fn(), setParams: jest.fn() }} RTCImpl={FakeRTCPeerConnection} VideoView={FakeVideoView} />);
   });
   await waitFor(() => expect(session.input).toBeDefined());
 
@@ -303,7 +301,7 @@ test("starts input health over the ready session sender", async () => {
     (SC.useServer as jest.Mock).mockReturnValue({ base: "http://h", client, setBase: jest.fn(), ready: true } as any);
 
     await act(async () => {
-      await render(<Stream route={{ params: { serial: "A" } }} navigation={{ navigate: jest.fn(), setParams: jest.fn() }} />);
+      await render(<Stream route={{ params: { serial: "A" } }} navigation={{ navigate: jest.fn(), setParams: jest.fn() }} RTCImpl={FakeRTCPeerConnection} VideoView={FakeVideoView} />);
     });
 
     await waitFor(() => expect(session.input.send).toHaveBeenCalledWith({ type: "idr" }));
@@ -326,7 +324,7 @@ test("starts a drag at touch begin, ends it when a second finger starts scrollin
   };
   (SC.useServer as jest.Mock).mockReturnValue({ base: "http://h", client, setBase: jest.fn(), ready: true } as any);
 
-  await render(<Stream route={{ params: { serial: "A" } }} navigation={{ navigate: jest.fn(), setParams: jest.fn() }} />);
+  await render(<Stream route={{ params: { serial: "A" } }} navigation={{ navigate: jest.fn(), setParams: jest.fn() }} RTCImpl={FakeRTCPeerConnection} VideoView={FakeVideoView} />);
   await waitFor(() => expect(Whep.connectWhep).toHaveBeenCalled());
   const pan = createPanResponder.mock.calls[0][0] as any;
 

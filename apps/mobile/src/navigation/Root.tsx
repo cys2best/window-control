@@ -1,12 +1,18 @@
 import React from "react";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
+import { RTCPeerConnection } from "react-native-webrtc";
 import { ServerSetup } from "../screens/ServerSetup";
 import { Login } from "../screens/Login";
 import { InstanceList } from "../screens/InstanceList";
-import { Stream } from "../screens/Stream";
+import { Stream } from "@wc/ui";
+import { VideoView } from "../platform/VideoView";
 import { useServer } from "@wc/core";
 
 const Stack = createNativeStackNavigator();
+
+function StreamScreen(props: any) {
+  return <Stream {...props} RTCImpl={RTCPeerConnection} VideoView={VideoView} />;
+}
 
 export function RootNavigator() {
   const { base, authToken } = useServer();
@@ -17,7 +23,7 @@ export function RootNavigator() {
       <Stack.Screen name="ServerSetup" component={ServerSetup} />
       <Stack.Screen name="Login" component={Login} />
       <Stack.Screen name="InstanceList" component={InstanceList} />
-      <Stack.Screen name="Stream" component={Stream} />
+      <Stack.Screen name="Stream" component={StreamScreen} />
     </Stack.Navigator>
   );
 }

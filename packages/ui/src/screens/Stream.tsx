@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { View, TextInput, PanResponder } from "react-native";
 import * as ScreenOrientation from "expo-screen-orientation";
-import { RTCView, RTCPeerConnection } from "react-native-webrtc";
+import type { VideoViewComponent } from "../video/VideoView";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { runOnJS } from "react-native-reanimated";
 import { useServer, connectWhep, WhepSession, normalizeCoords, makeAdaptive } from "@wc/core";
@@ -14,7 +14,17 @@ import { ErrorOverlay } from "../components/ErrorOverlay";
 
 type Net = "connected" | "connecting" | "disconnected";
 
-export function Stream({ route, navigation }: { route: any; navigation: any }) {
+export function Stream({
+  route,
+  navigation,
+  RTCImpl,
+  VideoView,
+}: {
+  route: any;
+  navigation: any;
+  RTCImpl: any;
+  VideoView: VideoViewComponent;
+}) {
   const { client } = useServer();
   const { serial } = route.params;
   const [streamUrl, setStreamUrl] = useState<string | null>(null);
@@ -69,7 +79,7 @@ export function Stream({ route, navigation }: { route: any; navigation: any }) {
         whepUrl: sel.whep_url,
         whepToken: sel.whep_token,
         iceServers: sel.ice_servers,
-        RTCImpl: RTCPeerConnection,
+        RTCImpl,
         onStream: (stream) => {
           if (gen !== startGen.current) return;
           nextStream = stream;
@@ -270,7 +280,7 @@ export function Stream({ route, navigation }: { route: any; navigation: any }) {
     <View style={{ flex: 1, backgroundColor: theme.color.streamBg }}>
       <View collapsable={false} style={{ flex: 1 }} {...panResponder.panHandlers}
         onLayout={(e) => { rect.current = { width: e.nativeEvent.layout.width, height: e.nativeEvent.layout.height }; }}>
-        {streamUrl ? <RTCView streamURL={streamUrl} objectFit="contain" pointerEvents="none" style={{ flex: 1 }} /> : null}
+        {streamUrl ? <VideoView streamURL={streamUrl} /> : null}
       </View>
 
       {statsOn && !failed ? <StatsOverlay lines={statsLines} /> : null}
