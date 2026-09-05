@@ -144,6 +144,19 @@ def resolve_gate_selection(config: FrontendCutoverConfig) -> dict[str, str]:
 _RSC_PAGES = ("index", "login", "setup", "instances", "stream")
 
 
+def _install_dir(installer_path: Path) -> Path:
+    r"""Real installs from build/installer.iss land at
+    C:\Program Files\WindowControl regardless of where the .exe installer
+    itself sits on disk (installer_path points at the installer artifact,
+    not the install destination) -- ArchitecturesInstallIn64BitMode makes
+    {autopf} resolve to Program Files, not Program Files (x86).
+    """
+    import os
+
+    program_files = os.environ.get("ProgramFiles", r"C:\Program Files")
+    return Path(program_files) / "WindowControl"
+
+
 class RealFrontendDeps:
     def __init__(self, config: FrontendCutoverConfig):
         self.config = config
@@ -221,6 +234,40 @@ class RealFrontendDeps:
         except OSError as error:
             return 1, f"command failed to start: {error}"
         return completed.returncode, completed.stdout + completed.stderr
+
+    def start_installed_app(self) -> OwnedProcess:
+        install_dir = _install_dir(self.config.installer_path)
+        no_window = {"creationflags": 0x08000000} if sys.platform == "win32" else {}
+        process = subprocess.Popen(
+            [str(install_dir / "WindowControl.exe")],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            **no_window,
+        )
+        import psutil
+
+        started_at = psutil.Process(process.pid).create_time()
+        self._owned_installed_app = OwnedProcess("installed_app", process.pid, started_at)
+        return self._owned_installed_app
+
+    def start_selfrelaunch(self, url: str) -> OwnedProcess:
+        install_dir = _install_dir(self.config.installer_path)
+        no_window = {"creationflags": 0x08000000} if sys.platform == "win32" else {}
+        process = subprocess.Popen(
+            [str(install_dir / "WindowControl.exe"), "--webview-window", url],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            **no_window,
+        )
+        import psutil
+
+        started_at = psutil.Process(process.pid).create_time()
+        return OwnedProcess("selfrelaunch", process.pid, started_at)
+
+    def process_is_alive(self, process: OwnedProcess) -> bool:
+        return _pid_started_at(process.pid) == process.started_at
+
+    def sleep(self, seconds: float) -> None:
+        time.sleep(seconds)
+
 
 
 def gate_dev_app_health(config: FrontendCutoverConfig, deps: Any, result: FrontendCutoverResult, reason: str) -> None:
@@ -358,6 +405,36 @@ def gate_offline_suites(config: FrontendCutoverConfig, deps: Any, result: Fronte
         result.mark("offline_suites", "FAIL", reason=reason, details=details)
     else:
         result.mark("offline_suites", "PASS", reason=reason, details=details)
+
+
+def gate_installed_app_launch(config: FrontendCutoverConfig, deps: Any, result: FrontendCutoverResult, reason: str) -> None:
+    app = deps.start_installed_app()
+    healthy = deps.wait_for_dev_app(app, config.port)
+    exit_code, output = deps.run_command(
+        ["netsh", "advfirewall", "firewall", "show", "rule", 'name="WindowControl-Engine"'],
+    )
+    expected_engine_path = r"WindowControl\_internal\assets\engine\engine.exe"
+    firewall_ok = exit_code == 0 and expected_engine_path in output
+    details = {"pid": app.pid, "healthy": healthy, "firewall_output": output[:2000], "firewall_ok": firewall_ok}
+    if healthy and firewall_ok:
+        result.mark("installed_app_launch", "PASS", reason=reason, details=details)
+    else:
+        result.mark("installed_app_launch", "FAIL", reason=reason, details=details)
+
+
+def gate_frozen_selfrelaunch(config: FrontendCutoverConfig, deps: Any, result: FrontendCutoverResult, reason: str, *, parent: OwnedProcess) -> None:
+    url = f"http://127.0.0.1:{config.port}"
+    child = deps.start_selfrelaunch(url)
+    deps.sleep(3)
+    child_alive = deps.process_is_alive(child)
+    parent_still_healthy = deps.wait_for_dev_app(parent, config.port)
+    details = {"child_pid": child.pid, "child_alive": child_alive, "parent_still_healthy": parent_still_healthy}
+    deps.terminate(child)
+    if child_alive and parent_still_healthy:
+        result.mark("frozen_selfrelaunch", "PASS", reason=reason, details=details)
+    else:
+        result.mark("frozen_selfrelaunch", "FAIL", reason=reason, details=details)
+
 
 
 

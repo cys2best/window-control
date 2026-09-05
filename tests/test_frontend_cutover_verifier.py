@@ -11,10 +11,13 @@ from scripts.verify_frontend_cutover import (
     FrontendCutoverConfig,
     FrontendCutoverResult,
     RealFrontendDeps,
+    _install_dir,
     _parse_jest_summary,
     _parse_pytest_summary,
     gate_auth_gate,
     gate_dev_app_health,
+    gate_frozen_selfrelaunch,
+    gate_installed_app_launch,
     gate_instances_negotiation,
     gate_offline_suites,
     gate_rsc_payloads,
@@ -540,6 +543,180 @@ def test_real_deps_run_command_oserror(monkeypatch):
     code, output = deps.run_command(["nonexistent_command"])
     assert code == 1
     assert "command failed to start" in output
+
+
+def test_installed_app_launch_passes_when_healthy_and_firewall_rule_matches():
+    class FakeDepsForInstaller:
+        def __init__(self):
+            self.started = False
+
+        def start_installed_app(self):
+            self.started = True
+            return __import__("scripts.verify_lib", fromlist=["OwnedProcess"]).OwnedProcess("installed_app", 5555, 2.0)
+
+        def wait_for_dev_app(self, app, port):
+            return True
+
+        def run_command(self, command, *, cwd=None, timeout=600):
+            return 0, 'Rule Name: WindowControl-Engine\nProgram: C:\\Program Files\\WindowControl\\_internal\\assets\\engine\\engine.exe\n'
+
+        def terminate(self, process):
+            pass
+
+    result = FrontendCutoverResult()
+    gate_installed_app_launch(_config(), FakeDepsForInstaller(), result, "requested")
+    assert result.gates["installed_app_launch"]["status"] == "PASS"
+
+
+def test_installed_app_launch_fails_when_firewall_rule_points_elsewhere():
+    class FakeDepsForInstaller:
+        def start_installed_app(self):
+            return __import__("scripts.verify_lib", fromlist=["OwnedProcess"]).OwnedProcess("installed_app", 5555, 2.0)
+
+        def wait_for_dev_app(self, app, port):
+            return True
+
+        def run_command(self, command, *, cwd=None, timeout=600):
+            return 0, "Rule Name: WindowControl-Engine\nProgram: C:\\some\\stale\\path\\engine.exe\n"
+
+        def terminate(self, process):
+            pass
+
+    result = FrontendCutoverResult()
+    gate_installed_app_launch(_config(), FakeDepsForInstaller(), result, "requested")
+    assert result.gates["installed_app_launch"]["status"] == "FAIL"
+
+
+def test_frozen_selfrelaunch_passes_when_child_survives_and_parent_still_healthy():
+    class FakeDepsForRelaunch:
+        def start_selfrelaunch(self, url):
+            return __import__("scripts.verify_lib", fromlist=["OwnedProcess"]).OwnedProcess("selfrelaunch", 6666, 3.0)
+
+        def sleep(self, seconds):
+            pass
+
+        def process_is_alive(self, process):
+            return True
+
+        def wait_for_dev_app(self, app, port):
+            return True
+
+        def terminate(self, process):
+            pass
+
+    result = FrontendCutoverResult()
+    gate_frozen_selfrelaunch(_config(), FakeDepsForRelaunch(), result, "requested", parent=__import__("scripts.verify_lib", fromlist=["OwnedProcess"]).OwnedProcess("installed_app", 5555, 2.0))
+    assert result.gates["frozen_selfrelaunch"]["status"] == "PASS"
+
+
+def test_frozen_selfrelaunch_fails_when_child_process_dies_immediately():
+    class FakeDepsForRelaunch:
+        def start_selfrelaunch(self, url):
+            return __import__("scripts.verify_lib", fromlist=["OwnedProcess"]).OwnedProcess("selfrelaunch", 6666, 3.0)
+
+        def sleep(self, seconds):
+            pass
+
+        def process_is_alive(self, process):
+            return False
+
+        def wait_for_dev_app(self, app, port):
+            return True
+
+        def terminate(self, process):
+            pass
+
+    result = FrontendCutoverResult()
+    gate_frozen_selfrelaunch(_config(), FakeDepsForRelaunch(), result, "requested", parent=__import__("scripts.verify_lib", fromlist=["OwnedProcess"]).OwnedProcess("installed_app", 5555, 2.0))
+    assert result.gates["frozen_selfrelaunch"]["status"] == "FAIL"
+
+
+def test_install_dir_defaults_to_program_files(monkeypatch):
+    monkeypatch.delenv("ProgramFiles", raising=False)
+    assert _install_dir(Path("dummy/installer.exe")) == Path(r"C:\Program Files") / "WindowControl"
+
+
+def test_install_dir_respects_programfiles_env(monkeypatch):
+    monkeypatch.setenv("ProgramFiles", r"D:\CustomPF")
+    assert _install_dir(Path("dummy/installer.exe")) == Path(r"D:\CustomPF") / "WindowControl"
+
+
+def test_real_deps_start_installed_app(monkeypatch):
+    config = _config()
+    deps = RealFrontendDeps(config)
+
+    class FakePopen:
+        pid = 7777
+
+    def mock_popen(cmd, **kwargs):
+        assert str(cmd[0]).endswith(r"WindowControl\WindowControl.exe") or str(cmd[0]).endswith("WindowControl/WindowControl.exe")
+        return FakePopen()
+
+    monkeypatch.setattr("subprocess.Popen", mock_popen)
+
+    class FakeProc:
+        def create_time(self):
+            return 222.333
+
+    monkeypatch.setattr("psutil.Process", lambda pid: FakeProc())
+
+    proc = deps.start_installed_app()
+    assert proc.kind == "installed_app"
+    assert proc.pid == 7777
+    assert proc.started_at == 222.333
+    assert deps._owned_installed_app == proc
+
+
+def test_real_deps_start_selfrelaunch(monkeypatch):
+    config = _config()
+    deps = RealFrontendDeps(config)
+
+    class FakePopen:
+        pid = 8888
+
+    def mock_popen(cmd, **kwargs):
+        assert cmd[1:] == ["--webview-window", "http://127.0.0.1:8080"]
+        return FakePopen()
+
+    monkeypatch.setattr("subprocess.Popen", mock_popen)
+
+    class FakeProc:
+        def create_time(self):
+            return 333.444
+
+    monkeypatch.setattr("psutil.Process", lambda pid: FakeProc())
+
+    proc = deps.start_selfrelaunch("http://127.0.0.1:8080")
+    assert proc.kind == "selfrelaunch"
+    assert proc.pid == 8888
+    assert proc.started_at == 333.444
+
+
+def test_real_deps_process_is_alive(monkeypatch):
+    from scripts.verify_lib import OwnedProcess
+
+    config = _config()
+    deps = RealFrontendDeps(config)
+    proc = OwnedProcess("installed_app", 5555, 100.0)
+
+    monkeypatch.setattr("scripts.verify_frontend_cutover._pid_started_at", lambda pid: 100.0)
+    assert deps.process_is_alive(proc) is True
+
+    monkeypatch.setattr("scripts.verify_frontend_cutover._pid_started_at", lambda pid: 200.0)
+    assert deps.process_is_alive(proc) is False
+
+    monkeypatch.setattr("scripts.verify_frontend_cutover._pid_started_at", lambda pid: None)
+    assert deps.process_is_alive(proc) is False
+
+
+def test_real_deps_sleep(monkeypatch):
+    config = _config()
+    deps = RealFrontendDeps(config)
+    slept = []
+    monkeypatch.setattr("time.sleep", lambda s: slept.append(s))
+    deps.sleep(3.0)
+    assert slept == [3.0]
+
 
 
 
