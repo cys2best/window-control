@@ -25,9 +25,9 @@ jest.mock("expo-screen-orientation", () => ({
 }));
 
 function FakeRTCPeerConnection() { return {}; }
-function FakeVideoView({ streamURL }: any) {
+function FakeVideoView({ stream }: any) {
   const { Text } = require("react-native");
-  return require("react").createElement(Text, { testID: "stream-video" }, streamURL);
+  return require("react").createElement(Text, { testID: "stream-video" }, String((stream as any).toURL?.() ?? stream));
 }
 
 jest.mock("react-native-gesture-handler", () => {

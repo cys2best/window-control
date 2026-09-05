@@ -27,7 +27,7 @@ export function Stream({
 }) {
   const { client } = useServer();
   const { serial } = route.params;
-  const [streamUrl, setStreamUrl] = useState<string | null>(null);
+  const [stream, setStream] = useState<MediaStream | null>(null);
   const [net, setNet] = useState<Net>("connecting");
   const [failed, setFailed] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
@@ -108,7 +108,7 @@ export function Stream({
       // session negotiates.
       const previous = session.current;
       session.current = s;
-      if (nextStream) setStreamUrl(nextStream.toURL());
+      if (nextStream) setStream(nextStream);
       if (previous) {
         releaseActiveDrag(previous.input);
         previous.close();
@@ -280,7 +280,7 @@ export function Stream({
     <View style={{ flex: 1, backgroundColor: theme.color.streamBg }}>
       <View collapsable={false} style={{ flex: 1 }} {...panResponder.panHandlers}
         onLayout={(e) => { rect.current = { width: e.nativeEvent.layout.width, height: e.nativeEvent.layout.height }; }}>
-        {streamUrl ? <VideoView streamURL={streamUrl} /> : null}
+        {stream ? <VideoView stream={stream} /> : null}
       </View>
 
       {statsOn && !failed ? <StatsOverlay lines={statsLines} /> : null}

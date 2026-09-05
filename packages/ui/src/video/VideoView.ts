@@ -1,2 +1,2 @@
-export type VideoViewProps = { streamURL: string };
+export type VideoViewProps = { stream: MediaStream };
 export type VideoViewComponent = React.ComponentType<VideoViewProps>;
