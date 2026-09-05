@@ -952,7 +952,12 @@ def test_main_full_run_pass(monkeypatch, tmp_path):
         "--installer-path", str(installer_path),
     ])
     assert exit_code == 0
-    assert (evidence_dir / "result.json").exists()
+    result_path = evidence_dir / "result.json"
+    assert result_path.exists()
+    import json
+    data = json.loads(result_path.read_text(encoding="utf-8"))
+    assert data["status"] == "PASS"
+    assert set(data["gates"]) == set(GATE_NAMES)
 
 
 def test_main_handles_value_error(monkeypatch, tmp_path):
@@ -965,6 +970,41 @@ def test_main_handles_value_error(monkeypatch, tmp_path):
         "--only", "invalid_gate_name",
     ])
     assert exit_code == 1
+
+
+def test_run_terminates_dev_app_before_installed_app_launch(monkeypatch):
+    import scripts.verify_frontend_cutover as module
+
+    events: list[str] = []
+
+    def fake_dev_health(config, deps, result, reason):
+        events.append("dev_health")
+        result.mark("dev_app_health", "PASS", reason=reason, details={"pid": 1111})
+
+    def fake_installed_launch(config, deps, result, reason):
+        events.append("installed_launch")
+        result.mark("installed_app_launch", "PASS", reason=reason, details={"pid": 2222})
+
+    def make_gate(name):
+        def gate(config, deps, result, reason):
+            events.append(name)
+            result.mark(name, "PASS", reason=reason)
+        return gate
+
+    for name in GATE_NAMES:
+        monkeypatch.setattr(module, f"gate_{name}", make_gate(name), raising=False)
+    monkeypatch.setattr(module, "gate_dev_app_health", fake_dev_health)
+    monkeypatch.setattr(module, "gate_installed_app_launch", fake_installed_launch)
+
+    class FakeDepsWithTerminate:
+        def terminate(self, process):
+            events.append(f"terminate_{process.kind}")
+
+    result = module.run(_config(), deps=FakeDepsWithTerminate())
+    assert "terminate_dev_app" in events
+    dev_term_idx = events.index("terminate_dev_app")
+    inst_launch_idx = events.index("installed_launch")
+    assert dev_term_idx < inst_launch_idx
 
 
 

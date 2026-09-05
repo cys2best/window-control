@@ -509,10 +509,7 @@ def run(config: FrontendCutoverConfig, deps: Any) -> FrontendCutoverResult:
             if reason.startswith("not selected"):
                 result.mark(name, "SKIPPED", reason=reason)
                 continue
-            if name == "leaked_key_forgery_check" and config.skip_installer:
-                result.mark(name, "SKIPPED", reason="skipped (--skip-installer)")
-                continue
-            if name in ("installed_app_launch", "frozen_selfrelaunch") and config.skip_installer:
+            if name in ("installed_app_launch", "frozen_selfrelaunch", "leaked_key_forgery_check") and config.skip_installer:
                 result.mark(name, "SKIPPED", reason="skipped (--skip-installer)")
                 continue
             if name in ("desktop_shell_visual", "supabase_two_account_flow", "leaked_key_forgery_check") and config.skip_manual_gates:
@@ -537,6 +534,11 @@ def run(config: FrontendCutoverConfig, deps: Any) -> FrontendCutoverResult:
                 else:
                     gate_fn(config, deps, result, reason)
             elif name == "installed_app_launch":
+                if started_app is not None:
+                    terminate = getattr(deps, "terminate", None)
+                    if terminate is not None:
+                        terminate(started_app)
+                    started_app = None
                 gate_fn = getattr(sys.modules[__name__], f"gate_{name}", gate_installed_app_launch)
                 gate_fn(config, deps, result, reason)
                 if result.gates[name]["status"] == "PASS":
