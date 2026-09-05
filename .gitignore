@@ -37,3 +37,9 @@ engine/test/verification-*/
 *.tfstate
 *.tfstate.*
 .terraform.lock.hcl
+
+# npm workspaces root deps (root package-lock.json IS tracked)
+/node_modules/
+
+# Personal, unshared agent notes
+CLAUDE.local.md
