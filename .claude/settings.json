@@ -4,11 +4,27 @@
     "pr": "",
     "sessionUrl": false
   },
+  "hooks": {
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .agent-sync/scripts/archive.py"
+          }
+        ]
+      }
+    ]
+  },
   "permissions": {
     "deny": [
       "Read(./package-lock.json)",
       "Read(./node_modules/**)",
       "Read(./.DS_Store)"
+    ],
+    "ask": [
+      "Read(./node_modules/**)",
+      "Read(./.venv/**)"
     ]
   }
 }

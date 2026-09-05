@@ -69,7 +69,7 @@ npm test                     # infra/vps/signaling/ (node:test, relay contract)
 <!-- agent-sync:project-policy:start -->
 - Commit message format: `<type>(optional-scope): imperative description`
 - Commit convention source: git history
-- Commit examples: `fix(webrtc_manager): reap disconnected PCs and request IDR only once connected`; `feat(scrcpy_session): add aiortc on-demand video path alongside ffmpeg`
+- Commit examples: `fix(desktop,web): run pywebview in its own process, serve Next RSC payloads and PWA manifest`; `feat(desktop): pywebview shell, cut FastAPI over to apps/web, delete src/client`
 - Live execution state (task briefs, reports, progress) is owned by
   Superpowers at `.superpowers/sdd/`, `docs/superpowers/` — don't
   hand-edit these or create files there yourself; that's the tool's
