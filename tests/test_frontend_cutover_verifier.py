@@ -511,4 +511,36 @@ def test_real_deps_run_command_timeout(monkeypatch):
     assert "timed out after 5s" in output
 
 
+def test_gate_offline_suites_fails_when_a_suite_reports_errors_even_with_exit_zero():
+    class FakeDepsForSuites:
+        def run_command(self, command, *, cwd=None, timeout=600):
+            if "pytest" in command and "apps/desktop" not in " ".join(command):
+                return 0, "1 error, 456 passed in 20s"
+            return 0, "Tests:       10 passed, 10 total\n"
+
+    result = FrontendCutoverResult()
+    gate_offline_suites(_config(), FakeDepsForSuites(), result, "requested")
+    assert result.gates["offline_suites"]["status"] == "FAIL"
+
+
+def test_parse_pytest_summary_singular_error():
+    output = "1 error, 10 passed in 1.0s"
+    assert _parse_pytest_summary(output) == {"passed": 10, "failed": 0, "skipped": 0, "errors": 1}
+
+
+def test_real_deps_run_command_oserror(monkeypatch):
+    import subprocess
+    config = _config()
+    deps = RealFrontendDeps(config)
+
+    def mock_run(command, cwd=None, text=True, capture_output=True, timeout=600, **kwargs):
+        raise FileNotFoundError(2, "No such file or directory")
+
+    monkeypatch.setattr("subprocess.run", mock_run)
+    code, output = deps.run_command(["nonexistent_command"])
+    assert code == 1
+    assert "command failed to start" in output
+
+
+
 

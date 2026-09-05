@@ -218,6 +218,8 @@ class RealFrontendDeps:
             )
         except subprocess.TimeoutExpired as error:
             return 1, f"timed out after {timeout}s: {error}"
+        except OSError as error:
+            return 1, f"command failed to start: {error}"
         return completed.returncode, completed.stdout + completed.stderr
 
 
@@ -308,13 +310,13 @@ def gate_auth_gate(config: FrontendCutoverConfig, deps: Any, result: FrontendCut
         result.mark("auth_gate", "FAIL", reason=reason, details={"observed": observed, "error": "an unauthenticated or garbage-token request to /instances did not get 401"})
 
 
-_PYTEST_CATEGORY_PATTERN = re.compile(r"(\d+) (passed|failed|skipped|error)")
+_PYTEST_CATEGORY_PATTERN = re.compile(r"\b(\d+) (passed|failed|skipped|errors?)\b")
 
 
 def _parse_pytest_summary(output: str) -> dict[str, int]:
     counts = {"passed": 0, "failed": 0, "skipped": 0, "errors": 0}
     for number, category in _PYTEST_CATEGORY_PATTERN.findall(output):
-        key = "errors" if category == "error" else category
+        key = "errors" if category.startswith("error") else category
         counts[key] = int(number)
     return counts
 
@@ -348,12 +350,14 @@ def gate_offline_suites(config: FrontendCutoverConfig, deps: Any, result: Fronte
         exit_code, output = deps.run_command(command, cwd=config.repo_root, timeout=600)
         counts = _parse_pytest_summary(output) if kind == "pytest" else _parse_jest_summary(output)
         failed = counts.get("failed", 0)
+        errors = counts.get("errors", 0)
         details[name] = {"exit_code": exit_code, "counts": counts}
-        if exit_code != 0 or failed != 0:
+        if exit_code != 0 or failed != 0 or errors != 0:
             any_failed = True
     if any_failed:
         result.mark("offline_suites", "FAIL", reason=reason, details=details)
     else:
         result.mark("offline_suites", "PASS", reason=reason, details=details)
+
 
 
