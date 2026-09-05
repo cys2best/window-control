@@ -91,7 +91,42 @@ CLI (via `argparse`, invoked as `python -m scripts.verify_frontend_cutover`):
                                    and leaked_key_forgery_check; caps overall status at
                                    INCOMPLETE, never PASS)
 --port INT                       (default: 8080, matches src/config.py's PORT)
+--only GATE[,GATE...]            (run just the named gate(s), for fast iteration during
+                                   development; mutually exclusive with --from)
+--from GATE                      (run this gate and every gate after it in the fixed order;
+                                   mutually exclusive with --only)
 ```
+
+### `--only`/`--from`: partial runs for fast iteration
+
+Full-sequence runs (neither flag given) are the only way to get an overall
+`PASS` — this mirrors every other partial-run flag this tool has. Use
+`--only`/`--from` while developing or debugging a single gate; run the full
+sequence with no flags for the acceptance record.
+
+- **Gate dependencies are auto-included, never silently assumed.** Four
+  gates need `dev_app_health`'s app already running
+  (`web_routes`, `rsc_payloads`, `instances_negotiation`, `auth_gate`);
+  `frozen_selfrelaunch` needs `installed_app_launch`'s installed process
+  already running. Selecting a dependent gate via `--only` transparently
+  runs its prerequisite(s) first — recorded in `result.json` with
+  `"reason": "auto-included as prerequisite of <gate>"`, distinct from
+  gates the operator actually asked for (`"reason": "requested"`). This
+  keeps `--only auth_gate` (say) actually runnable without the operator
+  having to know or spell out its dependency chain, while keeping the
+  evidence file honest about what ran and why.
+- Every gate outside the selected closure is recorded `SKIPPED` with
+  `"reason": "not selected this run (--only)"` or `"(--from)"`.
+- `--only`/`--from` cap overall `status` at `INCOMPLETE`, same as
+  `--skip-manual-gates`/`--skip-installer` — a partial run can never
+  report `PASS`.
+- `--only`/`--from` are validated against the exact gate-name list at
+  argument-parsing time (before any process starts) — an unknown gate
+  name is a usage error, not a silently-ignored no-op.
+- Scope: this flag pair is for `verify_frontend_cutover.py` only. The
+  existing `verify_engine_cutover.py`/`.ps1` is untouched beyond the
+  `verify_lib` import swap — adding equivalent flags there is a separate,
+  future decision, not part of this spec.
 
 **Gates, in the order they run** (each gate's outcome is
 `PASS | FAIL | SKIPPED`; a gate failing does not stop later gates —
@@ -207,7 +242,10 @@ at `FAIL` or `INCOMPLETE` respectively — matches the existing tool's
 Same shape as `engine/verify-engine-cutover.ps1`:
 - `[CmdletBinding()]` param block mirroring the CLI args above
   (`-WebBuildDir`, `-InstallerPath`, `-FilePrompts`, `-Confirm`,
-  `-SkipManualGates`, `-SkipInstaller`, `-Port`).
+  `-SkipManualGates`, `-SkipInstaller`, `-Port`, `-Only`, `-From`).
+  `-Only`/`-From` validated as mutually exclusive at the PowerShell layer
+  too (fail fast before even shelling out to Python), not just in
+  `argparse`.
 - Generates the timestamped+nonce evidence dir under
   `engine\test\frontend-cutover-<timestamp>-<PID>-<nonce>`, same naming
   convention.
@@ -229,12 +267,13 @@ leaves partial evidence, matching the existing tool):
   "status": "PASS | FAIL | INCOMPLETE",
   "started_at": "<iso8601>",
   "finished_at": "<iso8601>",
+  "selection": {"mode": "full | only | from", "requested": ["auth_gate"]},
   "gates": {
-    "dev_app_health": {"status": "PASS", "details": {...}},
-    "web_routes": {"status": "PASS", "details": {"/": {"status": 200, "content_type": "text/html"}, ...}},
-    "rsc_payloads": {"status": "PASS", "details": {...}},
-    "instances_negotiation": {"status": "PASS", "details": {...}},
-    "auth_gate": {"status": "SKIPPED", "details": {"reason": "Supabase auth not configured this run"}},
+    "dev_app_health": {"status": "PASS", "details": {...}, "reason": "auto-included as prerequisite of auth_gate"},
+    "web_routes": {"status": "SKIPPED", "details": {"reason": "not selected this run (--only)"}},
+    "rsc_payloads": {"status": "SKIPPED", "details": {"reason": "not selected this run (--only)"}},
+    "instances_negotiation": {"status": "SKIPPED", "details": {"reason": "not selected this run (--only)"}},
+    "auth_gate": {"status": "PASS", "details": {...}, "reason": "requested"},
     "offline_suites": {"status": "PASS", "details": {"pytest_tests": {"passed": 456, "failed": 2, "note": "2 pre-existing per HANDOFF.md"}, ...}},
     "installed_app_launch": {"status": "PASS", "details": {...}},
     "frozen_selfrelaunch": {"status": "PASS", "details": {...}},
@@ -244,6 +283,11 @@ leaves partial evidence, matching the existing tool):
   }
 }
 ```
+
+(the `selection`/per-gate `"reason"` fields shown above illustrate an
+`--only auth_gate` run specifically; a full run with no `--only`/`--from`
+omits `"selection"` entirely and every gate's `"reason"` is simply
+`"requested"`.)
 
 ## Error handling
 
@@ -282,6 +326,15 @@ leaves partial evidence, matching the existing tool):
   `auth_gate` correctly self-skips when `dev_app_health`'s response says
   auth is disabled, environment sanitization actually scrubs
   `SUPABASE_SERVICE_ROLE_KEY`/`AUTH_TOKEN` from what gets recorded.
+  Additional cases for `--only`/`--from`: `--only auth_gate` runs exactly
+  `{dev_app_health, auth_gate}` with the correct per-gate `"reason"`
+  values and skips everything else; `--only frozen_selfrelaunch` pulls in
+  `installed_app_launch` as a prerequisite; `--from offline_suites` runs
+  `offline_suites` through `leaked_key_forgery_check` and skips every
+  earlier gate; `--only` and `--from` together is a usage error caught at
+  argument-parsing time; an unknown gate name in `--only`/`--from` is a
+  usage error, not a silent no-op; any `--only`/`--from` run caps overall
+  `status` at `INCOMPLETE` even when every selected gate passes.
 
 ## Open risks / things the implementer should double check against real code before writing (not guessed here)
 
