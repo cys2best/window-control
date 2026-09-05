@@ -52,6 +52,9 @@ python scripts/bump_version.py       # sync VERSION across config.py / pyproject
 # test
 uv run pytest tests/ -v      # src/ (Mac-stubbed, doesn't confirm Windows behavior)
 uv run pytest apps/desktop/ -v  # apps/desktop (tray.py, window.py)
+uv run pytest tests/test_verify_lib.py tests/test_frontend_cutover_verifier.py -v  # scripts/, the frontend cutover verifier itself
+.\engine\verify-frontend-cutover.ps1 -Only auth_gate       # Windows-only, fast single-gate iteration
+.\engine\verify-frontend-cutover.ps1                       # Windows-only, full acceptance run
 npm run test:core            # packages/core (jest)
 npm run test:ui              # packages/ui (jest)
 npm test -w apps/web         # apps/web (jest)
