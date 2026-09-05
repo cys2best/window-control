@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import time
@@ -204,6 +205,21 @@ class RealFrontendDeps:
         except psutil.Error:
             pass
 
+    def run_command(self, command: list[str], *, cwd: Path | None = None, timeout: float = 600) -> tuple[int, str]:
+        no_window = {"creationflags": 0x08000000} if sys.platform == "win32" else {}
+        try:
+            completed = subprocess.run(
+                command,
+                cwd=cwd or self.config.repo_root,
+                text=True,
+                capture_output=True,
+                timeout=timeout,
+                **no_window,
+            )
+        except subprocess.TimeoutExpired as error:
+            return 1, f"timed out after {timeout}s: {error}"
+        return completed.returncode, completed.stdout + completed.stderr
+
 
 def gate_dev_app_health(config: FrontendCutoverConfig, deps: Any, result: FrontendCutoverResult, reason: str) -> None:
     environment = dict(os.environ)
@@ -290,4 +306,54 @@ def gate_auth_gate(config: FrontendCutoverConfig, deps: Any, result: FrontendCut
         result.mark("auth_gate", "PASS", reason=reason, details={"observed": observed})
     else:
         result.mark("auth_gate", "FAIL", reason=reason, details={"observed": observed, "error": "an unauthenticated or garbage-token request to /instances did not get 401"})
+
+
+_PYTEST_CATEGORY_PATTERN = re.compile(r"(\d+) (passed|failed|skipped|error)")
+
+
+def _parse_pytest_summary(output: str) -> dict[str, int]:
+    counts = {"passed": 0, "failed": 0, "skipped": 0, "errors": 0}
+    for number, category in _PYTEST_CATEGORY_PATTERN.findall(output):
+        key = "errors" if category == "error" else category
+        counts[key] = int(number)
+    return counts
+
+
+def _parse_jest_summary(output: str) -> dict[str, int]:
+    match = re.search(r"^Tests:\s+(.*)$", output, re.MULTILINE)
+    line = match.group(1) if match else ""
+    passed_match = re.search(r"(\d+) passed", line)
+    failed_match = re.search(r"(\d+) failed", line)
+    total_match = re.search(r"(\d+) total", line)
+    return {
+        "passed": int(passed_match.group(1)) if passed_match else 0,
+        "failed": int(failed_match.group(1)) if failed_match else 0,
+        "total": int(total_match.group(1)) if total_match else 0,
+    }
+
+
+_SUITE_COMMANDS: tuple[tuple[str, list[str], str], ...] = (
+    ("pytest_tests", ["uv", "run", "pytest", "tests/", "-q", "--continue-on-collection-errors"], "pytest"),
+    ("pytest_apps_desktop", ["uv", "run", "pytest", "apps/desktop/", "-q"], "pytest"),
+    ("jest_core", ["npm", "run", "test:core"], "jest"),
+    ("jest_ui", ["npm", "run", "test:ui"], "jest"),
+    ("jest_web", ["npm", "test", "-w", "apps/web"], "jest"),
+)
+
+
+def gate_offline_suites(config: FrontendCutoverConfig, deps: Any, result: FrontendCutoverResult, reason: str) -> None:
+    details: dict[str, Any] = {}
+    any_failed = False
+    for name, command, kind in _SUITE_COMMANDS:
+        exit_code, output = deps.run_command(command, cwd=config.repo_root, timeout=600)
+        counts = _parse_pytest_summary(output) if kind == "pytest" else _parse_jest_summary(output)
+        failed = counts.get("failed", 0)
+        details[name] = {"exit_code": exit_code, "counts": counts}
+        if exit_code != 0 or failed != 0:
+            any_failed = True
+    if any_failed:
+        result.mark("offline_suites", "FAIL", reason=reason, details=details)
+    else:
+        result.mark("offline_suites", "PASS", reason=reason, details=details)
+
 

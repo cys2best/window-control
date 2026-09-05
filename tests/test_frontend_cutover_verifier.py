@@ -11,9 +11,12 @@ from scripts.verify_frontend_cutover import (
     FrontendCutoverConfig,
     FrontendCutoverResult,
     RealFrontendDeps,
+    _parse_jest_summary,
+    _parse_pytest_summary,
     gate_auth_gate,
     gate_dev_app_health,
     gate_instances_negotiation,
+    gate_offline_suites,
     gate_rsc_payloads,
     gate_web_routes,
     resolve_gate_selection,
@@ -417,5 +420,95 @@ def test_real_deps_start_dev_app(monkeypatch, tmp_path):
     assert proc.pid == 9999
     assert proc.started_at == 123.456
     assert (evidence_dir / "dev-app.log").exists()
+
+
+def test_parse_pytest_summary_extracts_all_four_categories():
+    output = "2 failed, 456 passed, 1 skipped, 249 warnings, 2 errors in 25.86s"
+    assert _parse_pytest_summary(output) == {"passed": 456, "failed": 2, "skipped": 1, "errors": 2}
+
+
+def test_parse_pytest_summary_defaults_absent_categories_to_zero():
+    output = "45 passed in 3.02s"
+    assert _parse_pytest_summary(output) == {"passed": 45, "failed": 0, "skipped": 0, "errors": 0}
+
+
+def test_parse_jest_summary_extracts_from_the_tests_line_only():
+    output = "Test Suites: 1 failed, 9 passed, 10 total\nTests:       2 failed, 43 passed, 45 total\n"
+    assert _parse_jest_summary(output) == {"passed": 43, "failed": 2, "total": 45}
+
+
+def test_parse_jest_summary_handles_zero_failures():
+    output = "Test Suites: 10 passed, 10 total\nTests:       45 passed, 45 total\n"
+    assert _parse_jest_summary(output) == {"passed": 45, "failed": 0, "total": 45}
+
+
+def test_gate_offline_suites_passes_when_every_command_exits_zero_with_zero_failures():
+    class FakeDepsForSuites:
+        def run_command(self, command, *, cwd=None, timeout=600):
+            if "pytest" in command:
+                return 0, "456 passed in 20s"
+            return 0, "Tests:       10 passed, 10 total\n"
+
+    result = FrontendCutoverResult()
+    gate_offline_suites(_config(), FakeDepsForSuites(), result, "requested")
+    assert result.gates["offline_suites"]["status"] == "PASS"
+
+
+def test_gate_offline_suites_fails_when_a_suite_reports_failures_even_with_exit_zero():
+    class FakeDepsForSuites:
+        def run_command(self, command, *, cwd=None, timeout=600):
+            if "pytest" in command and "apps/desktop" not in " ".join(command):
+                return 0, "2 failed, 456 passed in 20s"
+            return 0, "Tests:       10 passed, 10 total\n"
+
+    result = FrontendCutoverResult()
+    gate_offline_suites(_config(), FakeDepsForSuites(), result, "requested")
+    assert result.gates["offline_suites"]["status"] == "FAIL"
+
+
+def test_gate_offline_suites_fails_when_a_command_exits_nonzero():
+    class FakeDepsForSuites:
+        def run_command(self, command, *, cwd=None, timeout=600):
+            return 1, "collection error"
+
+    result = FrontendCutoverResult()
+    gate_offline_suites(_config(), FakeDepsForSuites(), result, "requested")
+    assert result.gates["offline_suites"]["status"] == "FAIL"
+
+
+def test_real_deps_run_command_success(monkeypatch):
+    import subprocess
+    config = _config()
+    deps = RealFrontendDeps(config)
+
+    class FakeCompleted:
+        returncode = 0
+        stdout = "output line\n"
+        stderr = "err line\n"
+
+    def mock_run(command, cwd=None, text=True, capture_output=True, timeout=600, **kwargs):
+        assert command == ["echo", "hello"]
+        assert cwd == config.repo_root
+        return FakeCompleted()
+
+    monkeypatch.setattr("subprocess.run", mock_run)
+    code, output = deps.run_command(["echo", "hello"])
+    assert code == 0
+    assert output == "output line\nerr line\n"
+
+
+def test_real_deps_run_command_timeout(monkeypatch):
+    import subprocess
+    config = _config()
+    deps = RealFrontendDeps(config)
+
+    def mock_run(command, cwd=None, text=True, capture_output=True, timeout=600, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=command, timeout=timeout)
+
+    monkeypatch.setattr("subprocess.run", mock_run)
+    code, output = deps.run_command(["sleep", "10"], timeout=5)
+    assert code == 1
+    assert "timed out after 5s" in output
+
 
 
