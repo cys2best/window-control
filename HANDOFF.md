@@ -19,6 +19,57 @@ Plan/task identifiers belong here and in workflow state, not in commit subjects.
 
 ---
 
+### 2026-09-05 22:42 — claude
+- Finished: 2026-09-05-react-unified-frontend/task-10 (final task) and the
+  plan's own final whole-branch review, via superpowers:subagent-driven-development.
+  Task 10 itself (commit 4437d8c) had been implemented and committed by an
+  earlier session; this session resumed it, dispatched the task-10 reviewer
+  that earlier session never got a result back from, ran one fix round
+  (commit 8800659), a scoped re-review confirming both fixes independently,
+  then the plan's final whole-branch review (commit range 1a53f08..8800659,
+  20 commits). Both reviews came back clean.
+- Ruling (real, found during task-10's own review, not hypothetical): the
+  original implementation had 2 Critical bugs it had reported as safe —
+  (1) `webview.start()` was called from a `threading.Thread` in
+  `src/main.py`; the installed pywebview 6.2.1 raises unconditionally off
+  the main thread, so "Open App" could never actually open a window; (2)
+  Next's static-export client router fetches `<path>.txt` RSC payloads for
+  soft navigation, the server served none of them, so the app's default
+  post-login destination (`router.replace("/instances")`) silently
+  hard-navigated onto the pre-existing JSON `GET /instances` API route
+  instead of the page shell — the exact opposite of what the report and
+  `docs/PROJECT_CONTEXT.md`'s Decisions log had claimed. Fixed: pywebview
+  now runs in a separate subprocess (`apps/desktop/webview_main.py`);
+  FastAPI now serves the `.txt` RSC payloads and content-negotiates
+  `GET /instances` (HTML vs JSON) via one shared `_prefers_html` predicate
+  used identically by the auth gate and the handler, so they can't diverge.
+  Also fixed in the same round: dropped PWA manifest/viewport-lock/
+  apple-mobile-web-app meta tags (real regression for a touch-streaming
+  client) were restored via `apps/web`'s Next metadata/viewport exports.
+  Both fixes independently re-verified by a scoped re-review (ran a real
+  child-process thread-identity probe, grepped the real built export
+  rather than trusting the report).
+- Verified (final whole-branch review, sonnet — opus hit a session rate
+  limit mid-review and was re-dispatched): 0 Critical, 0 Important across
+  the whole plan. Specifically re-checked the auth-gate composition risk
+  this repo has a documented incident for — confirmed `_prefers_html`
+  is one shared predicate, not two lookalikes, and the claim-once-then-lock
+  ownership logic from 2026-09-04-public-session-isolation has zero diff
+  across this entire plan's range. `src/client`/`tests/client` deletion
+  confirmed complete, no dangling references anywhere. CI wiring for
+  `packages/core`/`packages/ui`/`apps/web` confirmed pinned by real test
+  assertions, not just documented commands.
+- Next: this plan is fully complete. Real Windows hardware verification of
+  the pywebview desktop shell (the "Open App" flow, the frozen-build
+  `--webview-window` self-reinvoke path, and the overall PyInstaller
+  build) remains outstanding — same shape as every other `apps/desktop`/
+  `engine/`-touching plan in this repo, not blocking this plan's own
+  closure. Proceeding to superpowers:finishing-a-development-branch.
+- Blockers: none for this plan. Windows manual verification is the
+  standing follow-up, as usual.
+
+---
+
 ### 2026-09-04 21:45 — claude
 - Finished: 2026-09-04-public-session-isolation (all 9 code tasks +
   final whole-branch review + one fix wave, executed via
