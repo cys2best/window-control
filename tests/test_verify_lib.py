@@ -105,6 +105,33 @@ def test_file_prompt_channel_round_trip_pass(tmp_path):
     assert not (evidence_dir / CutoverFilePromptChannel.PROMPT_FILENAME).exists()
 
 
+def test_file_prompt_channel_round_trip_fail(tmp_path):
+    evidence_dir = tmp_path / "engine" / "test" / "run-fail"
+    evidence_dir.mkdir(parents=True)
+    channel = CutoverFilePromptChannel(evidence_dir, poll_seconds=0.01)
+
+    def answer_from_another_process():
+        deadline = time.monotonic() + 5
+        prompt_path = evidence_dir / CutoverFilePromptChannel.PROMPT_FILENAME
+        while not prompt_path.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert prompt_path.exists(), "prompt file was never written"
+        submit_file_confirmation(
+            tmp_path,
+            "FAIL",
+            evidence_glob="run-*",
+        )
+
+    import threading
+
+    responder = threading.Thread(target=answer_from_another_process)
+    responder.start()
+    result = channel.prompt("please confirm", checkpoint="my_gate")
+    responder.join(timeout=5)
+    assert result == "FAIL"
+    assert not (evidence_dir / CutoverFilePromptChannel.PROMPT_FILENAME).exists()
+
+
 def test_submit_file_confirmation_rejects_invalid_result(tmp_path):
     with pytest.raises(VerifyLibError, match="PASS or FAIL"):
         submit_file_confirmation(tmp_path, "MAYBE", evidence_glob="anything-*")

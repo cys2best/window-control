@@ -28,16 +28,30 @@ from urllib.parse import parse_qsl, quote, urlsplit, urlunsplit
 
 import httpx
 
-import scripts.verify_lib as _verify_lib
-from scripts.verify_lib import (
-    CutoverFilePromptChannel,
-    OwnedProcess,
-    _pid_started_at,
-    _read_json,
-    _valid_prompt,
-    _write_json_atomic,
-    submit_file_confirmation as _lib_submit_file_confirmation,
-)
+try:
+    import scripts.verify_lib as _verify_lib
+    from scripts.verify_lib import (
+        CutoverFilePromptChannel,
+        OwnedProcess,
+        VerifyLibError,
+        _pid_started_at,
+        _read_json,
+        _valid_prompt,
+        _write_json_atomic,
+        submit_file_confirmation as _lib_submit_file_confirmation,
+    )
+except ModuleNotFoundError:
+    import verify_lib as _verify_lib  # type: ignore[no-redef]
+    from verify_lib import (  # type: ignore[no-redef]
+        CutoverFilePromptChannel,
+        OwnedProcess,
+        VerifyLibError,
+        _pid_started_at,
+        _read_json,
+        _valid_prompt,
+        _write_json_atomic,
+        submit_file_confirmation as _lib_submit_file_confirmation,
+    )
 
 
 class _VerifierModule(sys.modules[__name__].__class__):
@@ -161,7 +175,10 @@ def _safe_detail(value: Any) -> str:
 
 
 def submit_file_confirmation(repo_root: Path, result: str) -> Path:
-    return _lib_submit_file_confirmation(repo_root, result, evidence_glob="engine-cutover-*")
+    try:
+        return _lib_submit_file_confirmation(repo_root, result, evidence_glob="engine-cutover-*")
+    except VerifyLibError as error:
+        raise CutoverError(str(error)) from error
 
 
 
@@ -2075,7 +2092,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.confirm:
         try:
             path = submit_file_confirmation(args.repo_root, args.confirm)
-        except CutoverError as error:
+        except (CutoverError, VerifyLibError) as error:
             print(f"FAIL: {_safe_detail(error)}")
             return 1
         print(f"Submitted {args.confirm} confirmation to {path.parent.name}")
