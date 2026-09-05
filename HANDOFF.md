@@ -19,10 +19,10 @@ Plan/task identifiers belong here and in workflow state, not in commit subjects.
 
 ---
 
-### 2026-09-06 01:08 — codex
+### 2026-09-06 01:16 — codex
 - Claiming: none
-- Finished: frontend-cutover-verifier/task-6
-- Next: frontend-cutover-verifier/task-7 is ready
+- Finished: frontend-cutover-verifier/task-7
+- Next: frontend-cutover-verifier/task-8 is ready
 - Blockers: none
 
 ### 2026-09-06 00:59 — codex
