@@ -130,6 +130,16 @@ jobs:
           name: engine-windows
           path: src\assets\engine
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build apps/web's static export
+        run: |
+          npm install
+          npm run build -w apps/web
+        shell: cmd
+
       - name: Build EXE with PyInstaller
         run: uv run pyinstaller build/window_control.spec --distpath dist --workpath build/work --noconfirm
         shell: cmd

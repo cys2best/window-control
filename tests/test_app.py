@@ -54,17 +54,32 @@ def test_get_instances_empty():
     assert r.json() == []
 
 
-def test_index_cache_busts_static_assets():
-    # The installed iOS PWA has no service worker and caches /static/*.js hard,
-    # so a client change without a URL change kept serving stale JS (white
-    # screen). index must append ?v=<version> to js/css and send no-cache.
-    from config import VERSION
-    client, _ = _make_client()
-    r = client.get("/")
-    if r.status_code == 200:
-        assert f"app.js?v={VERSION}" in r.text
-        assert f"style.css?v={VERSION}" in r.text
-        assert "no-cache" in r.headers.get("cache-control", "")
+def test_index_serves_apps_web_export_uncached_and_unrewritten(tmp_path):
+    # apps/web (Next.js, output: "export") content-hashes its own asset
+    # filenames (e.g. main-app-<hash>.js), so unlike the old hand-rolled
+    # client, index.html needs no ?v=<VERSION> query-string rewrite to
+    # cache-bust -- a content change already changes the hash/URL. This
+    # test proves the served HTML is passed through byte-for-byte (no
+    # rewrite reintroduced) while still disabling caching on the HTML
+    # document itself (the one thing that can go legitimately stale: which
+    # hashed bundle it points at).
+    import server.app as app_module
+    fake_html = '<html><script src="/_next/static/chunks/main-app-abc123.js"></script></html>'
+    (tmp_path / "index.html").write_text(fake_html)
+    with patch.object(app_module, "WEB_BUILD_DIR", str(tmp_path)):
+        client, _ = _make_client()
+        r = client.get("/")
+    assert r.status_code == 200
+    assert r.text == fake_html
+    assert "no-cache" in r.headers.get("cache-control", "")
+
+
+def test_index_missing_build_returns_500():
+    import server.app as app_module
+    with patch.object(app_module, "WEB_BUILD_DIR", "/nonexistent/path"):
+        client, _ = _make_client()
+        r = client.get("/")
+    assert r.status_code == 500
 
 
 def test_get_instances_with_data():
@@ -223,7 +238,25 @@ def test_legacy_android_mjpeg_routes_are_not_registered():
     client, _ = _make_client()
     registered_paths = {route.path for route in client.app.routes}
 
-    assert registered_paths.isdisjoint({"/stream", "/stats", "/reconnect", "/quality"})
+    # "/stream" is deliberately excluded from this set: it's now apps/web's
+    # stream-view page-shell route (GET, serves stream.html -- see
+    # test_stream_route_serves_web_page_not_legacy_mjpeg below), not the
+    # removed Android MJPEG multipart endpoint that used to live there.
+    assert registered_paths.isdisjoint({"/stats", "/reconnect", "/quality"})
+
+
+def test_stream_route_serves_web_page_not_legacy_mjpeg(tmp_path):
+    # Confirms "/stream" being a registered route again (excluded above)
+    # is apps/web's static page shell, not a resurrection of the removed
+    # Android MJPEG multipart-response endpoint.
+    import server.app as app_module
+    (tmp_path / "stream.html").write_text("<html>stream shell</html>")
+    with patch.object(app_module, "WEB_BUILD_DIR", str(tmp_path)):
+        client, _ = _make_client()
+        r = client.get("/stream")
+    assert r.status_code == 200
+    assert "multipart" not in r.headers.get("content-type", "")
+    assert r.text == "<html>stream shell</html>"
 
 
 def test_android_mjpeg_runtime_is_absent():

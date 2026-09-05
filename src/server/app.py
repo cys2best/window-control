@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.routing import Match
 
-from config import CLIENT_DIR, STUN_PORT, TIER_ORDER
+from config import WEB_BUILD_DIR, STUN_PORT, TIER_ORDER
 from server import adb_manager
 from server import auth
 from server import install_identity
@@ -27,8 +27,12 @@ log = logging.getLogger(__name__)
 _tunnel_task: "asyncio.Task | None" = None
 
 # Routes reachable without a JWT even when Supabase auth is enabled —
-# just enough to load the login/register UI and its Supabase config.
-_AUTH_EXEMPT_PATHS = {"/", "/auth/config"}
+# just enough to load the login/register UI and its Supabase config. These
+# are apps/web's page-shell HTML routes: each is a static JS bundle with no
+# embedded user data (same reasoning that exempted the old single-page
+# client's "/" wholesale) -- the actual protected data lives behind the
+# JSON API routes below, which stay gated.
+_AUTH_EXEMPT_PATHS = {"/", "/login", "/setup", "/stream", "/auth/config"}
 
 
 def _log(msg: str):
@@ -214,7 +218,7 @@ def create_app(instance_manager: InstanceManager) -> FastAPI:
         # of letting them fall through to the router's normal 404. Only gate
         # paths that actually resolve to a registered route.
         if auth.auth_enabled() and path not in _AUTH_EXEMPT_PATHS \
-                and not path.startswith("/static/") \
+                and not path.startswith("/_next/") \
                 and any(route.matches(request.scope)[0] != Match.NONE
                          for route in app.router.routes):
             user = current_user(request)
@@ -282,25 +286,57 @@ def create_app(instance_manager: InstanceManager) -> FastAPI:
                 pass
 
     # ── Static / index ───────────────────────────────────────────────────────
+    # apps/web (Next.js, output: "export") replaces the old hand-rolled
+    # src/client single-page app. Its build emits one static HTML file per
+    # route (index/login/setup/instances/stream) plus content-hashed
+    # `_next/static/**` chunk filenames -- e.g. `main-app-<hash>.js` -- so
+    # the old ?v=<VERSION> query-string cache-busting rewrite (which existed
+    # solely because the previous client's app.js/style.css URLs never
+    # changed on their own) is redundant here and has been removed: a
+    # content change always changes the hash, which already forces a fresh
+    # fetch. Confirmed by inspecting a real `npm run build -w apps/web`
+    # output's index.html rather than assumed.
+    #
+    # NOTE: `/instances` has no page route registered here on purpose --
+    # it collides with the JSON API route of the same path below (a real
+    # gap the Next.js multi-route export introduces that the old
+    # single-page client never had, discovered while wiring this up). The
+    # JSON route wins, matching the existing tested contract that
+    # packages/core's API client and apps/mobile depend on. In-app
+    # navigation to that screen is unaffected (Next's client-side router
+    # transitions there without a fresh top-level GET to "/instances"); the
+    # only actual gap is a hard reload/direct navigation to the literal
+    # "/instances" URL in a regular browser tab, which would receive JSON
+    # instead of the app shell. Not reachable through this app's own
+    # pywebview shell (no address bar) or normal PWA use (no server-side
+    # top-level navigation there either); a real fix would need renaming
+    # one side's path, which is out of this task's scope.
 
-    @app.get("/")
-    async def index():
-        html_path = os.path.join(CLIENT_DIR, "index.html")
+    def _serve_web_page(filename: str) -> HTMLResponse:
+        html_path = os.path.join(WEB_BUILD_DIR, filename)
         if os.path.exists(html_path):
             html = Path(html_path).read_text()
-            # Cache-bust the static asset URLs with the app version. The installed
-            # iOS PWA caches /static/*.js hard and has no service worker to purge,
-            # so after a client change it kept running the old app.js (which hit
-            # the removed /active/whep) → white screen. Appending ?v=<version>
-            # makes the URL change whenever we ship, forcing a fresh fetch.
-            from config import VERSION
-            html = html.replace('.js"', f'.js?v={VERSION}"')
-            html = html.replace('.css"', f'.css?v={VERSION}"')
             return HTMLResponse(
                 html,
                 headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
             )
         return HTMLResponse("<h1>Client not found</h1>", status_code=500)
+
+    @app.get("/")
+    async def index():
+        return _serve_web_page("index.html")
+
+    @app.get("/login")
+    async def login_page():
+        return _serve_web_page("login.html")
+
+    @app.get("/setup")
+    async def setup_page():
+        return _serve_web_page("setup.html")
+
+    @app.get("/stream")
+    async def stream_page():
+        return _serve_web_page("stream.html")
 
     @app.get("/auth/config")
     async def auth_config():
@@ -412,7 +448,15 @@ def create_app(instance_manager: InstanceManager) -> FastAPI:
     async def preview(window_id: str, request: Request):
         return await _capture_preview(window_id)
 
-    if os.path.isdir(CLIENT_DIR):
-        app.mount("/static", StaticFiles(directory=CLIENT_DIR), name="static")
+    # apps/web's content-hashed asset chunks (main-app-<hash>.js, etc.) --
+    # every <script src> in its exported HTML is rooted at "/_next/...",
+    # so this must be mounted at "/_next" to match, not "/static" (the old
+    # client's assets lived under a "/static" prefix by choice, not by any
+    # framework requirement). Mounted last, after every @app.get/@app.post
+    # route above and the four page routes just registered, so it can only
+    # ever catch paths none of those already claimed.
+    _next_dir = os.path.join(WEB_BUILD_DIR, "_next")
+    if os.path.isdir(_next_dir):
+        app.mount("/_next", StaticFiles(directory=_next_dir), name="web_static")
 
     return app

@@ -1,4 +1,4 @@
-# src/gui/tray.py
+# apps/desktop/tray.py
 import sys
 import threading
 from pathlib import Path

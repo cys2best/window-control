@@ -107,15 +107,40 @@ def test_expired_jwt_is_rejected():
     assert response.status_code == 401
 
 
-def test_login_route_is_removed():
+def test_legacy_login_post_is_removed():
+    # "/login" now exists again as apps/web's GET-only login page-shell
+    # route (see test_web_page_shells_served_without_auth above), so a POST
+    # to it correctly 405s (path exists, method doesn't) rather than 404ing
+    # -- the thing this test actually guards, that the legacy shared-secret
+    # POST /login auth mechanism itself is gone, still holds either way.
     client, _, _ = _make_authed_client()
     r = client.post("/login", json={"token": "anything"})
-    assert r.status_code == 404
+    assert r.status_code == 405
 
 
 def test_index_served_without_auth_so_login_page_can_load():
     client, _, _ = _make_authed_client()
     r = client.get("/")
+    assert r.status_code != 401
+
+
+@pytest.mark.parametrize("path", ["/login", "/setup", "/stream"])
+def test_web_page_shells_served_without_auth(path):
+    # apps/web's page-shell HTML routes carry no user data (same reasoning
+    # that already exempted "/") -- an unauthenticated visitor must be able
+    # to reach /login and /setup at all, and /stream's own shell is no more
+    # sensitive than /'s was under the old single-page client. Real
+    # protection is enforced at the JSON API layer, which stays gated.
+    client, _, _ = _make_authed_client()
+    r = client.get(path)
+    assert r.status_code != 401
+
+
+def test_next_static_assets_served_without_auth():
+    client, _, _ = _make_authed_client()
+    r = client.get("/_next/static/chunks/does-not-exist.js")
+    # 404 (no such file) is fine -- the point is the auth gate doesn't
+    # intercept it with a 401 first.
     assert r.status_code != 401
 
 

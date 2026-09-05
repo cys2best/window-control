@@ -3,7 +3,7 @@ import sys
 
 PORT = 8080
 DEV_MODE = sys.platform != "win32"
-VERSION = "2.3.30"
+VERSION = "2.3.31"
 GITHUB_REPO = "cys2best/window-control"
 
 TIER_ORDER = ["480", "720", "1080", "1440"]
@@ -86,8 +86,25 @@ def get_base_path():
 
 
 BASE_PATH = get_base_path()
-CLIENT_DIR = os.path.join(BASE_PATH, "client")
 ASSETS_DIR = os.path.join(BASE_PATH, "assets")
+
+
+def get_web_build_dir() -> str:
+    """apps/web's Next.js static export (`npm run build -w apps/web`,
+    output: "export" -> apps/web/out). In a dev checkout BASE_PATH is
+    src/, a sibling of the repo-root apps/ directory, so the build output
+    is reached by going up one level. In a PyInstaller-frozen build
+    BASE_PATH is sys._MEIPASS (the extracted bundle root); window_control
+    .spec stages apps/web/out's contents as a top-level "web" datas entry
+    there, mirroring how "assets" and (previously) "client" were staged --
+    NOT as "../apps/web/out", which wouldn't exist inside the bundle.
+    """
+    if hasattr(sys, "_MEIPASS"):
+        return os.path.join(BASE_PATH, "web")
+    return os.path.join(os.path.dirname(BASE_PATH), "apps", "web", "out")
+
+
+WEB_BUILD_DIR = get_web_build_dir()
 
 
 def engine_exe_path() -> str:

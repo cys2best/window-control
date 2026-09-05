@@ -11,16 +11,28 @@ PWA client. Distributed as a Windows installer built via PyInstaller.
 ## Tech stack
 - Language / framework: Python 3.11+ / FastAPI (primary app, `src/`); C++ /
   WebRTC (new engine, `engine/`, Windows-only, successfully built and verified
-  on the Windows Host PC on 2026-08-31 — see `HANDOFF.md`); Expo / React Native
-  (`mobile/`); Terraform (`infra/`, VPS: coturn TURN server + signaling
-  bridge).
-- Package manager: `uv` (Python, `src/`); npm (`mobile/`); vcpkg + CMake
-  (`engine/`, Windows CI only).
+  on the Windows Host PC on 2026-08-31 — see `HANDOFF.md`); TypeScript / React
+  Native / react-native-web (`packages/core`, `packages/ui`, shared between
+  `apps/web` and `apps/mobile`); Next.js (`apps/web`, static export, the
+  browser/PWA client); Expo / React Native (`apps/mobile`); Python /
+  `pywebview` (`apps/desktop`, wraps `apps/web`'s build in a native window
+  alongside the existing PyQt5 tray/launcher); Terraform (`infra/`, VPS:
+  coturn TURN server + signaling bridge).
+- Package manager: `uv` (Python, `src/` + `apps/desktop`); npm workspaces at
+  the repo root (`apps/web`, `apps/mobile`, `packages/core`, `packages/ui`);
+  vcpkg + CMake (`engine/`, Windows CI only).
 - Test runner: `pytest` via `uv run pytest tests/ -v` (`src/`, runs on Mac
   against `src/stubs/` — Win32/mss stubbed, so a pass doesn't confirm
-  Windows behavior); `node --test tests/client/engine_session.test.js`
-  (browser client modules, repo root); `node:test` via `npm test`
-  (`infra/vps/signaling/`); `jest` via `npm test` (`mobile/`); `engine_tests.exe`
+  Windows behavior) and `uv run pytest apps/desktop/ -v` (same Python
+  toolchain, not a separate npm workspace); `node:test` via `npm test`
+  (`infra/vps/signaling/`); `jest` via `npm run test:core` / `npm run
+  test:ui` (root-level, `packages/core`/`packages/ui`), and `npm test -w
+  apps/web`. `apps/mobile` has intentionally had zero local test files
+  since Task 8 of the 2026-09-05 unified-frontend cutover moved every
+  screen/component test into `packages/ui` alongside the code it tests —
+  `cd apps/mobile && npx jest` exiting "No tests found" is the expected,
+  correct result, not a regression to chase; its coverage lives in
+  `packages/core`/`packages/ui` instead. `engine_tests.exe`
   (gtest, Windows-only, runs in CI's `build-engine` job, excludes
   `SignalingClient.*` — no server available there).
 - Lint / format command: not detected — fill in manually.
@@ -28,20 +40,25 @@ PWA client. Distributed as a Windows installer built via PyInstaller.
 ## Build & verify commands
 ```
 # install
-uv sync                      # src/
-npm install                  # mobile/ (run from inside mobile/)
+uv sync                      # src/, apps/desktop
+npm install                  # repo root (npm workspaces: apps/web, apps/mobile, packages/core, packages/ui)
 
 # build
+npm run build -w apps/web    # apps/web/out (Next.js static export) -- build this BEFORE running src/main.py or packaging; src/server/app.py serves it, build/window_control.spec bundles it
 uv run python src/main.py    # run the app directly
 cmake -S engine -B engine/build ...  # engine/, Windows-only, see engine/BUILD_WINDOWS.md
 python scripts/bump_version.py       # sync VERSION across config.py / pyproject.toml / installer.iss
 
 # test
 uv run pytest tests/ -v      # src/ (Mac-stubbed, doesn't confirm Windows behavior)
-npm test                     # mobile/ (jest)
+uv run pytest apps/desktop/ -v  # apps/desktop (tray.py, window.py)
+npm run test:core            # packages/core (jest)
+npm run test:ui              # packages/ui (jest)
+npm test -w apps/web         # apps/web (jest)
 npm test                     # infra/vps/signaling/ (node:test, relay contract)
-node --test tests/client/engine_session.test.js   # browser client (node:test)
-# tests/client/browser_cutover.test.js is known-failing (pre-existing rot)
+# apps/mobile has no local test files (all moved into packages/core/ui in
+# Task 8 of the 2026-09-05 cutover) -- `cd apps/mobile && npx jest`
+# correctly exits "No tests found"; that is not a regression.
 
 # lint
 # not detected — fill in manually
@@ -71,8 +88,14 @@ node --test tests/client/engine_session.test.js   # browser client (node:test)
     `download_assets.py`. `mediamtx` is no longer part of the product; a
     stale `src/assets/mediamtx/` from an old checkout is removed by
     `build/build.bat` before packaging.
-  - After editing frontend JS/CSS, bump `VERSION` in `src/config.py` —
-    `app.py` appends `?v={VERSION}` to asset URLs to bust browser cache.
+  - After editing frontend code, bump `VERSION` in `src/config.py`. Before
+    the 2026-09-05 unified-frontend cutover this mattered because
+    `app.py` appended `?v={VERSION}` to the old hand-rolled client's
+    fixed-name asset URLs to bust browser cache; `apps/web`'s Next.js
+    export content-hashes its own bundle filenames instead, so that
+    rewrite is gone from `app.py` (confirmed redundant by inspecting a
+    real build's output before removing it) — the bump-on-change habit
+    is now just general hygiene, not load-bearing for cache-busting.
   - `docs/*` is gitignored except `docs/TROUBLESHOOTING.md` and files
     force-added before the ignore rule (e.g. `docs/superpowers/`) — a
     newly created `docs/` file needs `git add -f` to be tracked.
@@ -100,32 +123,86 @@ node --test tests/client/engine_session.test.js   # browser client (node:test)
     the same plan's final review. Always pair `openClientWithToken` with
     `const closeCode = await waitForCloseCode(ws, 200); assert.strictEqual(closeCode, null);`
     when a test's whole point is proving acceptance.
-  - `tests/client/*.test.js` (browser client modules, repo root) is not
-    wired into any npm script or CI — it's only run via the exact command
-    documented in this file's Build & verify commands section. A task
-    that changes `src/client/*.js` without explicitly running that
-    command can silently regress it undetected (happened once already:
-    a field rename dropped `tests/client/engine_session.test.js` from
-    25/25 to 14/25, unnoticed until a final whole-branch review measured
-    it directly). Always run it after touching `src/client/`.
+  - Historical lesson (the underlying files no longer exist, but the
+    principle still applies elsewhere): `tests/client/*.test.js` tested
+    the old hand-rolled `src/client/*.js` and was never wired into any
+    npm script or CI — only documented as a manual command in this file.
+    A task that changed `src/client/*.js` without explicitly running that
+    command could silently regress it undetected (happened once: a field
+    rename dropped `tests/client/engine_session.test.js` from 25/25 to
+    14/25, unnoticed until a final whole-branch review measured it
+    directly). The 2026-09-05 unified-frontend cutover deleted both
+    `src/client/` and `tests/client/*.test.js` together (their target
+    code and its only test suite, dead as a pair) — the equivalent logic
+    now lives in `packages/core`/`packages/ui`/`apps/web`, each with a
+    real jest suite wired into `.github/workflows/frontend-packages.yml`
+    from the commit that added it, specifically to not repeat this. If a
+    new test suite is ever added without wiring it into CI, treat that as
+    the same risk recurring.
 
 ## Plan & spec structure
 - Multiple plans can be active at once. See HANDOFF.md for which agent
   owns which plan/task right now.
 
 ## Architecture notes
-- Monorepo with four components:
+- Monorepo. Python side:
   - `src/` — main Python/FastAPI Windows app (primary, most active).
+    Serves `apps/web`'s static export as its UI; has no client code of
+    its own.
+  - `apps/desktop` — pywebview desktop shell (`tray.py`, `window.py`),
+    part of the same Python/`uv` toolchain as `src/` (not an npm
+    workspace), embedding `apps/web`'s build in a native window.
   - `engine/` — new C++ WebRTC engine intended to replace parts of `src/`,
     Windows-only, unbuilt/unverified.
-  - `mobile/` — Expo/React Native iPhone client.
-  - `infra/` — Terraform for the VPS (coturn TURN server + signaling
-    bridge) supporting the public WebRTC path.
-- CI (`.github/workflows/build.yml`) builds the C++ engine on
-  `windows-latest`, then builds the installer; triggered on `v*` tags.
+- npm-workspaces side (root `package.json`), replacing the old
+  `src/client`/top-level `mobile/` split (2026-09-05 unified-frontend
+  cutover — see Decisions log):
+  - `packages/core` — shared TypeScript logic (API client, WHEP/engine
+    session state machine, quality tiers, input-channel protocol,
+    Supabase auth) consumed by both `apps/web` and `apps/mobile`.
+  - `packages/ui` — shared React components/screens (`react-native-web`)
+    built on `packages/core`, consumed the same way.
+  - `apps/web` — Next.js app (`output: "export"`), the browser/PWA
+    client `src/server/app.py` serves.
+  - `apps/mobile` — Expo/React Native iPhone client (relocated from the
+    old top-level `mobile/`), refactored onto `packages/core`/`packages/ui`.
+- `infra/` — Terraform for the VPS (coturn TURN server + signaling
+  bridge) supporting the public WebRTC path.
+- CI: `.github/workflows/build.yml` builds `apps/web`'s static export and
+  the C++ engine on `windows-latest`, then builds the installer;
+  triggered on `v*` tags. `.github/workflows/frontend-packages.yml` runs
+  `packages/core`/`packages/ui`/`apps/web`'s jest suites on every push/PR
+  (not tag-gated).
 
 ## Decisions log
 <!-- Promote real decisions here as they're made. Newest on top. -->
+- 2026-09-05: unified the three duplicated frontends (`src/client` vanilla
+  JS, `mobile/` Expo/React Native, and desktop's "open a system browser"
+  gap) into one monorepo: `packages/core` (shared logic) + `packages/ui`
+  (shared `react-native-web` components), consumed by `apps/web` (new
+  Next.js static export, replaces `src/client`), `apps/mobile` (relocated
+  `mobile/`, refactored onto the shared packages), and `apps/desktop`
+  (new `pywebview` shell embedding `apps/web`'s build, alongside the
+  existing PyQt5 tray/launcher rather than replacing it — the launcher's
+  QR-pairing/update-banner panel stayed, gaining an "Open App" button
+  rather than being removed, since it does something `apps/web` doesn't).
+  Single cutover: `src/client/` and `mobile/`'s local duplicated modules
+  were deleted in the same task that finished wiring `apps/desktop`
+  (Task 10), not staged incrementally. Real gaps found and fixed while
+  wiring FastAPI to the new build (none were called out by the plan
+  going in): apps/web's page routes for `/login`/`/stream` collide by
+  path with a pre-existing legacy `POST /login` route and a removed
+  legacy Android-MJPEG `/stream` route respectively (resolved: the new
+  GET page routes and old routes don't actually conflict in practice —
+  POST /login correctly 405s instead of 404ing, and /stream now serves
+  the page shell, not MJPEG); `/instances` collides with the existing
+  JSON API route of the same name and could not be given a page route at
+  all (documented limitation: a hard reload on that exact URL in a
+  regular browser tab gets JSON, not the app shell — unreachable through
+  `apps/desktop`'s pywebview shell, which has no address bar, or through
+  normal in-app client-side navigation). See
+  `docs/superpowers/specs/2026-09-05-react-unified-frontend-design.md`
+  and this plan's Task 10 report for the full account.
 - 2026-09-04: public-relay signaling no longer trusts a secret shared
   across every install (forgeable, and let two installs collide on the
   same session name) — replaced with account-verified access: viewers

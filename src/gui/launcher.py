@@ -28,11 +28,20 @@ def maybe_show_login(parent=None) -> bool:
 
 
 class LauncherWindow(QMainWindow):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, on_open_app=None):
+        """
+        on_open_app: callable() | None — opens the pywebview desktop shell
+        (apps/desktop/window.py's DesktopWindow) pointed at this PC's own
+        served build, so the same app a phone reaches over Tailscale/LAN
+        can also be driven locally. Optional so this window stays
+        constructible on its own (existing tests/callers that don't pass it
+        keep working; the button simply doesn't appear).
+        """
         super().__init__(parent)
         self.setWindowTitle(f"WindowControl v{VERSION}")
         self.setMinimumWidth(420)
         self.resize(460, 600)
+        self._on_open_app = on_open_app
         self._setup_ui()
         self._pending_update_version = None
         self._refresh_ip()
@@ -76,6 +85,13 @@ class LauncherWindow(QMainWindow):
         self._qr_label.setFixedHeight(200)
         self._qr_label.setStyleSheet("background: #ffffff; border-radius: 4px;")
         server_layout.addWidget(self._qr_label)
+
+        if self._on_open_app is not None:
+            self._open_app_btn = QPushButton("Open App")
+            self._open_app_btn.setMinimumHeight(36)
+            self._open_app_btn.setStyleSheet(self._btn_style("#2563eb", "#1d4ed8"))
+            self._open_app_btn.clicked.connect(self._on_open_app)
+            server_layout.addWidget(self._open_app_btn)
 
         layout.addWidget(server_group)
 

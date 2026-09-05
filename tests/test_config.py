@@ -3,7 +3,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from config import PORT, DEV_MODE, get_base_path, CLIENT_DIR, ASSETS_DIR
+from config import PORT, DEV_MODE, get_base_path, WEB_BUILD_DIR, ASSETS_DIR
 
 def test_port_default():
     assert PORT == 8080
@@ -16,8 +16,22 @@ def test_dev_mode_on_mac():
 def test_base_path_returns_string():
     assert isinstance(get_base_path(), str)
 
-def test_client_dir_is_string():
-    assert isinstance(CLIENT_DIR, str)
+def test_web_build_dir_is_string():
+    assert isinstance(WEB_BUILD_DIR, str)
+
+
+def test_web_build_dir_resolves_development_and_frozen_layouts(monkeypatch):
+    import config
+
+    monkeypatch.delattr(config.sys, "_MEIPASS", raising=False)
+    monkeypatch.setattr(config, "BASE_PATH", os.path.join("C:\\repo", "src"))
+    assert config.get_web_build_dir() == os.path.join(
+        "C:\\repo", "apps", "web", "out"
+    )
+
+    monkeypatch.setattr(config.sys, "_MEIPASS", "C:\\bundle", raising=False)
+    monkeypatch.setattr(config, "BASE_PATH", "C:\\bundle")
+    assert config.get_web_build_dir() == os.path.join("C:\\bundle", "web")
 
 def test_quality_tiers_shape():
     from config import QUALITY_TIERS, TIER_ORDER, DEFAULT_TIER

@@ -16,6 +16,22 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname
 
 import config
 
+# apps/desktop/{tray,window}.py live outside src/ (a sibling app directory,
+# like apps/web and apps/mobile), so unlike gui.tray/gui.launcher they are
+# not naturally importable via src/ being main.py's own directory. In a dev
+# checkout, add apps/desktop to sys.path so `import tray` / `from window
+# import DesktopWindow` resolve the same way `import gui.tray` already does
+# for modules that stayed under src/. In a PyInstaller-frozen build this is
+# unnecessary and the directory won't exist at this relative path -- those
+# modules are instead pulled into the frozen bundle via window_control.spec's
+# `pathex`, which PyInstaller's own import graph resolves without any
+# runtime sys.path change.
+if not hasattr(sys, "_MEIPASS"):
+    import pathlib
+    _desktop_dir = str(pathlib.Path(__file__).resolve().parent.parent / "apps" / "desktop")
+    if _desktop_dir not in sys.path:
+        sys.path.insert(0, _desktop_dir)
+
 
 def _log_early(msg: str):
     for _p in [r"C:\ProgramData\WindowControl", r"C:\Windows\Temp", r"C:\Temp"]:
@@ -52,7 +68,8 @@ try:
     from server.app import create_app
     from server.instance_manager import InstanceManager
     from gui.launcher import LauncherWindow, maybe_show_login
-    from gui.tray import TrayIcon
+    from tray import TrayIcon
+    from window import DesktopWindow
     _log_early("[gui-imports] app modules OK")
 except Exception:
     import traceback as _tb
@@ -237,7 +254,25 @@ def main():
         _log("[GUI] login cancelled — exiting without showing launcher")
         return
 
-    launcher = LauncherWindow()
+    # DesktopWindow embeds apps/web's served build (login/instances/stream)
+    # in a pywebview window -- the same content a phone reaches over
+    # Tailscale/LAN, now viewable locally too. PyQt5's QApplication (created
+    # above) already owns this process's main GUI thread via app.exec_()
+    # below, and pywebview's own webview.start() is a second, separate
+    # blocking GUI loop -- it cannot also run on the main thread. Running it
+    # on a background thread instead is pywebview's documented way to embed
+    # alongside a host application; it is started lazily, once, the first
+    # time a webview window is actually needed, not eagerly at launch.
+    desktop_window = DesktopWindow(f"http://127.0.0.1:{PORT}")
+    _webview_loop_started = {"done": False}
+
+    def open_app_window():
+        desktop_window.show()
+        if not _webview_loop_started["done"]:
+            _webview_loop_started["done"] = True
+            threading.Thread(target=desktop_window.start, daemon=True).start()
+
+    launcher = LauncherWindow(on_open_app=open_app_window)
 
     def show_launcher():
         launcher.show()

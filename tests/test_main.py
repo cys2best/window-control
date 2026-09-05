@@ -119,7 +119,7 @@ class _FakeApplication:
 
 
 class _FakeLauncher:
-    def __init__(self):
+    def __init__(self, on_open_app=None):
         pass
 
     def show(self):
@@ -215,7 +215,7 @@ def test_main_starts_server_without_android_mjpeg_pipeline(monkeypatch):
 
 
 def test_config_imports():
-    from config import PORT, VERSION, SCRCPY_PATH, CLIENT_DIR, ASSETS_DIR, engine_exe_path
+    from config import PORT, VERSION, SCRCPY_PATH, WEB_BUILD_DIR, ASSETS_DIR, engine_exe_path
     assert PORT == 8080
     assert callable(engine_exe_path)
 

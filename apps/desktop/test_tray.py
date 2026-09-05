@@ -1,17 +1,17 @@
-# tests/test_tray.py
+# apps/desktop/test_tray.py
 import sys
 import pytest
 from unittest.mock import MagicMock, patch
 
 
 def test_tray_module_importable():
-    import gui.tray
-    assert hasattr(gui.tray, 'TrayIcon')
+    import tray
+    assert hasattr(tray, 'TrayIcon')
 
 
 def test_tray_icon_construction():
     """TrayIcon can be constructed with three callables."""
-    from gui.tray import TrayIcon
+    from tray import TrayIcon
     show = MagicMock()
     stop = MagicMock()
     exit_ = MagicMock()
@@ -25,7 +25,7 @@ def test_tray_icon_construction():
 
 def test_load_tray_icon_fallback(tmp_path, monkeypatch):
     """Falls back to blue square when tray_icon.png missing."""
-    from gui import tray as tray_mod
+    import tray as tray_mod
     import importlib
     importlib.reload(tray_mod)
     # Patch ASSETS_DIR after reload so the monkeypatch isn't undone by the reload
@@ -37,7 +37,7 @@ def test_load_tray_icon_fallback(tmp_path, monkeypatch):
 
 def test_handle_exit_calls_callback():
     """_handle_exit calls on_exit and stops the icon."""
-    from gui.tray import TrayIcon
+    from tray import TrayIcon
     exit_called = []
     tray = TrayIcon(
         on_show=MagicMock(),
@@ -52,7 +52,7 @@ def test_handle_exit_calls_callback():
 
 def test_tray_icon_construction_with_reinstall():
     """TrayIcon accepts on_reinstall callback."""
-    from gui.tray import TrayIcon
+    from tray import TrayIcon
     reinstall = MagicMock()
     tray = TrayIcon(
         on_show=MagicMock(),
@@ -65,7 +65,7 @@ def test_tray_icon_construction_with_reinstall():
 
 def test_handle_reinstall_calls_callback():
     """_handle_reinstall calls on_reinstall."""
-    from gui.tray import TrayIcon
+    from tray import TrayIcon
     called = []
     tray = TrayIcon(
         on_show=MagicMock(),

@@ -52,7 +52,7 @@ Wiring:
 | STUN server | `src/server/stun_server.py` | UDP Binding responder |
 | Start / rebind | `InstanceManager._ensure_stun` in `src/server/instance_manager.py` | binds STUN to the current Tailscale IP; rebinds if the IP changes |
 | Advertise to client | engine-select response includes `ice_servers` | `stun:<tailscale-ip>:3478` (and TURN, for public/remote sessions) |
-| Use it | the browser client's WHEP/WebRTC setup in `src/client/app.js` | `RTCPeerConnection({ iceServers })` |
+| Use it | the shared WHEP/WebRTC session logic in `packages/core/src/webrtc/whep.ts` (consumed by `apps/web` and `apps/desktop`'s pywebview shell) | `RTCPeerConnection({ iceServers })` |
 | Firewall | `src/main.py` | opens UDP `3478` inbound |
 | Config | `STUN_PORT` in `src/config.py` | `3478` |
 
@@ -67,9 +67,13 @@ If `srflx` still shows a `104.x` public IP, the browser's route to
 `100.x:3478` did not go over Tailscale — check Tailscale is up on the browser
 device and that UDP `3478` is open on the server.
 
-> **Safari caches `app.js` aggressively.** After any client change, hard-reload
-> with **Cmd+Option+R**, or the old script (often with public/no STUN) keeps
-> running and the bug looks unfixed.
+> **Historical note:** the old hand-rolled `src/client/app.js` had a fixed
+> filename, so Safari's aggressive caching could keep an old script (often
+> with public/no STUN) running after a client change until a hard-reload
+> (Cmd+Option+R). `apps/web`'s Next.js export content-hashes its bundle
+> filenames instead (`main-app-<hash>.js`), so a real content change always
+> changes the URL and this specific failure mode should no longer occur —
+> if STUN still looks stale after a deploy, suspect something else first.
 
 ---
 

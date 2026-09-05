@@ -36,6 +36,21 @@ if %ERRORLEVEL% NEQ 0 (
     exit /b 1
 )
 
+REM Build apps/web's static export (Next.js, output: "export") so
+REM window_control.spec has an apps\web\out to stage as this build's
+REM served UI (replaces the old src\client, which was committed source and
+REM needed no build step -- apps/web is a build artifact instead).
+call npm install
+if %ERRORLEVEL% NEQ 0 (
+    echo [ERROR] npm install failed.
+    exit /b 1
+)
+call npm run build -w apps/web
+if %ERRORLEVEL% NEQ 0 (
+    echo [ERROR] npm run build -w apps/web failed.
+    exit /b 1
+)
+
 REM Run PyInstaller from build/ directory
 cd /d "%~dp0"
 pyinstaller window_control.spec --distpath ..\dist --workpath ..\build\work --noconfirm
