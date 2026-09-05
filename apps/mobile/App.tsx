@@ -8,7 +8,7 @@ import * as ScreenOrientation from "expo-screen-orientation";
 import { ServerProvider, useServer } from "@wc/core";
 import { plainStorage, secureStorage } from "./src/platform/storage";
 import { RootNavigator } from "./src/navigation/Root";
-import { theme } from "./src/theme/tokens";
+import { theme } from "@wc/ui";
 
 function Gate() {
   const { ready } = useServer();

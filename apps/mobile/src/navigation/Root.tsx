@@ -1,10 +1,7 @@
 import React from "react";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { RTCPeerConnection } from "react-native-webrtc";
-import { ServerSetup } from "../screens/ServerSetup";
-import { Login } from "../screens/Login";
-import { InstanceList } from "../screens/InstanceList";
-import { Stream } from "@wc/ui";
+import { ServerSetup, Login, InstanceList, Stream } from "@wc/ui";
 import { VideoView } from "../platform/VideoView";
 import { useServer } from "@wc/core";
 
