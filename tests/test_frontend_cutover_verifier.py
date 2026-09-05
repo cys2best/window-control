@@ -15,14 +15,19 @@ from scripts.verify_frontend_cutover import (
     _parse_jest_summary,
     _parse_pytest_summary,
     gate_auth_gate,
+    gate_desktop_shell_visual,
     gate_dev_app_health,
     gate_frozen_selfrelaunch,
     gate_installed_app_launch,
     gate_instances_negotiation,
+    gate_leaked_key_forgery_check,
     gate_offline_suites,
     gate_rsc_payloads,
+    gate_supabase_two_account_flow,
     gate_web_routes,
+    main,
     resolve_gate_selection,
+    run,
 )
 
 
@@ -716,6 +721,250 @@ def test_real_deps_sleep(monkeypatch):
     monkeypatch.setattr("time.sleep", lambda s: slept.append(s))
     deps.sleep(3.0)
     assert slept == [3.0]
+
+
+def test_desktop_shell_visual_records_operator_answer():
+    class FakeDepsManual:
+        def manual_confirm(self, message, checkpoint):
+            assert checkpoint == "desktop_shell_visual"
+            return "PASS"
+
+    result = FrontendCutoverResult()
+    gate_desktop_shell_visual(_config(), FakeDepsManual(), result, "requested")
+    assert result.gates["desktop_shell_visual"]["status"] == "PASS"
+
+
+def test_desktop_shell_visual_records_fail_answer():
+    class FakeDepsManual:
+        def manual_confirm(self, message, checkpoint):
+            return "FAIL"
+
+    result = FrontendCutoverResult()
+    gate_desktop_shell_visual(_config(), FakeDepsManual(), result, "requested")
+    assert result.gates["desktop_shell_visual"]["status"] == "FAIL"
+
+
+def test_supabase_two_account_flow_records_fail_answer():
+    class FakeDepsManual:
+        def manual_confirm(self, message, checkpoint):
+            return "FAIL"
+
+    result = FrontendCutoverResult()
+    gate_supabase_two_account_flow(_config(), FakeDepsManual(), result, "requested")
+    assert result.gates["supabase_two_account_flow"]["status"] == "FAIL"
+
+
+def test_supabase_two_account_flow_records_pass_answer():
+    class FakeDepsManual:
+        def manual_confirm(self, message, checkpoint):
+            assert checkpoint == "supabase_two_account_flow"
+            return "PASS"
+
+    result = FrontendCutoverResult()
+    gate_supabase_two_account_flow(_config(), FakeDepsManual(), result, "requested")
+    assert result.gates["supabase_two_account_flow"]["status"] == "PASS"
+
+
+def test_leaked_key_forgery_check_maps_skip_answer_to_skipped_status():
+    class FakeDepsManual:
+        def manual_confirm(self, message, checkpoint):
+            return "SKIP"
+
+    result = FrontendCutoverResult()
+    gate_leaked_key_forgery_check(_config(), FakeDepsManual(), result, "requested")
+    assert result.gates["leaked_key_forgery_check"]["status"] == "SKIPPED"
+
+
+def test_leaked_key_forgery_check_records_pass_and_fail():
+    class FakeDepsPass:
+        def manual_confirm(self, message, checkpoint):
+            assert checkpoint == "leaked_key_forgery_check"
+            return "PASS"
+
+    result = FrontendCutoverResult()
+    gate_leaked_key_forgery_check(_config(), FakeDepsPass(), result, "requested")
+    assert result.gates["leaked_key_forgery_check"]["status"] == "PASS"
+
+    class FakeDepsFail:
+        def manual_confirm(self, message, checkpoint):
+            return "FAIL"
+
+    result = FrontendCutoverResult()
+    gate_leaked_key_forgery_check(_config(), FakeDepsFail(), result, "requested")
+    assert result.gates["leaked_key_forgery_check"]["status"] == "FAIL"
+
+
+def test_run_executes_every_gate_in_order_on_a_full_run(monkeypatch):
+    calls: list[str] = []
+    gate_names_called = []
+
+    def make_gate(name):
+        def gate(config, deps, result, reason):
+            gate_names_called.append(name)
+            result.mark(name, "PASS", reason=reason)
+        return gate
+
+    import scripts.verify_frontend_cutover as module
+
+    for name in GATE_NAMES:
+        monkeypatch.setattr(module, f"gate_{name}", make_gate(name), raising=False)
+
+    result = module.run(_config(), deps=object())
+    assert gate_names_called == list(GATE_NAMES)
+    assert result.status == "PASS"
+
+
+def test_run_with_only_skips_unselected_gates_and_caps_incomplete(monkeypatch):
+    import scripts.verify_frontend_cutover as module
+
+    def make_gate(name):
+        def gate(config, deps, result, reason):
+            result.mark(name, "PASS", reason=reason)
+        return gate
+
+    for name in GATE_NAMES:
+        monkeypatch.setattr(module, f"gate_{name}", make_gate(name), raising=False)
+
+    config = _config(only=("offline_suites",))
+    result = module.run(config, deps=object())
+    assert result.gates["offline_suites"]["status"] == "PASS"
+    assert result.gates["web_routes"]["status"] == "SKIPPED"
+    assert result.status == "INCOMPLETE"
+
+
+def test_run_with_skip_manual_gates_caps_incomplete_even_if_all_pass(monkeypatch):
+    import scripts.verify_frontend_cutover as module
+
+    def make_gate(name):
+        def gate(config, deps, result, reason):
+            result.mark(name, "PASS", reason=reason)
+        return gate
+
+    for name in GATE_NAMES:
+        monkeypatch.setattr(module, f"gate_{name}", make_gate(name), raising=False)
+
+    config = _config(skip_manual_gates=True)
+    result = module.run(config, deps=object())
+    assert result.status == "INCOMPLETE"
+
+
+def test_run_with_skip_installer_skips_exactly_the_three_installer_gates(monkeypatch):
+    import scripts.verify_frontend_cutover as module
+
+    def make_gate(name):
+        def gate(config, deps, result, reason):
+            result.mark(name, "PASS", reason=reason)
+        return gate
+
+    for name in GATE_NAMES:
+        monkeypatch.setattr(module, f"gate_{name}", make_gate(name), raising=False)
+
+    config = _config(skip_installer=True)
+    result = module.run(config, deps=object())
+    for name in ("installed_app_launch", "frozen_selfrelaunch", "leaked_key_forgery_check"):
+        assert result.gates[name]["status"] == "SKIPPED"
+    assert result.status == "INCOMPLETE"
+
+
+def test_run_with_from_gate_sets_selection_extra(monkeypatch):
+    import scripts.verify_frontend_cutover as module
+
+    def make_gate(name):
+        def gate(config, deps, result, reason):
+            result.mark(name, "PASS", reason=reason)
+        return gate
+
+    for name in GATE_NAMES:
+        monkeypatch.setattr(module, f"gate_{name}", make_gate(name), raising=False)
+
+    config = _config(from_gate="offline_suites")
+    result = module.run(config, deps=object())
+    assert result.status == "INCOMPLETE"
+    assert result.selection_extra == {"selection": {"mode": "from", "requested": ["offline_suites"]}}
+
+
+def test_real_deps_manual_confirm_interactive(monkeypatch):
+    config = _config(file_prompts=False)
+    deps = RealFrontendDeps(config)
+    monkeypatch.setattr("builtins.input", lambda prompt: "pass")
+    assert deps.manual_confirm("test prompt", "checkpoint_x") == "PASS"
+
+
+def test_real_deps_manual_confirm_file_prompts(monkeypatch, tmp_path):
+    config = _config(evidence_dir=tmp_path, file_prompts=True)
+    deps = RealFrontendDeps(config)
+
+    class FakeChannel:
+        def __init__(self, evidence_dir, poll_seconds):
+            self.evidence_dir = evidence_dir
+
+        def prompt(self, message, checkpoint):
+            return f"{checkpoint}_ANSWER"
+
+    monkeypatch.setattr("scripts.verify_lib.CutoverFilePromptChannel", FakeChannel)
+    assert deps.manual_confirm("test prompt", "checkpoint_y") == "checkpoint_y_ANSWER"
+
+
+def test_main_confirm_submits(monkeypatch, tmp_path):
+    called = []
+
+    def mock_submit(repo_root, result, evidence_glob):
+        called.append((repo_root, result, evidence_glob))
+        return tmp_path / "frontend-cutover-123" / "prompt-response-abc.json"
+
+    monkeypatch.setattr("scripts.verify_lib.submit_file_confirmation", mock_submit)
+    exit_code = main(["--repo-root", str(tmp_path), "--confirm", "PASS"])
+    assert exit_code == 0
+    assert len(called) == 1
+    assert called[0][1] == "PASS"
+
+
+def test_main_confirm_submits_error(monkeypatch, tmp_path):
+    def mock_submit(repo_root, result, evidence_glob):
+        raise RuntimeError("simulated confirm error")
+
+    monkeypatch.setattr("scripts.verify_lib.submit_file_confirmation", mock_submit)
+    exit_code = main(["--repo-root", str(tmp_path), "--confirm", "FAIL"])
+    assert exit_code == 1
+
+
+def test_main_requires_evidence_dir_and_installer_path(tmp_path):
+    with pytest.raises(SystemExit):
+        main(["--repo-root", str(tmp_path)])
+
+
+def test_main_full_run_pass(monkeypatch, tmp_path):
+    import scripts.verify_frontend_cutover as module
+
+    def make_gate(name):
+        def gate(config, deps, result, reason):
+            result.mark(name, "PASS", reason=reason)
+        return gate
+
+    for name in GATE_NAMES:
+        monkeypatch.setattr(module, f"gate_{name}", make_gate(name), raising=False)
+
+    evidence_dir = tmp_path / "evidence"
+    installer_path = tmp_path / "installer.exe"
+    exit_code = main([
+        "--repo-root", str(tmp_path),
+        "--evidence-dir", str(evidence_dir),
+        "--installer-path", str(installer_path),
+    ])
+    assert exit_code == 0
+    assert (evidence_dir / "result.json").exists()
+
+
+def test_main_handles_value_error(monkeypatch, tmp_path):
+    evidence_dir = tmp_path / "evidence"
+    installer_path = tmp_path / "installer.exe"
+    exit_code = main([
+        "--repo-root", str(tmp_path),
+        "--evidence-dir", str(evidence_dir),
+        "--installer-path", str(installer_path),
+        "--only", "invalid_gate_name",
+    ])
+    assert exit_code == 1
 
 
 

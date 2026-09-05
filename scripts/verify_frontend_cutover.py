@@ -268,6 +268,15 @@ class RealFrontendDeps:
     def sleep(self, seconds: float) -> None:
         time.sleep(seconds)
 
+    def manual_confirm(self, message: str, checkpoint: str) -> str:
+        if self.config.file_prompts:
+            from scripts.verify_lib import CutoverFilePromptChannel
+            channel = CutoverFilePromptChannel(self.config.evidence_dir, poll_seconds=self.config.file_prompt_poll_seconds)
+            return channel.prompt(message, checkpoint)
+        print(f"CHECKPOINT: {checkpoint}\n{message}")
+        answer = input("PASS/FAIL (or SKIP where offered)? ").strip().upper()
+        return answer
+
 
 
 def gate_dev_app_health(config: FrontendCutoverConfig, deps: Any, result: FrontendCutoverResult, reason: str) -> None:
@@ -434,6 +443,189 @@ def gate_frozen_selfrelaunch(config: FrontendCutoverConfig, deps: Any, result: F
         result.mark("frozen_selfrelaunch", "PASS", reason=reason, details=details)
     else:
         result.mark("frozen_selfrelaunch", "FAIL", reason=reason, details=details)
+
+
+def gate_desktop_shell_visual(config: FrontendCutoverConfig, deps: Any, result: FrontendCutoverResult, reason: str) -> None:
+    answer = deps.manual_confirm(
+        "On the machine running the installed app, click the tray's 'Open App' "
+        "button. Confirm: a real window opens, shows the login/instance UI (not "
+        "blank, not a crash), and clicking 'Open App' again while it's still open "
+        "does NOT open a second window.",
+        "desktop_shell_visual",
+    )
+    result.mark("desktop_shell_visual", "PASS" if answer == "PASS" else "FAIL", reason=reason)
+
+
+def gate_supabase_two_account_flow(config: FrontendCutoverConfig, deps: Any, result: FrontendCutoverResult, reason: str) -> None:
+    answer = deps.manual_confirm(
+        "Complete the full flow from docs/WINDOWS_MANUAL_VALIDATION.md section 3: "
+        "register a new account, confirm empty instance list, confirm the device "
+        "claims on first login, confirm a second account cannot see or act on the "
+        "first account's claimed instance (403, not silent adoption), confirm "
+        "mobile login shows the same linked list as web. PASS only if every part "
+        "of this passed.",
+        "supabase_two_account_flow",
+    )
+    result.mark("supabase_two_account_flow", "PASS" if answer == "PASS" else "FAIL", reason=reason)
+
+
+def gate_leaked_key_forgery_check(config: FrontendCutoverConfig, deps: Any, result: FrontendCutoverResult, reason: str) -> None:
+    answer = deps.manual_confirm(
+        "If you have a second machine available, complete "
+        "docs/WINDOWS_MANUAL_VALIDATION.md section 8 (copy the install's private "
+        "key to a second machine, confirm Account B cannot use it to access "
+        "Account A's session). If you don't have a second machine for this run, "
+        "answer SKIP.",
+        "leaked_key_forgery_check",
+    )
+    if answer == "SKIP":
+        result.mark("leaked_key_forgery_check", "SKIPPED", reason=reason, details={"reason": "no second machine available"})
+    else:
+        result.mark("leaked_key_forgery_check", "PASS" if answer == "PASS" else "FAIL", reason=reason)
+
+
+_GATE_FUNCTIONS = {
+    "dev_app_health": gate_dev_app_health,
+    "web_routes": gate_web_routes,
+    "rsc_payloads": gate_rsc_payloads,
+    "instances_negotiation": gate_instances_negotiation,
+    "auth_gate": gate_auth_gate,
+    "offline_suites": gate_offline_suites,
+    "installed_app_launch": gate_installed_app_launch,
+    "desktop_shell_visual": gate_desktop_shell_visual,
+    "supabase_two_account_flow": gate_supabase_two_account_flow,
+    "leaked_key_forgery_check": gate_leaked_key_forgery_check,
+}
+
+
+def run(config: FrontendCutoverConfig, deps: Any) -> FrontendCutoverResult:
+    selection = resolve_gate_selection(config)
+    result = FrontendCutoverResult()
+    started_app: OwnedProcess | None = None
+    started_installed_app: OwnedProcess | None = None
+    try:
+        for name in GATE_NAMES:
+            reason = selection[name]
+            if reason.startswith("not selected"):
+                result.mark(name, "SKIPPED", reason=reason)
+                continue
+            if name == "leaked_key_forgery_check" and config.skip_installer:
+                result.mark(name, "SKIPPED", reason="skipped (--skip-installer)")
+                continue
+            if name in ("installed_app_launch", "frozen_selfrelaunch") and config.skip_installer:
+                result.mark(name, "SKIPPED", reason="skipped (--skip-installer)")
+                continue
+            if name in ("desktop_shell_visual", "supabase_two_account_flow", "leaked_key_forgery_check") and config.skip_manual_gates:
+                result.mark(name, "SKIPPED", reason="skipped (--skip-manual-gates)")
+                continue
+            if name == "dev_app_health":
+                gate_fn = getattr(sys.modules[__name__], f"gate_{name}", gate_dev_app_health)
+                gate_fn(config, deps, result, reason)
+                if result.gates[name]["status"] == "PASS":
+                    pid = result.gates[name].get("details", {}).get("pid")
+                    if pid is not None:
+                        started_app = OwnedProcess("dev_app", pid, 0)
+            elif name == "frozen_selfrelaunch":
+                gate_fn = getattr(sys.modules[__name__], f"gate_{name}", gate_frozen_selfrelaunch)
+                import inspect
+                sig = inspect.signature(gate_fn)
+                if "parent" in sig.parameters:
+                    if started_installed_app is not None:
+                        gate_fn(config, deps, result, reason, parent=started_installed_app)
+                    else:
+                        result.mark(name, "FAIL", reason=reason, details={"error": "installed_app_launch did not produce a running app to relaunch against"})
+                else:
+                    gate_fn(config, deps, result, reason)
+            elif name == "installed_app_launch":
+                gate_fn = getattr(sys.modules[__name__], f"gate_{name}", gate_installed_app_launch)
+                gate_fn(config, deps, result, reason)
+                if result.gates[name]["status"] == "PASS":
+                    pid = result.gates[name].get("details", {}).get("pid")
+                    if pid is not None:
+                        started_installed_app = OwnedProcess("installed_app", pid, 0)
+            else:
+                gate_fn = getattr(sys.modules[__name__], f"gate_{name}", _GATE_FUNCTIONS.get(name))
+                gate_fn(config, deps, result, reason)
+    finally:
+        if not config.keep_on_failure:
+            terminate = getattr(deps, "terminate", None)
+            if terminate is not None:
+                if started_app is not None:
+                    terminate(started_app)
+                if started_installed_app is not None:
+                    terminate(started_installed_app)
+    payload_extra: dict[str, Any] = {}
+    if config.only is not None:
+        payload_extra["selection"] = {"mode": "only", "requested": list(config.only)}
+    elif config.from_gate is not None:
+        payload_extra["selection"] = {"mode": "from", "requested": [config.from_gate]}
+    result.selection_extra = payload_extra  # type: ignore[attr-defined]
+    return result
+
+
+def main(argv: list[str] | None = None) -> int:
+    import argparse
+    import json
+
+    from scripts.verify_lib import submit_file_confirmation
+
+    parser = argparse.ArgumentParser(description="Verify the frontend/desktop cutover surface")
+    parser.add_argument("--repo-root", type=Path, required=True)
+    parser.add_argument("--evidence-dir", type=Path)
+    parser.add_argument("--web-build-dir", type=Path)
+    parser.add_argument("--installer-path", type=Path)
+    parser.add_argument("--port", type=int, default=8080)
+    parser.add_argument("--file-prompts", action="store_true")
+    parser.add_argument("--confirm", choices=("PASS", "FAIL"))
+    parser.add_argument("--keep-on-failure", action="store_true")
+    parser.add_argument("--skip-manual-gates", action="store_true")
+    parser.add_argument("--skip-installer", action="store_true")
+    parser.add_argument("--only")
+    parser.add_argument("--from-gate", "--from", dest="from_gate")
+    args = parser.parse_args(argv)
+
+    if args.confirm:
+        try:
+            path = submit_file_confirmation(args.repo_root, args.confirm, evidence_glob="frontend-cutover-*")
+        except Exception as error:  # noqa: BLE001 - mirrors verify_engine_cutover.py's own top-level catch
+            print(f"FAIL: {error}")
+            return 1
+        print(f"Submitted {args.confirm} confirmation to {path.parent.name}")
+        return 0
+
+    if not args.evidence_dir or not args.installer_path:
+        parser.error("verification requires --evidence-dir and --installer-path")
+
+    config = FrontendCutoverConfig(
+        repo_root=args.repo_root,
+        evidence_dir=args.evidence_dir,
+        web_build_dir=args.web_build_dir or (args.repo_root / "apps" / "web" / "out"),
+        installer_path=args.installer_path,
+        port=args.port,
+        file_prompts=args.file_prompts,
+        keep_on_failure=args.keep_on_failure,
+        skip_manual_gates=args.skip_manual_gates,
+        skip_installer=args.skip_installer,
+        only=tuple(args.only.split(",")) if args.only else None,
+        from_gate=args.from_gate,
+    )
+    deps = RealFrontendDeps(config)
+    try:
+        result = run(config, deps)
+    except (FrontendCutoverError, ValueError) as error:
+        print(f"FAIL: {error}")
+        return 1
+    payload = result.to_dict()
+    payload.update(getattr(result, "selection_extra", {}))
+    from scripts.verify_lib import _write_json_atomic
+
+    _write_json_atomic(config.evidence_dir / "result.json", payload)
+    print(json.dumps(payload, indent=2))
+    return 0 if result.status == "PASS" else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
 
 
 
