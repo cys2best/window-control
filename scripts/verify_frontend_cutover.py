@@ -153,16 +153,18 @@ class RealFrontendDeps:
         self.config.evidence_dir.mkdir(parents=True, exist_ok=True)
         app_log = open(self.config.evidence_dir / "dev-app.log", "a", encoding="utf-8")
         no_window = {"creationflags": 0x08000000} if sys.platform == "win32" else {}
-        process = subprocess.Popen(
-            ["uv", "run", "python", "src/main.py"],
-            cwd=self.config.repo_root,
-            env=environment,
-            stdin=subprocess.DEVNULL,
-            stdout=app_log,
-            stderr=subprocess.STDOUT,
-            **no_window,
-        )
-        app_log.close()
+        try:
+            process = subprocess.Popen(
+                ["uv", "run", "python", "src/main.py"],
+                cwd=self.config.repo_root,
+                env=environment,
+                stdin=subprocess.DEVNULL,
+                stdout=app_log,
+                stderr=subprocess.STDOUT,
+                **no_window,
+            )
+        finally:
+            app_log.close()
         import psutil
 
         started_at = psutil.Process(process.pid).create_time()
@@ -265,7 +267,7 @@ def gate_instances_negotiation(config: FrontendCutoverConfig, deps: Any, result:
         failures.append("no-Accept-header request did not return JSON")
     if "application/json" not in json_header[1]:
         failures.append("Accept: application/json request did not return JSON")
-    if "text/html" not in html_header[1]:
+    if html_header[0] != 200 or "text/html" not in html_header[1]:
         failures.append("Accept: text/html request did not return the HTML page shell")
     if failures:
         result.mark("instances_negotiation", "FAIL", reason=reason, details={"observed": observed, "failures": failures})

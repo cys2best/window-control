@@ -242,6 +242,19 @@ def test_instances_negotiation_fails_when_html_accept_still_returns_json():
     assert result.gates["instances_negotiation"]["status"] == "FAIL"
 
 
+def test_instances_negotiation_fails_when_html_status_is_not_200():
+    responses = {
+        (8080, "/instances|"): (200, "application/json", "[]"),
+        (8080, "/instances|application/json"): (200, "application/json", "[]"),
+        (8080, "/instances|text/html"): (500, "text/html; charset=utf-8", "<html>server error</html>"),
+    }
+    result = FrontendCutoverResult()
+    deps = FakeDeps(responses=responses)
+    gate_instances_negotiation(_config(), deps, result, "requested")
+    assert result.gates["instances_negotiation"]["status"] == "FAIL"
+    assert any("HTML" in f for f in result.gates["instances_negotiation"]["details"]["failures"])
+
+
 def test_auth_gate_self_skips_when_auth_is_disabled():
     result = FrontendCutoverResult()
     deps = FakeDeps(auth_config={"auth_enabled": False, "supabase_url": "", "supabase_anon_key": ""})
@@ -250,7 +263,7 @@ def test_auth_gate_self_skips_when_auth_is_disabled():
     assert "not configured" in result.gates["auth_gate"]["details"]["reason"]
 
 
-def test_auth_gate_passes_when_both_unauthenticated_requests_401(monkeypatch):
+def test_auth_gate_passes_when_both_unauthenticated_requests_401():
     responses = {
         (8080, "/instances|"): (401, "application/json", '{"detail": "Not authenticated"}'),
     }
