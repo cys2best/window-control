@@ -191,7 +191,20 @@ npm test                     # infra/vps/signaling/ (node:test, relay contract)
   (not tag-gated).
 
 ## Decisions log
-<!-- Promote real decisions here as they're made. Newest on top. -->
+- 2026-09-06: zero-config network connectivity & desktop host GUI refactor.
+  Eliminated manual server URL entry (`ServerSetup.tsx` deleted). The client
+  routes initial REST API calls through the existing VPS HTTP tunnel
+  (`PUBLIC_UI_URL` / `infra/vps/tunnel`), and initiates WebRTC streaming via
+  the VPS signaling bridge (`VPS_SIGNALING_URL` / `infra/vps/signaling`).
+  Network path discovery (local LAN vs. public relay) is handled automatically
+  by WebRTC's native ICE candidate discovery: SDP exchanges local host IP,
+  Tailscale IP, and STUN/TURN candidates, connecting directly peer-to-peer
+  on LAN with zero extra cloud IP tracking or custom UDP broadcast daemons,
+  while seamlessly routing through coturn TURN off-LAN. Simultaneously retired
+  `pywebview`, `DesktopWindow`, and `apps/desktop/webview_main.py` from the
+  Windows host app, transforming `LauncherWindow` into a clean ~400px
+  Minimal Host Monitor Widget (Option B) focused on server health, detected
+  IPs, relay status, and active client counts with system tray minimization.
 - 2026-09-05: unified the three duplicated frontends (`src/client` vanilla
   JS, `mobile/` Expo/React Native, and desktop's "open a system browser"
   gap) into one monorepo: `packages/core` (shared logic) + `packages/ui`
