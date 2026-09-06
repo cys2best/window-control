@@ -298,7 +298,7 @@ def test_rechecks_the_same_single_adb_device_after_tests_before_discovery(tmp_pa
             deps,
         )
 
-    assert not deps.started_env
+    assert not any(call[0] == "WindowControl app" for call in deps.calls)
     assert not deps.opened
     assert deps.discover_calls == 0
 
@@ -324,7 +324,7 @@ def test_refuses_a_changed_sole_adb_device_after_tests_before_discovery(tmp_path
             deps,
         )
 
-    assert not deps.started_env
+    assert not any(call[0] == "WindowControl app" for call in deps.calls)
     assert not deps.opened
     assert deps.discover_calls == 0
 

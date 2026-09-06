@@ -1,7 +1,7 @@
 export type SignalingViewerOpts = {
   signalingUrl: string;
   sessionId: string;
-  token: string;
+  token?: string;
   offerSdp: string;
   WebSocketImpl?: any;
   timeoutMs?: number;
@@ -63,9 +63,13 @@ export function connectSignalingViewer(opts: SignalingViewerOpts): Promise<Signa
       }
     };
 
-    listen("open", () => {
+    if (ws.readyState === (ws.OPEN ?? 1)) {
       ws.send(opts.offerSdp);
-    });
+    } else {
+      listen("open", () => {
+        ws.send(opts.offerSdp);
+      });
+    }
 
     listen("message", (event: any) => {
       if (resolved) return;

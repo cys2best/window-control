@@ -19,6 +19,48 @@ Plan/task identifiers belong here and in workflow state, not in commit subjects.
 
 ---
 
+### 2026-09-06 12:19 — codex
+- Claiming: none
+- Finished: zero-config-and-host-gui-refactor/task-8
+- Next: none
+- Blockers: none
+
+### 2026-09-06 12:11 — codex
+- Claiming: zero-config-and-host-gui-refactor/task-7
+- Finished: zero-config-and-host-gui-refactor/task-6
+- Next: zero-config-and-host-gui-refactor/task-7 is ready
+- Blockers: none
+
+### 2026-09-06 12:05 — codex
+- Claiming: zero-config-and-host-gui-refactor/task-6
+- Finished: zero-config-and-host-gui-refactor/task-5
+- Next: zero-config-and-host-gui-refactor/task-6 is ready
+- Blockers: none
+
+### 2026-09-06 12:03 — codex
+- Claiming: none
+- Finished: zero-config-and-host-gui-refactor/task-5
+- Next: zero-config-and-host-gui-refactor/task-6 is ready
+- Blockers: none
+
+### 2026-09-06 11:51 — codex
+- Claiming: zero-config-and-host-gui-refactor/task-4
+- Finished: zero-config-and-host-gui-refactor/task-3
+- Next: zero-config-and-host-gui-refactor/task-4 is ready
+- Blockers: none
+
+### 2026-09-06 11:46 — codex
+- Claiming: zero-config-and-host-gui-refactor/task-3
+- Finished: zero-config-and-host-gui-refactor/task-2
+- Next: zero-config-and-host-gui-refactor/task-3 is ready
+- Blockers: none
+
+### 2026-09-06 11:41 — codex
+- Claiming: zero-config-and-host-gui-refactor/task-2
+- Finished: zero-config-and-host-gui-refactor/task-1
+- Next: zero-config-and-host-gui-refactor/task-2 is ready
+- Blockers: none
+
 ### 2026-09-06 01:19 — codex
 - Claiming: none
 - Finished: frontend-cutover-verifier/task-8

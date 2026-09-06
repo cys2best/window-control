@@ -28,9 +28,9 @@ export function ServerProvider({
   secureStorage: SecureStorageAdapter;
 }) {
   const defaultBase =
-    (typeof process !== "undefined" &&
+    ((typeof process !== "undefined" &&
       (process.env?.EXPO_PUBLIC_API_URL || process.env?.NEXT_PUBLIC_API_URL)) ||
-    "";
+      "").replace(/\/+$/, "");
   const [base, setBaseState] = useState<string | null>(defaultBase || null);
   const [authToken, setAuthTokenState] = useState<string | null>(null);
   const [baseLoaded, setBaseLoaded] = useState(false);

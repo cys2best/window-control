@@ -118,4 +118,24 @@ test("ServerProvider prefers persisted wc_base over environment fallback", async
   }
 });
 
+test("ServerProvider trims trailing slashes from environment fallback", async () => {
+  const originalEnv = process.env;
+  try {
+    process.env = { ...originalEnv, NEXT_PUBLIC_API_URL: "https://trailing.example.com///" };
+    const plain = makeMemoryStorage();
+    const secure = makeMemoryStorage();
+
+    const { getByTestId } = render(
+      <ServerProvider plainStorage={plain} secureStorage={secure}>
+        <Probe />
+      </ServerProvider>
+    );
+
+    await waitFor(() => expect(getByTestId("ready").textContent).toBe("true"));
+    expect(getByTestId("base").textContent).toBe("https://trailing.example.com");
+  } finally {
+    process.env = originalEnv;
+  }
+});
+
 

@@ -8,7 +8,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, pyqtSignal
 
 from config import PORT, VERSION, SUPABASE_URL, SUPABASE_ANON_KEY, VPS_SIGNALING_URL
-from server.tailscale import get_best_ip, has_tailscale, detect_local_ip, detect_tailscale_ip
+from server.tailscale import has_tailscale, detect_local_ip, detect_tailscale_ip
 from updater import check_for_update
 
 

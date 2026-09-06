@@ -194,4 +194,40 @@ describe("connectSignalingViewer", () => {
     const result = await promise;
     expect(result.answerSdp).toBe("answer-sdp");
   });
+
+  test("sends offer immediately if readyState is already OPEN", async () => {
+    const fakeWs: any = {
+      url: "",
+      sent: [] as string[],
+      readyState: 1, // OPEN
+      OPEN: 1,
+      send(data: string) { this.sent.push(data); },
+      close() { this.readyState = 3; },
+      addEventListener: jest.fn(),
+    };
+
+    const promise = connectSignalingViewer({
+      signalingUrl: "wss://relay.example.com/ws",
+      sessionId: "user123.instance1",
+      offerSdp: "immediate-offer",
+      WebSocketImpl: function (url: string) {
+        fakeWs.url = url;
+        return fakeWs;
+      },
+      timeoutMs: 1000,
+    });
+
+    expect(fakeWs.sent).toEqual(["immediate-offer"]);
+    // Since readyState was OPEN, open listener was not attached
+    expect(fakeWs.addEventListener).not.toHaveBeenCalledWith("open", expect.any(Function));
+
+    // Deliver message
+    const messageHandler = fakeWs.addEventListener.mock.calls.find(
+      (call: any[]) => call[0] === "message"
+    )[1];
+    messageHandler({ data: "immediate-answer" });
+
+    const result = await promise;
+    expect(result.answerSdp).toBe("immediate-answer");
+  });
 });
