@@ -458,7 +458,8 @@ def gate_frozen_package_layout(config: FrontendCutoverConfig, deps: Any, result:
     parent_still_healthy = deps.wait_for_dev_app(parent, config.port)
     route_failures: list[str] = []
     for path in ("/", "/login", "/instances", "/stream"):
-        status, content_type, _ = deps.get(config.port, path)
+        headers = {"Accept": "text/html"} if path == "/instances" else None
+        status, content_type, _ = deps.get(config.port, path, headers=headers)
         if status != 200 or "text/html" not in content_type:
             route_failures.append(f"{path}: expected 200, got {status}")
     setup_status, _, _ = deps.get(config.port, "/setup")

@@ -659,20 +659,23 @@ def test_installed_app_launch_fails_when_firewall_rule_points_elsewhere():
 
 
 def test_frozen_package_layout_passes_when_parent_healthy_and_routes_ok():
-    responses = {(8080, path): (200, "text/html; charset=utf-8", "<html></html>") for path in ("/", "/login", "/instances", "/stream")}
-    responses[(8080, "/setup")] = (404, "text/plain", "not found")
+    captured_headers = {}
 
     class FakeDepsForLayout:
         def wait_for_dev_app(self, app, port):
             return True
 
         def get(self, port, path, *, headers=None):
-            return responses.get((port, path), (404, "text/plain", "not found"))
+            captured_headers[path] = headers
+            if path == "/setup":
+                return (404, "text/plain", "not found")
+            return (200, "text/html; charset=utf-8", "<html></html>")
 
     result = FrontendCutoverResult()
     parent = __import__("scripts.verify_lib", fromlist=["OwnedProcess"]).OwnedProcess("installed_app", 5555, 2.0)
     gate_frozen_package_layout(_config(), FakeDepsForLayout(), result, "requested", parent=parent)
     assert result.gates["frozen_package_layout"]["status"] == "PASS"
+    assert captured_headers["/instances"] == {"Accept": "text/html"}
 
 
 def test_frozen_package_layout_fails_when_parent_unhealthy():
