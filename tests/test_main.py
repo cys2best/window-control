@@ -259,3 +259,39 @@ def test_main_handles_deprecated_service_args(monkeypatch, capsys):
     captured = capsys.readouterr()
     assert "deprecated and removed" in captured.out
 
+
+def test_main_handles_service_uninstall_arg(monkeypatch, capsys):
+    import main as main_mod
+
+    cleaned = []
+    monkeypatch.setattr(main_mod, "_remove_legacy_services", lambda: cleaned.append(True))
+    monkeypatch.setattr(main_mod.sys, "argv", ["main.py", "--uninstall"])
+    main_mod.main()
+    captured = capsys.readouterr()
+    assert cleaned == [True]
+    assert "removed" in captured.out
+
+
+def test_remove_legacy_services_invokes_sc_on_win32(monkeypatch):
+    import main as main_mod
+
+    calls = []
+    removed_files = []
+    monkeypatch.setattr(main_mod.sys, "platform", "win32")
+    monkeypatch.setattr(
+        "subprocess.run",
+        lambda cmd, **kwargs: calls.append(cmd) or object(),
+    )
+    monkeypatch.setattr("os.path.exists", lambda path: True)
+    monkeypatch.setattr("os.remove", lambda path: removed_files.append(path))
+
+    main_mod._remove_legacy_services()
+
+    assert ["sc.exe", "stop", "EmuCtrlService"] in calls
+    assert ["sc.exe", "delete", "EmuCtrlService"] in calls
+    assert ["sc.exe", "stop", "WindowControlService"] in calls
+    assert ["sc.exe", "delete", "WindowControlService"] in calls
+    assert r"C:\ProgramData\EmuCtrl\unlock.dat" in removed_files
+    assert r"C:\ProgramData\WindowControl\unlock.dat" in removed_files
+
+

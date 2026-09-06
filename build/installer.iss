@@ -47,9 +47,13 @@ var
   ResultCode: Integer;
 begin
   Exec('sc.exe', 'stop EmuCtrlService', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec('sc.exe', 'stop WindowControlService', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Sleep(2000);
   Exec('sc.exe', 'delete EmuCtrlService', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec('sc.exe', 'delete WindowControlService', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Sleep(1000);
+  DeleteFile(ExpandConstant('{commonappdata}\EmuCtrl\unlock.dat'));
+  DeleteFile(ExpandConstant('{commonappdata}\WindowControl\unlock.dat'));
 end;
 
 procedure RemoveEngineFirewallRule();

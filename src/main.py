@@ -146,10 +146,29 @@ def build_engine_orchestrator() -> "EngineOrchestrator":
     return EngineOrchestrator(runtime_config)
 
 
+def _remove_legacy_services():
+    """Stop and delete legacy Windows services and purge stored unlock credentials."""
+    if sys.platform == "win32":
+        import subprocess
+        for svc in ("EmuCtrlService", "WindowControlService"):
+            subprocess.run(["sc.exe", "stop", svc], capture_output=True, timeout=10)
+            subprocess.run(["sc.exe", "delete", svc], capture_output=True, timeout=10)
+        for dat in (r"C:\ProgramData\EmuCtrl\unlock.dat", r"C:\ProgramData\WindowControl\unlock.dat"):
+            try:
+                if os.path.exists(dat):
+                    os.remove(dat)
+            except Exception:
+                pass
+
+
 def main():
     # Handle legacy service CLI args gracefully without starting GUI
     _svc_args = {"--install", "--uninstall", "--start", "--stop", "--run-service"}
     if _svc_args & set(sys.argv):
+        if "--uninstall" in sys.argv or "--stop" in sys.argv:
+            _remove_legacy_services()
+            print("Legacy EmuCtrl/WindowControl services and stored unlock data removed.")
+            return
         print("EmuCtrl lock screen service has been deprecated and removed.")
         return
 
@@ -162,10 +181,7 @@ def main():
     if sys.platform == "win32":
         def _win32_setup():
             import subprocess
-            subprocess.run(["sc.exe", "stop", "EmuCtrlService"],
-                           capture_output=True, timeout=10)
-            subprocess.run(["sc.exe", "delete", "EmuCtrlService"],
-                           capture_output=True, timeout=10)
+            _remove_legacy_services()
             # Keep the embedded STUN binding reachable on the LAN/Tailscale
             # interface. Engine program rules are installed with the package.
             from config import STUN_PORT
