@@ -56,3 +56,66 @@ test("setServer persists base and token via the injected adapters", async () => 
   expect(await plain.getItem("wc_base")).toBe("http://host:8000");
   expect(await secure.getItem("wc_auth_token")).toBe("tok");
 });
+
+test("ServerProvider falls back to EXPO_PUBLIC_API_URL when plainStorage has no wc_base", async () => {
+  const originalEnv = process.env;
+  try {
+    process.env = { ...originalEnv, EXPO_PUBLIC_API_URL: "https://api.example.com" };
+    const plain = makeMemoryStorage();
+    const secure = makeMemoryStorage();
+
+    const { getByTestId } = render(
+      <ServerProvider plainStorage={plain} secureStorage={secure}>
+        <Probe />
+      </ServerProvider>
+    );
+
+    await waitFor(() => expect(getByTestId("ready").textContent).toBe("true"));
+    expect(getByTestId("base").textContent).toBe("https://api.example.com");
+  } finally {
+    process.env = originalEnv;
+  }
+});
+
+test("ServerProvider falls back to NEXT_PUBLIC_API_URL when EXPO_PUBLIC_API_URL is unset", async () => {
+  const originalEnv = process.env;
+  try {
+    process.env = { ...originalEnv, EXPO_PUBLIC_API_URL: undefined, NEXT_PUBLIC_API_URL: "https://next.example.com" };
+    const plain = makeMemoryStorage();
+    const secure = makeMemoryStorage();
+
+    const { getByTestId } = render(
+      <ServerProvider plainStorage={plain} secureStorage={secure}>
+        <Probe />
+      </ServerProvider>
+    );
+
+    await waitFor(() => expect(getByTestId("ready").textContent).toBe("true"));
+    expect(getByTestId("base").textContent).toBe("https://next.example.com");
+  } finally {
+    process.env = originalEnv;
+  }
+});
+
+test("ServerProvider prefers persisted wc_base over environment fallback", async () => {
+  const originalEnv = process.env;
+  try {
+    process.env = { ...originalEnv, EXPO_PUBLIC_API_URL: "https://fallback.example.com" };
+    const plain = makeMemoryStorage();
+    const secure = makeMemoryStorage();
+    await plain.setItem("wc_base", "https://persisted.example.com");
+
+    const { getByTestId } = render(
+      <ServerProvider plainStorage={plain} secureStorage={secure}>
+        <Probe />
+      </ServerProvider>
+    );
+
+    await waitFor(() => expect(getByTestId("ready").textContent).toBe("true"));
+    expect(getByTestId("base").textContent).toBe("https://persisted.example.com");
+  } finally {
+    process.env = originalEnv;
+  }
+});
+
+

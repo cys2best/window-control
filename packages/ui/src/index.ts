@@ -13,7 +13,6 @@ export * from "./components/StreamToolbar";
 export * from "./components/SwitchDrawer";
 export * from "./components/SettingsModal";
 export * from "./screens/Login";
-export * from "./screens/ServerSetup";
 export * from "./screens/InstanceList";
 export * from "./video/VideoView";
 export * from "./screens/Stream";

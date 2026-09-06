@@ -30,3 +30,17 @@ test("renders instances and navigates on tap", async () => {
   await waitFor(() => expect(nav.navigate).toHaveBeenCalledWith("Stream", { serial: "B", title: "LDP-02" }));
   expect(client.keyframe).toHaveBeenCalledWith("B");
 });
+
+test("BottomNav setup button does not navigate to ServerSetup", async () => {
+  const client = {
+    instances: jest.fn().mockResolvedValue([]),
+    previewSource: jest.fn(),
+    keyframe: jest.fn(),
+  };
+  (SC.useServer as jest.Mock).mockReturnValue({ base: "http://h", client, setBase: jest.fn(), ready: true } as any);
+  const nav = { navigate: jest.fn() } as any;
+  const { getByLabelText } = await render(<InstanceList navigation={nav} />);
+  fireEvent.press(getByLabelText("Setup"));
+  expect(nav.navigate).not.toHaveBeenCalledWith("ServerSetup");
+});
+

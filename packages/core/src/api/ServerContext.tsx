@@ -27,19 +27,29 @@ export function ServerProvider({
   plainStorage: SecureStorageAdapter;
   secureStorage: SecureStorageAdapter;
 }) {
-  const [base, setBaseState] = useState<string | null>(null);
+  const defaultBase =
+    (typeof process !== "undefined" &&
+      (process.env?.EXPO_PUBLIC_API_URL || process.env?.NEXT_PUBLIC_API_URL)) ||
+    "";
+  const [base, setBaseState] = useState<string | null>(defaultBase || null);
   const [authToken, setAuthTokenState] = useState<string | null>(null);
   const [baseLoaded, setBaseLoaded] = useState(false);
   const [tokenLoaded, setTokenLoaded] = useState(false);
 
   useEffect(() => {
     plainStorage.getItem(BASE_KEY)
-      .then((v) => { if (v) setBaseState(v); })
+      .then((v) => {
+        if (v) {
+          setBaseState(v);
+        } else if (defaultBase) {
+          setBaseState(defaultBase);
+        }
+      })
       .finally(() => setBaseLoaded(true));
     secureStorage.getItem(TOKEN_KEY)
       .then((v) => { if (v) setAuthTokenState(v); })
       .finally(() => setTokenLoaded(true));
-  }, [plainStorage, secureStorage]);
+  }, [plainStorage, secureStorage, defaultBase]);
 
   const setServer = useCallback(async (url: string, token: string) => {
     const norm = normalizeBase(url);
