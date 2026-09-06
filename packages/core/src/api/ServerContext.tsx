@@ -30,6 +30,7 @@ export function ServerProvider({
   const defaultBase =
     ((typeof process !== "undefined" &&
       (process.env?.EXPO_PUBLIC_API_URL || process.env?.NEXT_PUBLIC_API_URL)) ||
+      (typeof window !== "undefined" && window.location?.origin && window.location.origin !== "null" ? window.location.origin : "") ||
       "").replace(/\/+$/, "");
   const [base, setBaseState] = useState<string | null>(defaultBase || null);
   const [authToken, setAuthTokenState] = useState<string | null>(null);
@@ -73,8 +74,11 @@ export function ServerProvider({
   const [supabaseAnonKey, setSupabaseAnonKey] = useState("");
 
   useEffect(() => {
-    if (!base) return;
-    fetch(`${base}/auth/config`)
+    if (typeof fetch === "undefined" && typeof globalThis.fetch === "undefined") return;
+    const fetchFn = typeof fetch !== "undefined" ? fetch : globalThis.fetch;
+    const target = base || (typeof window !== "undefined" && window.location?.origin && window.location.origin !== "null" ? window.location.origin : "");
+    if (!target) return;
+    fetchFn(`${target}/auth/config`)
       .then((r) => r.json())
       .then((cfg) => {
         setSupabaseUrl(cfg.supabase_url || "");

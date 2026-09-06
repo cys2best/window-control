@@ -15,6 +15,11 @@ export function Login({ navigation }: { navigation: any }) {
   const submit = async () => {
     if (busy) return;
     setBusy(true); setError("");
+    if (!supabaseUrl) {
+      setBusy(false);
+      setError("Authentication is not configured on this server");
+      return;
+    }
     const authFn = mode === "sign-in" ? signInWithPassword : signUpWithPassword;
     const result = await authFn(supabaseUrl, supabaseAnonKey, email, password);
     setBusy(false);
@@ -22,7 +27,8 @@ export function Login({ navigation }: { navigation: any }) {
       setError(result.error);
       return;
     }
-    await setServer(base, result.access_token);
+    const effectiveBase = base || (typeof window !== "undefined" && window.location?.origin ? window.location.origin : "");
+    await setServer(effectiveBase, result.access_token);
     navigation.replace("InstanceList");
   };
 
