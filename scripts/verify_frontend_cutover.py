@@ -18,9 +18,12 @@ import sys
 import time
 from typing import Any
 
+from dotenv import load_dotenv
 import httpx
 
 from scripts.verify_lib import OwnedProcess, _pid_started_at
+
+load_dotenv()
 
 
 GATE_NAMES: tuple[str, ...] = (

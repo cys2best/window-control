@@ -22,6 +22,19 @@ param(
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 
+# Load .env if present in repo root
+$envFile = Join-Path $repoRoot ".env"
+if (Test-Path $envFile) {
+    Write-Host "Loading environment variables from $envFile..." -ForegroundColor Gray
+    Get-Content $envFile | Where-Object { $_ -match '^\s*([^#][^=]*?)\s*=\s*(.*)$' } | ForEach-Object {
+        $name = $Matches[1].Trim()
+        $val = $Matches[2].Trim().Trim('"').Trim("'")
+        if (-not [string]::IsNullOrEmpty($name)) {
+            [System.Environment]::SetEnvironmentVariable($name, $val, "Process")
+        }
+    }
+}
+
 if ($Only -and $From) {
     throw "-Only and -From are mutually exclusive"
 }

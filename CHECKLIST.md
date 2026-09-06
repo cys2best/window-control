@@ -25,7 +25,17 @@
   - [ ] `adb` on PATH (`adb version`)
 - [ ] **1.3. Android Emulator / Device**:
   - [ ] At least one LDPlayer emulator instance running, or physical Android device connected via ADB (`adb devices` lists active device).
-- [ ] **1.4. Environment Variables Configured**:
+- [ ] **1.4. Environment Variables Configured (via `.env` file in repo root)**:
+  > **Tip**: You can create a `.env` file in the repo root (gitignored). Both the Python dev server (`src/main.py`), verification scripts, and PowerShell runners (`verify-all.ps1`, `verify-frontend-cutover.ps1`) automatically load `.env`!
+  ```ini
+  SUPABASE_URL=https://<your-project>.supabase.co
+  SUPABASE_ANON_KEY=eyJ...
+  SUPABASE_SERVICE_ROLE_KEY=eyJ...
+  VPS_SIGNALING_URL=ws://<VPS_IP>:8443
+  # Optional:
+  PUBLIC_UI_URL=wss://tunnel.example.com/__tunnel/register
+  TUNNEL_SECRET=...
+  ```
   - [ ] `SUPABASE_URL`
   - [ ] `SUPABASE_ANON_KEY`
   - [ ] `SUPABASE_SERVICE_ROLE_KEY`

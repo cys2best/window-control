@@ -13,8 +13,10 @@ import subprocess
 import sys
 import time
 
+from dotenv import load_dotenv
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+load_dotenv(REPO_ROOT / ".env")
 
 
 def _run_step(name: str, cmd: list[str], cwd: Path | None = None) -> tuple[bool, str, float]:
