@@ -110,11 +110,24 @@ cmake --build engine\build --config Release
   ```
   All offline engine tests pass (excluding tests that require the live Node signaling relay).
 - [ ] **4.3. Live Signaling Relay GTest**:
-  *(Requires starting the Node relay in another terminal first: `cd infra\vps\signaling; npm start`)*
-  ```powershell
-  .\engine\build\Release\engine_tests.exe --gtest_filter="SignalingClient.*:PublicSignalingBridge.*"
-  ```
-  WebRTC signaling handshake passes against local relay.
+  1. In a dedicated terminal, launch the signaling relay with test TLS certs:
+     ```powershell
+     cd infra\vps\signaling
+     $repoRoot = (Resolve-Path ..\..\..).Path
+     $env:JWT_SECRET = ""
+     $env:SIGNALING_TLS_CERT_FILE = Join-Path $repoRoot "engine\test\tls\localhost-cert.pem"
+     $env:SIGNALING_TLS_KEY_FILE = Join-Path $repoRoot "engine\test\tls\localhost-key.pem"
+     $env:SIGNALING_TLS_PORT = "8444"
+     npm start
+     ```
+  2. In your engine test terminal (from repo root):
+     ```powershell
+     $env:SSL_CERT_FILE = (Resolve-Path "engine\test\tls\ca-cert.pem").Path
+     $env:ENGINE_TEST_WSS_PORT = "8444"
+     cmake --build engine\build --config Release --target engine_tests
+     .\engine\build\Release\engine_tests.exe --gtest_filter="SignalingClient.*:PublicSignalingBridge.*"
+     ```
+  WebRTC signaling handshake and public peer bridge pass against local relay.
 
 ---
 

@@ -5,14 +5,75 @@
 #include <chrono>
 #include <atomic>
 #include <cstdlib>
+#include <filesystem>
 #include <stdexcept>
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
 
 // Assumes a signaling server instance is already running at
 // ws://localhost:8443 with JWT auth disabled (JWT_SECRET unset) — see
 // test/README.md for how to start one for local test runs.
 
 namespace {
+void EnsureTestSslCertFile() {
+    if (std::getenv("SSL_CERT_FILE") != nullptr) {
+        return;
+    }
+    const std::filesystem::path candidates[] = {
+        "engine/test/tls/ca-cert.pem",
+        "test/tls/ca-cert.pem",
+        "../engine/test/tls/ca-cert.pem",
+        "../test/tls/ca-cert.pem",
+        "../../engine/test/tls/ca-cert.pem",
+        "../../test/tls/ca-cert.pem",
+        "../../../engine/test/tls/ca-cert.pem",
+        "../../../test/tls/ca-cert.pem",
+    };
+    for (const auto& candidate : candidates) {
+        std::error_code ec;
+        if (std::filesystem::exists(candidate, ec)) {
+            const auto absolutePath = std::filesystem::absolute(candidate).string();
+#if defined(_WIN32)
+            _putenv_s("SSL_CERT_FILE", absolutePath.c_str());
+            SetEnvironmentVariableA("SSL_CERT_FILE", absolutePath.c_str());
+#else
+            setenv("SSL_CERT_FILE", absolutePath.c_str(), 1);
+#endif
+            return;
+        }
+    }
+#if defined(_WIN32)
+    char exePath[MAX_PATH];
+    if (GetModuleFileNameA(nullptr, exePath, MAX_PATH) > 0) {
+        auto exeDir = std::filesystem::path(exePath).parent_path();
+        for (int i = 0; i < 4; ++i) {
+            auto checkPath = exeDir / "engine" / "test" / "tls" / "ca-cert.pem";
+            std::error_code ec;
+            if (std::filesystem::exists(checkPath, ec)) {
+                const auto absolutePath = std::filesystem::absolute(checkPath).string();
+                _putenv_s("SSL_CERT_FILE", absolutePath.c_str());
+                SetEnvironmentVariableA("SSL_CERT_FILE", absolutePath.c_str());
+                return;
+            }
+            checkPath = exeDir / "test" / "tls" / "ca-cert.pem";
+            if (std::filesystem::exists(checkPath, ec)) {
+                const auto absolutePath = std::filesystem::absolute(checkPath).string();
+                _putenv_s("SSL_CERT_FILE", absolutePath.c_str());
+                SetEnvironmentVariableA("SSL_CERT_FILE", absolutePath.c_str());
+                return;
+            }
+            exeDir = exeDir.parent_path();
+        }
+    }
+#endif
+}
+
 std::string SecureRelayUrl(const std::string& hostname) {
+    EnsureTestSslCertFile();
     const char* configuredPort = std::getenv("ENGINE_TEST_WSS_PORT");
     const std::string port = configuredPort ? configuredPort : "8444";
     return "wss://" + hostname + ":" + port;

@@ -13,8 +13,6 @@ $env:JWT_SECRET = ""
 $env:SIGNALING_TLS_CERT_FILE = Join-Path $repoRoot "engine\test\tls\localhost-cert.pem"
 $env:SIGNALING_TLS_KEY_FILE = Join-Path $repoRoot "engine\test\tls\localhost-key.pem"
 $env:SIGNALING_TLS_PORT = "8444"
-$env:SSL_CERT_FILE = Join-Path $repoRoot "engine\test\tls\ca-cert.pem"
-$env:ENGINE_TEST_WSS_PORT = "8444"
 npm install
 npm start
 ```
@@ -23,6 +21,8 @@ Keep that window running, then build and execute the live tests in another
 window:
 
 ```powershell
+$env:SSL_CERT_FILE = (Resolve-Path "engine\test\tls\ca-cert.pem").Path
+$env:ENGINE_TEST_WSS_PORT = "8444"
 cmake --build engine\build --config Release
 .\engine\build\Release\engine_tests.exe --gtest_filter="SignalingClient.*:PublicSignalingBridge.*"
 ```
