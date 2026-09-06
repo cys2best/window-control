@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert';
 import { readFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { WebSocketServer, WebSocket } from 'ws';
 import {
   generateKeyPair, SignJWT, jwtVerify,
@@ -10,9 +11,9 @@ import {
 } from 'jose';
 import { createSignalingServer } from './server.js';
 
-const tlsCa = readFileSync(new URL('../../../engine/test/tls/ca-cert.pem', import.meta.url));
-const tlsCert = readFileSync(new URL('../../../engine/test/tls/localhost-cert.pem', import.meta.url));
-const tlsKey = readFileSync(new URL('../../../engine/test/tls/localhost-key.pem', import.meta.url));
+const tlsCa = readFileSync(fileURLToPath(new URL('../../../engine/test/tls/ca-cert.pem', import.meta.url)));
+const tlsCert = readFileSync(fileURLToPath(new URL('../../../engine/test/tls/localhost-cert.pem', import.meta.url)));
+const tlsKey = readFileSync(fileURLToPath(new URL('../../../engine/test/tls/localhost-key.pem', import.meta.url)));
 
 function openClient(port, session, role) {
   return new Promise((resolve, reject) => {
@@ -362,13 +363,14 @@ test('expired engine token is rejected even with a valid signature', async () =>
 // immediately and never holds a port.
 function runStandalone(env) {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [new URL('./server.js', import.meta.url).pathname], {
+    const entrypoint = fileURLToPath(new URL('./server.js', import.meta.url));
+    const child = spawn(process.execPath, [entrypoint], {
       env: { ...process.env, PORT: '0', ...env },
       stdio: ['ignore', 'ignore', 'pipe'],
     });
     let stderr = '';
     child.stderr.on('data', (chunk) => { stderr += chunk; });
-    const timer = setTimeout(() => child.kill('SIGKILL'), 5000);
+    const timer = setTimeout(() => child.kill(process.platform === 'win32' ? undefined : 'SIGKILL'), 5000);
     child.once('close', (code, signal) => {
       clearTimeout(timer);
       resolve({ code, signal, stderr });
@@ -399,13 +401,18 @@ test('standalone relay refuses to start with a service role key but no SUPABASE_
 });
 
 test('standalone relay still starts unverified when neither Supabase variable is set', async () => {
-  const { signal, stderr } = await runStandalone({
+  const { code, signal, stderr } = await runStandalone({
     SUPABASE_URL: '', SUPABASE_SERVICE_ROLE_KEY: '',
   });
 
   // Not a startup error: it binds and runs as the trusted dev/local relay,
   // so the 5s guard has to kill it. That it was killed (rather than exiting
   // on its own) is the proof it started.
-  assert.strictEqual(signal, 'SIGKILL');
+  if (process.platform === 'win32') {
+    // Windows TerminateProcess produces null signal
+    assert.ok(signal === 'SIGKILL' || signal === null || code !== 0);
+  } else {
+    assert.strictEqual(signal, 'SIGKILL');
+  }
   assert.doesNotMatch(stderr, /must be set together/);
 });

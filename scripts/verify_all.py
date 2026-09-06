@@ -88,8 +88,8 @@ def main() -> int:
         ),
         (
             "VPS WebRTC Signaling Relay Tests",
-            ["npm", "test"],
-            REPO_ROOT / "infra" / "vps" / "signaling",
+            ["npm", "run", "test:signaling"],
+            REPO_ROOT,
         ),
     ]
 
@@ -108,7 +108,7 @@ def main() -> int:
     # Ensure signaling relay dependencies are installed if not already present
     vps_dir = REPO_ROOT / "infra" / "vps" / "signaling"
     if not (REPO_ROOT / "node_modules" / "ws").exists() and not (vps_dir / "node_modules" / "ws").exists():
-        _run_step("Install Signaling Dependencies", ["npm", "install"], cwd=vps_dir)
+        _run_step("Install Signaling Dependencies", ["npm", "install"], cwd=REPO_ROOT)
 
     for title, cmd, cwd in steps:
         sys.stdout.write(f"[*] Running {title}... ")
@@ -154,7 +154,8 @@ def main() -> int:
         print(f" {status_colored:<8} {title:<48} ({dur:.2f}s)")
         if status == "FAIL" and out:
             lines = out.strip().splitlines()
-            for l in lines[-8:]:
+            show_lines = lines[-30:] if len(lines) > 30 else lines
+            for l in show_lines:
                 print(f"          | {l}")
 
     print("-" * 72)

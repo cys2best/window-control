@@ -9,6 +9,7 @@
   ],
   "scripts": {
     "test:core": "npm test -w packages/core",
-    "test:ui": "npm test -w packages/ui"
+    "test:ui": "npm test -w packages/ui",
+    "test:signaling": "npm test -w infra/vps/signaling"
   }
 }

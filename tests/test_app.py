@@ -307,12 +307,12 @@ def test_rsc_payloads_are_served_so_soft_navigation_does_not_hard_reload(
     # it 404s. A 404 here is what made router.replace("/instances") turn
     # into a hard navigation onto the JSON API route.
     import server.app as app_module
-    (tmp_path / name).write_text("0:payload\n")
+    (tmp_path / name).write_bytes(b"0:payload\n")
     with patch.object(app_module, "WEB_BUILD_DIR", str(tmp_path)):
         client, _ = _make_client()
         r = client.get(path)
     assert r.status_code == 200
-    assert r.text == "0:payload\n"
+    assert r.text in ("0:payload\n", "0:payload\r\n")
     # The router only treats a payload as usable when the content type is
     # text/x-component or text/plain; anything else hard-navigates.
     content_type = r.headers["content-type"]
