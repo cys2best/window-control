@@ -112,3 +112,10 @@
   2. Implement dual-transport WebRTC manager in `packages/core`.
   3. Update `packages/ui` screens and navigation to eliminate `ServerSetup`.
   4. Run full Python and Jest test suites.
+
+## Technical Debt & Future Work
+
+- **Multi-Tenant VPS HTTP Tunnel Routing**:
+  - *Current State*: `infra/vps/tunnel/server.js` currently maintains a single active host PC connection (`let pcConn = null; ws.close(1008, 'a PC is already registered')`). While unauthorized cross-user access to a connected PC is strictly blocked by FastAPI's `_auth_gate` (403 Forbidden) and WebRTC stream sessions are isolated by Supabase account-signed Ed25519 tokens (`${owner_user_id}.${instance}`), only one host PC can register with the tunnel server at a time across the entire VPS.
+  - *Future Plan*: Upgrade `infra/vps/tunnel/server.js` to support multi-tenant dispatching (`Map<userId, pcWebSocket>`). The tunnel server will extract `userId` from the incoming request's Supabase JWT `Authorization: Bearer <token>` and route HTTP calls exclusively to the matching user's registered host PC.
+
