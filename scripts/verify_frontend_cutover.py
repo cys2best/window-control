@@ -437,7 +437,7 @@ def gate_installed_app_launch(config: FrontendCutoverConfig, deps: Any, result: 
     app = deps.start_installed_app()
     healthy = deps.wait_for_dev_app(app, config.port)
     exit_code, output = deps.run_command(
-        ["netsh", "advfirewall", "firewall", "show", "rule", 'name="WindowControl-Engine"'],
+        ["netsh", "advfirewall", "firewall", "show", "rule", 'name="WindowControl-Engine"', "verbose"],
     )
     expected_engine_path = r"WindowControl\_internal\assets\engine\engine.exe"
     firewall_ok = exit_code == 0 and expected_engine_path.lower() in output.lower()
