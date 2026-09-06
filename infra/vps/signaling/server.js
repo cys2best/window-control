@@ -28,14 +28,32 @@ export async function createSignalingServer({
   }
 
   const resolveViewerToken = verifyViewerToken || (supabaseUrl ? (() => {
+    const cleanUrl = supabaseUrl.replace(/\/$/, '');
     const jwks = createRemoteJWKSet(
-      new URL(`${supabaseUrl.replace(/\/$/, '')}/auth/v1/.well-known/jwks.json`),
+      new URL(`${cleanUrl}/auth/v1/.well-known/jwks.json`),
     );
     return async (token) => {
-      const { payload } = await jwtVerify(token, jwks, {
-        algorithms: ['ES256'], audience: 'authenticated',
-      });
-      return payload.sub;
+      try {
+        const { payload } = await jwtVerify(token, jwks, {
+          algorithms: ['ES256'], audience: 'authenticated',
+        });
+        return payload.sub;
+      } catch (err) {
+        if (serviceRoleKey) {
+          try {
+            const res = await fetch(`${cleanUrl}/auth/v1/user`, {
+              headers: { Authorization: `Bearer ${token}`, apikey: serviceRoleKey },
+            });
+            if (res.ok) {
+              const user = await res.json();
+              if (user && user.id) return user.id;
+            }
+          } catch {
+            // fall through
+          }
+        }
+        throw err;
+      }
     };
   })() : null);
   const lookupInstall = installLookup || ((supabaseUrl && serviceRoleKey) ? (async (userId) => {

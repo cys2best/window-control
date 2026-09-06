@@ -1,6 +1,8 @@
 "use client";
+import { useEffect } from "react";
 import { Stream } from "@wc/ui";
 import { useRouter, useSearchParams } from "next/navigation";
+import { useServer } from "@wc/core";
 import { VideoView } from "../../platform/VideoView";
 
 // Screens navigate by PascalCase route name (e.g. "Login", "InstanceList")
@@ -24,6 +26,15 @@ export default function StreamPageClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const serial = serialFromParams(searchParams);
+  const { ready, authToken } = useServer();
+
+  useEffect(() => {
+    if (!ready) return;
+    if (!authToken) router.replace("/login");
+  }, [ready, authToken, router]);
+
+  if (!ready || !authToken) return null;
+
   return (
     <Stream
       route={{ params: { serial, title: serial } }}

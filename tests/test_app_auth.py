@@ -69,6 +69,7 @@ def _clear_supabase_env(monkeypatch, tmp_path):
     importlib.reload(config)
     from server import auth
     importlib.reload(auth)
+    auth._token_cache.clear()
 
 
 def test_protected_route_rejected_without_token():

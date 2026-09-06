@@ -25,10 +25,11 @@ class _FakeSigningKey:
 @pytest.fixture(autouse=True)
 def _clear_supabase_env(monkeypatch):
     yield
-    for key in ("SUPABASE_URL",):
+    for key in ("SUPABASE_URL", "SUPABASE_JWT_SECRET", "SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY"):
         os.environ.pop(key, None)
     importlib.reload(config)
     importlib.reload(auth)
+    auth._token_cache.clear()
 
 
 def _reload(url):
@@ -168,3 +169,54 @@ def test_verify_supabase_jwt_rejects_when_jwks_lookup_fails(monkeypatch):
     monkeypatch.setattr(PyJWKClient, "get_signing_key_from_jwt", _raise)
     token = _make_jwt({"sub": "user-123", "exp": int(time.time()) + 3600})
     assert auth.verify_supabase_jwt(token) is None
+
+
+def test_verify_supabase_jwt_accepts_hs256_with_jwt_secret():
+    secret = "test-secret-at-least-32-chars-long-12345"
+    os.environ["SUPABASE_URL"] = "https://project.supabase.co"
+    os.environ["SUPABASE_JWT_SECRET"] = secret
+    importlib.reload(config)
+    importlib.reload(auth)
+
+    token = jwt.encode(
+        {"sub": "user-456", "email": "hs256@example.com", "aud": "authenticated", "exp": int(time.time()) + 3600},
+        secret,
+        algorithm="HS256",
+    )
+    claims = auth.verify_supabase_jwt(token)
+    assert claims == auth.UserClaims(user_id="user-456", email="hs256@example.com")
+
+
+def test_verify_supabase_jwt_handles_trailing_slash_in_supabase_url(monkeypatch):
+    _reload("https://project.supabase.co/")
+    _mock_jwks(monkeypatch)
+    token = _make_jwt({"sub": "user-789", "exp": int(time.time()) + 3600})
+    claims = auth.verify_supabase_jwt(token)
+    assert claims == auth.UserClaims(user_id="user-789", email=None)
+
+
+def test_verify_supabase_jwt_falls_back_to_supabase_auth_api(monkeypatch):
+    _reload("https://project.supabase.co")
+    os.environ["SUPABASE_ANON_KEY"] = "anon-key-123"
+    importlib.reload(config)
+    importlib.reload(auth)
+
+    # Token signed with HS256 without SUPABASE_JWT_SECRET configured
+    token = jwt.encode(
+        {"sub": "user-remote", "email": "remote@example.com", "aud": "authenticated", "exp": int(time.time()) + 3600},
+        "unknown-secret",
+        algorithm="HS256",
+    )
+
+    class FakeResponse:
+        status_code = 200
+        text = '{"id": "user-remote", "email": "remote@example.com"}'
+        def json(self):
+            return {"id": "user-remote", "email": "remote@example.com"}
+
+    import httpx
+    monkeypatch.setattr(httpx, "get", lambda url, headers, timeout: FakeResponse())
+
+    claims = auth.verify_supabase_jwt(token)
+    assert claims == auth.UserClaims(user_id="user-remote", email="remote@example.com")
+

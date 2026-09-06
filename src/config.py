@@ -65,6 +65,8 @@ SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY", "")
 # against it; releasing it for a different account means deleting
 # install_owner.txt locally (see server/install_identity.py).
 SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+# Optional server-only secret for local HS256 JWT signature verification
+SUPABASE_JWT_SECRET = os.environ.get("SUPABASE_JWT_SECRET", "")
 
 # Public-internet UI tunnel (VPS relay). Unset = tunnel disabled, matching
 # the VPS_SIGNALING_URL auto-start-only-if-configured pattern above. Full
