@@ -40,6 +40,7 @@ export default function StreamPageClient() {
       route={{ params: { serial, title: serial } }}
       navigation={{
         navigate: (route: string) => router.push(toPath(route)),
+        replace: (route: string) => router.replace(toPath(route)),
         setParams: (p: any) => router.push(`/stream?serial=${encodeURIComponent(p.serial)}`),
       }}
       RTCImpl={typeof window !== "undefined" ? window.RTCPeerConnection : undefined}

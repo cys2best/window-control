@@ -44,3 +44,20 @@ test("BottomNav setup button does not navigate to ServerSetup", async () => {
   expect(nav.navigate).not.toHaveBeenCalledWith("ServerSetup");
 });
 
+test("redirects to Login on 401 response and clears auth", async () => {
+  const err: any = new Error("401");
+  err.status = 401;
+  const client = {
+    instances: jest.fn().mockRejectedValue(err),
+    previewSource: jest.fn(),
+    keyframe: jest.fn(),
+  };
+  const clearAuth = jest.fn();
+  (SC.useServer as jest.Mock).mockReturnValue({ base: "http://h", client, clearAuth, ready: true } as any);
+  const nav = { navigate: jest.fn(), replace: jest.fn() } as any;
+  await render(<InstanceList navigation={nav} />);
+  await waitFor(() => expect(clearAuth).toHaveBeenCalled());
+  expect(nav.replace).toHaveBeenCalledWith("Login");
+});
+
+

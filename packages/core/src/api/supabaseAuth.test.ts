@@ -1,4 +1,4 @@
-import { signInWithPassword, signUpWithPassword } from "./supabaseAuth";
+import { signInWithPassword, signUpWithPassword, isJwtExpired } from "./supabaseAuth";
 
 describe("supabaseAuth", () => {
   beforeEach(() => {
@@ -44,5 +44,24 @@ describe("supabaseAuth", () => {
       "https://project.supabase.co/auth/v1/signup",
       expect.objectContaining({ method: "POST" })
     );
+  });
+
+  it("isJwtExpired returns true for null or empty", () => {
+    expect(isJwtExpired(null)).toBe(true);
+    expect(isJwtExpired("")).toBe(true);
+  });
+
+  it("isJwtExpired returns false for non-jwt strings without exp", () => {
+    expect(isJwtExpired("plain-token")).toBe(false);
+  });
+
+  it("isJwtExpired correctly identifies expired vs valid tokens", () => {
+    const expiredPayload = Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) - 60 })).toString("base64url");
+    const expiredToken = `eyJhbGciOiJIUzI1NiJ9.${expiredPayload}.signature`;
+    expect(isJwtExpired(expiredToken)).toBe(true);
+
+    const validPayload = Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 3600 })).toString("base64url");
+    const validToken = `eyJhbGciOiJIUzI1NiJ9.${validPayload}.signature`;
+    expect(isJwtExpired(validToken)).toBe(false);
   });
 });

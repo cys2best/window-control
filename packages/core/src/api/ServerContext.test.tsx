@@ -13,13 +13,14 @@ function makeMemoryStorage(): SecureStorageAdapter {
 }
 
 function Probe() {
-  const { ready, base, authToken, setServer } = useServer();
+  const { ready, base, authToken, setServer, clearAuth } = useServer();
   return (
     <div>
       <span data-testid="ready">{String(ready)}</span>
       <span data-testid="base">{base ?? ""}</span>
       <span data-testid="token">{authToken ?? ""}</span>
       <button onClick={() => setServer("http://host:8000", "tok")}>set</button>
+      <button onClick={() => clearAuth()}>clear</button>
     </div>
   );
 }
@@ -137,5 +138,44 @@ test("ServerProvider trims trailing slashes from environment fallback", async ()
     process.env = originalEnv;
   }
 });
+
+test("ServerProvider purges expired JWT token on load and leaves authToken null", async () => {
+  const plain = makeMemoryStorage();
+  const secure = makeMemoryStorage();
+  const expiredPayload = Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) - 60 })).toString("base64url");
+  const expiredToken = `eyJhbGciOiJIUzI1NiJ9.${expiredPayload}.signature`;
+  await secure.setItem("wc_auth_token", expiredToken);
+
+  const { getByTestId } = render(
+    <ServerProvider plainStorage={plain} secureStorage={secure}>
+      <Probe />
+    </ServerProvider>
+  );
+
+  await waitFor(() => expect(getByTestId("ready").textContent).toBe("true"));
+  expect(getByTestId("token").textContent).toBe("");
+  expect(await secure.getItem("wc_auth_token")).toBeNull();
+});
+
+test("clearAuth clears token from secure storage and resets authToken state", async () => {
+  const plain = makeMemoryStorage();
+  const secure = makeMemoryStorage();
+  await secure.setItem("wc_auth_token", "active-tok");
+
+  const { getByTestId, getByText } = render(
+    <ServerProvider plainStorage={plain} secureStorage={secure}>
+      <Probe />
+    </ServerProvider>
+  );
+
+  await waitFor(() => expect(getByTestId("ready").textContent).toBe("true"));
+  expect(getByTestId("token").textContent).toBe("active-tok");
+
+  await act(async () => { getByText("clear").click(); });
+
+  expect(getByTestId("token").textContent).toBe("");
+  expect(await secure.getItem("wc_auth_token")).toBeNull();
+});
+
 
 

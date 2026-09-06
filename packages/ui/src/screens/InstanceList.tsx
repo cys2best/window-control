@@ -9,16 +9,29 @@ import { BottomNav } from "../components/BottomNav";
 import type { Instance } from "@wc/core";
 
 export function InstanceList({ navigation }: { navigation: any }) {
-  const { client, base } = useServer();
+  const { client, base, clearAuth } = useServer() as any;
   const [items, setItems] = useState<Instance[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [reachable, setReachable] = useState(true);
 
   const load = useCallback(async () => {
     if (!client) return;
-    try { setItems(await client.instances()); setReachable(true); }
-    catch { setReachable(false); }
-  }, [client]);
+    try {
+      setItems(await client.instances());
+      setReachable(true);
+    } catch (err: any) {
+      if (err?.status === 401) {
+        if (clearAuth) await clearAuth();
+        if (navigation?.replace) {
+          navigation.replace("Login");
+        } else if (navigation?.navigate) {
+          navigation.navigate("Login");
+        }
+        return;
+      }
+      setReachable(false);
+    }
+  }, [client, navigation, clearAuth]);
 
   useEffect(() => {
     load();

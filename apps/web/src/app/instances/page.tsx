@@ -25,6 +25,8 @@ export default function InstancesPage() {
       navigation={{
         navigate: (route: string, params?: any) =>
           router.push(route === "Stream" ? `/stream?serial=${encodeURIComponent(params.serial)}` : toPath(route)),
+        replace: (route: string, params?: any) =>
+          router.replace(route === "Stream" ? `/stream?serial=${encodeURIComponent(params.serial)}` : toPath(route)),
       }}
     />
   );

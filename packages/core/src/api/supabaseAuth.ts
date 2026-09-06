@@ -28,3 +28,44 @@ export function signUpWithPassword(
 ): Promise<AuthResult> {
   return _authRequest(supabaseUrl, anonKey, "/auth/v1/signup", email, password);
 }
+
+export function decodeBase64Url(str: string): string {
+  let output = str.replace(/-/g, "+").replace(/_/g, "/");
+  switch (output.length % 4) {
+    case 0:
+      break;
+    case 2:
+      output += "==";
+      break;
+    case 3:
+      output += "=";
+      break;
+    default:
+      return "";
+  }
+  if (typeof atob === "function") {
+    return atob(output);
+  }
+  if (typeof Buffer !== "undefined") {
+    return Buffer.from(output, "base64").toString("binary");
+  }
+  return "";
+}
+
+export function isJwtExpired(token: string | null): boolean {
+  if (!token) return true;
+  try {
+    const parts = token.split(".");
+    if (parts.length < 2) return false;
+    const decoded = decodeBase64Url(parts[1]);
+    if (!decoded) return false;
+    const payload = JSON.parse(decoded);
+    if (typeof payload?.exp === "number") {
+      return Date.now() / 1000 >= payload.exp - 10;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+

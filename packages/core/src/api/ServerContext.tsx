@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useMemo, useState, useCallback } from "react";
 import { makeClient } from "./client";
 import { normalizeBase } from "./urls";
+import { isJwtExpired } from "./supabaseAuth";
 import type { SecureStorageAdapter } from "./storage";
 
 type ApiClient = ReturnType<typeof makeClient>;
@@ -10,6 +11,7 @@ type Ctx = {
   authToken: string | null;
   client: ApiClient | null;
   setServer: (base: string, token: string) => Promise<ApiClient>;
+  clearAuth: () => Promise<void>;
   ready: boolean;
   supabaseUrl: string;
   supabaseAnonKey: string;
@@ -48,9 +50,23 @@ export function ServerProvider({
       })
       .finally(() => setBaseLoaded(true));
     secureStorage.getItem(TOKEN_KEY)
-      .then((v) => { if (v) setAuthTokenState(v); })
+      .then((v) => {
+        if (v) {
+          if (isJwtExpired(v)) {
+            secureStorage.deleteItem(TOKEN_KEY);
+            setAuthTokenState(null);
+          } else {
+            setAuthTokenState(v);
+          }
+        }
+      })
       .finally(() => setTokenLoaded(true));
   }, [plainStorage, secureStorage, defaultBase]);
+
+  const clearAuth = useCallback(async () => {
+    await secureStorage.deleteItem(TOKEN_KEY);
+    setAuthTokenState(null);
+  }, [secureStorage]);
 
   const setServer = useCallback(async (url: string, token: string) => {
     const norm = normalizeBase(url);
@@ -62,12 +78,12 @@ export function ServerProvider({
     }
     setBaseState(norm);
     setAuthTokenState(token || null);
-    return makeClient(norm, token || null);
-  }, [plainStorage, secureStorage]);
+    return makeClient(norm, token || null, clearAuth);
+  }, [plainStorage, secureStorage, clearAuth]);
 
   const client = useMemo(
-    () => (base ? makeClient(base, authToken) : null),
-    [base, authToken]
+    () => (base ? makeClient(base, authToken, clearAuth) : null),
+    [base, authToken, clearAuth]
   );
 
   const [supabaseUrl, setSupabaseUrl] = useState("");
@@ -89,7 +105,7 @@ export function ServerProvider({
 
   const ready = baseLoaded && tokenLoaded;
   return (
-    <ServerCtx.Provider value={{ base, authToken, client, setServer, ready, supabaseUrl, supabaseAnonKey }}>
+    <ServerCtx.Provider value={{ base, authToken, client, setServer, clearAuth, ready, supabaseUrl, supabaseAnonKey }}>
       {children}
     </ServerCtx.Provider>
   );

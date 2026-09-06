@@ -25,7 +25,7 @@ export function Stream({
   RTCImpl: any;
   VideoView: VideoViewComponent;
 }) {
-  const { client, authToken } = useServer();
+  const { client, authToken, clearAuth } = useServer() as any;
   const { serial } = route.params;
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [net, setNet] = useState<Net>("connecting");
@@ -124,15 +124,34 @@ export function Stream({
         serial,
         onApply: (t) => client.setQuality(serial, t),
       });
-      adaptive.current.start(session.current.pc);
-    } catch { if (gen === startGen.current) { setFailed(true); setNet("disconnected"); } }
-  }, [client, authToken, serial, releaseActiveDrag]);
+    } catch (error: any) {
+      if (error?.status === 401) {
+        if (clearAuth) await clearAuth();
+        if (navigation?.replace) {
+          navigation.replace("Login");
+        } else if (navigation?.navigate) {
+          navigation.navigate("Login");
+        }
+        return;
+      }
+      if (gen === startGen.current) { setFailed(true); setNet("disconnected"); }
+    }
+  }, [client, authToken, clearAuth, serial, releaseActiveDrag, navigation]);
 
   // Instance list is owned by the client identity, not by `start`.
   useEffect(() => {
     if (!client) return;
-    client.instances().then(setInstances).catch(() => {});
-  }, [client]);
+    client.instances().then(setInstances).catch((err: any) => {
+      if (err?.status === 401) {
+        if (clearAuth) clearAuth();
+        if (navigation?.replace) {
+          navigation.replace("Login");
+        } else if (navigation?.navigate) {
+          navigation.navigate("Login");
+        }
+      }
+    });
+  }, [client, navigation, clearAuth]);
 
   // WHEP session + input channel + adaptive quality follow `start`
   // (serial/client changes).
@@ -153,11 +172,11 @@ export function Stream({
   // Restore the app-wide portrait lock on exit.
   useEffect(() => {
     try {
-      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE).catch(() => {});
+      Promise.resolve(ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE)).catch(() => {});
     } catch {}
     return () => {
       try {
-        ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
+        Promise.resolve(ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP)).catch(() => {});
       } catch {}
     };
   }, []);
@@ -302,7 +321,7 @@ export function Stream({
             // in the unmount cleanup below — requesting the geometry change
             // mid-transition can get silently dropped by iOS.
             try {
-              ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
+              Promise.resolve(ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP)).catch(() => {});
             } catch {}
             navigation.navigate("InstanceList");
           }} />

@@ -65,6 +65,15 @@ test("non-2xx responses throw ApiError with preserved status", async () => {
   );
 });
 
+test("triggers onUnauthorized callback on 401 status", async () => {
+  global.fetch = jest.fn(async () => okJson({}, 401)) as any;
+  const onUnauthorized = jest.fn();
+  const client = makeClient("https://host", "tok", onUnauthorized);
+  await expect(client.instances()).rejects.toBeInstanceOf(ApiError);
+  expect(onUnauthorized).toHaveBeenCalledTimes(1);
+});
+
+
 test("setQuality and keyframe send bearer auth", async () => {
   global.fetch = jest.fn(async () => okJson({})) as any;
   const client = makeClient("https://host", "tok");

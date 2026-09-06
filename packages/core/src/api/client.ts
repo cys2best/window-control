@@ -36,7 +36,11 @@ function serialOf(raw: any): string {
   return raw.serial ?? (id.startsWith("adb:") ? id.slice(4) : id);
 }
 
-export function makeClient(base: string, authToken: string | null) {
+export function makeClient(
+  base: string,
+  authToken: string | null,
+  onUnauthorized?: () => void
+) {
   const request = async (path: string, init: RequestInit = {}) => {
     const requestHeaders = new Headers(init.headers);
     if (authToken) requestHeaders.set("Authorization", `Bearer ${authToken}`);
@@ -44,7 +48,12 @@ export function makeClient(base: string, authToken: string | null) {
       ...init,
       headers: requestHeaders,
     });
-    if (!response.ok) throw new ApiError(path, response.status);
+    if (!response.ok) {
+      if (response.status === 401 && onUnauthorized) {
+        try { onUnauthorized(); } catch {}
+      }
+      throw new ApiError(path, response.status);
+    }
     return response;
   };
 
