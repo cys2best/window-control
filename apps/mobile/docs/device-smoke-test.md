@@ -1,51 +1,69 @@
-# Device Smoke Test Checklist
+# Mobile Device Smoke Test Checklist (v3.1.0)
 
-Run this checklist on a real device over Tailscale with a running server and at least two scrcpy instances.
-
-## Server Setup
-
-- [ ] **ServerSetup: bad URL shows inline error** — Enter an invalid URL (e.g., `http://invalid`) and verify the error appears inline on the screen without crashing.
-- [ ] **ServerSetup: valid URL persists and advances** — Enter a valid Tailscale URL (e.g., `http://100.x.x.x:8080`) and verify it's saved to AsyncStorage and navigates to the InstanceList screen.
-- [ ] **ServerSetup: unreachable host shows "Can't reach server"** — Enter a syntactically valid but unreachable IP (e.g., `http://100.64.0.1:8080`) and verify the "Can't reach server" error overlay appears.
-
-## Instance List
-
-- [ ] **InstanceList: cards render with live 16:9 previews** — On the InstanceList screen, verify each instance card displays a preview thumbnail in 16:9 aspect ratio that updates periodically.
-- [ ] **InstanceList: N-online count correct** — Verify the header shows the correct count of online instances (should match scrcpy instances running on the server).
-- [ ] **InstanceList: pull-to-refresh updates** — Pull down on the list and release; verify the preview thumbnails refresh and the instance list updates.
-- [ ] **InstanceList: 60s poll refreshes** — Wait 60 seconds without interacting; verify the list updates automatically with new preview data.
-
-## Stream Screen
-
-- [ ] **Stream: WHEP video + input DataChannel connect; video paints; net dot green** — Tap an instance to open the Stream screen. Verify the WHEP WebRTC peer and its input DataChannel establish (green network dot in the toolbar), and the video stream displays.
-- [ ] **Stream: tap registers on device** — Tap on the video to verify a tap registers on the target device (e.g., opens a menu or confirms selection).
-- [ ] **Stream: rapid drag remains smooth and releases** — Drag rapidly across the video, then lift or let iOS cancel the touch (for example, by opening Control Center). Verify movement remains smooth and the remote device is not left with a held finger.
-- [ ] **Stream: two-finger proportional scroll scrolls** — Compare a short and a long two-finger swipe at the same point. Verify both scroll in the correct direction and the longer swipe produces proportionally more scrolling.
-- [ ] **Stream: keyboard button forwards keystrokes** — Tap the keyboard icon in the toolbar and type text; verify keystrokes are sent to the device and appear in an active text field.
-
-## Settings & Quality
-
-- [ ] **Settings: pinning 480/1080 changes resolution** — Tap Settings, pin the quality to 480p or 1080p, and verify the stream video resolution changes immediately.
-- [ ] **Settings: Auto resumes adaptation** — Disable the pin (select "Auto"), and verify the client resumes adaptive quality switching based on network conditions.
-- [ ] **Under induced congestion, tier steps DOWN only (never restart-storms up)** — Induce network congestion (e.g., throttle bandwidth in device settings or use a network limiter). Verify the quality tier steps down smoothly without restarting the stream repeatedly.
-
-## Instance Switching
-
-- [ ] **Quick-switch drawer switches instances; new stream paints quickly (keyframe prefetch)** — While streaming, open the quick-switch drawer (swipe from the left or tap the drawer icon), select a different instance, and verify the new stream displays quickly with a keyframe already present (no long buffering).
-
-## Error Recovery
-
-- [ ] **Kill server → ErrorOverlay appears; restart → Reconnect recovers** — Stop the server and verify the ErrorOverlay appears on the mobile client. Restart the server and tap Reconnect; verify the app re-establishes the connection.
-- [ ] **Background/foreground the app → WHEP video + input DataChannel recover** — While streaming, send the app to the background (home button). Bring it back to the foreground and verify the WHEP video and input DataChannel recover without manual action.
-
-## Tier-Switch ICE Bounce Verification
-
-- [ ] **Verify the tier-switch ICE bounce does NOT blank to the error overlay** — While streaming, trigger a quality tier change (induce congestion or manually pin/unpin quality). Verify the ICE connection bounces (you may see momentary video freeze or flicker) but does NOT show the ErrorOverlay. If it blanks to ErrorOverlay during tier switch, port the `_tierSwitchUntil` suppression window from the web client (`app.js oniceconnectionstatechange`) into `whep.ts` / `Stream.tsx` and re-run this check.
+Run this checklist on a physical iOS or Android device (via Expo Go or dev build) connected to the WindowControl host on LAN or over Tailscale.
 
 ---
 
-## Notes
+## 1. Zero-Config Launch & Authentication
+- [ ] **Direct Launch without Manual URL**:
+  - Launch the mobile app from a clean state (or after clearing app storage).
+  - **Pass condition**: App opens directly to the **Login** screen without prompting for a manual "Server base URL".
+- [ ] **Automatic API Base Connection**:
+  - Enter valid account credentials and tap Sign In.
+  - **Pass condition**: Authenticates seamlessly using the configured default tunnel (`EXPO_PUBLIC_API_URL`) and transitions to the **InstanceList** screen.
+- [ ] **Persistent Session on Relaunch**:
+  - Force quit the app and reopen it.
+  - **Pass condition**: Bypasses Login and navigates directly to the **InstanceList** screen.
 
-- All tests assume Tailscale connectivity and a running server with at least two active scrcpy instances.
-- Network-induced failures (congestion, timeout) should show error overlays; resolving the network should recover gracefully.
-- Any crashes or hangs not covered by the checklist should be logged as a bug with a device stack trace (use Xcode Console for iOS or `adb logcat` for Android).
+---
+
+## 2. Instance List
+- [ ] **Instance Cards with 16:9 Previews**:
+  - Verify each active emulator card displays a 16:9 preview thumbnail that updates periodically.
+- [ ] **Online Instance Count**:
+  - Verify header indicates correct count of running emulator instances.
+- [ ] **Pull-to-Refresh**:
+  - Pull down on the instance list and release; confirm thumbnails and list refresh cleanly.
+- [ ] **60-Second Background Polling**:
+  - Leave list idle for 60 seconds without interaction; confirm list auto-refreshes.
+
+---
+
+## 3. Dual-Transport WebRTC Streaming
+- [ ] **Stream Connection & Video Display**:
+  - Tap an instance card.
+  - **Pass condition**: Dual-transport manager races local WHEP against VPS relay; video paints quickly, toolbar network dot turns green, and stats overlay shows active streaming.
+- [ ] **Touch Tap Registration**:
+  - Tap on the stream video; confirm tap registers accurately at the matching coordinates on the remote emulator.
+- [ ] **Rapid Drag & Release**:
+  - Drag rapidly across the screen, then lift finger or let iOS swipe gesture activate (e.g. Control Center).
+  - **Pass condition**: Remote drag tracks smoothly and releases immediately on finger lift (no sticky held touches).
+- [ ] **Two-Finger Proportional Scrolling**:
+  - Perform short vs long two-finger swipes; verify proportional scrolling in the correct direction.
+- [ ] **Virtual Keyboard Relay**:
+  - Tap the keyboard icon in the toolbar, type into a text field; confirm keystrokes appear on the remote device.
+
+---
+
+## 4. Settings & Adaptive Bitrate
+- [ ] **Resolution Pinning (480p / 720p / 1080p / 1440p)**:
+  - Open Settings modal, select 1080p or 480p; confirm resolution changes immediately.
+- [ ] **Auto Adaptive Streaming**:
+  - Select "Auto" quality tier; verify adaptive bitrate adjusts based on network conditions.
+- [ ] **Congestion Step-Down (No Restart Storms)**:
+  - Induce network congestion (e.g. enable device Network Link Conditioner); confirm quality steps down without dropping the connection or loop-restarting.
+- [ ] **Tier-Switch Stability**:
+  - Confirm switching quality tiers does not blank to the error overlay.
+
+---
+
+## 5. Instance Switching & Error Recovery
+- [ ] **Quick-Switch Drawer**:
+  - While streaming, open drawer (swipe from left or tap drawer icon) and select another instance.
+  - **Pass condition**: Immediately switches to the new instance with keyframe prefetch (minimal buffering).
+- [ ] **Server Kill & Reconnect**:
+  - Stop the host server; confirm ErrorOverlay appears with "Can't reach server".
+  - Restart host server, tap "Reconnect"; confirm stream re-establishes cleanly.
+- [ ] **App Backgrounding & Foregrounding**:
+  - Send app to background while streaming, wait 5 seconds, bring back to foreground.
+  - **Pass condition**: Video and input DataChannel recover automatically without requiring manual reconnection.

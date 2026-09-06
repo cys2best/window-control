@@ -1,6 +1,6 @@
 # Windows-only frontend/desktop cutover verifier.
 # Automates docs/WINDOWS_MANUAL_VALIDATION.md's build/HTTP/process-level
-# checks; genuinely manual gates (WebView2 visual confirmation, the
+# checks; genuinely manual gates (Minimal Host Monitor visual confirmation, the
 # Supabase two-account browser flow, the leaked-key cross-machine test)
 # remain file-prompt confirmations, same mechanism as verify-engine-cutover.ps1.
 

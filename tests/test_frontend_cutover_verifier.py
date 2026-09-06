@@ -17,7 +17,7 @@ from scripts.verify_frontend_cutover import (
     gate_auth_gate,
     gate_desktop_shell_visual,
     gate_dev_app_health,
-    gate_frozen_selfrelaunch,
+    gate_frozen_package_layout,
     gate_installed_app_launch,
     gate_instances_negotiation,
     gate_leaked_key_forgery_check,
@@ -63,10 +63,10 @@ def test_only_a_dependent_gate_auto_includes_its_prerequisite():
     assert selection["web_routes"] == "not selected this run (--only)"
 
 
-def test_only_frozen_selfrelaunch_auto_includes_installed_app_launch():
-    selection = resolve_gate_selection(_config(only=("frozen_selfrelaunch",)))
-    assert selection["frozen_selfrelaunch"] == "requested"
-    assert selection["installed_app_launch"] == "auto-included as prerequisite of frozen_selfrelaunch"
+def test_only_frozen_package_layout_auto_includes_installed_app_launch():
+    selection = resolve_gate_selection(_config(only=("frozen_package_layout",)))
+    assert selection["frozen_package_layout"] == "requested"
+    assert selection["installed_app_launch"] == "auto-included as prerequisite of frozen_package_layout"
 
 
 def test_only_accepts_a_comma_style_tuple_of_multiple_gates():
@@ -186,7 +186,8 @@ def test_dev_app_health_fails_when_wait_times_out():
 
 
 def test_web_routes_passes_when_every_page_is_html_200():
-    responses = {(8080, path): (200, "text/html; charset=utf-8", "<html></html>") for path in ("/", "/login", "/setup", "/stream")}
+    responses = {(8080, path): (200, "text/html; charset=utf-8", "<html></html>") for path in ("/", "/login", "/instances", "/stream")}
+    responses[(8080, "/setup")] = (404, "text/plain", "not found")
     result = FrontendCutoverResult()
     deps = FakeDeps(responses=responses)
     gate_web_routes(_config(), deps, result, "requested")
@@ -194,8 +195,9 @@ def test_web_routes_passes_when_every_page_is_html_200():
 
 
 def test_web_routes_fails_when_one_page_is_not_html():
-    responses = {(8080, path): (200, "text/html; charset=utf-8", "<html></html>") for path in ("/", "/login", "/setup", "/stream")}
+    responses = {(8080, path): (200, "text/html; charset=utf-8", "<html></html>") for path in ("/", "/login", "/instances", "/stream")}
     responses[(8080, "/stream")] = (200, "application/json", "{}")
+    responses[(8080, "/setup")] = (404, "text/plain", "not found")
     result = FrontendCutoverResult()
     deps = FakeDeps(responses=responses)
     gate_web_routes(_config(), deps, result, "requested")
@@ -203,9 +205,9 @@ def test_web_routes_fails_when_one_page_is_not_html():
     assert "/stream" in result.gates["web_routes"]["details"]["failures"][0]
 
 
-def test_rsc_payloads_passes_for_the_five_txt_files_plus_static_assets():
+def test_rsc_payloads_passes_for_the_four_txt_files_plus_static_assets():
     responses = {}
-    for page in ("index", "login", "setup", "instances", "stream"):
+    for page in ("index", "login", "instances", "stream"):
         responses[(8080, f"/{page}.txt")] = (200, "text/x-component; charset=utf-8", "chunk")
     responses[(8080, "/404.html")] = (200, "text/html; charset=utf-8", "<html></html>")
     responses[(8080, "/manifest.json")] = (200, "application/json", "{}")
@@ -218,7 +220,7 @@ def test_rsc_payloads_passes_for_the_five_txt_files_plus_static_assets():
 
 def test_rsc_payloads_fails_when_a_txt_payload_404s():
     responses = {}
-    for page in ("index", "login", "setup", "instances", "stream"):
+    for page in ("index", "login", "instances", "stream"):
         responses[(8080, f"/{page}.txt")] = (200, "text/x-component; charset=utf-8", "chunk")
     responses[(8080, "/stream.txt")] = (404, "text/plain", "not found")
     responses[(8080, "/404.html")] = (200, "text/html; charset=utf-8", "<html></html>")
@@ -656,74 +658,51 @@ def test_installed_app_launch_fails_when_firewall_rule_points_elsewhere():
     assert result.gates["installed_app_launch"]["details"]["started_at"] == 2.0
 
 
-def test_frozen_selfrelaunch_passes_when_child_survives_and_parent_still_healthy():
-    class FakeDepsForRelaunch:
-        def start_selfrelaunch(self, url):
-            return __import__("scripts.verify_lib", fromlist=["OwnedProcess"]).OwnedProcess("selfrelaunch", 6666, 3.0)
+def test_frozen_package_layout_passes_when_parent_healthy_and_routes_ok():
+    responses = {(8080, path): (200, "text/html; charset=utf-8", "<html></html>") for path in ("/", "/login", "/instances", "/stream")}
+    responses[(8080, "/setup")] = (404, "text/plain", "not found")
 
-        def sleep(self, seconds):
-            pass
-
-        def process_is_alive(self, process):
-            return True
-
+    class FakeDepsForLayout:
         def wait_for_dev_app(self, app, port):
             return True
 
-        def terminate(self, process):
-            pass
-
-    result = FrontendCutoverResult()
-    gate_frozen_selfrelaunch(_config(), FakeDepsForRelaunch(), result, "requested", parent=__import__("scripts.verify_lib", fromlist=["OwnedProcess"]).OwnedProcess("installed_app", 5555, 2.0))
-    assert result.gates["frozen_selfrelaunch"]["status"] == "PASS"
-
-
-def test_frozen_selfrelaunch_fails_when_child_process_dies_immediately():
-    class FakeDepsForRelaunch:
-        def start_selfrelaunch(self, url):
-            return __import__("scripts.verify_lib", fromlist=["OwnedProcess"]).OwnedProcess("selfrelaunch", 6666, 3.0)
-
-        def sleep(self, seconds):
-            pass
-
-        def process_is_alive(self, process):
-            return False
-
-        def wait_for_dev_app(self, app, port):
-            return True
-
-        def terminate(self, process):
-            pass
-
-    result = FrontendCutoverResult()
-    gate_frozen_selfrelaunch(_config(), FakeDepsForRelaunch(), result, "requested", parent=__import__("scripts.verify_lib", fromlist=["OwnedProcess"]).OwnedProcess("installed_app", 5555, 2.0))
-    assert result.gates["frozen_selfrelaunch"]["status"] == "FAIL"
-
-
-def test_frozen_selfrelaunch_terminates_child_on_exception():
-    terminated = []
-
-    class FakeDepsForRelaunch:
-        def start_selfrelaunch(self, url):
-            return __import__("scripts.verify_lib", fromlist=["OwnedProcess"]).OwnedProcess("selfrelaunch", 6666, 3.0)
-
-        def sleep(self, seconds):
-            raise RuntimeError("simulated crash during sleep")
-
-        def process_is_alive(self, process):
-            return True
-
-        def wait_for_dev_app(self, app, port):
-            return True
-
-        def terminate(self, process):
-            terminated.append(process.kind)
+        def get(self, port, path, *, headers=None):
+            return responses.get((port, path), (404, "text/plain", "not found"))
 
     result = FrontendCutoverResult()
     parent = __import__("scripts.verify_lib", fromlist=["OwnedProcess"]).OwnedProcess("installed_app", 5555, 2.0)
-    with pytest.raises(RuntimeError, match="simulated crash during sleep"):
-        gate_frozen_selfrelaunch(_config(), FakeDepsForRelaunch(), result, "requested", parent=parent)
-    assert terminated == ["selfrelaunch"]
+    gate_frozen_package_layout(_config(), FakeDepsForLayout(), result, "requested", parent=parent)
+    assert result.gates["frozen_package_layout"]["status"] == "PASS"
+
+
+def test_frozen_package_layout_fails_when_parent_unhealthy():
+    class FakeDepsForLayout:
+        def wait_for_dev_app(self, app, port):
+            return False
+
+        def get(self, port, path, *, headers=None):
+            return (200, "text/html", "ok")
+
+    result = FrontendCutoverResult()
+    parent = __import__("scripts.verify_lib", fromlist=["OwnedProcess"]).OwnedProcess("installed_app", 5555, 2.0)
+    gate_frozen_package_layout(_config(), FakeDepsForLayout(), result, "requested", parent=parent)
+    assert result.gates["frozen_package_layout"]["status"] == "FAIL"
+
+
+def test_frozen_package_layout_fails_when_routes_fail():
+    class FakeDepsForLayout:
+        def wait_for_dev_app(self, app, port):
+            return True
+
+        def get(self, port, path, *, headers=None):
+            if path == "/stream":
+                return (500, "text/plain", "error")
+            return (200, "text/html", "ok")
+
+    result = FrontendCutoverResult()
+    parent = __import__("scripts.verify_lib", fromlist=["OwnedProcess"]).OwnedProcess("installed_app", 5555, 2.0)
+    gate_frozen_package_layout(_config(), FakeDepsForLayout(), result, "requested", parent=parent)
+    assert result.gates["frozen_package_layout"]["status"] == "FAIL"
 
 
 def test_install_dir_defaults_to_program_files(monkeypatch):
@@ -951,7 +930,7 @@ def test_run_with_skip_installer_skips_exactly_the_three_installer_gates(monkeyp
 
     config = _config(skip_installer=True)
     result = module.run(config, deps=object())
-    for name in ("installed_app_launch", "frozen_selfrelaunch", "leaked_key_forgery_check"):
+    for name in ("installed_app_launch", "frozen_package_layout", "leaked_key_forgery_check"):
         assert result.gates[name]["status"] == "SKIPPED"
     assert result.status == "INCOMPLETE"
 

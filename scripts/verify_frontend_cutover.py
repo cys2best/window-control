@@ -31,7 +31,7 @@ GATE_NAMES: tuple[str, ...] = (
     "auth_gate",
     "offline_suites",
     "installed_app_launch",
-    "frozen_selfrelaunch",
+    "frozen_package_layout",
     "desktop_shell_visual",
     "supabase_two_account_flow",
     "leaked_key_forgery_check",
@@ -42,7 +42,7 @@ GATE_DEPENDENCIES: dict[str, tuple[str, ...]] = {
     "rsc_payloads": ("dev_app_health",),
     "instances_negotiation": ("dev_app_health",),
     "auth_gate": ("dev_app_health",),
-    "frozen_selfrelaunch": ("installed_app_launch",),
+    "frozen_package_layout": ("installed_app_launch",),
 }
 
 
@@ -141,7 +141,7 @@ def resolve_gate_selection(config: FrontendCutoverConfig) -> dict[str, str]:
     return selection
 
 
-_RSC_PAGES = ("index", "login", "setup", "instances", "stream")
+_RSC_PAGES = ("index", "login", "instances", "stream")
 
 
 def _install_dir(installer_path: Path) -> Path:
@@ -292,11 +292,15 @@ def gate_dev_app_health(config: FrontendCutoverConfig, deps: Any, result: Fronte
 def gate_web_routes(config: FrontendCutoverConfig, deps: Any, result: FrontendCutoverResult, reason: str) -> None:
     observed: dict[str, Any] = {}
     failures: list[str] = []
-    for path in ("/", "/login", "/setup", "/stream"):
+    for path in ("/", "/login", "/instances", "/stream"):
         status, content_type, _ = deps.get(config.port, path)
         observed[path] = {"status": status, "content_type": content_type}
         if status != 200 or "text/html" not in content_type:
             failures.append(f"{path}: expected 200 text/html, got {status} {content_type!r}")
+    setup_status, setup_ct, _ = deps.get(config.port, "/setup")
+    observed["/setup"] = {"status": setup_status, "content_type": setup_ct}
+    if setup_status == 200:
+        failures.append("/setup: retired route should not return 200")
     if failures:
         result.mark("web_routes", "FAIL", reason=reason, details={"observed": observed, "failures": failures})
     else:
@@ -437,28 +441,35 @@ def gate_installed_app_launch(config: FrontendCutoverConfig, deps: Any, result: 
         result.mark("installed_app_launch", "FAIL", reason=reason, details=details)
 
 
-def gate_frozen_selfrelaunch(config: FrontendCutoverConfig, deps: Any, result: FrontendCutoverResult, reason: str, *, parent: OwnedProcess) -> None:
-    url = f"http://127.0.0.1:{config.port}"
-    child = deps.start_selfrelaunch(url)
-    try:
-        deps.sleep(3)
-        child_alive = deps.process_is_alive(child)
-        parent_still_healthy = deps.wait_for_dev_app(parent, config.port)
-        details = {"child_pid": child.pid, "child_alive": child_alive, "parent_still_healthy": parent_still_healthy}
-    finally:
-        deps.terminate(child)
-    if child_alive and parent_still_healthy:
-        result.mark("frozen_selfrelaunch", "PASS", reason=reason, details=details)
+def gate_frozen_package_layout(config: FrontendCutoverConfig, deps: Any, result: FrontendCutoverResult, reason: str, *, parent: OwnedProcess) -> None:
+    parent_still_healthy = deps.wait_for_dev_app(parent, config.port)
+    route_failures: list[str] = []
+    for path in ("/", "/login", "/instances", "/stream"):
+        status, content_type, _ = deps.get(config.port, path)
+        if status != 200 or "text/html" not in content_type:
+            route_failures.append(f"{path}: expected 200, got {status}")
+    setup_status, _, _ = deps.get(config.port, "/setup")
+    if setup_status == 200:
+        route_failures.append("/setup: retired route returned 200")
+    details = {
+        "parent_pid": parent.pid,
+        "parent_still_healthy": parent_still_healthy,
+        "route_failures": route_failures,
+    }
+    if parent_still_healthy and not route_failures:
+        result.mark("frozen_package_layout", "PASS", reason=reason, details=details)
     else:
-        result.mark("frozen_selfrelaunch", "FAIL", reason=reason, details=details)
+        result.mark("frozen_package_layout", "FAIL", reason=reason, details=details)
 
 
 def gate_desktop_shell_visual(config: FrontendCutoverConfig, deps: Any, result: FrontendCutoverResult, reason: str) -> None:
     answer = deps.manual_confirm(
-        "On the machine running the installed app, click the tray's 'Open App' "
-        "button. Confirm: a real window opens, shows the login/instance UI (not "
-        "blank, not a crash), and clicking 'Open App' again while it's still open "
-        "does NOT open a second window.",
+        "On the machine running the installed app, click the system tray icon's "
+        "'Show' option. Confirm: the Option B Minimal Host Monitor widget opens "
+        "(~400px compact card showing server health dot, port 8080, LAN/Tailscale "
+        "IPs, relay status, and active streams count), clicking 'Minimize to Tray' "
+        "hides the window, and closing the window via [X] minimizes to tray without "
+        "terminating the server process.",
         "desktop_shell_visual",
     )
     result.mark("desktop_shell_visual", "PASS" if answer == "PASS" else "FAIL", reason=reason)
@@ -517,7 +528,7 @@ def run(config: FrontendCutoverConfig, deps: Any) -> FrontendCutoverResult:
             if reason.startswith("not selected"):
                 result.mark(name, "SKIPPED", reason=reason)
                 continue
-            if name in ("installed_app_launch", "frozen_selfrelaunch", "leaked_key_forgery_check") and config.skip_installer:
+            if name in ("installed_app_launch", "frozen_package_layout", "leaked_key_forgery_check") and config.skip_installer:
                 result.mark(name, "SKIPPED", reason="skipped (--skip-installer)")
                 continue
             if name in ("desktop_shell_visual", "supabase_two_account_flow", "leaked_key_forgery_check") and config.skip_manual_gates:
@@ -534,15 +545,15 @@ def run(config: FrontendCutoverConfig, deps: Any) -> FrontendCutoverResult:
                         if started_at is None:
                             started_at = _pid_started_at(pid) or 0
                         started_app = OwnedProcess("dev_app", pid, started_at)
-            elif name == "frozen_selfrelaunch":
-                gate_fn = getattr(sys.modules[__name__], f"gate_{name}", gate_frozen_selfrelaunch)
+            elif name == "frozen_package_layout":
+                gate_fn = getattr(sys.modules[__name__], f"gate_{name}", gate_frozen_package_layout)
                 import inspect
                 sig = inspect.signature(gate_fn)
                 if "parent" in sig.parameters:
                     if started_installed_app is not None:
                         gate_fn(config, deps, result, reason, parent=started_installed_app)
                     else:
-                        result.mark(name, "FAIL", reason=reason, details={"error": "installed_app_launch did not produce a running app to relaunch against"})
+                        result.mark(name, "FAIL", reason=reason, details={"error": "installed_app_launch did not produce a running app to verify layout against"})
                 else:
                     gate_fn(config, deps, result, reason)
             elif name == "installed_app_launch":
