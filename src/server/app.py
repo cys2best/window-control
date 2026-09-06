@@ -154,7 +154,14 @@ async def _capture_preview(serial: str) -> Response:
     including concurrent selection and preview requests.
     """
     import asyncio as _asyncio
+    import urllib.parse
     from PIL import Image
+
+    serial = urllib.parse.unquote(serial)
+    if serial.startswith("adb:"):
+        serial = serial[4:]
+    if not serial:
+        raise HTTPException(status_code=400, detail="Serial required")
 
     adb = adb_manager._find_adb()
     if not adb:
@@ -192,9 +199,10 @@ async def _capture_preview(serial: str) -> Response:
 
 
 def current_user(request: Request) -> auth.UserClaims | None:
-    return auth.verify_supabase_jwt(
-        auth.bearer_token(request.headers.get("authorization"))
-    )
+    token = auth.bearer_token(request.headers.get("authorization"))
+    if not token:
+        token = request.query_params.get("token")
+    return auth.verify_supabase_jwt(token)
 
 
 def _format_host(host: str) -> str:
@@ -495,8 +503,25 @@ def create_app(instance_manager: InstanceManager) -> FastAPI:
         return {"ok": True, "tier": req.tier}
 
     @app.get("/instances/{instance_id}/preview")
+    @app.get("/preview/{instance_id}")
     async def instance_preview(instance_id: str, request: Request):
         return await _capture_preview(instance_id)
+
+    @app.get("/instances/preview")
+    @app.get("/preview")
+    async def query_preview(request: Request):
+        serial = request.query_params.get("serial") or request.query_params.get("id") or ""
+        if not serial:
+            active = instance_manager.active
+            if active:
+                serial = active.serial
+            else:
+                instances = instance_manager.list_instances()
+                if instances:
+                    serial = instances[0].get("serial", "")
+        if not serial:
+            raise HTTPException(status_code=404, detail="No instance found")
+        return await _capture_preview(serial)
 
     # ── Legacy /windows + /select (kept for backward compat) ────────────────
 

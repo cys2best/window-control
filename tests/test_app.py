@@ -447,3 +447,32 @@ def test_decode_raw_screencap_accepts_12_byte_header():
     img = _decode_raw_screencap(raw)
     assert img is not None
     assert img.size == (4, 4)
+
+
+def test_capture_preview_unquotes_and_strips_adb_prefix():
+    client, _ = _make_client()
+    raw = _raw_screencap_bytes(4, 4)
+    with patch("server.app.adb_manager._find_adb", return_value="adb"), \
+         patch("server.app.adb_manager._no_window_flags", return_value={}), \
+         patch("server.app.subprocess.check_output", return_value=raw) as mock_run:
+        r = client.get("/instances/adb%3A127.0.0.1%3A5555/preview")
+    assert r.status_code == 200
+    assert mock_run.call_count == 1
+    args = mock_run.call_args[0][0]
+    assert "-s" in args
+    idx = args.index("-s")
+    assert args[idx + 1] == "127.0.0.1:5555"
+
+
+def test_query_preview_aliases():
+    client, manager = _make_client()
+    manager.list_instances.return_value = [{"serial": "emulator-5554", "name": "LDPlayer"}]
+    raw = _raw_screencap_bytes(4, 4)
+    with patch("server.app.adb_manager._find_adb", return_value="adb"), \
+         patch("server.app.adb_manager._no_window_flags", return_value={}), \
+         patch("server.app.subprocess.check_output", return_value=raw) as mock_run:
+        r1 = client.get("/preview?serial=adb:emulator-5554")
+        r2 = client.get("/instances/preview")
+    assert r1.status_code == 200
+    assert r2.status_code == 200
+

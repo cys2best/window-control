@@ -299,3 +299,12 @@ def test_login_upsert_failure_does_not_fail_the_request(monkeypatch):
     r = client.get("/instances", headers={"Authorization": f"Bearer {_jwt()}"})
 
     assert r.status_code == 200
+
+
+def test_auth_accepts_token_query_param():
+    client, _, _ = _make_authed_client()
+    token = _jwt()
+    # Without Authorization header, passing ?token=... authenticates successfully
+    r = client.get(f"/instances?token={token}")
+    assert r.status_code == 200
+

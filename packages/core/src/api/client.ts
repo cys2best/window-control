@@ -75,7 +75,9 @@ export function makeClient(base: string, authToken: string | null) {
       } catch {}
     },
     previewSource(serial: string): { uri: string; headers?: { Authorization: string } } {
-      const uri = httpUrl(base, `/instances/${serial}/preview?t=${Date.now()}`);
+      const cleanSerial = serial.startsWith("adb:") ? serial.slice(4) : serial;
+      const tokenParam = authToken ? `&token=${encodeURIComponent(authToken)}` : "";
+      const uri = httpUrl(base, `/instances/${cleanSerial}/preview?t=${Date.now()}${tokenParam}`);
       return authToken ? { uri, headers: { Authorization: `Bearer ${authToken}` } } : { uri };
     },
   };

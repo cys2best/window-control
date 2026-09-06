@@ -152,8 +152,14 @@ export function Stream({
   // rotate freely (either landscape direction) while this screen is up.
   // Restore the app-wide portrait lock on exit.
   useEffect(() => {
-    ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
-    return () => { ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP); };
+    try {
+      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE).catch(() => {});
+    } catch {}
+    return () => {
+      try {
+        ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
+      } catch {}
+    };
   }, []);
 
   const norm = (px: number, py: number) => normalizeCoords({ x: px, y: py }, rect.current, content.current);
@@ -295,7 +301,9 @@ export function Stream({
             // Lock portrait before the screen-pop transition starts, not only
             // in the unmount cleanup below — requesting the geometry change
             // mid-transition can get silently dropped by iOS.
-            ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
+            try {
+              ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
+            } catch {}
             navigation.navigate("InstanceList");
           }} />
       </GestureDetector>
