@@ -98,7 +98,7 @@ Execute the automated HTTP server verifier:
 
 Compile and verify the native streaming engine:
 ```powershell
-cmake -S engine -B engine\build -DCMAKE_TOOLCHAIN_FILE=<path-to-vcpkg>\scripts\buildsystems\vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-windows
+cmake -S engine -B engine\build -DCMAKE_TOOLCHAIN_FILE="C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\vcpkg\scripts\buildsystems\vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows
 cmake --build engine\build --config Release
 ```
 

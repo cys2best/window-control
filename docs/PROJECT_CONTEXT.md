@@ -46,7 +46,7 @@ npm install                  # repo root (npm workspaces: apps/web, apps/mobile,
 # build
 npm run build -w apps/web    # apps/web/out (Next.js static export) -- build this BEFORE running src/main.py or packaging; src/server/app.py serves it, build/window_control.spec bundles it
 uv run python src/main.py    # run the app directly
-cmake -S engine -B engine/build ...  # engine/, Windows-only, see engine/BUILD_WINDOWS.md
+cmake -S engine -B engine/build ...  # engine/, Windows-only, see engine/BUILD_WINDOWS.md (VS 2022 BuildTools: -DCMAKE_TOOLCHAIN_FILE="C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\vcpkg\scripts\buildsystems\vcpkg.cmake")
 python scripts/bump_version.py       # sync VERSION across config.py / pyproject.toml / installer.iss
 
 # test

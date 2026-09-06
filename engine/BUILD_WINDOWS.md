@@ -35,9 +35,15 @@ debug locally or run the real-device gates.
 
 From the repo root:
 
-```
-cmake -S engine -B engine\build ^
-  -DCMAKE_TOOLCHAIN_FILE=<path-to-vcpkg>\scripts\buildsystems\vcpkg.cmake ^
+```powershell
+# If using standalone or custom vcpkg:
+cmake -S engine -B engine\build `
+  -DCMAKE_TOOLCHAIN_FILE="<path-to-vcpkg>\scripts\buildsystems\vcpkg.cmake" `
+  -DVCPKG_TARGET_TRIPLET=x64-windows
+
+# If using Visual Studio 2022 Build Tools:
+cmake -S engine -B engine\build `
+  -DCMAKE_TOOLCHAIN_FILE="C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\vcpkg\scripts\buildsystems\vcpkg.cmake" `
   -DVCPKG_TARGET_TRIPLET=x64-windows
 ```
 
