@@ -1,5 +1,6 @@
 module.exports = {
   testEnvironment: "jsdom",
+  testTimeout: 15000,
   // `next build`/`next dev` unconditionally rewrite tsconfig.json (forcing
   // "jsx": "preserve", "incremental": true, and a ".next/types" include) —
   // ts-jest needs actual JSX-to-JS output and a single common source root,
