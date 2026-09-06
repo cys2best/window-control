@@ -421,7 +421,10 @@ def gate_offline_suites(config: FrontendCutoverConfig, deps: Any, result: Fronte
         counts = _parse_pytest_summary(output) if kind == "pytest" else _parse_jest_summary(output)
         failed = counts.get("failed", 0)
         errors = counts.get("errors", 0)
+        failed_lines = [line for line in output.splitlines() if line.startswith("FAILED ") or line.startswith("FAIL ")]
         details[name] = {"exit_code": exit_code, "counts": counts}
+        if failed_lines:
+            details[name]["failed_tests"] = failed_lines
         if exit_code != 0 or failed != 0 or errors != 0:
             any_failed = True
     if any_failed:
