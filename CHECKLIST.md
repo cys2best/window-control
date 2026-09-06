@@ -102,16 +102,17 @@ cmake -S engine -B engine\build -DCMAKE_TOOLCHAIN_FILE="C:\Program Files (x86)\M
 cmake --build engine\build --config Release
 ```
 
-- [ ] **4.1. Engine Binary Built**: `engine\build\Release\engine.exe` exists with 0 compiler errors.
+- [x] **4.1. Engine Binary Built**: `engine\build\Release\engine.exe` exists with 0 compiler errors. *(Verified on Windows)*
 - [ ] **4.2. Offline GTest Suite**:
   ```powershell
   cmake --build engine\build --config Release --target engine_tests
-  .\engine\build\Release\engine_tests.exe --gtest_filter=-SignalingClient.*
+  .\engine\build\Release\engine_tests.exe --gtest_filter=-SignalingClient.*:PublicSignalingBridge.*
   ```
-  All offline engine tests pass.
+  All offline engine tests pass (excluding tests that require the live Node signaling relay).
 - [ ] **4.3. Live Signaling Relay GTest**:
+  *(Requires starting the Node relay in another terminal first: `cd infra\vps\signaling; npm start`)*
   ```powershell
-  .\engine\build\Release\engine_tests.exe --gtest_filter=SignalingClient.*:PublicSignalingBridge.*
+  .\engine\build\Release\engine_tests.exe --gtest_filter="SignalingClient.*:PublicSignalingBridge.*"
   ```
   WebRTC signaling handshake passes against local relay.
 
