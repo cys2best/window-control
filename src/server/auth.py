@@ -61,6 +61,7 @@ def _jwks_client() -> PyJWKClient | None:
 def _fetch_user_from_supabase(url: str, token: str) -> UserClaims | None:
     api_key = getattr(config, "SUPABASE_SERVICE_ROLE_KEY", "") or getattr(config, "SUPABASE_ANON_KEY", "")
     if not api_key:
+        log.warning("Cannot verify token with Supabase REST API: neither SUPABASE_SERVICE_ROLE_KEY nor SUPABASE_ANON_KEY is set")
         return None
     try:
         r = httpx.get(
@@ -102,6 +103,11 @@ def verify_supabase_jwt(token: str | None) -> UserClaims | None:
     alg = header.get("alg")
     claims: UserClaims | None = None
 
+    try:
+        unverified_payload = jwt.decode(token, options={"verify_signature": False, "verify_exp": False, "verify_aud": False})
+    except Exception:
+        unverified_payload = {}
+
     if alg == "HS256":
         jwt_secret = getattr(config, "SUPABASE_JWT_SECRET", None)
         if jwt_secret:
@@ -117,8 +123,11 @@ def verify_supabase_jwt(token: str | None) -> UserClaims | None:
                 if sub and isinstance(sub, str):
                     claims = UserClaims(user_id=sub, email=payload.get("email"))
             except (jwt.InvalidSignatureError, jwt.ExpiredSignatureError, jwt.InvalidAudienceError, jwt.MissingRequiredClaimError) as error:
-                log.info("Supabase JWT HS256 verification failed: %s: %s", type(error).__name__, error)
-                return None
+                log.info(
+                    "Supabase JWT HS256 verification failed: %s: %s (claims: aud=%s exp=%s now=%s, diff=%ss)",
+                    type(error).__name__, error, unverified_payload.get("aud"), unverified_payload.get("exp"), int(now),
+                    int(unverified_payload.get("exp", 0)) - int(now) if unverified_payload.get("exp") else "N/A"
+                )
             except Exception as error:
                 log.info("Supabase JWT HS256 decode error: %s: %s", type(error).__name__, error)
         if claims is None:
@@ -140,8 +149,11 @@ def verify_supabase_jwt(token: str | None) -> UserClaims | None:
                 if sub and isinstance(sub, str):
                     claims = UserClaims(user_id=sub, email=payload.get("email"))
             except (jwt.InvalidSignatureError, jwt.ExpiredSignatureError, jwt.InvalidAudienceError, jwt.MissingRequiredClaimError) as error:
-                log.info("Supabase JWT ES256 verification failed: %s: %s", type(error).__name__, error)
-                return None
+                log.info(
+                    "Supabase JWT ES256 verification failed: %s: %s (claims: aud=%s exp=%s now=%s, diff=%ss)",
+                    type(error).__name__, error, unverified_payload.get("aud"), unverified_payload.get("exp"), int(now),
+                    int(unverified_payload.get("exp", 0)) - int(now) if unverified_payload.get("exp") else "N/A"
+                )
             except Exception as error:
                 log.info("Supabase JWKS verification attempt failed: %s: %s", type(error).__name__, error)
         if claims is None:
