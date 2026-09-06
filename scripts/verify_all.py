@@ -107,8 +107,19 @@ def main() -> int:
 
     # Ensure signaling relay dependencies are installed if not already present
     vps_dir = REPO_ROOT / "infra" / "vps" / "signaling"
-    if not (REPO_ROOT / "node_modules" / "ws").exists() and not (vps_dir / "node_modules" / "ws").exists():
-        _run_step("Install Signaling Dependencies", ["npm", "install"], cwd=REPO_ROOT)
+    has_jose = (REPO_ROOT / "node_modules" / "jose").exists() or (vps_dir / "node_modules" / "jose").exists()
+    has_ws = (REPO_ROOT / "node_modules" / "ws").exists() or (vps_dir / "node_modules" / "ws").exists()
+    if not has_jose or not has_ws:
+        sys.stdout.write("[*] Installing signaling relay dependencies (jose, ws)... ")
+        sys.stdout.flush()
+        ok, out, dur = _run_step("Install Signaling Dependencies", ["npm", "install"], cwd=REPO_ROOT)
+        if ok:
+            print(f"PASS ({dur:.2f}s)")
+        else:
+            print(f"FAIL ({dur:.2f}s)")
+            if out:
+                for l in out.strip().splitlines()[-10:]:
+                    print(f"          | {l}")
 
     for title, cmd, cwd in steps:
         sys.stdout.write(f"[*] Running {title}... ")
@@ -154,8 +165,7 @@ def main() -> int:
         print(f" {status_colored:<8} {title:<48} ({dur:.2f}s)")
         if status == "FAIL" and out:
             lines = out.strip().splitlines()
-            show_lines = lines[-30:] if len(lines) > 30 else lines
-            for l in show_lines:
+            for l in lines:
                 print(f"          | {l}")
 
     print("-" * 72)
