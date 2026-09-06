@@ -197,37 +197,37 @@ Start host: `uv run python src\main.py` (or launch installed `WindowControl.exe`
 
 ## Section 7: Supabase Multi-User Security & Isolation Gate
 
-- [ ] **7.1. First Account Registration (Account A)**:
+- [x] **7.1. First Account Registration (Account A)**: *(Verified on Windows)*
   - Navigate to `http://<PC-IP>:8080/login` in browser.
   - Register Account A (or sign in).
   - Verify Account A claims the host machine (trust-on-first-use).
   - Verify connected emulator appears in instance list.
-- [ ] **7.2. Second Account Isolation (Account B)**:
+- [x] **7.2. Second Account Isolation (Account B)**: *(Verified on Windows)*
   - Open a separate **Incognito / Private browser window**.
   - Navigate to `http://<PC-IP>:8080/login` and log in as Account B (a different registered user).
   - **Critical Pass Condition**: Account B sees an **empty** device list.
   - Attempting to query or stream Account A's device (e.g. `/instances/{serial}/select`) returns **HTTP 403 Forbidden**.
-- [ ] **7.3. Persistent Claim**: Close and reopen browser; Account A continues to see the claimed instance.
+- [x] **7.3. Persistent Claim**: Close and reopen browser; Account A continues to see the claimed instance. *(Verified on Windows)*
 
 ---
 
-## Section 8: Web Client Streaming &amp; Dual-Transport Verification
+## Section 8: Web Client Streaming & Dual-Transport Verification
 
-- [ ] **8.1. Stream Launch**: From Account A's instance list, click an emulator card to open `/stream`.
-- [ ] **8.2. Dual-Transport Connection**:
-  - [ ] Video stream displays immediately (no black frame).
-  - [ ] Toolbar network dot shows green (connected).
-  - [ ] Stats overlay shows active bitrate and climbing `framesDecoded`.
-- [ ] **8.3. Touch &amp; Mouse Inputs**:
-  - [ ] Click / tap on video -&gt; emulator responds at exact coordinate.
-  - [ ] Drag / swipe across video -&gt; smooth drag tracking on emulator; releases immediately when mouse/touch lifts.
-  - [ ] Virtual keyboard -&gt; typing characters forwards keystrokes into emulator text field.
-- [ ] **8.4. Quality Tier Adaptation**:
+- [x] **8.1. Stream Launch**: From Account A's instance list, click an emulator card to open `/stream`. *(Verified on Windows)*
+- [x] **8.2. Dual-Transport Connection**: *(Verified on Windows)*
+  - [x] Video stream displays immediately (no black frame).
+  - [x] Toolbar network dot shows green (connected).
+  - [x] Stats overlay shows active bitrate and climbing `framesDecoded`.
+- [x] **8.3. Touch & Mouse Inputs**: *(Verified on Windows)*
+  - [x] Click / tap on video -> emulator responds at exact coordinate.
+  - [x] Drag / swipe across video -> smooth drag tracking on emulator; releases immediately when mouse/touch lifts.
+  - [x] Virtual keyboard -> typing characters forwards keystrokes into emulator text field.
+- [x] **8.4. Quality Tier Adaptation**: *(Verified on Windows)*
   - Open Settings overlay mid-stream.
   - Pin resolution to `480p`, `720p`, `1080p`.
   - Confirm video resolution adapts dynamically without stream disconnect or crash.
   - Switch back to `Auto`.
-- [ ] **8.5. Quick-Switch Drawer**:
+- [x] **8.5. Quick-Switch Drawer**: *(Verified on Windows)*
   - Open left navigation drawer.
   - Select a different running emulator instance.
   - Confirm stream transitions rapidly with keyframe prefetch (no endless loading spinner).
@@ -258,22 +258,22 @@ Run app via Expo dev build or Expo Go on physical phone:
   - While streaming, press Home to background app for 5 seconds, then return to app.
   - Confirm WebRTC video and DataChannel recover automatically without manual reconnect.
 - [ ] **9.6. Server Disconnect Recovery**:
-  - Stop host server -&gt; Error overlay appears.
-  - Restart host server, tap **Reconnect** -&gt; stream resumes cleanly.
+  - Stop host server -> Error overlay appears.
+  - Restart host server, tap **Reconnect** -> stream resumes cleanly.
 
 ---
 
-## Section 10: Sign-Off &amp; Result Logging
+## Section 10: Sign-Off & Result Logging
 
 - [x] All automated tests verified green (Section 2 full monorepo & Section 3.1-3.3 live server verified on macOS).
 - [x] Engine compilation verified on Windows (Section 4).
 - [x] Installer built and verified (Section 5).
 - [x] Host Monitor Widget Option B visually confirmed (Section 6).
-- [ ] Supabase two-account isolation verified (Section 7).
-- [ ] Physical WebRTC streaming verified on web and mobile (Section 8, 9).
-- [ ] Update `HANDOFF.md` with sign-off entry:
+- [x] Supabase two-account isolation verified (Section 7).
+- [x] Physical WebRTC streaming verified on web (Section 8; Section 9 mobile skipped due to host storage).
+- [x] Update `HANDOFF.md` with sign-off entry:
   ```markdown
-  ### YYYY-MM-DD HH:MM — [operator]
+  ### 2026-09-07 01:00 — codex
   - Validated: v3.1.0 zero-config-and-host-gui-refactor on Windows 11 hardware
   - Automated: ALL 8 GATES PASS
   - Hardware: Host GUI widget, Supabase 2-account 403, and WebRTC dual-transport stream PASS

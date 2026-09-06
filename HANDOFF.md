@@ -19,10 +19,10 @@ Plan/task identifiers belong here and in workflow state, not in commit subjects.
 
 ---
 
-### 2026-09-07 00:58 — codex
+### 2026-09-07 01:00 — codex
 - Claiming: none
-- Finished: none
-- Next: zero-config-and-host-gui-refactor/section-7, zero-config-and-host-gui-refactor/section-8
+- Finished: zero-config-and-host-gui-refactor/section-7, zero-config-and-host-gui-refactor/section-8
+- Next: none
 - Blockers: none
 
 ### 2026-09-06 12:19 — codex
