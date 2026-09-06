@@ -252,7 +252,7 @@ def main():
         _log("[GUI] login cancelled — exiting without showing launcher")
         return
 
-    launcher = LauncherWindow()
+    launcher = LauncherWindow(on_stop_server=stop_server)
 
     def show_launcher():
         launcher.show()

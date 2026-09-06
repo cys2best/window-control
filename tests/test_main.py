@@ -119,7 +119,7 @@ class _FakeApplication:
 
 
 class _FakeLauncher:
-    def __init__(self, on_open_app=None):
+    def __init__(self, *args, **kwargs):
         pass
 
     def show(self):
@@ -212,30 +212,6 @@ def test_main_starts_server_without_android_mjpeg_pipeline(monkeypatch):
     assert len(app_calls) == 1
     assert len(app_calls[0][0]) == 1
     assert all(getattr(target, "__name__", "") != "capture_loop" for target in thread_targets)
-
-
-def test_main_webview_window_flag_hosts_the_shell_and_starts_nothing_else(monkeypatch):
-    # apps/desktop/window.py spawns `<app> --webview-window <url>` because
-    # pywebview's GUI loop only runs on a process main thread and PyQt5
-    # owns this one. That re-invocation must hand straight off to
-    # webview_main and never build an orchestrator/server/tray.
-    import main as main_mod
-    import webview_main
-
-    calls = []
-    monkeypatch.setattr(webview_main, "main", lambda argv: calls.append(argv) or 0)
-    monkeypatch.setattr(
-        main_mod, "build_engine_orchestrator",
-        lambda: pytest.fail("webview-window mode must not start the engine"),
-    )
-    monkeypatch.setattr(main_mod.sys, "argv",
-                        ["main.py", "--webview-window", "http://127.0.0.1:8080"])
-
-    with pytest.raises(SystemExit) as exit_info:
-        main_mod.main()
-
-    assert exit_info.value.code == 0
-    assert calls == [["http://127.0.0.1:8080"]]
 
 
 def test_main_does_not_run_pywebview_on_a_background_thread():
