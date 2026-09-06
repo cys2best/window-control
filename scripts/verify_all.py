@@ -27,6 +27,7 @@ def _run_step(name: str, cmd: list[str], cwd: Path | None = None, env: dict[str,
     work_dir = cwd or REPO_ROOT
     use_shell = sys.platform == "win32"
     run_env = dict(os.environ)
+    run_env["PYTHONIOENCODING"] = "utf-8"
     if env:
         run_env.update(env)
     try:
@@ -38,9 +39,11 @@ def _run_step(name: str, cmd: list[str], cwd: Path | None = None, env: dict[str,
             check=False,
             shell=use_shell,
             env=run_env,
+            encoding="utf-8",
+            errors="replace",
         )
         duration = time.time() - start
-        output = proc.stdout + proc.stderr
+        output = (proc.stdout or "") + (proc.stderr or "")
         return proc.returncode == 0, output, duration
     except Exception as e:
         duration = time.time() - start
@@ -95,7 +98,17 @@ def main() -> int:
     results = []
     overall_pass = True
 
-    pytest_env = {"SUPABASE_URL": "", "AUTH_TOKEN": ""}
+    pytest_env = {
+        "SUPABASE_URL": "",
+        "PUBLIC_UI_URL": "",
+        "TUNNEL_SECRET": "",
+        "AUTH_TOKEN": "",
+    }
+
+    # Ensure signaling relay dependencies are installed if not already present
+    vps_dir = REPO_ROOT / "infra" / "vps" / "signaling"
+    if not (REPO_ROOT / "node_modules" / "ws").exists() and not (vps_dir / "node_modules" / "ws").exists():
+        _run_step("Install Signaling Dependencies", ["npm", "install"], cwd=vps_dir)
 
     for title, cmd, cwd in steps:
         sys.stdout.write(f"[*] Running {title}... ")

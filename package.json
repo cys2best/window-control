@@ -4,7 +4,8 @@
   "workspaces": [
     "packages/*",
     "apps/web",
-    "apps/mobile"
+    "apps/mobile",
+    "infra/vps/signaling"
   ],
   "scripts": {
     "test:core": "npm test -w packages/core",

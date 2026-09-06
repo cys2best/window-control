@@ -234,13 +234,15 @@ class RealFrontendDeps:
                 capture_output=True,
                 timeout=timeout,
                 shell=use_shell,
+                encoding="utf-8",
+                errors="replace",
                 **no_window,
             )
         except subprocess.TimeoutExpired as error:
             return 1, f"timed out after {timeout}s: {error}"
         except OSError as error:
             return 1, f"command failed to start: {error}"
-        return completed.returncode, completed.stdout + completed.stderr
+        return completed.returncode, (completed.stdout or "") + (completed.stderr or "")
 
     def start_installed_app(self) -> OwnedProcess:
         install_dir = _install_dir(self.config.installer_path)
