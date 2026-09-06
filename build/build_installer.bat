@@ -3,15 +3,24 @@ setlocal
 
 echo [WindowControl Build] Building installer...
 
-REM First build the EXE
+REM First build the EXE (unless --no-build or -n is passed)
+if /i "%~1"=="--no-build" goto find_iscc
+if /i "%~1"=="-n" goto find_iscc
 call "%~dp0build.bat"
 if %ERRORLEVEL% NEQ 0 exit /b 1
 
+:find_iscc
 REM Find Inno Setup compiler
-set ISCC="C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
-if not exist %ISCC% (
-    echo [ERROR] Inno Setup 6 not found at %ISCC%
-    echo Install from: https://jrsoftware.org/isdl.php
+set ISCC=
+where iscc.exe >nul 2>&1 && for /f "delims=" %%I in ('where iscc.exe') do set ISCC="%%I"
+if not defined ISCC if exist "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" set ISCC="C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+if not defined ISCC if exist "C:\Program Files\Inno Setup 6\ISCC.exe" set ISCC="C:\Program Files\Inno Setup 6\ISCC.exe"
+if not defined ISCC if exist "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" set ISCC="%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe"
+
+if not defined ISCC (
+    echo [ERROR] Inno Setup 6 not found.
+    echo Install via winget: winget install JRSoftware.InnoSetup
+    echo Or download from: https://jrsoftware.org/isdl.php
     exit /b 1
 )
 

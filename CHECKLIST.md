@@ -103,13 +103,13 @@ cmake --build engine\build --config Release
 ```
 
 - [x] **4.1. Engine Binary Built**: `engine\build\Release\engine.exe` exists with 0 compiler errors. *(Verified on Windows)*
-- [ ] **4.2. Offline GTest Suite**:
+- [x] **4.2. Offline GTest Suite**: *(Verified on Windows)*
   ```powershell
   cmake --build engine\build --config Release --target engine_tests
   .\engine\build\Release\engine_tests.exe --gtest_filter=-SignalingClient.*:PublicSignalingBridge.*
   ```
   All offline engine tests pass (excluding tests that require the live Node signaling relay).
-- [ ] **4.3. Live Signaling Relay GTest**:
+- [x] **4.3. Live Signaling Relay GTest**: *(Verified on Windows)*
   1. In a dedicated terminal, launch the signaling relay with test TLS certs:
      ```powershell
      cd infra\vps\signaling
@@ -140,12 +140,24 @@ cd build
 cd ..
 ```
 
-- [ ] **5.1. Packaged Layout Check**:
-  - [ ] `dist\WindowControl\WindowControl.exe` exists.
-  - [ ] `dist\WindowControl\_internal\assets\engine\engine.exe` exists.
-  - [ ] `dist\WindowControl\_internal\web\` contains web build assets (and no `setup.html`).
-  - [ ] Confirm no `webview` / `pywebview` files or DLLs are packaged.
-- [ ] **5.2. Inno Setup Compilation**: Installer `.exe` generated with VC++ x64 redistributable bootstrap.
+- [x] **5.1. Packaged Layout Check**: *(Verified on Windows)*
+  - [x] `dist\WindowControl\WindowControl.exe` exists.
+  - [x] `dist\WindowControl\_internal\assets\engine\engine.exe` exists.
+  - [x] `dist\WindowControl\_internal\web\` contains web build assets (and no `setup.html`).
+  - [x] Confirm no `webview` / `pywebview` files or DLLs are packaged.
+- [ ] **5.2. Inno Setup Compilation & Installation**:
+  1. Compile installer with Inno Setup 6 (requires Inno Setup 6, e.g. `winget install JRSoftware.InnoSetup`):
+     ```powershell
+     cd build
+     .\build_installer.bat --no-build
+     cd ..
+     ```
+     Generates `release\WindowControlInstaller.exe` with bundled VC++ x64 runtime bootstrap.
+  2. Run the installer to install WindowControl into `C:\Program Files\WindowControl\`:
+     ```powershell
+     .\release\WindowControlInstaller.exe /VERYSILENT /NORESTART
+     ```
+     *(Or double-click `release\WindowControlInstaller.exe` to run the graphical wizard with admin privileges).*
 - [ ] **5.3. Automated Installer Gate**:
   ```powershell
   .\engine\verify-frontend-cutover.ps1 -Only installed_app_launch,frozen_package_layout

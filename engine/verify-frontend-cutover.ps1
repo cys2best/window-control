@@ -15,12 +15,13 @@ param(
     [string]$Confirm = "",
     [switch]$SkipManualGates,
     [switch]$SkipInstaller,
-    [string]$Only = "",
+    [string[]]$Only = @(),
     [string]$From = ""
 )
 
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
+$onlyStr = ($Only | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join ","
 
 # Load .env if present in repo root
 $envFile = Join-Path $repoRoot ".env"
@@ -35,7 +36,7 @@ if (Test-Path $envFile) {
     }
 }
 
-if ($Only -and $From) {
+if ($onlyStr -and $From) {
     throw "-Only and -From are mutually exclusive"
 }
 
@@ -75,7 +76,7 @@ if ($KeepOnFailure) { $arguments += "--keep-on-failure" }
 if ($FilePrompts) { $arguments += "--file-prompts" }
 if ($SkipManualGates) { $arguments += "--skip-manual-gates" }
 if ($SkipInstaller) { $arguments += "--skip-installer" }
-if ($Only) { $arguments += @("--only", $Only) }
+if ($onlyStr) { $arguments += @("--only", $onlyStr) }
 if ($From) { $arguments += @("--from-gate", $From) }
 
 Write-Host "Evidence directory: $evidenceDir"
@@ -85,7 +86,7 @@ if ($SkipManualGates) {
 if ($SkipInstaller) {
     Write-Warning "-SkipInstaller is set: installer-dependent gates are SKIPPED. This run can never report PASS."
 }
-if ($Only -or $From) {
+if ($onlyStr -or $From) {
     Write-Warning "A partial gate selection (-Only/-From) is set. This run can never report PASS -- use a full run with neither flag for the acceptance record."
 }
 & uv @arguments
