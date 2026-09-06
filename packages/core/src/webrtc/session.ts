@@ -48,7 +48,7 @@ async function defaultStartLocal(
     whepUrl: selection.whep_url,
     whepToken: selection.whep_token || "",
     iceServers: selection.ice_servers || [],
-    RTCImpl: opts.RTCImpl,
+    RTCImpl: opts.RTCImpl || (globalThis as any).RTCPeerConnection,
     fetchImpl: opts.fetchImpl,
     timeoutMs: opts.timeoutMs,
     onStream: (stream: any) => {
@@ -138,7 +138,6 @@ async function defaultStartPublic(
   function fail(error: Error) {
     if (settled) {
       if (!closed) {
-        onState("disconnected");
         close();
       }
       return;
@@ -210,9 +209,11 @@ async function defaultStartPublic(
     } catch {}
   });
   listen(channel, "close", () => {
+    if (closed) return;
     fail(new Error("Input channel closed"));
   });
   listen(channel, "error", () => {
+    if (closed) return;
     fail(new Error("Input channel failed"));
   });
 
@@ -261,7 +262,14 @@ export async function connectEngineSession(opts: ConnectEngineSessionOpts): Prom
     throw new Error("No engine session transport is configured");
   }
 
-  opts.onState?.("connecting");
+  let lastState: SessionState | null = null;
+  const safeState = (state: SessionState) => {
+    if (lastState === state) return;
+    lastState = state;
+    opts.onState?.(state);
+  };
+
+  safeState("connecting");
 
   let adoptedKind: "local" | "public" | null = null;
 
@@ -279,7 +287,7 @@ export async function connectEngineSession(opts: ConnectEngineSessionOpts): Prom
 
   const onAttemptState = (kind: "local" | "public", state: SessionState) => {
     if (adoptedKind === kind) {
-      opts.onState?.(state);
+      safeState(state);
     }
   };
 
@@ -335,7 +343,7 @@ export async function connectEngineSession(opts: ConnectEngineSessionOpts): Prom
       if (winner.stream) {
         opts.onStream?.(winner.stream);
       }
-      opts.onState?.("connected");
+      safeState("connected");
 
       const session: EngineSession = {
         kind: winner.kind,
@@ -345,8 +353,12 @@ export async function connectEngineSession(opts: ConnectEngineSessionOpts): Prom
           return winner.stream;
         },
         close: async () => {
-          adoptedKind = null;
-          await winner.close();
+          try {
+            await winner.close();
+          } finally {
+            safeState("disconnected");
+            adoptedKind = null;
+          }
         },
       };
 

@@ -322,10 +322,11 @@ describe("connectEngineSession", () => {
     expect(session.kind).toBe("public");
   });
 
-  test("forwards callbacks (onStream, onInputRtt, onState) from winner", async () => {
+  test("forwards callbacks (onStream, onInputRtt, onState) from winner and fires disconnected on close", async () => {
     const states: string[] = [];
     const streams: any[] = [];
     const rtts: number[] = [];
+    let capturedRttCb: ((ms: number) => void) | null = null;
 
     const session = await connectEngineSession({
       selection: {
@@ -338,10 +339,11 @@ describe("connectEngineSession", () => {
       onState: (st) => states.push(st),
       onStream: (st) => streams.push(st),
       onInputRtt: (ms) => rtts.push(ms),
-      startLocalImpl: async () => {
+      connectWhepImpl: async (opts) => {
+        capturedRttCb = opts.onInputRtt;
+        opts.onStream({ id: "local-vid" });
         return {
-          kind: "local",
-          stream: { id: "local-vid" } as any,
+          pc: {} as any,
           input: { close: () => {}, send: () => {} } as any,
           close: async () => {},
         };
@@ -358,9 +360,17 @@ describe("connectEngineSession", () => {
     });
 
     expect(session.kind).toBe("local");
-    expect(states).toContain("connecting");
-    expect(states).toContain("connected");
+    expect(states).toEqual(["connecting", "connected"]);
     expect(streams).toEqual([{ id: "local-vid" }]);
+
+    // Trigger and assert onInputRtt forwarding
+    expect(capturedRttCb).not.toBeNull();
+    capturedRttCb!(42);
+    expect(rtts).toEqual([42]);
+
+    // Closing session fires disconnected state
+    await session.close();
+    expect(states).toEqual(["connecting", "connected", "disconnected"]);
   });
 
   test("uses defaultStartLocal with connectWhepImpl when startLocalImpl not specified", async () => {
@@ -389,9 +399,38 @@ describe("connectEngineSession", () => {
     expect(session.stream).toEqual({ id: "whep-stream" });
   });
 
-  test("uses defaultStartPublic with connectSignalingViewerImpl when startPublicImpl not specified", async () => {
+  test("defaultStartLocal falls back to globalThis.RTCPeerConnection if opts.RTCImpl omitted", async () => {
+    let capturedRTC: any = null;
+    const origRTC = (globalThis as any).RTCPeerConnection;
+    try {
+      (globalThis as any).RTCPeerConnection = function FakeGlobalRTC() {};
+      await connectEngineSession({
+        selection: {
+          whep_url: "http://192.168.1.10:8080/whep",
+          whep_token: "tok",
+          signaling_url: null,
+          public_session: null,
+          ice_servers: [],
+        } as any,
+        connectWhepImpl: async (opts) => {
+          capturedRTC = opts.RTCImpl;
+          return {
+            pc: {} as any,
+            input: { close: () => {}, send: () => {} } as any,
+            close: async () => {},
+          };
+        },
+      });
+      expect(capturedRTC).toBe((globalThis as any).RTCPeerConnection);
+    } finally {
+      (globalThis as any).RTCPeerConnection = origRTC;
+    }
+  });
+
+  test("uses defaultStartPublic with connectSignalingViewerImpl and receives RTT echo", async () => {
     const pc = fakePc();
     let signalingCalled = false;
+    const rtts: number[] = [];
 
     const promise = connectEngineSession({
       selection: {
@@ -402,6 +441,7 @@ describe("connectEngineSession", () => {
         ice_servers: [],
       } as any,
       authToken: "auth-token",
+      onInputRtt: (ms) => rtts.push(ms),
       RTCImpl: function () {
         return pc;
       } as any,
@@ -429,5 +469,10 @@ describe("connectEngineSession", () => {
     expect(signalingCalled).toBe(true);
     expect(session.kind).toBe("public");
     expect(session.stream).toEqual({ id: "public-stream" });
+
+    // Simulate echo data channel message for RTT
+    pc.dc._fire("message", { data: JSON.stringify({ type: "echo", t: Date.now() - 55 }) });
+    expect(rtts.length).toBe(1);
+    expect(rtts[0]).toBeGreaterThanOrEqual(0);
   });
 });
