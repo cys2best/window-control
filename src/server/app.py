@@ -36,8 +36,8 @@ _tunnel_task: "asyncio.Task | None" = None
 # wholesale) -- the actual protected data lives behind the JSON API routes
 # below, which stay gated.
 _AUTH_EXEMPT_PATHS = {
-    "/", "/login", "/setup", "/stream", "/auth/config",
-    "/index.txt", "/login.txt", "/setup.txt", "/stream.txt", "/instances.txt",
+    "/", "/login", "/stream", "/auth/config",
+    "/index.txt", "/login.txt", "/stream.txt", "/instances.txt",
     "/manifest.json", "/icon-192.png", "/404.html",
 }
 
@@ -368,10 +368,6 @@ def create_app(instance_manager: InstanceManager) -> FastAPI:
     @app.get("/login")
     async def login_page():
         return _serve_web_page("login.html")
-
-    @app.get("/setup")
-    async def setup_page():
-        return _serve_web_page("setup.html")
 
     @app.get("/stream")
     async def stream_page():

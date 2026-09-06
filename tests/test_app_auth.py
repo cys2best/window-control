@@ -124,11 +124,11 @@ def test_index_served_without_auth_so_login_page_can_load():
     assert r.status_code != 401
 
 
-@pytest.mark.parametrize("path", ["/login", "/setup", "/stream"])
+@pytest.mark.parametrize("path", ["/login", "/stream"])
 def test_web_page_shells_served_without_auth(path):
     # apps/web's page-shell HTML routes carry no user data (same reasoning
     # that already exempted "/") -- an unauthenticated visitor must be able
-    # to reach /login and /setup at all, and /stream's own shell is no more
+    # to reach /login at all, and /stream's own shell is no more
     # sensitive than /'s was under the old single-page client. Real
     # protection is enforced at the JSON API layer, which stays gated.
     client, _, _ = _make_authed_client()
@@ -136,8 +136,14 @@ def test_web_page_shells_served_without_auth(path):
     assert r.status_code != 401
 
 
+def test_retired_setup_route_returns_404():
+    client, _, _ = _make_authed_client()
+    r = client.get("/setup")
+    assert r.status_code == 404
+
+
 @pytest.mark.parametrize(
-    "path", ["/index.txt", "/login.txt", "/setup.txt", "/stream.txt", "/instances.txt"]
+    "path", ["/index.txt", "/login.txt", "/stream.txt", "/instances.txt"]
 )
 def test_rsc_payloads_served_without_auth(path):
     # Next's client router fetches these on every soft navigation with no

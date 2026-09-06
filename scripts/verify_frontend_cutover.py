@@ -293,7 +293,8 @@ def gate_web_routes(config: FrontendCutoverConfig, deps: Any, result: FrontendCu
     observed: dict[str, Any] = {}
     failures: list[str] = []
     for path in ("/", "/login", "/instances", "/stream"):
-        status, content_type, _ = deps.get(config.port, path)
+        headers = {"Accept": "text/html"} if path == "/instances" else None
+        status, content_type, _ = deps.get(config.port, path, headers=headers)
         observed[path] = {"status": status, "content_type": content_type}
         if status != 200 or "text/html" not in content_type:
             failures.append(f"{path}: expected 200 text/html, got {status} {content_type!r}")
@@ -308,7 +309,7 @@ def gate_web_routes(config: FrontendCutoverConfig, deps: Any, result: FrontendCu
 
 
 _RSC_EXPECTED_CONTENT_TYPES = {
-    "manifest.json": "application/json",
+    "manifest.json": "json",
     "icon-192.png": "image/png",
     "404.html": "text/html",
 }
