@@ -131,7 +131,7 @@ class CutoverFilePromptChannel:
             while True:
                 if response_path.exists():
                     response = _read_json(response_path)
-                    self._remove(response_path)
+                    self._remove(self.prompt_path)
                     if (
                         response is not None
                         and response.get("version") == 1
@@ -140,7 +140,9 @@ class CutoverFilePromptChannel:
                         and response.get("nonce") == nonce
                         and response.get("result") in {"PASS", "FAIL"}
                     ):
+                        self._remove(response_path)
                         return str(response["result"])
+                    self._remove(response_path)
                     self._event(f"ignored mismatched confirmation for {checkpoint}")
                 time.sleep(self.poll_seconds)
         finally:
@@ -189,24 +191,20 @@ def submit_file_confirmation(repo_root: Path, result: str, *, evidence_glob: str
     ):
         raise VerifyLibError("active file prompt changed; retry confirmation")
     response_path = CutoverFilePromptChannel.response_path(prompt_path.parent, prompt["nonce"])
-    temporary = response_path.with_name(f".{response_path.name}.{secrets.token_hex(8)}.tmp")
+    if response_path.exists():
+        raise VerifyLibError("confirmation already submitted for this prompt")
+    payload = json.dumps(
+        {
+            "version": 1,
+            "verifier_pid": prompt["verifier_pid"],
+            "verifier_started_at": prompt["verifier_started_at"],
+            "nonce": prompt["nonce"],
+            "result": result,
+        }
+    )
     try:
-        temporary.write_text(
-            json.dumps(
-                {
-                    "version": 1,
-                    "verifier_pid": prompt["verifier_pid"],
-                    "verifier_started_at": prompt["verifier_started_at"],
-                    "nonce": prompt["nonce"],
-                    "result": result,
-                }
-            ),
-            encoding="utf-8",
-        )
-        try:
-            os.link(temporary, response_path)
-        except FileExistsError as error:
-            raise VerifyLibError("confirmation already submitted for this prompt") from error
-    finally:
-        temporary.unlink(missing_ok=True)
+        with open(response_path, "x", encoding="utf-8") as f:
+            f.write(payload)
+    except FileExistsError as error:
+        raise VerifyLibError("confirmation already submitted for this prompt") from error
     return response_path

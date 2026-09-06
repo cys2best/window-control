@@ -13,15 +13,22 @@ import subprocess
 import sys
 import time
 
-from dotenv import load_dotenv
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
-load_dotenv(REPO_ROOT / ".env")
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv(REPO_ROOT / ".env")
+except ImportError:
+    pass
 
 
-def _run_step(name: str, cmd: list[str], cwd: Path | None = None) -> tuple[bool, str, float]:
+def _run_step(name: str, cmd: list[str], cwd: Path | None = None, env: dict[str, str] | None = None) -> tuple[bool, str, float]:
     start = time.time()
     work_dir = cwd or REPO_ROOT
+    use_shell = sys.platform == "win32"
+    run_env = dict(os.environ)
+    if env:
+        run_env.update(env)
     try:
         proc = subprocess.run(
             cmd,
@@ -29,6 +36,8 @@ def _run_step(name: str, cmd: list[str], cwd: Path | None = None) -> tuple[bool,
             capture_output=True,
             text=True,
             check=False,
+            shell=use_shell,
+            env=run_env,
         )
         duration = time.time() - start
         output = proc.stdout + proc.stderr
@@ -81,13 +90,20 @@ def main() -> int:
         ),
     ]
 
+    import shutil
+
     results = []
     overall_pass = True
+
+    pytest_env = {"SUPABASE_URL": "", "AUTH_TOKEN": ""}
 
     for title, cmd, cwd in steps:
         sys.stdout.write(f"[*] Running {title}... ")
         sys.stdout.flush()
-        ok, out, duration = _run_step(title, cmd, cwd)
+        if "Build" in title:
+            shutil.rmtree(REPO_ROOT / "apps" / "web" / "out", ignore_errors=True)
+        step_env = pytest_env if "pytest" in cmd else None
+        ok, out, duration = _run_step(title, cmd, cwd, env=step_env)
         if ok:
             print(f"PASS ({duration:.2f}s)")
             results.append((title, "PASS", duration, ""))

@@ -18,12 +18,14 @@ import sys
 import time
 from typing import Any
 
-from dotenv import load_dotenv
+from scripts.verify_lib import OwnedProcess, _pid_started_at
 import httpx
 
-from scripts.verify_lib import OwnedProcess, _pid_started_at
-
-load_dotenv()
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 
 GATE_NAMES: tuple[str, ...] = (
@@ -223,6 +225,7 @@ class RealFrontendDeps:
 
     def run_command(self, command: list[str], *, cwd: Path | None = None, timeout: float = 600) -> tuple[int, str]:
         no_window = {"creationflags": 0x08000000} if sys.platform == "win32" else {}
+        use_shell = sys.platform == "win32"
         try:
             completed = subprocess.run(
                 command,
@@ -230,6 +233,7 @@ class RealFrontendDeps:
                 text=True,
                 capture_output=True,
                 timeout=timeout,
+                shell=use_shell,
                 **no_window,
             )
         except subprocess.TimeoutExpired as error:

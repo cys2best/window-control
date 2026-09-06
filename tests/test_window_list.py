@@ -1,3 +1,4 @@
+import os
 import sys
 import pytest
 from unittest.mock import patch, MagicMock
@@ -35,10 +36,10 @@ def test_find_ldconsole_reuses_discovery_search_order(monkeypatch):
     monkeypatch.setattr(
         adb_manager.os.path,
         "exists",
-        lambda path: path == "/opt/LDPlayer9/ldconsole.exe",
+        lambda path: os.path.normpath(path) == os.path.normpath("/opt/LDPlayer9/ldconsole.exe"),
     )
 
-    assert adb_manager._find_ldconsole() == "/opt/LDPlayer9/ldconsole.exe"
+    assert os.path.normpath(adb_manager._find_ldconsole()) == os.path.normpath("/opt/LDPlayer9/ldconsole.exe")
 
 
 def test_instance_manager_list():

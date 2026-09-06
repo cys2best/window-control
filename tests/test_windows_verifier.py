@@ -864,7 +864,7 @@ def test_missing_engine_tests_is_a_failure_by_default(tmp_path):
     deps = FakeDeps(skip_tests=False)
 
     with pytest.raises(VerificationError, match="engine_tests.exe"):
-        run_verification(config(evidence_dir=tmp_path, skip_tests=False, require_engine_binary=False), deps)
+        run_verification(config(repo_root=tmp_path, evidence_dir=tmp_path, skip_tests=False, require_engine_binary=False), deps)
 
 
 def test_fragment_browser_url_contains_no_query_api_or_token_log_payload(tmp_path):
