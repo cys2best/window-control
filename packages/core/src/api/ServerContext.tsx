@@ -81,6 +81,34 @@ export function ServerProvider({
     return makeClient(norm, token || null, clearAuth);
   }, [plainStorage, secureStorage, clearAuth]);
 
+  // Support Supabase email confirmation / magic link / OAuth redirects containing tokens in hash or query
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      let token: string | null = null;
+      if (window.location?.hash) {
+        const hash = window.location.hash.replace(/^#/, "");
+        const hashParams = new URLSearchParams(hash);
+        token = hashParams.get("access_token");
+      }
+      if (!token && window.location?.search) {
+        const searchParams = new URLSearchParams(window.location.search);
+        token = searchParams.get("access_token");
+      }
+      if (token) {
+        const targetBase =
+          (window.location?.origin && window.location.origin !== "null"
+            ? window.location.origin
+            : "") || defaultBase;
+        setServer(targetBase, token).then(() => {
+          try {
+            window.history.replaceState(null, "", window.location.pathname);
+          } catch {}
+        });
+      }
+    } catch {}
+  }, [setServer, defaultBase]);
+
   const client = useMemo(
     () => (base ? makeClient(base, authToken, clearAuth) : null),
     [base, authToken, clearAuth]

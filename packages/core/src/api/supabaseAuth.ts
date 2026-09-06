@@ -1,19 +1,35 @@
-export type AuthResult = { access_token: string } | { error: string };
+export type AuthResult =
+  | { access_token: string }
+  | { error: string }
+  | { needs_confirmation: true; message: string };
 
 async function _authRequest(
   supabaseUrl: string,
   anonKey: string,
   path: string,
   email: string,
-  password: string
+  password: string,
+  redirectTo?: string
 ): Promise<AuthResult> {
+  const payload: any = { email, password };
+  if (redirectTo) {
+    payload.options = { emailRedirectTo: redirectTo };
+  }
   const r = await fetch(`${supabaseUrl}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", apikey: anonKey },
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify(payload),
   });
   const body = await r.json();
-  if (r.ok && body.access_token) return { access_token: body.access_token };
+  if (r.ok) {
+    if (body.access_token) return { access_token: body.access_token };
+    if (body.id || body.user) {
+      return {
+        needs_confirmation: true,
+        message: "Confirmation email sent. Please check your inbox.",
+      };
+    }
+  }
   return { error: body.error_description ?? body.msg ?? "Authentication failed" };
 }
 
@@ -24,10 +40,12 @@ export function signInWithPassword(
 }
 
 export function signUpWithPassword(
-  supabaseUrl: string, anonKey: string, email: string, password: string
+  supabaseUrl: string, anonKey: string, email: string, password: string, redirectTo?: string
 ): Promise<AuthResult> {
-  return _authRequest(supabaseUrl, anonKey, "/auth/v1/signup", email, password);
+  const query = redirectTo ? `?redirect_to=${encodeURIComponent(redirectTo)}` : "";
+  return _authRequest(supabaseUrl, anonKey, `/auth/v1/signup${query}`, email, password, redirectTo);
 }
+
 
 export function decodeBase64Url(str: string): string {
   let output = str.replace(/-/g, "+").replace(/_/g, "/");
