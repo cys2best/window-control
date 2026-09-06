@@ -147,11 +147,10 @@ def build_engine_orchestrator() -> "EngineOrchestrator":
 
 
 def main():
-    # Delegate service CLI args before starting GUI
+    # Handle legacy service CLI args gracefully without starting GUI
     _svc_args = {"--install", "--uninstall", "--start", "--stop", "--run-service"}
     if _svc_args & set(sys.argv):
-        from service_main import main as service_cli
-        service_cli()
+        print("EmuCtrl lock screen service has been deprecated and removed.")
         return
 
     from config import VERSION

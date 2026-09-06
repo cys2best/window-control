@@ -249,3 +249,13 @@ def test_main_retains_only_stun_firewall_rule_no_legacy_whep_ice_loop():
     assert "WindowControl-Engine" not in source
     for legacy in ("WHEP", "ICE_PORT", "for port in", "ice_port_range"):
         assert legacy not in source
+
+
+def test_main_handles_deprecated_service_args(monkeypatch, capsys):
+    import main as main_mod
+
+    monkeypatch.setattr(main_mod.sys, "argv", ["main.py", "--install"])
+    main_mod.main()
+    captured = capsys.readouterr()
+    assert "deprecated and removed" in captured.out
+
