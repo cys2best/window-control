@@ -4,7 +4,7 @@ import * as ScreenOrientation from "expo-screen-orientation";
 import type { VideoViewComponent } from "../video/VideoView";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { runOnJS } from "react-native-reanimated";
-import { useServer, connectWhep, WhepSession, normalizeCoords, makeAdaptive } from "@wc/core";
+import { useServer, connectEngineSession, EngineSession, normalizeCoords, makeAdaptive } from "@wc/core";
 import { theme } from "../theme/tokens";
 import { StreamToolbar } from "../components/StreamToolbar";
 import { SettingsModal } from "../components/SettingsModal";
@@ -25,7 +25,7 @@ export function Stream({
   RTCImpl: any;
   VideoView: VideoViewComponent;
 }) {
-  const { client } = useServer();
+  const { client, authToken } = useServer();
   const { serial } = route.params;
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [net, setNet] = useState<Net>("connecting");
@@ -39,7 +39,7 @@ export function Stream({
   const [rtt, setRtt] = useState<number | null>(null);
   const rect = useRef({ width: 1, height: 1 });
   const content = useRef({ w: 1, h: 1 });
-  const session = useRef<WhepSession | null>(null);
+  const session = useRef<EngineSession | null>(null);
   const adaptive = useRef<any>(null);
   const inputHealth = useRef<any>(null);
   const scrollLast = useRef(0);
@@ -72,13 +72,12 @@ export function Stream({
     setFailed(false); setNet("connecting");
     try {
       const sel = await client.select(serial);
-      if (gen !== startGen.current) return; // superseded before WHEP even started
+      if (gen !== startGen.current) return; // superseded before session even started
       content.current = { w: sel.w, h: sel.h };
       let nextStream: any = null;
-      const s = await connectWhep({
-        whepUrl: sel.whep_url,
-        whepToken: sel.whep_token,
-        iceServers: sel.ice_servers,
+      const s = await connectEngineSession({
+        selection: sel,
+        authToken,
         RTCImpl,
         onStream: (stream) => {
           if (gen !== startGen.current) return;
@@ -127,7 +126,7 @@ export function Stream({
       });
       adaptive.current.start(session.current.pc);
     } catch { if (gen === startGen.current) { setFailed(true); setNet("disconnected"); } }
-  }, [client, serial, releaseActiveDrag]);
+  }, [client, authToken, serial, releaseActiveDrag]);
 
   // Instance list is owned by the client identity, not by `start`.
   useEffect(() => {
