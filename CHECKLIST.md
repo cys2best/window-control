@@ -234,7 +234,9 @@ Start host: `uv run python src\main.py` (or launch installed `WindowControl.exe`
 
 ---
 
-## Section 9: Mobile Physical Device Smoke Test (iOS / Android)
+## Section 9: Mobile Physical Device Smoke Test (iOS / Android) [SKIPPED]
+
+> **Note**: Skipped for this validation cycle (host machine disk storage constraint). Core logic and shared presentation layers remain verified via monorepo Jest test suites (`npm run test:core`, `npm run test:ui`).
 
 Run app via Expo dev build or Expo Go on physical phone:
 
