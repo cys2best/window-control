@@ -52,20 +52,20 @@ Execute the full automated test suite:
 # (macOS/Linux: python3 scripts/verify_all.py)
 ```
 
-- [x] **2.1. Python Backend & Desktop Suites**: 568 passed, 1 skipped (`uv run pytest tests/ apps/desktop/ -q`). *(Verified on macOS)*
-- [x] **2.2. Host Launcher Headless Tests**: All Option B layout and event tests pass (`tests/test_launcher_widget.py`). *(Verified on macOS)*
-- [x] **2.3. Core WebRTC Session & Signaling**: 68 passed across 12 suites (`npm run test:core`). *(Verified on macOS)*
-- [x] **2.4. Shared UI Components**: 18 passed across 7 suites (`npm run test:ui`). *(Verified on macOS)*
-- [x] **2.5. Web Client Routing & Redirection**: 7 passed across 4 suites (`npm test -w apps/web`). *(Verified on macOS)*
-- [x] **2.6. Next.js Static Export Build**: Succeeds into `apps/web/out` in 7.94s (`npm run build -w apps/web`). *(Verified on macOS)*
-- [x] **2.7. Web Export Artifact Integrity**: *(Verified on macOS)*
+- [x] **2.1. Python Backend & Desktop Suites**: 567 passed, 1 skipped (`uv run pytest tests/ apps/desktop/ -q`). *(Verified on Windows)*
+- [x] **2.2. Host Launcher Headless Tests**: All Option B layout and event tests pass (`tests/test_launcher_widget.py`). *(Verified on Windows)*
+- [x] **2.3. Core WebRTC Session & Signaling**: 68 passed across 12 suites (`npm run test:core`). *(Verified on Windows)*
+- [x] **2.4. Shared UI Components**: 18 passed across 7 suites (`npm run test:ui`). *(Verified on Windows)*
+- [x] **2.5. Web Client Routing & Redirection**: 7 passed across 4 suites (`npm test -w apps/web`). *(Verified on Windows)*
+- [x] **2.6. Next.js Static Export Build**: Succeeds into `apps/web/out` in 8.81s (`npm run build -w apps/web`). *(Verified on Windows)*
+- [x] **2.7. Web Export Artifact Integrity**: *(Verified on Windows)*
   - [x] `apps/web/out/index.html` exists
   - [x] `apps/web/out/login.html` exists
   - [x] `apps/web/out/instances.html` exists
   - [x] `apps/web/out/stream.html` exists
   - [x] `apps/web/out/404.html` exists
   - [x] `apps/web/out/setup.html` **does NOT exist** (retired manual setup screen)
-- [x] **2.8. VPS Signaling Bridge Relay**: 18 passed (`npm test` in `infra/vps/signaling`). *(Verified on macOS)*
+- [x] **2.8. VPS Signaling Bridge Relay**: 18 passed (`npm test -w infra/vps/signaling`). *(Verified on Windows)*
 
 ---
 
@@ -77,20 +77,20 @@ Execute the automated HTTP server verifier:
 # (macOS/Linux: uv run python -m scripts.verify_frontend_cutover --repo-root . --skip-manual-gates --skip-installer)
 ```
 
-- [x] **3.1. Server Health**: Dev app boots cleanly on port 8080 (`/auth/config` and web server respond). *(Verified on macOS)*
-- [x] **3.2. Web Route Servicing**: *(Verified on macOS)*
+- [x] **3.1. Server Health**: Dev app boots cleanly on port 8080 (`/auth/config` and web server respond). *(Verified on Windows)*
+- [x] **3.2. Web Route Servicing**: *(Verified on Windows)*
   - [x] `GET http://127.0.0.1:8080/` -> 200 text/html
   - [x] `GET http://127.0.0.1:8080/login` -> 200 text/html
   - [x] `GET http://127.0.0.1:8080/instances` -> 200 text/html (when requesting HTML shell)
   - [x] `GET http://127.0.0.1:8080/stream` -> 200 text/html
   - [x] `GET http://127.0.0.1:8080/setup` -> 404 (retired route rejected)
-- [x] **3.3. Content Negotiation on `/instances`**: *(Verified on macOS)*
+- [x] **3.3. Content Negotiation on `/instances`**: *(Verified on Windows)*
   - [x] `Accept: text/html` returns the HTML page shell.
   - [x] `Accept: application/json` returns JSON instance list or 401.
   - [x] No Accept header defaults to JSON API response.
-- [ ] **3.4. Supabase Auth Gate**: *(Unit tested in `tests/test_app_auth.py`, live cloud gate run on Windows with env vars)*
-  - [ ] Unauthenticated API request to `/instances` returns `401 Unauthorized`.
-  - [ ] Garbage token (`Bearer not-a-real-token`) returns `401 Unauthorized`.
+- [x] **3.4. Supabase Auth Gate**: *(Verified on Windows via automated cutover verifier)*
+  - [x] Unauthenticated API request to `/instances` returns `401 Unauthorized`.
+  - [x] Garbage token (`Bearer not-a-real-token`) returns `401 Unauthorized`.
 
 ---
 
