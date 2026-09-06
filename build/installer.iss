@@ -1,9 +1,9 @@
-; installer.iss — Inno Setup 6 script for WindowControl
+; installer.iss — Inno Setup 6 script for EmuCtrl
 
-#define MyAppName "WindowControl"
+#define MyAppName "EmuCtrl"
 #define MyAppVersion "2.1.4"
-#define MyAppPublisher "WindowControl"
-#define MyAppExeName "WindowControl.exe"
+#define MyAppPublisher "EmuCtrl"
+#define MyAppExeName "EmuCtrl.exe"
 
 [Setup]
 AppId={{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}
@@ -13,14 +13,14 @@ AppPublisher={#MyAppPublisher}
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
-; WindowControl.exe (PyInstaller) and the bundled engine.exe/DLLs
+; EmuCtrl.exe (PyInstaller) and the bundled engine.exe/DLLs
 ; (x64-windows vcpkg triplet) are both 64-bit only; without these, Inno
 ; Setup defaults to a 32-bit installer and {autopf} resolves to
 ; "Program Files (x86)" instead of "Program Files".
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=..\release
-OutputBaseFilename=WindowControlInstaller
+OutputBaseFilename=EmuCtrlInstaller
 SetupIconFile=..\src\assets\icon.ico
 Compression=lzma
 SolidCompression=yes
@@ -46,9 +46,9 @@ procedure StopAndRemoveService();
 var
   ResultCode: Integer;
 begin
-  Exec('sc.exe', 'stop WindowControlService', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec('sc.exe', 'stop EmuCtrlService', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Sleep(2000);
-  Exec('sc.exe', 'delete WindowControlService', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec('sc.exe', 'delete EmuCtrlService', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Sleep(1000);
 end;
 
@@ -57,7 +57,7 @@ var
   ResultCode: Integer;
 begin
   Exec(ExpandConstant('{sys}\netsh.exe'),
-    'advfirewall firewall delete rule name="WindowControl-Engine"',
+    'advfirewall firewall delete rule name="EmuCtrl-Engine"',
     '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;
 
@@ -69,7 +69,7 @@ begin
   // PyInstaller 6+ onedir builds place everything except the top-level
   // .exe under _internal\ (see src/config.py's sys._MEIPASS handling).
   Exec(ExpandConstant('{sys}\netsh.exe'),
-    'advfirewall firewall add rule name="WindowControl-Engine" dir=in action=allow ' +
+    'advfirewall firewall add rule name="EmuCtrl-Engine" dir=in action=allow ' +
     'program="' + ExpandConstant('{app}\_internal\assets\engine\engine.exe') + '" enable=yes',
     '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;
@@ -79,7 +79,7 @@ var
   ResultCode: Integer;
 begin
   if CurStep = ssInstall then begin
-    Exec('taskkill.exe', '/F /IM WindowControl.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Exec('taskkill.exe', '/F /IM EmuCtrl.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     Sleep(1000);
     StopAndRemoveService();
     RemoveEngineFirewallRule();
@@ -104,7 +104,7 @@ begin
   HasTailscale := FileExists('C:\Program Files\Tailscale\tailscale.exe');
   if not HasTailscale then begin
     Answer := MsgBox(
-      'Tailscale is not installed. WindowControl works best with Tailscale for remote access.' + #13#10 +
+      'Tailscale is not installed. EmuCtrl works best with Tailscale for remote access.' + #13#10 +
       'You can still use it on your local network.' + #13#10#13#10 +
       'Continue installation without Tailscale?',
       mbConfirmation, MB_YESNO
@@ -122,11 +122,11 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 ; Checked by default so the app comes back after a reboot without the user
 ; having to relaunch it (remote streaming host is expected to always be up).
-Name: "startupicon"; Description: "Start WindowControl with Windows"; GroupDescription: "Startup:"
+Name: "startupicon"; Description: "Start EmuCtrl with Windows"; GroupDescription: "Startup:"
 
 [Files]
-; One-dir build: copy entire dist\WindowControl\ folder contents
-Source: "..\dist\WindowControl\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; One-dir build: copy entire dist\EmuCtrl\ folder contents
+Source: "..\dist\EmuCtrl\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; VC++ 2015-2022 x64 redistributable (downloaded by CI, bundled here)
 Source: "..\build\vc_redist.x64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall; Check: NeedsVCRedist
 

@@ -40,7 +40,7 @@ def sign_in(supabase_url: str, anon_key: str, email: str, password: str) -> dict
 
 def _session_path() -> str:
     base = os.environ.get("APPDATA") or os.path.expanduser("~")
-    return os.path.join(base, "WindowControl", "session.json")
+    return os.path.join(base, "EmuCtrl", "session.json")
 
 
 def load_cached_session() -> dict | None:
@@ -106,7 +106,7 @@ class LoginDialog(QDialog):
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(12)
 
-        title = QLabel("WindowControl")
+        title = QLabel("EmuCtrl")
         title.setAlignment(Qt.AlignCenter)
         title.setStyleSheet("color: #e8eaed; font-size: 20px; font-weight: 600; background: transparent;")
         layout.addWidget(title)

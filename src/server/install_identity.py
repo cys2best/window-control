@@ -16,7 +16,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 _CANDIDATE_DIRS = [
-    r"C:\ProgramData\WindowControl", r"C:\Windows\Temp", r"C:\Temp", "/tmp",
+    r"C:\ProgramData\EmuCtrl", r"C:\ProgramData\WindowControl", r"C:\Windows\Temp", r"C:\Temp", "/tmp",
 ]
 _KEY_FILENAME = "install_key.bin"
 _OWNER_FILENAME = "install_owner.txt"

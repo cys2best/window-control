@@ -3,14 +3,14 @@ import type { Metadata, Viewport } from "next";
 import Providers from "./providers";
 
 export const metadata: Metadata = {
-  title: "WindowControl",
+  title: "EmuCtrl",
   manifest: "/manifest.json",
   // Home-screen installability + the iOS chrome-less presentation the old
   // hand-rolled client declared with raw <meta apple-mobile-web-app-*>
   // tags. Next emits the same tags from this block.
   appleWebApp: {
     capable: true,
-    title: "WindowControl",
+    title: "EmuCtrl",
     statusBarStyle: "black-translucent",
   },
   // Next 15 renders appleWebApp.capable as the standardized

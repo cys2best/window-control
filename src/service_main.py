@@ -1,20 +1,20 @@
 # src/service_main.py
 """
-WindowControl Windows Service.
+EmuCtrl Windows Service.
 
 Usage:
-  WindowControl.exe --install     Install and start the service
-  WindowControl.exe --uninstall   Stop and remove the service
-  WindowControl.exe --start       Start an installed service
-  WindowControl.exe --stop        Stop the running service
-  (no args)                       Run as service (called by SCM)
+  EmuCtrl.exe --install     Install and start the service
+  EmuCtrl.exe --uninstall   Stop and remove the service
+  EmuCtrl.exe --start       Start an installed service
+  EmuCtrl.exe --stop        Stop the running service
+  (no args)                 Run as service (called by SCM)
 """
 import sys
 import os
 
 # Log import crashes — service process dying here produces error 1053 with no other trace
 def _log_crash(msg: str):
-    for _p in [r"C:\ProgramData\WindowControl", r"C:\Windows\Temp", r"C:\Temp"]:
+    for _p in [r"C:\ProgramData\EmuCtrl", r"C:\Windows\Temp", r"C:\Temp"]:
         try:
             os.makedirs(_p, exist_ok=True)
             with open(os.path.join(_p, "service_crash.log"), "a") as _f:
@@ -52,9 +52,9 @@ except Exception as _e:
     raise
 
 
-SERVICE_NAME = "WindowControlService"
-SERVICE_DISPLAY = "Window Control Lock Screen Monitor"
-SERVICE_DESCRIPTION = "Monitors Windows lock/unlock events for WindowControl screen streaming."
+SERVICE_NAME = "EmuCtrlService"
+SERVICE_DISPLAY = "EmuCtrl Lock Screen Monitor"
+SERVICE_DESCRIPTION = "Monitors Windows lock/unlock events for EmuCtrl screen streaming."
 
 
 if sys.platform == "win32":
@@ -325,7 +325,7 @@ def main():
         _log_crash(f"[run-service] entered, exe={sys.executable}")
         _dispatch_service()
     else:
-        print("Usage: WindowControl.exe --install | --uninstall | --start | --stop")
+        print("Usage: EmuCtrl.exe --install | --uninstall | --start | --stop")
 
 
 if __name__ == "__main__":

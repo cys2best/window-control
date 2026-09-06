@@ -1,7 +1,7 @@
 @echo off
 setlocal
 
-echo [WindowControl Build] Building installer...
+echo [EmuCtrl Build] Building installer...
 
 REM First build the EXE (unless --no-build or -n is passed)
 if /i "%~1"=="--no-build" goto find_iscc
@@ -26,7 +26,7 @@ if not defined ISCC (
 
 REM Download the VC++ runtime installer.iss bundles, if not already staged.
 if not exist "%~dp0vc_redist.x64.exe" (
-    echo [WindowControl Build] Downloading vc_redist.x64.exe...
+    echo [EmuCtrl Build] Downloading vc_redist.x64.exe...
     curl -L -o "%~dp0vc_redist.x64.exe" "https://aka.ms/vs/17/release/vc_redist.x64.exe"
     if %ERRORLEVEL% NEQ 0 (
         echo [ERROR] failed to download vc_redist.x64.exe.
@@ -41,4 +41,4 @@ if %ERRORLEVEL% NEQ 0 (
     exit /b 1
 )
 
-echo [WindowControl Build] Installer built at release\WindowControlInstaller.exe
+echo [EmuCtrl Build] Installer built at release\EmuCtrlInstaller.exe

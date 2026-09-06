@@ -1,5 +1,5 @@
 {
-  "name": "window-control-engine",
+  "name": "emuctrl-engine",
   "version": "0.1.0",
   "dependencies": [
     { "name": "libdatachannel", "features": ["srtp"] },

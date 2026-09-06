@@ -7,7 +7,7 @@ import os
 import ctypes
 import ctypes.wintypes
 
-_PASSWORD_FILE = r"C:\ProgramData\WindowControl\unlock.dat"
+_PASSWORD_FILE = r"C:\ProgramData\EmuCtrl\unlock.dat"
 
 
 def _dpapi_encrypt(data: bytes) -> bytes:
@@ -153,7 +153,7 @@ def _type_password_to_winlogon(password: str):
 
 def _log(msg: str):
     import os
-    for _p in [r"C:\ProgramData\WindowControl", r"C:\Windows\Temp"]:
+    for _p in [r"C:\ProgramData\EmuCtrl", r"C:\Windows\Temp"]:
         try:
             os.makedirs(_p, exist_ok=True)
             with open(os.path.join(_p, "service_crash.log"), "a") as f:

@@ -37,7 +37,7 @@ def test_spec_stages_apps_web_export_not_legacy_client():
 def test_installer_iss_has_tailscale_check():
     content = (BUILD_DIR / "installer.iss").read_text()
     assert "Tailscale" in content
-    assert "OutputBaseFilename=WindowControlInstaller" in content
+    assert "OutputBaseFilename=EmuCtrlInstaller" in content
 
 
 def test_pyinstaller_contains_engine_without_legacy_media_imports():
@@ -50,7 +50,7 @@ def test_pyinstaller_contains_engine_without_legacy_media_imports():
 
 def test_installer_owns_engine_program_firewall_rule():
     text = (BUILD_DIR / "installer.iss").read_text()
-    assert "WindowControl-Engine" in text
+    assert "EmuCtrl-Engine" in text
     assert "assets\\engine\\engine.exe" in text
     assert "firewall delete rule" in text.lower()
 

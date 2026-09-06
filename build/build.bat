@@ -1,7 +1,7 @@
 @echo off
 setlocal
 
-echo [WindowControl Build] Starting PyInstaller build...
+echo [EmuCtrl Build] Starting PyInstaller build...
 
 REM Activate venv
 call ..\.venv\Scripts\activate.bat
@@ -60,4 +60,4 @@ if %ERRORLEVEL% NEQ 0 (
     exit /b 1
 )
 
-echo [WindowControl Build] Built at dist\WindowControl\ (one-dir mode)
+echo [EmuCtrl Build] Built at dist\EmuCtrl\ (one-dir mode)

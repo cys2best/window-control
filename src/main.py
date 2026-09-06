@@ -33,7 +33,7 @@ if not hasattr(sys, "_MEIPASS"):
 
 
 def _log_early(msg: str):
-    for _p in [r"C:\ProgramData\WindowControl", r"C:\Windows\Temp", r"C:\Temp"]:
+    for _p in [r"C:\ProgramData\EmuCtrl", r"C:\Windows\Temp", r"C:\Temp"]:
         try:
             os.makedirs(_p, exist_ok=True)
             with open(os.path.join(_p, "service_crash.log"), "a") as _f:
@@ -77,7 +77,7 @@ except Exception:
 
 def _log(msg: str):
     import os
-    for _p in [r"C:\ProgramData\WindowControl", r"C:\Windows\Temp"]:
+    for _p in [r"C:\ProgramData\EmuCtrl", r"C:\Windows\Temp"]:
         try:
             os.makedirs(_p, exist_ok=True)
             with open(os.path.join(_p, "service_crash.log"), "a") as f:
@@ -163,16 +163,16 @@ def main():
     if sys.platform == "win32":
         def _win32_setup():
             import subprocess
-            subprocess.run(["sc.exe", "stop", "WindowControlService"],
+            subprocess.run(["sc.exe", "stop", "EmuCtrlService"],
                            capture_output=True, timeout=10)
-            subprocess.run(["sc.exe", "delete", "WindowControlService"],
+            subprocess.run(["sc.exe", "delete", "EmuCtrlService"],
                            capture_output=True, timeout=10)
             # Keep the embedded STUN binding reachable on the LAN/Tailscale
             # interface. Engine program rules are installed with the package.
             from config import STUN_PORT
             subprocess.run([
                 "netsh", "advfirewall", "firewall", "add", "rule",
-                f"name=WindowControl-STUN-UDP-{STUN_PORT}",
+                f"name=EmuCtrl-STUN-UDP-{STUN_PORT}",
                 "dir=in", "action=allow", "protocol=UDP",
                 f"localport={STUN_PORT}",
             ], capture_output=True, timeout=10)
@@ -263,14 +263,14 @@ def main():
         def _run():
             from updater import _fetch_latest_version, download_and_install
             _log("[Reinstall] Fetching latest version…")
-            tray.notify("Fetching latest release…", "WindowControl Update")
+            tray.notify("Fetching latest release…", "EmuCtrl Update")
             latest = _fetch_latest_version()
             if not latest:
                 _log("[Reinstall] Failed to fetch latest version from GitHub")
                 tray.notify("Could not fetch latest release. Check internet.", "Update Failed")
                 return
             _log(f"[Reinstall] Downloading v{latest}…")
-            tray.notify(f"Downloading v{latest}…", "WindowControl Update")
+            tray.notify(f"Downloading v{latest}…", "EmuCtrl Update")
 
             def _on_error(msg):
                 _log(f"[Reinstall] Download failed: {msg}")

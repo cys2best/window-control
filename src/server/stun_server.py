@@ -32,7 +32,7 @@ _FAMILY_IPV4 = 0x01
 
 
 def _log(msg: str):
-    for _p in [r"C:\ProgramData\WindowControl", r"C:\Windows\Temp", r"C:\Temp", "/tmp"]:
+    for _p in [r"C:\ProgramData\EmuCtrl", r"C:\Windows\Temp", r"C:\Temp", "/tmp"]:
         try:
             os.makedirs(_p, exist_ok=True)
             with open(os.path.join(_p, "service_crash.log"), "a") as f:

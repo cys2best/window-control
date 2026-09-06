@@ -1,6 +1,6 @@
 {
-  "name": "WindowControl",
-  "short_name": "WinCtrl",
+  "name": "EmuCtrl",
+  "short_name": "EmuCtrl",
   "display": "standalone",
   "orientation": "any",
   "start_url": "/",

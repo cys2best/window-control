@@ -4,8 +4,8 @@ import sys
 import threading
 from typing import Callable
 
-CMD_PIPE_NAME   = r"\\.\pipe\WindowControlCmd"
-EVENT_PIPE_NAME = r"\\.\pipe\WindowControlEvents"
+CMD_PIPE_NAME   = r"\\.\pipe\EmuCtrlCmd"
+EVENT_PIPE_NAME = r"\\.\pipe\EmuControlEvents"
 
 # Keep old name for any code that still imports it
 PIPE_NAME = CMD_PIPE_NAME

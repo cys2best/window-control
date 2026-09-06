@@ -2,7 +2,7 @@ import subprocess
 import sys
 
 if sys.platform == "win32":
-    SERVICE_NAME = "WindowControlService"
+    SERVICE_NAME = "EmuCtrlService"
 
     def get_service_status() -> str:
         """Returns 'running', 'stopped', 'not_installed'."""

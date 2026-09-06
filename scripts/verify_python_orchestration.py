@@ -894,7 +894,9 @@ def run_verification(config: VerificationConfig, deps: Any) -> VerificationResul
                 "selected_forward": retained_forward,
             }
             _trace(deps, f"failure retention app={app is not None} engine_pids={sorted(owned_engine_pids)} selected_forward={retained_forward}")
-        service_log = Path(r"C:\ProgramData\WindowControl\service_crash.log")
+        service_log = Path(r"C:\ProgramData\EmuCtrl\service_crash.log")
+        if not service_log.exists():
+            service_log = Path(r"C:\ProgramData\WindowControl\service_crash.log")
         if service_log.exists():
             try:
                 shutil.copyfile(service_log, config.evidence_dir / "service_crash.log")

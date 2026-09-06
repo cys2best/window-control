@@ -27,7 +27,7 @@ _ADB_PATH_FALLBACKS = [
 
 
 def _log(msg: str):
-    for _p in [r"C:\ProgramData\WindowControl", r"C:\Windows\Temp"]:
+    for _p in [r"C:\ProgramData\EmuCtrl", r"C:\Windows\Temp"]:
         try:
             os.makedirs(_p, exist_ok=True)
             with open(os.path.join(_p, "service_crash.log"), "a") as f:

@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 def _log(msg: str):
     import os
 
-    for path in [r"C:\ProgramData\WindowControl", r"C:\Windows\Temp"]:
+    for path in [r"C:\ProgramData\EmuCtrl", r"C:\Windows\Temp"]:
         try:
             os.makedirs(path, exist_ok=True)
             with open(os.path.join(path, "service_crash.log"), "a") as log_file:

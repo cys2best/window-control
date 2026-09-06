@@ -334,7 +334,7 @@ def test_unknown_rsc_payload_is_a_404_not_a_traversal(tmp_path):
 
 def test_manifest_and_icon_are_served_for_pwa_installability(tmp_path):
     import server.app as app_module
-    (tmp_path / "manifest.json").write_text('{"name":"WindowControl"}')
+    (tmp_path / "manifest.json").write_text('{"name":"EmuCtrl"}')
     (tmp_path / "icon-192.png").write_bytes(b"\x89PNG\r\n\x1a\n")
     with patch.object(app_module, "WEB_BUILD_DIR", str(tmp_path)):
         client, _ = _make_client()
@@ -342,7 +342,7 @@ def test_manifest_and_icon_are_served_for_pwa_installability(tmp_path):
         icon = client.get("/icon-192.png")
     assert manifest.status_code == 200
     assert manifest.headers["content-type"].startswith("application/manifest+json")
-    assert manifest.json() == {"name": "WindowControl"}
+    assert manifest.json() == {"name": "EmuCtrl"}
     assert icon.status_code == 200
     assert icon.headers["content-type"].startswith("image/png")
 

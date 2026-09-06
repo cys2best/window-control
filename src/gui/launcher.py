@@ -31,7 +31,7 @@ class LauncherWindow(QMainWindow):
 
     def __init__(self, parent=None, on_stop_server=None):
         super().__init__(parent)
-        self.setWindowTitle(f"WindowControl Host v{VERSION}")
+        self.setWindowTitle(f"EmuCtrl Host v{VERSION}")
         self.resize(400, 460)
         self.setMinimumWidth(380)
         self._on_stop_server = on_stop_server
@@ -63,7 +63,7 @@ class LauncherWindow(QMainWindow):
         header_layout.setSpacing(4)
 
         title_row = QHBoxLayout()
-        title_label = QLabel("WindowControl Host")
+        title_label = QLabel("EmuCtrl Host")
         title_label.setStyleSheet("font-size: 18px; font-weight: 700; color: #e8eaed;")
         version_label = QLabel(f"v{VERSION}")
         version_label.setStyleSheet("font-size: 12px; color: #8a8f98; padding-top: 4px;")

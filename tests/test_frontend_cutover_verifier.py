@@ -36,7 +36,7 @@ def _config(**overrides) -> FrontendCutoverConfig:
         repo_root=Path("/repo"),
         evidence_dir=Path("/repo/engine/test/frontend-cutover-x"),
         web_build_dir=Path("/repo/apps/web/out"),
-        installer_path=Path("/repo/release/WindowControlInstaller.exe"),
+        installer_path=Path("/repo/release/EmuCtrlInstaller.exe"),
     )
     defaults.update(overrides)
     return FrontendCutoverConfig(**defaults)
@@ -605,7 +605,7 @@ def test_installed_app_launch_passes_when_healthy_and_firewall_rule_matches():
             return True
 
         def run_command(self, command, *, cwd=None, timeout=600):
-            return 0, 'Rule Name: WindowControl-Engine\nProgram: C:\\Program Files\\WindowControl\\_internal\\assets\\engine\\engine.exe\n'
+            return 0, 'Rule Name: EmuCtrl-Engine\nProgram: C:\\Program Files\\EmuCtrl\\_internal\\assets\\engine\\engine.exe\n'
 
         def terminate(self, process):
             pass
@@ -626,7 +626,7 @@ def test_installed_app_launch_passes_with_case_insensitive_firewall_rule():
             return True
 
         def run_command(self, command, *, cwd=None, timeout=600):
-            return 0, 'Rule Name: WINDOWCONTROL-ENGINE\nProgram: C:\\PROGRAM FILES\\WINDOWCONTROL\\_INTERNAL\\ASSETS\\ENGINE\\ENGINE.EXE\n'
+            return 0, 'Rule Name: EMUCTRL-ENGINE\nProgram: C:\\PROGRAM FILES\\EMUCTRL\\_INTERNAL\\ASSETS\\ENGINE\\ENGINE.EXE\n'
 
         def terminate(self, process):
             pass
@@ -647,7 +647,7 @@ def test_installed_app_launch_fails_when_firewall_rule_points_elsewhere():
             return True
 
         def run_command(self, command, *, cwd=None, timeout=600):
-            return 0, "Rule Name: WindowControl-Engine\nProgram: C:\\some\\stale\\path\\engine.exe\n"
+            return 0, "Rule Name: EmuCtrl-Engine\nProgram: C:\\some\\stale\\path\\engine.exe\n"
 
         def terminate(self, process):
             pass
@@ -710,12 +710,12 @@ def test_frozen_package_layout_fails_when_routes_fail():
 
 def test_install_dir_defaults_to_program_files(monkeypatch):
     monkeypatch.delenv("ProgramFiles", raising=False)
-    assert _install_dir(Path("dummy/installer.exe")) == Path(r"C:\Program Files") / "WindowControl"
+    assert _install_dir(Path("dummy/installer.exe")) == Path(r"C:\Program Files") / "EmuCtrl"
 
 
 def test_install_dir_respects_programfiles_env(monkeypatch):
     monkeypatch.setenv("ProgramFiles", r"D:\CustomPF")
-    assert _install_dir(Path("dummy/installer.exe")) == Path(r"D:\CustomPF") / "WindowControl"
+    assert _install_dir(Path("dummy/installer.exe")) == Path(r"D:\CustomPF") / "EmuCtrl"
 
 
 def test_real_deps_start_installed_app(monkeypatch):
@@ -726,7 +726,7 @@ def test_real_deps_start_installed_app(monkeypatch):
         pid = 7777
 
     def mock_popen(cmd, **kwargs):
-        assert str(cmd[0]).endswith(r"WindowControl\WindowControl.exe") or str(cmd[0]).endswith("WindowControl/WindowControl.exe")
+        assert str(cmd[0]).endswith(r"EmuCtrl\EmuCtrl.exe") or str(cmd[0]).endswith("EmuCtrl/EmuCtrl.exe")
         return FakePopen()
 
     monkeypatch.setattr("subprocess.Popen", mock_popen)

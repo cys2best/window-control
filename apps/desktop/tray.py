@@ -59,15 +59,15 @@ class TrayIcon:
         """Run tray icon in a background daemon thread."""
         img = _load_tray_icon()
         self._icon = pystray.Icon(
-            "WindowControl",
+            "EmuCtrl",
             img,
-            "WindowControl",
+            "EmuCtrl",
             menu=self._build_menu(),
         )
         t = threading.Thread(target=self._icon.run, daemon=True)
         t.start()
 
-    def notify(self, message: str, title: str = "WindowControl"):
+    def notify(self, message: str, title: str = "EmuCtrl"):
         if self._icon:
             self._icon.notify(message, title)
 

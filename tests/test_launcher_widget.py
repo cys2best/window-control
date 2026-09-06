@@ -24,7 +24,7 @@ def test_launcher_window_constructs_without_open_app(qapp):
         assert not hasattr(window, "_qr_label")
         assert hasattr(window, "_status_label")
         assert hasattr(window, "_ip_label")
-        assert window.windowTitle().startswith("WindowControl Host")
+        assert window.windowTitle().startswith("EmuCtrl Host")
 
 
 def test_launcher_window_dimensions_and_close_event(qapp):

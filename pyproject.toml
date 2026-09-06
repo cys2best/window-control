@@ -1,7 +1,7 @@
 [project]
-name = "window-control"
+name = "emuctrl"
 version = "2.1.4"
-description = "Stream Windows app windows to iPhone over Tailscale"
+description = "Stream LDPlayer emulator instances to mobile and web"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

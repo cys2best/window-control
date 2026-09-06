@@ -159,7 +159,7 @@ def _install_dir(installer_path: Path) -> Path:
     import os
 
     program_files = os.environ.get("ProgramFiles", r"C:\Program Files")
-    return Path(program_files) / "WindowControl"
+    return Path(program_files) / "EmuCtrl"
 
 
 class RealFrontendDeps:
@@ -248,7 +248,7 @@ class RealFrontendDeps:
         install_dir = _install_dir(self.config.installer_path)
         no_window = {"creationflags": 0x08000000} if sys.platform == "win32" else {}
         process = subprocess.Popen(
-            [str(install_dir / "WindowControl.exe")],
+            [str(install_dir / "EmuCtrl.exe")],
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             **no_window,
         )
@@ -262,7 +262,7 @@ class RealFrontendDeps:
         install_dir = _install_dir(self.config.installer_path)
         no_window = {"creationflags": 0x08000000} if sys.platform == "win32" else {}
         process = subprocess.Popen(
-            [str(install_dir / "WindowControl.exe"), "--webview-window", url],
+            [str(install_dir / "EmuCtrl.exe"), "--webview-window", url],
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             **no_window,
         )
@@ -437,9 +437,9 @@ def gate_installed_app_launch(config: FrontendCutoverConfig, deps: Any, result: 
     app = deps.start_installed_app()
     healthy = deps.wait_for_dev_app(app, config.port)
     exit_code, output = deps.run_command(
-        ["netsh", "advfirewall", "firewall", "show", "rule", 'name="WindowControl-Engine"', "verbose"],
+        ["netsh", "advfirewall", "firewall", "show", "rule", 'name="EmuCtrl-Engine"', "verbose"],
     )
-    expected_engine_path = r"WindowControl\_internal\assets\engine\engine.exe"
+    expected_engine_path = r"EmuCtrl\_internal\assets\engine\engine.exe"
     firewall_ok = exit_code == 0 and expected_engine_path.lower() in output.lower()
     details = {
         "pid": app.pid,
