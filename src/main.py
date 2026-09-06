@@ -16,16 +16,15 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname
 
 import config
 
-# apps/desktop/{tray,window}.py live outside src/ (a sibling app directory,
-# like apps/web and apps/mobile), so unlike gui.tray/gui.launcher they are
+# apps/desktop/tray.py lives outside src/ (a sibling app directory,
+# like apps/web and apps/mobile), so unlike gui.launcher it is
 # not naturally importable via src/ being main.py's own directory. In a dev
-# checkout, add apps/desktop to sys.path so `import tray` / `from window
-# import DesktopWindow` resolve the same way `import gui.tray` already does
-# for modules that stayed under src/. In a PyInstaller-frozen build this is
-# unnecessary and the directory won't exist at this relative path -- those
-# modules are instead pulled into the frozen bundle via window_control.spec's
-# `pathex`, which PyInstaller's own import graph resolves without any
-# runtime sys.path change.
+# checkout, add apps/desktop to sys.path so `import tray` resolves the same
+# way `import gui.launcher` already does for modules that stayed under src/.
+# In a PyInstaller-frozen build this is unnecessary and the directory won't
+# exist at this relative path -- those modules are instead pulled into the
+# frozen bundle via window_control.spec's `pathex`, which PyInstaller's own
+# import graph resolves without any runtime sys.path change.
 if not hasattr(sys, "_MEIPASS"):
     import pathlib
     _desktop_dir = str(pathlib.Path(__file__).resolve().parent.parent / "apps" / "desktop")
@@ -69,7 +68,6 @@ try:
     from server.instance_manager import InstanceManager
     from gui.launcher import LauncherWindow, maybe_show_login
     from tray import TrayIcon
-    from window import WEBVIEW_ARG, DesktopWindow
     _log_early("[gui-imports] app modules OK")
 except Exception:
     import traceback as _tb
@@ -155,19 +153,6 @@ def main():
         from service_main import main as service_cli
         service_cli()
         return
-
-    # `WindowControl.exe --webview-window <url>` is this app re-invoking
-    # itself to host the pywebview desktop shell (apps/desktop/window.py
-    # spawns it). pywebview's blocking GUI loop only runs on a process's
-    # real main thread, which in the *main* process belongs to PyQt5's
-    # QApplication.exec_() below -- so the shell gets a process, and a
-    # main thread, of its own. Nothing else starts on this path: no
-    # server, no tray, no engine.
-    if WEBVIEW_ARG in sys.argv:
-        _idx = sys.argv.index(WEBVIEW_ARG)
-        _url = sys.argv[_idx + 1] if len(sys.argv) > _idx + 1 else ""
-        from webview_main import main as webview_window_main
-        sys.exit(webview_window_main([_url]))
 
     from config import VERSION
     _log(f"[GUI] starting v{VERSION} pid={os.getpid()} user={os.environ.get('USERNAME','?')}")
@@ -267,16 +252,7 @@ def main():
         _log("[GUI] login cancelled — exiting without showing launcher")
         return
 
-    # DesktopWindow embeds apps/web's served build (login/instances/stream)
-    # in a pywebview window -- the same content a phone reaches over
-    # Tailscale/LAN, now viewable locally too. It runs pywebview in a child
-    # process (see apps/desktop/window.py): PyQt5's QApplication owns this
-    # process's main thread for the whole life of the app, and pywebview
-    # refuses to start anywhere else. The child is spawned lazily, on the
-    # first "Open App" click, and at most one at a time.
-    desktop_window = DesktopWindow(f"http://127.0.0.1:{PORT}")
-
-    launcher = LauncherWindow(on_open_app=desktop_window.show)
+    launcher = LauncherWindow()
 
     def show_launcher():
         launcher.show()
@@ -317,7 +293,6 @@ def main():
 
     exit_code = app.exec_()
     _log(f"[GUI] app.exec_() returned exit_code={exit_code} — process exiting")
-    desktop_window.close()
     stop_server()
     instance_manager.stop_all()
     tray.stop()
