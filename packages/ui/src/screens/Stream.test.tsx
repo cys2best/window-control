@@ -525,7 +525,9 @@ test("reconnecting after a saved quality change pins the replacement controller 
   preferences = { ...preferences, quality: "1080" };
   await view.rerender(<Stream route={{ params: { serial: "A" } }} navigation={navigation} RTCImpl={FakeRTCPeerConnection} VideoView={FakeVideoView} />);
   await waitFor(() => expect(firstAdaptive.pin).toHaveBeenCalledWith("1080"));
+  expect(Core.connectEngineSession).toHaveBeenCalledTimes(1);
   await act(async () => { onState("disconnected"); });
 
+  await waitFor(() => expect(Core.connectEngineSession).toHaveBeenCalledTimes(2));
   await waitFor(() => expect(replacementAdaptive.pin).toHaveBeenCalledWith("1080"));
 });
