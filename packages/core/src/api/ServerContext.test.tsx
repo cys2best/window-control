@@ -45,7 +45,8 @@ test("ServerProvider loads persisted base/token and exposes ready", async () => 
 
 test("ServerProvider publishes successful host reachability probes", async () => {
   jest.useFakeTimers();
-  global.fetch = jest.fn(async () => ({ ok: true, json: async () => ({}) })) as any;
+  const fetchMock = jest.fn(async () => ({ ok: true, json: async () => ({}) }));
+  global.fetch = fetchMock as any;
   const plain = makeMemoryStorage();
   const secure = makeMemoryStorage();
   await plain.setItem("wc_base", "http://192.168.1.8:8080");
@@ -58,8 +59,12 @@ test("ServerProvider publishes successful host reachability probes", async () =>
 
   await act(async () => { await Promise.resolve(); });
   expect(getByTestId("reachability").textContent).toBe("reachable");
+  const initialRequestCount = fetchMock.mock.calls.length;
   act(() => { jest.advanceTimersByTime(30_000); });
+  expect(fetchMock).toHaveBeenCalledTimes(initialRequestCount + 1);
   unmount();
+  act(() => { jest.advanceTimersByTime(30_000); });
+  expect(fetchMock).toHaveBeenCalledTimes(initialRequestCount + 1);
   jest.useRealTimers();
 });
 
@@ -218,4 +223,3 @@ test("clearAuth clears token from secure storage and resets authToken state", as
   expect(getByTestId("token").textContent).toBe("");
   expect(await secure.getItem("wc_auth_token")).toBeNull();
 });
-
