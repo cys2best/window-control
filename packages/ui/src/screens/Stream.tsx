@@ -46,6 +46,7 @@ export function Stream({
   const inputHealth = useRef<any>(null);
   const sampler = useRef<ReturnType<typeof makeTelemetrySampler> | null>(null);
   const appliedTier = useRef<QualitySelection | null>(null);
+  const currentQuality = useRef<QualitySelection>(preferences.quality);
   const scrollLast = useRef(0);
   const keyInput = useRef<TextInput>(null);
   const dragStarted = useRef(false);
@@ -53,6 +54,8 @@ export function Stream({
   const lastTouch = useRef({ x: 0, y: 0 });
   const railTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const twoFingerMoved = useRef(false);
+
+  currentQuality.current = preferences.quality;
 
   const wakeRail = useCallback(() => {
     setRailOpen(true);
@@ -157,9 +160,10 @@ export function Stream({
         serial,
         onApply: (t) => client.setQuality(serial, t),
       });
-      if (preferences.quality === "auto") adaptive.current.setAuto();
-      else adaptive.current.pin(preferences.quality);
-      appliedTier.current = preferences.quality;
+      const quality = currentQuality.current;
+      if (quality === "auto") adaptive.current.setAuto();
+      else adaptive.current.pin(quality);
+      appliedTier.current = quality;
     } catch (error: any) {
       if (error?.status === 401) {
         if (clearAuth) await clearAuth();

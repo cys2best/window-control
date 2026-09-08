@@ -500,3 +500,32 @@ test("applies a saved manual quality through the adaptive pin path when the sess
   await render(<Stream route={{ params: { serial: "A" } }} navigation={{ navigate: jest.fn(), setParams: jest.fn() }} RTCImpl={FakeRTCPeerConnection} VideoView={FakeVideoView} />);
   await waitFor(() => expect(adaptive.pin).toHaveBeenCalledWith("1080"));
 });
+
+test("reconnecting after a saved quality change pins the replacement controller to the latest tier", async () => {
+  const firstSession = makeFakeSession();
+  const replacementSession = makeFakeSession();
+  const firstAdaptive = makeFakeAdaptive();
+  const replacementAdaptive = makeFakeAdaptive();
+  let onState!: (state: "connecting" | "connected" | "disconnected") => void;
+  let preferences = { quality: "720", showHudOnConnect: false, haptics: true, hideRailWhilePlaying: true } as const;
+  (Core.connectEngineSession as jest.Mock).mockImplementationOnce((opts: any) => {
+    onState = opts.onState;
+    return Promise.resolve(firstSession as any);
+  }).mockResolvedValueOnce(replacementSession as any);
+  (Adaptive.makeAdaptive as jest.Mock).mockReturnValueOnce(firstAdaptive).mockReturnValueOnce(replacementAdaptive);
+  const client = {
+    select: jest.fn().mockResolvedValue(selectResp()), instances: jest.fn().mockResolvedValue([]),
+    setQuality: jest.fn(), keyframe: jest.fn(),
+  };
+  (SC.useServer as jest.Mock).mockImplementation(() => ({ base: "http://h", client, setBase: jest.fn(), ready: true, preferences }) as any);
+  const navigation = { navigate: jest.fn(), setParams: jest.fn() };
+  const view = await render(<Stream route={{ params: { serial: "A" } }} navigation={navigation} RTCImpl={FakeRTCPeerConnection} VideoView={FakeVideoView} />);
+  await waitFor(() => expect(firstAdaptive.pin).toHaveBeenCalledWith("720"));
+
+  preferences = { ...preferences, quality: "1080" };
+  await view.rerender(<Stream route={{ params: { serial: "A" } }} navigation={navigation} RTCImpl={FakeRTCPeerConnection} VideoView={FakeVideoView} />);
+  await waitFor(() => expect(firstAdaptive.pin).toHaveBeenCalledWith("1080"));
+  await act(async () => { onState("disconnected"); });
+
+  await waitFor(() => expect(replacementAdaptive.pin).toHaveBeenCalledWith("1080"));
+});
