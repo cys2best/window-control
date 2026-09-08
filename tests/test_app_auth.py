@@ -144,7 +144,7 @@ def test_retired_setup_route_returns_404():
 
 
 @pytest.mark.parametrize(
-    "path", ["/index.txt", "/login.txt", "/stream.txt", "/instances.txt"]
+    "path", ["/index.txt", "/login.txt", "/stream.txt", "/instances.txt", "/account.txt"]
 )
 def test_rsc_payloads_served_without_auth(path):
     # Next's client router fetches these on every soft navigation with no
@@ -162,6 +162,15 @@ def test_browser_navigation_to_instances_gets_the_shell_not_a_401():
     client, _, _ = _make_authed_client()
     r = client.get("/instances", headers={"Accept": "text/html,*/*;q=0.8"})
     assert r.status_code != 401
+
+
+def test_account_json_request_stays_protected_while_its_shell_is_public(tmp_path):
+    import server.app as app_module
+    (tmp_path / "account.html").write_text("<html>account shell</html>")
+    client, _, _ = _make_authed_client()
+    with patch.object(app_module, "WEB_BUILD_DIR", str(tmp_path)):
+        assert client.get("/account", headers={"Accept": "text/html"}).text == "<html>account shell</html>"
+        assert client.get("/account", headers={"Accept": "application/json"}).status_code == 401
 
 
 def test_instances_json_still_requires_auth_for_api_shaped_requests():
@@ -307,4 +316,3 @@ def test_auth_accepts_token_query_param():
     # Without Authorization header, passing ?token=... authenticates successfully
     r = client.get(f"/instances?token={token}")
     assert r.status_code == 200
-

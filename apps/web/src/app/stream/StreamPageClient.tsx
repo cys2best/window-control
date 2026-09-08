@@ -7,7 +7,7 @@ import { VideoView } from "../../platform/VideoView";
 
 // Screens navigate by PascalCase route name (e.g. "Login", "InstanceList")
 // which doesn't lowercase-map onto this app's actual path segments 1:1.
-const ROUTE_PATH: Record<string, string> = { Login: "/login", InstanceList: "/instances" };
+const ROUTE_PATH: Record<string, string> = { Login: "/login", InstanceList: "/instances", Account: "/account" };
 const toPath = (route: string) => ROUTE_PATH[route] ?? `/${route.toLowerCase()}`;
 
 // `/stream` takes its instance serial from a query param, not a `[serial]`

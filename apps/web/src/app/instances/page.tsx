@@ -6,7 +6,7 @@ import { useServer } from "@wc/core";
 
 // Screens navigate by PascalCase route name (e.g. "Login", "InstanceList")
 // which doesn't lowercase-map onto this app's actual path segments 1:1.
-const ROUTE_PATH: Record<string, string> = { Login: "/login", InstanceList: "/instances" };
+const ROUTE_PATH: Record<string, string> = { Login: "/login", InstanceList: "/instances", Account: "/account" };
 const toPath = (route: string) => ROUTE_PATH[route] ?? `/${route.toLowerCase()}`;
 
 export default function InstancesPage() {

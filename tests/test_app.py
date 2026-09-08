@@ -275,6 +275,16 @@ def test_instances_serves_the_web_page_shell_to_a_browser_navigation(tmp_path):
     assert r.text == "<html>instance list shell</html>"
 
 
+def test_account_serves_only_its_browser_shell_and_rsc_payload(tmp_path):
+    import server.app as app_module
+    (tmp_path / "account.html").write_text("<html>account shell</html>")
+    (tmp_path / "account.txt").write_text("0:account payload\n")
+    with patch.object(app_module, "WEB_BUILD_DIR", str(tmp_path)):
+        client, _ = _make_client()
+        assert client.get("/account", headers={"Accept": "text/html"}).text == "<html>account shell</html>"
+        assert client.get("/account.txt").headers["content-type"].startswith("text/x-component")
+
+
 @pytest.mark.parametrize("headers", [
     {},                                  # packages/core + apps/mobile: plain fetch()
     {"Accept": "*/*"},
@@ -475,4 +485,3 @@ def test_query_preview_aliases():
         r2 = client.get("/instances/preview")
     assert r1.status_code == 200
     assert r2.status_code == 200
-

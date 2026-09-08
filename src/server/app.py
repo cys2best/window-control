@@ -37,7 +37,7 @@ _tunnel_task: "asyncio.Task | None" = None
 # below, which stay gated.
 _AUTH_EXEMPT_PATHS = {
     "/", "/login", "/stream", "/auth/config",
-    "/index.txt", "/login.txt", "/stream.txt", "/instances.txt",
+    "/index.txt", "/login.txt", "/stream.txt", "/instances.txt", "/account.txt",
     "/manifest.json", "/icon-192.png", "/404.html",
 }
 
@@ -69,10 +69,10 @@ def _is_public_web_asset(request: Request) -> bool:
     path = request.url.path
     if path in _AUTH_EXEMPT_PATHS or path.startswith("/_next/"):
         return True
-    # A browser navigating to /instances gets the page shell (see
-    # get_instances) -- the identical static file every other exempt shell
-    # serves. The JSON list on that same path stays gated.
-    return request.method == "GET" and path == "/instances" and _prefers_html(request)
+    # Browser navigation shells have no user data, while API-shaped requests
+    # on the shared paths remain protected (the /instances JSON list has a
+    # contract to preserve; /account intentionally has no JSON endpoint).
+    return request.method == "GET" and path in {"/instances", "/account"} and _prefers_html(request)
 
 
 def _log(msg: str):
@@ -380,6 +380,10 @@ def create_app(instance_manager: InstanceManager) -> FastAPI:
     @app.get("/stream")
     async def stream_page():
         return _serve_web_page("stream.html")
+
+    @app.get("/account")
+    async def account_page():
+        return _serve_web_page("account.html")
 
     @app.get("/404.html")
     async def not_found_page():

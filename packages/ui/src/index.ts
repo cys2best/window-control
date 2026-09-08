@@ -17,5 +17,6 @@ export * from "./components/SwitchDrawer";
 export * from "./components/SettingsModal";
 export * from "./screens/Login";
 export * from "./screens/InstanceList";
+export * from "./screens/Account";
 export * from "./video/VideoView";
 export * from "./screens/Stream";
