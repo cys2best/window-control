@@ -33,6 +33,26 @@ test("no Authorization header when token is null", async () => {
   expect(new Headers(init?.headers).get("Authorization")).toBeNull();
 });
 
+test("instances preserves active state and numeric fps metadata", async () => {
+  global.fetch = jest.fn(async () => okJson([
+    { id: "adb:A", serial: "A", title: "LDP-01", w: 1920, h: 1080, active: true, fps: 60 },
+  ])) as any;
+  const client = makeClient("https://host", "tok");
+
+  expect(await client.instances()).toEqual([
+    { id: "adb:A", serial: "A", title: "LDP-01", w: 1920, h: 1080, active: true, fps: 60 },
+  ]);
+});
+
+test("ping returns the elapsed auth-config request time", async () => {
+  const now = jest.spyOn(Date, "now").mockReturnValueOnce(100).mockReturnValueOnce(137);
+  global.fetch = jest.fn(async () => okJson({})) as any;
+  const client = makeClient("https://host", "tok");
+
+  await expect(client.ping()).resolves.toBe(37);
+  now.mockRestore();
+});
+
 test("parses the exact final selection shape", async () => {
   const body = {
     ok: true,

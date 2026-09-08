@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useMemo, useState, useCallback } from "react";
 import { makeClient } from "./client";
+import { classifyHostRoute, probeHost, type HostReachability } from "./hostProbe";
 import { normalizeBase } from "./urls";
 import { isJwtExpired } from "./supabaseAuth";
 import type { SecureStorageAdapter } from "./storage";
@@ -13,6 +14,7 @@ type Ctx = {
   setServer: (base: string, token: string) => Promise<ApiClient>;
   clearAuth: () => Promise<void>;
   ready: boolean;
+  hostReachability: HostReachability;
   supabaseUrl: string;
   supabaseAnonKey: string;
 };
@@ -38,6 +40,12 @@ export function ServerProvider({
   const [authToken, setAuthTokenState] = useState<string | null>(null);
   const [baseLoaded, setBaseLoaded] = useState(false);
   const [tokenLoaded, setTokenLoaded] = useState(false);
+  const [hostReachability, setHostReachability] = useState<HostReachability>(() => ({
+    state: "checking",
+    route: base ? classifyHostRoute(base) : "lan",
+    host: base ? new URL(base).host : "",
+    rttMs: null,
+  }));
 
   useEffect(() => {
     plainStorage.getItem(BASE_KEY)
@@ -131,9 +139,31 @@ export function ServerProvider({
       .catch(() => {});
   }, [base]);
 
+  useEffect(() => {
+    if (!base) return;
+    let current = true;
+    const check = () => {
+      probeHost(base).then((result) => {
+        if (current) setHostReachability(result);
+      });
+    };
+    setHostReachability({
+      state: "checking",
+      route: classifyHostRoute(base),
+      host: new URL(base).host,
+      rttMs: null,
+    });
+    check();
+    const interval = setInterval(check, 30_000);
+    return () => {
+      current = false;
+      clearInterval(interval);
+    };
+  }, [base]);
+
   const ready = baseLoaded && tokenLoaded;
   return (
-    <ServerCtx.Provider value={{ base, authToken, client, setServer, clearAuth, ready, supabaseUrl, supabaseAnonKey }}>
+    <ServerCtx.Provider value={{ base, authToken, client, setServer, clearAuth, ready, hostReachability, supabaseUrl, supabaseAnonKey }}>
       {children}
     </ServerCtx.Provider>
   );

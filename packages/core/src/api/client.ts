@@ -1,6 +1,14 @@
 import { httpUrl } from "./urls";
 
-export type Instance = { id: string; serial: string; title: string; w?: number; h?: number };
+export type Instance = {
+  id: string;
+  serial: string;
+  title: string;
+  w?: number;
+  h?: number;
+  fps?: number;
+  active: boolean;
+};
 
 export type IceServer = {
   urls: string | string[];
@@ -65,8 +73,16 @@ export function makeClient(
         id: d.id ?? d.serial,
         serial: serialOf(d),
         title: d.title ?? d.name ?? serialOf(d),
-        w: d.w, h: d.h,
+        w: d.w,
+        h: d.h,
+        fps: typeof d.fps === "number" ? d.fps : undefined,
+        active: d.active === true,
       }));
+    },
+    async ping(): Promise<number> {
+      const started = Date.now();
+      await request("/auth/config");
+      return Math.max(0, Date.now() - started);
     },
     async select(serial: string): Promise<SelectResp> {
       const r = await request(`/instances/${serial}/select`, { method: "POST" });

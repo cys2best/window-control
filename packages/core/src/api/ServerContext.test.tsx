@@ -13,12 +13,13 @@ function makeMemoryStorage(): SecureStorageAdapter {
 }
 
 function Probe() {
-  const { ready, base, authToken, setServer, clearAuth } = useServer();
+  const { ready, base, authToken, hostReachability, setServer, clearAuth } = useServer();
   return (
     <div>
       <span data-testid="ready">{String(ready)}</span>
       <span data-testid="base">{base ?? ""}</span>
       <span data-testid="token">{authToken ?? ""}</span>
+      <span data-testid="reachability">{hostReachability.state}</span>
       <button onClick={() => setServer("http://host:8000", "tok")}>set</button>
       <button onClick={() => clearAuth()}>clear</button>
     </div>
@@ -40,6 +41,47 @@ test("ServerProvider loads persisted base/token and exposes ready", async () => 
   await waitFor(() => expect(getByTestId("ready").textContent).toBe("true"));
   expect(getByTestId("base").textContent).toBe("http://saved:8000");
   expect(getByTestId("token").textContent).toBe("saved-tok");
+});
+
+test("ServerProvider publishes successful host reachability probes", async () => {
+  jest.useFakeTimers();
+  global.fetch = jest.fn(async () => ({ ok: true, json: async () => ({}) })) as any;
+  const plain = makeMemoryStorage();
+  const secure = makeMemoryStorage();
+  await plain.setItem("wc_base", "http://192.168.1.8:8080");
+
+  const { getByTestId, unmount } = render(
+    <ServerProvider plainStorage={plain} secureStorage={secure}>
+      <Probe />
+    </ServerProvider>
+  );
+
+  await act(async () => { await Promise.resolve(); });
+  expect(getByTestId("reachability").textContent).toBe("reachable");
+  act(() => { jest.advanceTimersByTime(30_000); });
+  unmount();
+  jest.useRealTimers();
+});
+
+test("ServerProvider reports failed probes without clearing auth", async () => {
+  jest.useFakeTimers();
+  global.fetch = jest.fn(async () => { throw new Error("offline"); }) as any;
+  const plain = makeMemoryStorage();
+  const secure = makeMemoryStorage();
+  await plain.setItem("wc_base", "http://192.168.1.8:8080");
+  await secure.setItem("wc_auth_token", "active-tok");
+
+  const { getByTestId, unmount } = render(
+    <ServerProvider plainStorage={plain} secureStorage={secure}>
+      <Probe />
+    </ServerProvider>
+  );
+
+  await act(async () => { await Promise.resolve(); });
+  expect(getByTestId("reachability").textContent).toBe("unreachable");
+  expect(getByTestId("token").textContent).toBe("active-tok");
+  unmount();
+  jest.useRealTimers();
 });
 
 test("setServer persists base and token via the injected adapters", async () => {
@@ -176,6 +218,4 @@ test("clearAuth clears token from secure storage and resets authToken state", as
   expect(getByTestId("token").textContent).toBe("");
   expect(await secure.getItem("wc_auth_token")).toBeNull();
 });
-
-
 
