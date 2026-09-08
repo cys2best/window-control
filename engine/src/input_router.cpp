@@ -20,7 +20,7 @@ const std::unordered_map<std::string, std::int32_t>& KeyTable() {
     static const std::unordered_map<std::string, std::int32_t> table = {
         {"Return", 66}, {"BackSpace", 67}, {"Tab", 61}, {"Escape", 111},
         {"Delete", 112}, {"ArrowLeft", 21}, {"ArrowUp", 19}, {"ArrowRight", 22},
-        {"ArrowDown", 20}, {" ", 62}, {"Space", 62}, {"Back", 4}, {"Home", 3},
+        {"ArrowDown", 20}, {" ", 62}, {"Space", 62}, {"Back", 4}, {"Home", 3}, {"AppSwitch", 187},
         {"Menu", 82},
     };
     return table;

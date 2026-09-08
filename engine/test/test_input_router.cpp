@@ -214,6 +214,19 @@ TEST(InputRouter, UnknownKeyNameIsIgnoredWithoutCrashing) {
     fake.Stop();
 }
 
+TEST(InputRouter, MapsRecentAppsToAndroidAppSwitchKey) {
+    FakeScrcpyServer fake;
+    fake.Serve();
+    PeerRegistry registry;
+    ScrcpySource source(registry);
+    source.ConnectInitial(fake.Port());
+    InputRouter router(source);
+
+    EXPECT_EQ(router.KeycodeForKey("AppSwitch"), 187);
+
+    fake.Stop();
+}
+
 TEST(InputRouter, RateLimitsRapidIdrRequests) {
     FakeScrcpyServer fake;
     fake.Serve();

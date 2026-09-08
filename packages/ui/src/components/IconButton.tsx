@@ -8,12 +8,12 @@ import { theme } from "../theme/tokens";
 // plain Pressable's RN-responder touch claim wins before RNGH can resolve
 // which gesture the touch belongs to, silently eating swipes that start on
 // a button.
-export function IconButton({ children, onPress, active, label }:
-  { children: React.ReactNode; onPress: () => void; active?: boolean; label: string }) {
+export function IconButton({ children, onPress, active, label, testID }:
+  { children: React.ReactNode; onPress: () => void; active?: boolean; label: string; testID?: string }) {
   const tap = Gesture.Tap().runOnJS(true).onEnd(() => onPress());
   return (
     <GestureDetector gesture={tap}>
-      <View collapsable={false} accessibilityLabel={label}
+      <View collapsable={false} accessibilityLabel={label} testID={testID}
         style={{ width: 48, height: 48, alignItems: "center", justifyContent: "center",
           backgroundColor: active ? theme.color.accent : "transparent", borderRadius: theme.radius.sm }}>
         {children}

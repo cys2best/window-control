@@ -2,30 +2,32 @@ import React, { useEffect, useRef, useState, useCallback } from "react";
 import { View, TextInput, PanResponder } from "react-native";
 import * as ScreenOrientation from "expo-screen-orientation";
 import type { VideoViewComponent } from "../video/VideoView";
-import { Gesture, GestureDetector } from "react-native-gesture-handler";
-import { runOnJS } from "react-native-reanimated";
-import { useServer, connectEngineSession, EngineSession, normalizeCoords, makeAdaptive } from "@wc/core";
+import { useServer, connectEngineSession, EngineSession, normalizeCoords, makeAdaptive, DEFAULT_STREAM_PREFERENCES } from "@wc/core";
 import { theme } from "../theme/tokens";
-import { StreamToolbar, STREAM_TOOLBAR_WIDTH } from "../components/StreamToolbar";
+import { StreamRail, STREAM_RAIL_WIDTH } from "../components/StreamRail";
+import { SwapControl } from "../components/SwapControl";
 import { SettingsModal } from "../components/SettingsModal";
 import { SwitchDrawer } from "../components/SwitchDrawer";
 import { StatsOverlay } from "../components/StatsOverlay";
 import { ErrorOverlay } from "../components/ErrorOverlay";
 
 type Net = "connected" | "connecting" | "disconnected";
+const IDLE_COLLAPSE_MS = 4000;
 
 export function Stream({
   route,
   navigation,
   RTCImpl,
   VideoView,
+  performHaptic,
 }: {
   route: any;
   navigation: any;
   RTCImpl: any;
   VideoView: VideoViewComponent;
+  performHaptic?: () => void;
 }) {
-  const { client, authToken, clearAuth } = useServer() as any;
+  const { client, authToken, clearAuth, preferences = DEFAULT_STREAM_PREFERENCES } = useServer() as any;
   const { serial } = route.params;
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [net, setNet] = useState<Net>("connecting");
@@ -37,6 +39,7 @@ export function Stream({
   const [tier, setTier] = useState("auto");
   const [instances, setInstances] = useState<any[]>([]);
   const [rtt, setRtt] = useState<number | null>(null);
+  const [railOpen, setRailOpen] = useState(true);
   const rect = useRef({ width: 1, height: 1 });
   const content = useRef({ w: 1, h: 1 });
   const session = useRef<EngineSession | null>(null);
@@ -47,6 +50,24 @@ export function Stream({
   const dragStarted = useRef(false);
   const isScroll = useRef(false);
   const lastTouch = useRef({ x: 0, y: 0 });
+  const railTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const twoFingerMoved = useRef(false);
+
+  const wakeRail = useCallback(() => {
+    setRailOpen(true);
+    if (railTimer.current) clearTimeout(railTimer.current);
+    if (preferences.hideRailWhilePlaying) {
+      railTimer.current = setTimeout(() => setRailOpen(false), IDLE_COLLAPSE_MS);
+    }
+  }, [preferences.hideRailWhilePlaying]);
+  const tick = useCallback(() => {
+    if (preferences.haptics) performHaptic?.();
+  }, [performHaptic, preferences.haptics]);
+
+  useEffect(() => {
+    wakeRail();
+    return () => { if (railTimer.current) clearTimeout(railTimer.current); };
+  }, [wakeRail]);
 
   const releaseActiveDrag = useCallback((input = session.current?.input) => {
     if (input && dragStarted.current) {
@@ -203,6 +224,7 @@ export function Stream({
         lastTouch.current = { x, y };
         if (isScroll.current) {
           scrollLast.current = 0;
+          twoFingerMoved.current = false;
           return;
         }
         const input = session.current?.input;
@@ -225,7 +247,9 @@ export function Stream({
               dragStarted.current = false;
             }
             scrollLast.current = gs.dy;
+            twoFingerMoved.current = false;
           }
+          if (Math.abs(gs.dx) > 3 || Math.abs(gs.dy) > 3) twoFingerMoved.current = true;
           const delta = gs.dy - scrollLast.current;
           if (Math.abs(delta) < 1) return;
           scrollLast.current = gs.dy;
@@ -245,6 +269,7 @@ export function Stream({
       onPanResponderRelease: (e) => {
         const { locationX: x, locationY: y } = e.nativeEvent;
         lastTouch.current = { x, y };
+        if (isScroll.current && !twoFingerMoved.current) setStatsOn((v) => !v);
         releaseActiveDrag();
       },
       onPanResponderTerminate: (e) => {
@@ -263,23 +288,13 @@ export function Stream({
     navigation.setParams({ serial: inst.serial, title: inst.title });
   };
   const cycleInstance = (dir: 1 | -1) => {
-    if (instances.length < 2) return;
+    if (instances.length < 2) return false;
     const i = instances.findIndex((x) => x.serial === serial);
     const j = i + dir;
-    if (j < 0 || j >= instances.length) return; // at the first/last instance — no wrap
+    if (j < 0 || j >= instances.length) return false; // at the first/last instance — no wrap
     switchTo(instances[j]);
+    return true;
   };
-  // Vertical swipe on the toolbar strip (not the video) cycles instances,
-  // so it never competes with the drag gesture used for remote mouse input.
-  // Memoized on [instances, serial] for the same reattachment reason as the
-  // video gesture above — only rebuild when what cycleInstance closes over
-  // actually changes, not on every rtt/net/stats render.
-  const toolbarSwipe = React.useMemo(() => Gesture.Pan()
-    .runOnJS(true)
-    .activeOffsetY([-20, 20])
-    .failOffsetX([-15, 15])
-    .onEnd((e) => { cycleInstance(e.translationY < 0 ? 1 : -1); }),
-  [instances, serial]);
 
   const pickTier = (t: string) => {
     setTier(t);
@@ -302,21 +317,20 @@ export function Stream({
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.color.streamBg }}>
-      <View collapsable={false} style={{ flex: 1, marginRight: STREAM_TOOLBAR_WIDTH }} {...panResponder.panHandlers}
+      <View collapsable={false} style={{ flex: 1, marginHorizontal: STREAM_RAIL_WIDTH }} {...panResponder.panHandlers}
         onLayout={(e) => { rect.current = { width: e.nativeEvent.layout.width, height: e.nativeEvent.layout.height }; }}>
         {stream ? <VideoView stream={stream} /> : null}
       </View>
 
       {statsOn && !failed ? <StatsOverlay lines={statsLines} /> : null}
 
-      <GestureDetector gesture={toolbarSwipe}>
-        <StreamToolbar net={net}
-          active={{ settings: overlay === "settings", drawer: overlay === "drawer", keyboard: keyboardOn, stats: statsOn }}
-          onSettings={() => setOverlay(overlay === "settings" ? null : "settings")}
-          onSwitch={() => setOverlay(overlay === "drawer" ? null : "drawer")}
-          onKeyboard={() => (keyboardOn ? keyInput.current?.blur() : keyInput.current?.focus())}
-          onStats={() => setStatsOn((v) => !v)}
-          onBack={() => {
+      <StreamRail visible={railOpen && overlay === null} telemetry={{ rttMs: rtt, loss: 0, decodeMs: null, networkMs: rtt, inputMs: rtt, jitterMs: null, bitrateMbps: null, droppedFrames: null, transport: "LAN" }}
+        connected={net === "connected"} keyboardOn={keyboardOn} settingsOn={overlay === "settings"}
+        onDiagnostics={() => setStatsOn((v) => !v)}
+        onKeyboard={() => (keyboardOn ? keyInput.current?.blur() : keyInput.current?.focus())}
+        onSystemKey={(key) => session.current?.input.send({ type: "key", key })}
+        onSettings={() => setOverlay(overlay === "settings" ? null : "settings")}
+        onExit={() => {
             // Lock portrait before the screen-pop transition starts, not only
             // in the unmount cleanup below — requesting the geometry change
             // mid-transition can get silently dropped by iOS.
@@ -324,8 +338,12 @@ export function Stream({
               Promise.resolve(ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP)).catch(() => {});
             } catch {}
             navigation.navigate("InstanceList");
-          }} />
-      </GestureDetector>
+          }}
+        onWake={wakeRail} tick={tick} />
+      {!railOpen && overlay === null ? <View testID="rail-wake-target" onTouchEnd={wakeRail}
+        style={{ position: "absolute", top: 0, right: 0, bottom: 0, width: 12 }} /> : null}
+      {overlay === null ? <SwapControl activeIndex={Math.max(0, instances.findIndex((x) => x.serial === serial))} count={instances.length}
+        onOpen={() => setOverlay("drawer")} onCycle={cycleInstance} onWake={wakeRail} tick={tick} /> : null}
 
       <TextInput ref={keyInput} testID="stream-key-input" onKeyPress={(e) => sendKey(e.nativeEvent.key)}
         showSoftInputOnFocus

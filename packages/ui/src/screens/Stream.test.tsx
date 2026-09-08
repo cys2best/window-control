@@ -109,7 +109,7 @@ test("connects via client.select() + connectEngineSession() on mount, not the ol
   expect((client as any).inputWsUrl).toBeUndefined();
 });
 
-test("keeps the entire video surface clear of the right-side toolbar", async () => {
+test("keeps the video surface clear of both edge controls", async () => {
   const session = makeFakeSession();
   (Core.connectEngineSession as jest.Mock).mockImplementation(async (opts: any) => {
     opts.onStream({ toURL: () => "visible-stream" });
@@ -133,7 +133,7 @@ test("keeps the entire video surface clear of the right-side toolbar", async () 
 
   const video = await result.findByTestId("stream-video");
   expect(StyleSheet.flatten(video.parent?.props.style)).toEqual(
-    expect.objectContaining({ marginRight: 64 }),
+    expect.objectContaining({ marginHorizontal: 68 }),
   );
 });
 
