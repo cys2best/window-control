@@ -16,7 +16,7 @@ test("rail exposes the locked key order and system commands", async () => {
   const props = makeRailProps();
   const view = await render(<StreamRail {...props} />);
   expect(view.getAllByTestId("rail-key").map((node) => node.props.accessibilityLabel)).toEqual([
-    "Virtual keyboard", "Android home", "Recent apps", "Stream settings", "Exit stream",
+    "Virtual keyboard", "Android home", "Recent apps", "Stream settings",
   ]);
   await fireEvent.press(view.getByLabelText("Android home"));
   await fireEvent.press(view.getByLabelText("Recent apps"));
@@ -27,6 +27,7 @@ test("rail exposes the locked key order and system commands", async () => {
 test("EXIT is separated and invokes exit", async () => {
   const props = makeRailProps();
   const view = await render(<StreamRail {...props} />);
+  expect(view.getByTestId("rail-exit").props.accessibilityLabel).toBe("Exit stream");
   await fireEvent.press(view.getByLabelText("Exit stream"));
   expect(props.onExit).toHaveBeenCalledTimes(1);
 });

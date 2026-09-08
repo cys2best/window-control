@@ -2,9 +2,7 @@ import React from "react";
 import { Platform, View, Text, Pressable, useWindowDimensions } from "react-native";
 import { theme } from "../theme/tokens";
 
-type Insets = { top: number; right: number; bottom: number; left: number };
-const EMPTY_INSETS: Insets = { top: 0, right: 0, bottom: 0, left: 0 };
-const EmptyInsetsContext = React.createContext<Insets>(EMPTY_INSETS);
+const EmptyInsetsContext = React.createContext({ top: 0, right: 0, bottom: 0, left: 0 });
 
 export type BottomNavProps = {
   onInstances: () => void;
@@ -14,10 +12,8 @@ export type BottomNavProps = {
 
 export function BottomNav({ onInstances, onResume, onHealth }: BottomNavProps) {
   const { width } = useWindowDimensions();
-  const SafeAreaInsetsContext: React.Context<Insets | null> = Platform.OS === "web"
-    ? EmptyInsetsContext
-    : require("react-native-safe-area-context").SafeAreaInsetsContext;
-  const insets = React.useContext(SafeAreaInsetsContext) ?? EMPTY_INSETS;
+  const SafeAreaInsetsContext = Platform.OS === "web" ? EmptyInsetsContext : require("react-native-safe-area-context").SafeAreaInsetsContext;
+  const insets = React.useContext(SafeAreaInsetsContext) ?? { top: 0, right: 0, bottom: 0, left: 0 };
   const position = Platform.OS === "web" && width >= 768
     ? { top: 24 }
     : { bottom: Platform.OS === "web" ? "calc(34px + env(safe-area-inset-bottom, 0px))" : insets.bottom + 34 };

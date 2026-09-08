@@ -222,7 +222,16 @@ TEST(InputRouter, MapsRecentAppsToAndroidAppSwitchKey) {
     source.ConnectInitial(fake.Port());
     InputRouter router(source);
 
-    EXPECT_EQ(router.KeycodeForKey("AppSwitch"), 187);
+    // HandleMessageForTest reaches the production JSON handler directly;
+    // inspect the fake control client's captured key packets, rather than
+    // merely checking the table lookup.
+    router.HandleMessageForTest(R"({"type":"key","key":"AppSwitch"})");
+    ASSERT_TRUE(PollUntil([&]() { return fake.ControlBytesReceived() >= 28u; }));
+
+    const auto control = fake.ControlDataReceived();
+    ASSERT_GE(control.size(), 28u); // 14-byte key-down + 14-byte key-up
+    EXPECT_EQ(ReadU32BE(control, 2), 187u);
+    EXPECT_EQ(ReadU32BE(control, 16), 187u);
 
     fake.Stop();
 }

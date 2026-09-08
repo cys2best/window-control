@@ -259,7 +259,14 @@ export function Stream({
             scrollLast.current = gs.dy;
             twoFingerMoved.current = false;
           }
-          if (Math.abs(gs.dx) > 3 || Math.abs(gs.dy) > 3) twoFingerMoved.current = true;
+          if (!twoFingerMoved.current) {
+            if (Math.abs(gs.dx) <= 3 && Math.abs(gs.dy) <= 3) return;
+            twoFingerMoved.current = true;
+            // Treat the threshold-crossing movement as gesture activation,
+            // not scrolling, so a HUD toggle never leaks a tiny scroll.
+            scrollLast.current = gs.dy;
+            return;
+          }
           const delta = gs.dy - scrollLast.current;
           if (Math.abs(delta) < 1) return;
           scrollLast.current = gs.dy;

@@ -371,3 +371,52 @@ test("starts a drag at touch begin, ends it when a second finger starts scrollin
   await act(async () => { pan.onPanResponderTerminate(touch(20, 30)); });
   expect(session.input.dragEnd).toHaveBeenCalledTimes(2);
 });
+
+test("a two-finger gesture at or below the HUD threshold never scrolls", async () => {
+  const session = makeFakeSession();
+  const createPanResponder = jest.spyOn(PanResponder, "create").mockImplementation(() => ({ panHandlers: {} }) as any);
+  (Core.connectEngineSession as jest.Mock).mockResolvedValue(session as any);
+  const client = {
+    select: jest.fn().mockResolvedValue(selectResp()),
+    instances: jest.fn().mockResolvedValue([]),
+    setQuality: jest.fn(),
+    keyframe: jest.fn(),
+  };
+  (SC.useServer as jest.Mock).mockReturnValue({ base: "http://h", client, setBase: jest.fn(), ready: true } as any);
+
+  const result = await render(<Stream route={{ params: { serial: "A" } }} navigation={{ navigate: jest.fn(), setParams: jest.fn() }} RTCImpl={FakeRTCPeerConnection} VideoView={FakeVideoView} />);
+  await waitFor(() => expect(Core.connectEngineSession).toHaveBeenCalled());
+  const pan = createPanResponder.mock.calls[0][0] as any;
+
+  await act(async () => { pan.onPanResponderGrant(touch(10, 20, 2)); });
+  await act(async () => { pan.onPanResponderMove(touch(12, 22, 2), { dx: 2, dy: 2 }); });
+  await act(async () => { pan.onPanResponderMove(touch(13, 23, 2), { dx: 3, dy: 3 }); });
+  await act(async () => { pan.onPanResponderRelease(touch(13, 23, 2)); });
+
+  expect(session.input.scroll).not.toHaveBeenCalled();
+  expect(result.getByText("DECODE")).toBeTruthy();
+});
+
+test("two-finger scroll begins after crossing the HUD threshold with a fresh baseline", async () => {
+  const session = makeFakeSession();
+  const createPanResponder = jest.spyOn(PanResponder, "create").mockImplementation(() => ({ panHandlers: {} }) as any);
+  (Core.connectEngineSession as jest.Mock).mockResolvedValue(session as any);
+  const client = {
+    select: jest.fn().mockResolvedValue(selectResp()),
+    instances: jest.fn().mockResolvedValue([]),
+    setQuality: jest.fn(),
+    keyframe: jest.fn(),
+  };
+  (SC.useServer as jest.Mock).mockReturnValue({ base: "http://h", client, setBase: jest.fn(), ready: true } as any);
+
+  await render(<Stream route={{ params: { serial: "A" } }} navigation={{ navigate: jest.fn(), setParams: jest.fn() }} RTCImpl={FakeRTCPeerConnection} VideoView={FakeVideoView} />);
+  await waitFor(() => expect(Core.connectEngineSession).toHaveBeenCalled());
+  const pan = createPanResponder.mock.calls[0][0] as any;
+
+  await act(async () => { pan.onPanResponderGrant(touch(10, 20, 2)); });
+  await act(async () => { pan.onPanResponderMove(touch(14, 24, 2), { dx: 0, dy: 4 }); });
+  expect(session.input.scroll).not.toHaveBeenCalled();
+  await act(async () => { pan.onPanResponderMove(touch(15, 25, 2), { dx: 0, dy: 5 }); });
+
+  expect(session.input.scroll).toHaveBeenCalledTimes(1);
+});

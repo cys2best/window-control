@@ -22,8 +22,8 @@ export type StreamRailProps = {
   tick: () => void;
 };
 
-function RailKey({ label, active, onPress, children }: { label: string; active?: boolean; onPress: () => void; children: React.ReactNode }) {
-  return <Pressable testID="rail-key" accessibilityRole="button" accessibilityLabel={label}
+function RailKey({ label, active, onPress, children, testID = "rail-key" }: { label: string; active?: boolean; onPress: () => void; children: React.ReactNode; testID?: string }) {
+  return <Pressable testID={testID} accessibilityRole="button" accessibilityLabel={label}
     onPress={() => { onPress(); }}
     style={({ pressed }) => ({ width: 52, height: 52, alignItems: "center", justifyContent: "center",
       backgroundColor: pressed ? "rgba(255,87,34,0.18)" : active ? "rgba(0,229,255,0.13)" : "transparent",
@@ -55,7 +55,7 @@ export function StreamRail(props: StreamRailProps) {
       </RailKey>
     </View>
     <View style={{ borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.10)", paddingVertical: 8 }}>
-      <RailKey label="Exit stream" onPress={action(props.onExit)}>
+      <RailKey testID="rail-exit" label="Exit stream" onPress={action(props.onExit)}>
         <Text style={{ color: iconStroke, fontFamily: theme.font.monoBold, fontSize: 9, letterSpacing: 0.7 }}>EXIT</Text>
       </RailKey>
     </View>
