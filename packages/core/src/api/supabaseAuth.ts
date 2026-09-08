@@ -10,17 +10,23 @@ export type AuthIdentity = {
   initials: string;
 };
 
+export type SignUpOptions = {
+  redirectTo?: string;
+  metadata?: Record<string, string>;
+};
+
 async function _authRequest(
   supabaseUrl: string,
   anonKey: string,
   path: string,
   email: string,
   password: string,
-  redirectTo?: string
+  options: SignUpOptions = {}
 ): Promise<AuthResult> {
   const payload: any = { email, password };
-  if (redirectTo) {
-    payload.options = { emailRedirectTo: redirectTo };
+  if (options.metadata) payload.data = options.metadata;
+  if (options.redirectTo) {
+    payload.options = { emailRedirectTo: options.redirectTo };
   }
   const r = await fetch(`${supabaseUrl}${path}`, {
     method: "POST",
@@ -47,10 +53,10 @@ export function signInWithPassword(
 }
 
 export function signUpWithPassword(
-  supabaseUrl: string, anonKey: string, email: string, password: string, redirectTo?: string
+  supabaseUrl: string, anonKey: string, email: string, password: string, options: SignUpOptions = {}
 ): Promise<AuthResult> {
-  const query = redirectTo ? `?redirect_to=${encodeURIComponent(redirectTo)}` : "";
-  return _authRequest(supabaseUrl, anonKey, `/auth/v1/signup${query}`, email, password, redirectTo);
+  const query = options.redirectTo ? `?redirect_to=${encodeURIComponent(options.redirectTo)}` : "";
+  return _authRequest(supabaseUrl, anonKey, `/auth/v1/signup${query}`, email, password, options);
 }
 
 

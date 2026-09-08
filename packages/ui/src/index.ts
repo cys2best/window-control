@@ -6,7 +6,6 @@ export * from "./components/BrandMark";
 export * from "./components/Toggle";
 export * from "./components/IconButton";
 export * from "./components/NetChip";
-export * from "./components/NetDot";
 export * from "./components/StatsOverlay";
 export * from "./components/ErrorOverlay";
 export * from "./components/BottomNav";

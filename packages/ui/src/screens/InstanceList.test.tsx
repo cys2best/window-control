@@ -31,6 +31,15 @@ test("renders instances and navigates on tap", async () => {
   expect(client.keyframe).toHaveBeenCalledWith("B");
 });
 
+test("header uses the current host reachability chip", async () => {
+  (SC.useServer as jest.Mock).mockReturnValue({
+    base: "https://relay.example", client: { instances: jest.fn().mockResolvedValue([]) },
+    hostReachability: { route: "relay", state: "unreachable", host: "relay.example", rttMs: null },
+  });
+  const screen = await render(<InstanceList navigation={{ navigate: jest.fn() }} />);
+  expect(screen.getByLabelText("RELAY · relay.example, unreachable")).toBeTruthy();
+});
+
 test("BottomNav setup button does not navigate to ServerSetup", async () => {
   const client = {
     instances: jest.fn().mockResolvedValue([]),
@@ -59,5 +68,4 @@ test("redirects to Login on 401 response and clears auth", async () => {
   await waitFor(() => expect(clearAuth).toHaveBeenCalled());
   expect(nav.replace).toHaveBeenCalledWith("Login");
 });
-
 

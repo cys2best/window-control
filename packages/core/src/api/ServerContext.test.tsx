@@ -80,6 +80,29 @@ test("ServerProvider publishes successful host reachability probes", async () =>
   jest.useRealTimers();
 });
 
+test("ServerProvider remains renderable with a saved base when the runtime has no fetch", async () => {
+  const originalFetch = global.fetch;
+  const plain = makeMemoryStorage();
+  const secure = makeMemoryStorage();
+  await plain.setItem("wc_base", "http://192.168.1.8:8080");
+  let unmount: (() => void) | undefined;
+  try {
+    delete (global as { fetch?: typeof fetch }).fetch;
+    const screen = render(
+      <ServerProvider plainStorage={plain} secureStorage={secure}>
+        <Probe />
+      </ServerProvider>
+    );
+    unmount = screen.unmount;
+    await waitFor(() => expect(screen.getByTestId("ready").textContent).toBe("true"));
+    expect(screen.getByTestId("base").textContent).toBe("http://192.168.1.8:8080");
+    expect(screen.getByTestId("reachability").textContent).toBe("checking");
+  } finally {
+    unmount?.();
+    global.fetch = originalFetch;
+  }
+});
+
 test("ServerProvider reports failed probes without clearing auth", async () => {
   jest.useFakeTimers();
   global.fetch = jest.fn(async () => { throw new Error("offline"); }) as any;

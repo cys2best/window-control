@@ -168,6 +168,7 @@ export function ServerProvider({
 
   useEffect(() => {
     if (!base) return;
+    if (typeof fetch === "undefined" && typeof globalThis.fetch === "undefined") return;
     let current = true;
     const check = () => {
       probeHost(base).then((result) => {

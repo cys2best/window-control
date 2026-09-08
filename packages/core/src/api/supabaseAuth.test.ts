@@ -22,6 +22,9 @@ describe("supabaseAuth", () => {
       "https://project.supabase.co/auth/v1/token?grant_type=password",
       expect.objectContaining({ method: "POST" })
     );
+    expect(JSON.parse((global.fetch as jest.Mock).mock.calls[0][1].body)).toEqual({
+      email: "a@example.com", password: "pw",
+    });
   });
 
   it("returns an error message on rejected sign-in", async () => {
@@ -53,6 +56,31 @@ describe("supabaseAuth", () => {
   it("isJwtExpired returns true for null or empty", () => {
     expect(isJwtExpired(null)).toBe(true);
     expect(isJwtExpired("")).toBe(true);
+  });
+
+  test("signup sends the user-entered pairing code as metadata and preserves the confirmation redirect", async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true, json: async () => ({ access_token: "jwt" }),
+    });
+    await signUpWithPassword("https://s.example", "anon", "a@b.com", "pw", {
+      redirectTo: "https://app.example/login",
+      metadata: { host_pairing_code: "ABCD-1234" },
+    });
+    expect(JSON.parse((global.fetch as jest.Mock).mock.calls[0][1].body)).toEqual({
+      email: "a@b.com", password: "pw", data: { host_pairing_code: "ABCD-1234" },
+      options: { emailRedirectTo: "https://app.example/login" },
+    });
+    expect((global.fetch as jest.Mock).mock.calls[0][0]).toBe(
+      "https://s.example/auth/v1/signup?redirect_to=https%3A%2F%2Fapp.example%2Flogin",
+    );
+  });
+
+  test("signup without a session preserves email confirmation", async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true, json: async () => ({ user: { id: "new-user" } }),
+    });
+    await expect(signUpWithPassword("https://s.example", "anon", "a@b.com", "pw"))
+      .resolves.toEqual({ needs_confirmation: true, message: "Confirmation email sent. Please check your inbox." });
   });
 
   it("isJwtExpired returns false for non-jwt strings without exp", () => {

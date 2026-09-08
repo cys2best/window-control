@@ -2,7 +2,6 @@ import React from "react";
 import { View, Text } from "react-native";
 import Svg, { Path, Circle, Rect } from "react-native-svg";
 import { theme } from "../theme/tokens";
-import { NetDot } from "./NetDot";
 import { IconButton } from "./IconButton";
 
 type Net = "connected" | "connecting" | "disconnected";
@@ -17,7 +16,6 @@ export function StreamToolbar({ net, active, onSettings, onSwitch, onKeyboard, o
     <View collapsable={false} style={{ position: "absolute", top: 0, right: 0, bottom: 0, width: STREAM_TOOLBAR_WIDTH,
       backgroundColor: "#000", alignItems: "center", justifyContent: "space-between", paddingVertical: 18 }}>
       <View style={{ width: 48, height: 48, alignItems: "center", justifyContent: "center", gap: 4 }}>
-        <NetDot state={net} />
         <Text style={{ fontFamily: theme.font.semibold, fontSize: 7.5, letterSpacing: 0.4, color: "rgba(250,248,246,0.5)" }}>
           {net === "connected" ? "LIVE" : net === "connecting" ? "SYNC" : "DOWN"}</Text>
       </View>

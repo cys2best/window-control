@@ -1,17 +1,28 @@
 import React from "react";
 import { View, Text } from "react-native";
 import { theme } from "../theme/tokens";
-import { NetDot, NetState } from "./NetDot";
+import type { HostReachability } from "@wc/core";
 
-const LABEL: Record<NetState, string> = { connected: "Online", connecting: "Connecting", disconnected: "Offline" };
+type NetChipProps = {
+  route: HostReachability["route"];
+  state: HostReachability["state"] | "standby";
+  host: string;
+};
 
-export function NetChip({ state }: { state: NetState }) {
-  const c = theme.net[state];
+export function NetChip({ route, state, host }: NetChipProps) {
+  if (!host) return null;
+  const failedOrRelay = state === "unreachable" || (route === "relay" && state === "reachable");
+  const reachableLan = route === "lan" && state === "reachable";
+  const color = failedOrRelay ? theme.color.live : reachableLan ? theme.color.telemetry : theme.color.textMuted;
+  const backgroundColor = failedOrRelay ? theme.net.disconnected.chipBg
+    : reachableLan ? theme.net.connected.chipBg : theme.color.surfaceRaised;
+  const label = `${route === "lan" ? "LAN" : "RELAY"} · ${host}`;
   return (
-    <View style={{ flexDirection: "row", alignItems: "center", gap: 7, paddingHorizontal: 13, paddingVertical: 8,
-      backgroundColor: c.chipBg, borderRadius: theme.radius.pill }}>
-      <NetDot state={state} />
-      <Text style={{ fontFamily: theme.font.semibold, fontSize: 12, color: c.chipFg }}>{LABEL[state]}</Text>
+    <View accessible accessibilityLabel={`${label}, ${state}`}
+      style={{ flexDirection: "row", alignItems: "center", gap: 7, paddingHorizontal: 12, paddingVertical: 8,
+        backgroundColor, borderRadius: theme.radius.pill, maxWidth: "100%" }}>
+      <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: color }} />
+      <Text numberOfLines={1} style={{ flexShrink: 1, fontFamily: theme.font.mono, fontSize: 10, color }}>{label}</Text>
     </View>
   );
 }

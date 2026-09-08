@@ -9,7 +9,7 @@ import { BottomNav } from "../components/BottomNav";
 import type { Instance } from "@wc/core";
 
 export function InstanceList({ navigation }: { navigation: any }) {
-  const { client, base, clearAuth } = useServer() as any;
+  const { client, base, clearAuth, hostReachability } = useServer() as any;
   const [items, setItems] = useState<Instance[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [reachable, setReachable] = useState(true);
@@ -45,7 +45,6 @@ export function InstanceList({ navigation }: { navigation: any }) {
     navigation.navigate("Stream", { serial: inst.serial, title: inst.title });
   };
   const host = (base ?? "").replace(/^https?:\/\//, "");
-  const net = reachable ? "connected" : "disconnected";
 
   const header = (
     <View>
@@ -56,7 +55,7 @@ export function InstanceList({ navigation }: { navigation: any }) {
           <Text style={{ fontFamily: theme.font.regular, fontSize: 12.5, color: theme.color.textMuted, marginBottom: 5 }}>Server</Text>
           <Text numberOfLines={1} style={{ fontFamily: theme.font.semibold, fontSize: 15, color: theme.color.text }}>{host}</Text>
         </View>
-        <NetChip state={net as any} />
+        {hostReachability ? <NetChip route={hostReachability.route} state={hostReachability.state} host={hostReachability.host} /> : null}
       </View>
       <View style={{ flexDirection: "row", alignItems: "baseline", gap: 10, marginBottom: 12 }}>
         <Text style={{ flex: 1, fontFamily: theme.font.semibold, fontSize: 16, color: theme.color.text }}>Instances</Text>
