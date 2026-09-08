@@ -1,0 +1,19 @@
+import React from "react";
+import Svg, { Circle, Path, Rect } from "react-native-svg";
+import { theme } from "../theme/tokens";
+
+export function BrandMark({ size = 46 }: { size?: number }) {
+  return (
+    <Svg accessibilityLabel="EmuCtrl" width={size} height={size} viewBox="0 0 96 96" fill="none">
+      <Rect x={8} y={8} width={80} height={80} rx={6} stroke={theme.color.textDim} strokeWidth={3} />
+      <Rect x={66} y={11} width={19} height={74} fill={theme.color.accent} />
+      <Rect x={20} y={18.25} width={32} height={7.5} fill={theme.color.text} />
+      <Rect x={20} y={42.25} width={28} height={7.5} fill={theme.color.text} />
+      <Rect x={20} y={70.25} width={32} height={7.5} fill={theme.color.text} />
+      <Rect x={73} y={26} width={5} height={5} fill={theme.color.bg} />
+      <Rect x={73} y={61} width={5} height={5} fill={theme.color.bg} />
+      <Circle cx={75.5} cy={46} r={6} fill={theme.color.bg} />
+      <Path d="M64 39a12 12 0 000 14M57 33a21 21 0 000 26" stroke={theme.color.accent} strokeWidth={2.5} opacity={0.5} />
+    </Svg>
+  );
+}

@@ -1,14 +1,19 @@
 import { theme } from "./tokens";
 
-test("EmuCtrl v3 tokens carry the spec values", () => {
-  expect(theme.color.accent).toBe("#f2916f");
-  expect(theme.color.bg).toBe("#eae7e3");
-  expect(theme.color.card).toBe("#ffffff");
-  expect(theme.color.streamBg).toBe("#141110");
-  expect(theme.color.error).toBe("#c2452a");
-  expect(theme.radius.pill).toBe(999);
-  expect(theme.radius.card).toBe(22);
-  expect(theme.font.bold).toBe("Archivo_700Bold");
-  expect(theme.net.connected.dot).toBe("#3f9d6d");
-  expect(theme.net.disconnected.chipBg).toBe("#fbe5de");
+test("theme exposes only the locked dark EmuCtrl palette", () => {
+  expect(theme.color).toMatchObject({
+    bg: "#06070b",
+    surface: "#090a0f",
+    surfaceRaised: "#13161f",
+    border: "#222738",
+    text: "#E6EAF2",
+    textMuted: "#7A8496",
+    textDim: "#5C6679",
+    accent: "#00E5FF",
+    live: "#FF5722",
+    telemetry: "#10B981",
+  });
+  expect(theme.font.regular).toBe("SpaceGrotesk_400Regular");
+  expect(theme.font.mono).toBe("JetBrainsMono_400Regular");
+  expect(JSON.stringify(theme)).not.toMatch(/f2916f|eae7e3|Archivo/i);
 });

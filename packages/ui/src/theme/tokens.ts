@@ -1,31 +1,38 @@
-import { Platform } from "react-native";
-
 export const theme = {
   color: {
-    accent: "#f2916f",       // coral
-    accentInk: "#c96a48",    // link/hover
-    bg: "#eae7e3",           // warm app ground
-    screen: "#f2f0ed",       // phone-frame screen
-    card: "#ffffff",
-    cardActive: "#fdeee7",
-    streamBg: "#141110",     // stream screen only
-    glass: "rgba(250,248,246,0.9)",  // overlays on the stream screen
-    text: "#1c1a19",         // ink
-    textMuted: "rgba(28,26,25,0.5)",
-    error: "#c2452a",
-    errorBg: "#fbe5de",
+    bg: "#06070b",
+    screen: "#06070b",
+    streamBg: "#000000",
+    surface: "#090a0f",
+    surfaceRaised: "#13161f",
+    card: "#13161f",
+    cardActive: "#101822",
+    glass: "rgba(9,10,15,0.72)",
+    border: "#222738",
+    text: "#E6EAF2",
+    textMuted: "#7A8496",
+    textDim: "#5C6679",
+    accent: "#00E5FF",
+    accentInk: "#00E5FF",
+    live: "#FF5722",
+    telemetry: "#10B981",
+    warning: "#EDBB00",
+    error: "#FF5722",
+    errorBg: "rgba(255,87,34,0.12)",
   },
   net: {
-    connected:    { dot: "#3f9d6d", chipBg: "#e6f2ea", chipFg: "#2f7a54" },
-    connecting:   { dot: "#e0a52c", chipBg: "#fbf0dc", chipFg: "#8a6410" },
-    disconnected: { dot: "#c2452a", chipBg: "#fbe5de", chipFg: "#a8391f" },
+    connected: { dot: "#10B981", chipBg: "rgba(16,185,129,0.10)", chipFg: "#10B981" },
+    connecting: { dot: "#EDBB00", chipBg: "rgba(237,187,0,0.10)", chipFg: "#EDBB00" },
+    disconnected: { dot: "#FF5722", chipBg: "rgba(255,87,34,0.10)", chipFg: "#FF5722" },
   },
-  radius: { card: 22, input: 18, pill: 999, sm: 16 },
+  radius: { card: 14, input: 11, pill: 999, sm: 8 },
   font: {
-    regular: "Archivo_400Regular",
-    medium: "Archivo_500Medium",
-    semibold: "Archivo_600SemiBold",
-    bold: "Archivo_700Bold",
-    mono: Platform.select({ ios: "Menlo", android: "monospace", default: "monospace" })!,
+    regular: "SpaceGrotesk_400Regular",
+    medium: "SpaceGrotesk_500Medium",
+    semibold: "SpaceGrotesk_600SemiBold",
+    bold: "SpaceGrotesk_700Bold",
+    mono: "JetBrainsMono_400Regular",
+    monoMedium: "JetBrainsMono_500Medium",
+    monoBold: "JetBrainsMono_700Bold",
   },
 } as const;
