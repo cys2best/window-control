@@ -6,13 +6,15 @@ import { NetDot } from "./NetDot";
 import { IconButton } from "./IconButton";
 
 type Net = "connected" | "connecting" | "disconnected";
+export const STREAM_TOOLBAR_WIDTH = 64;
+
 // Solid black, edge-to-edge full-height panel on the right; active button = coral fill.
 export function StreamToolbar({ net, active, onSettings, onSwitch, onKeyboard, onStats, onBack }:
   { net: Net; active: { settings: boolean; drawer: boolean; keyboard: boolean; stats: boolean };
     onSettings: () => void; onSwitch: () => void; onKeyboard: () => void; onStats: () => void; onBack: () => void }) {
   const stroke = (on: boolean) => (on ? theme.color.text : "rgba(250,248,246,0.65)");
   return (
-    <View collapsable={false} style={{ position: "absolute", top: 0, right: 0, bottom: 0, width: 64,
+    <View collapsable={false} style={{ position: "absolute", top: 0, right: 0, bottom: 0, width: STREAM_TOOLBAR_WIDTH,
       backgroundColor: "#000", alignItems: "center", justifyContent: "space-between", paddingVertical: 18 }}>
       <View style={{ width: 48, height: 48, alignItems: "center", justifyContent: "center", gap: 4 }}>
         <NetDot state={net} />

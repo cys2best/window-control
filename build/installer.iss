@@ -1,7 +1,7 @@
 ; installer.iss — Inno Setup 6 script for EmuCtrl
 
 #define MyAppName "EmuCtrl"
-#define MyAppVersion "2.1.4"
+#define MyAppVersion "3.1.1"
 #define MyAppPublisher "EmuCtrl"
 #define MyAppExeName "EmuCtrl.exe"
 

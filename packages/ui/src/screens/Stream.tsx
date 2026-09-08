@@ -6,7 +6,7 @@ import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { runOnJS } from "react-native-reanimated";
 import { useServer, connectEngineSession, EngineSession, normalizeCoords, makeAdaptive } from "@wc/core";
 import { theme } from "../theme/tokens";
-import { StreamToolbar } from "../components/StreamToolbar";
+import { StreamToolbar, STREAM_TOOLBAR_WIDTH } from "../components/StreamToolbar";
 import { SettingsModal } from "../components/SettingsModal";
 import { SwitchDrawer } from "../components/SwitchDrawer";
 import { StatsOverlay } from "../components/StatsOverlay";
@@ -302,7 +302,7 @@ export function Stream({
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.color.streamBg }}>
-      <View collapsable={false} style={{ flex: 1 }} {...panResponder.panHandlers}
+      <View collapsable={false} style={{ flex: 1, marginRight: STREAM_TOOLBAR_WIDTH }} {...panResponder.panHandlers}
         onLayout={(e) => { rect.current = { width: e.nativeEvent.layout.width, height: e.nativeEvent.layout.height }; }}>
         {stream ? <VideoView stream={stream} /> : null}
       </View>

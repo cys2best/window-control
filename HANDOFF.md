@@ -17,6 +17,12 @@ Plan/task identifiers belong here and in workflow state, not in commit subjects.
 ```
 <!-- agent-sync:handoff-template:end -->
 
+### 2026-09-08 00:30 — codex
+- Claiming: video-crop-fix/task-1
+- Finished: video-crop-fix/task-1
+- Next: simultaneous-viewers/design
+- Blockers: none
+
 ### 2026-09-07 01:21 — codex
 - Claiming: none
 - Finished: none
@@ -118,4 +124,3 @@ Plan/task identifiers belong here and in workflow state, not in commit subjects.
 - Finished: none
 - Next: frontend-cutover-verifier/task-1 is ready
 - Blockers: none
-

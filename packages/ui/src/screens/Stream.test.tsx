@@ -1,6 +1,6 @@
 import React from "react";
 import { render, waitFor, act } from "@testing-library/react-native";
-import { PanResponder } from "react-native";
+import { PanResponder, StyleSheet } from "react-native";
 import { Stream } from "./Stream";
 import * as SC from "@wc/core";
 import * as Core from "@wc/core";
@@ -107,6 +107,34 @@ test("connects via client.select() + connectEngineSession() on mount, not the ol
     RTCImpl: FakeRTCPeerConnection,
   })));
   expect((client as any).inputWsUrl).toBeUndefined();
+});
+
+test("keeps the entire video surface clear of the right-side toolbar", async () => {
+  const session = makeFakeSession();
+  (Core.connectEngineSession as jest.Mock).mockImplementation(async (opts: any) => {
+    opts.onStream({ toURL: () => "visible-stream" });
+    return session as any;
+  });
+  const client = {
+    select: jest.fn().mockResolvedValue(selectResp()),
+    instances: jest.fn().mockResolvedValue([]),
+    setQuality: jest.fn(),
+    keyframe: jest.fn(),
+  };
+  (SC.useServer as jest.Mock).mockReturnValue({
+    base: "http://h", authToken: "auth-tok-123", client, setBase: jest.fn(), ready: true,
+  } as any);
+
+  const result = await render(
+    <Stream route={{ params: { serial: "A" } }}
+      navigation={{ navigate: jest.fn(), setParams: jest.fn() }}
+      RTCImpl={FakeRTCPeerConnection} VideoView={FakeVideoView} />,
+  );
+
+  const video = await result.findByTestId("stream-video");
+  expect(StyleSheet.flatten(video.parent?.props.style)).toEqual(
+    expect.objectContaining({ marginRight: 64 }),
+  );
 });
 
 test("a disconnected state (closed input channel) triggers a fresh select/reconnect", async () => {
