@@ -11,6 +11,7 @@ export * from "./components/ErrorOverlay";
 export * from "./components/BottomNav";
 export * from "./components/InstanceRow";
 export * from "./components/StreamToolbar";
+export * from "./components/SignalMeter";
 export * from "./components/SwitchDrawer";
 export * from "./components/SettingsModal";
 export * from "./screens/Login";
