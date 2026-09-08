@@ -3,6 +3,13 @@ export type AuthResult =
   | { error: string }
   | { needs_confirmation: true; message: string };
 
+export type AuthIdentity = {
+  id: string;
+  email: string;
+  displayName: string;
+  initials: string;
+};
+
 async function _authRequest(
   supabaseUrl: string,
   anonKey: string,
@@ -70,6 +77,23 @@ export function decodeBase64Url(str: string): string {
   return "";
 }
 
+export function authIdentityFromToken(token: string | null): AuthIdentity | null {
+  if (!token) return null;
+  try {
+    const payload = JSON.parse(decodeBase64Url(token.split(".")[1]));
+    const email = typeof payload.email === "string" ? payload.email : "";
+    const metadata = payload.user_metadata && typeof payload.user_metadata === "object"
+      ? payload.user_metadata
+      : {};
+    const displayName = metadata.display_name || metadata.full_name || metadata.name || email.split("@")[0] || payload.sub;
+    const initials = String(displayName).trim().split(/\s+/).slice(0, 2)
+      .map((part) => part[0]?.toUpperCase() ?? "").join("");
+    return { id: String(payload.sub), email, displayName: String(displayName), initials };
+  } catch {
+    return null;
+  }
+}
+
 export function isJwtExpired(token: string | null): boolean {
   if (!token) return true;
   try {
@@ -86,4 +110,3 @@ export function isJwtExpired(token: string | null): boolean {
     return false;
   }
 }
-

@@ -1,4 +1,8 @@
-import { signInWithPassword, signUpWithPassword, isJwtExpired } from "./supabaseAuth";
+import { authIdentityFromToken, signInWithPassword, signUpWithPassword, isJwtExpired } from "./supabaseAuth";
+
+function jwt(payload: object): string {
+  return `header.${Buffer.from(JSON.stringify(payload)).toString("base64url")}.signature`;
+}
 
 describe("supabaseAuth", () => {
   beforeEach(() => {
@@ -63,5 +67,25 @@ describe("supabaseAuth", () => {
     const validPayload = Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 3600 })).toString("base64url");
     const validToken = `eyJhbGciOiJIUzI1NiJ9.${validPayload}.signature`;
     expect(isJwtExpired(validToken)).toBe(false);
+  });
+
+  test("authIdentityFromToken reads real Supabase claims", () => {
+    const token = jwt({
+      sub: "user-1",
+      email: "kai@example.com",
+      user_metadata: { display_name: "Kai" },
+    });
+
+    expect(authIdentityFromToken(token)).toEqual({
+      id: "user-1", email: "kai@example.com", displayName: "Kai", initials: "K",
+    });
+  });
+
+  test("identity falls back to the email local-part, never a sample name", () => {
+    const token = jwt({ sub: "user-2", email: "owner@example.com" });
+
+    expect(authIdentityFromToken(token)).toEqual({
+      id: "user-2", email: "owner@example.com", displayName: "owner", initials: "O",
+    });
   });
 });

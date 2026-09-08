@@ -26,6 +26,18 @@ function Probe() {
   );
 }
 
+function PreferencesProbe() {
+  const server = useServer();
+  return (
+    <div>
+      <span data-testid="identity">{server.identity ? `${server.identity.id}:${server.identity.displayName}` : ""}</span>
+      <span data-testid="preferences">{JSON.stringify(server.preferences)}</span>
+      <button onClick={() => server.updatePreferences({ quality: "720", haptics: false })}>update preferences</button>
+      <button onClick={() => server.clearAuth()}>clear auth</button>
+    </div>
+  );
+}
+
 test("ServerProvider loads persisted base/token and exposes ready", async () => {
   const plain = makeMemoryStorage();
   const secure = makeMemoryStorage();
@@ -222,4 +234,37 @@ test("clearAuth clears token from secure storage and resets authToken state", as
 
   expect(getByTestId("token").textContent).toBe("");
   expect(await secure.getItem("wc_auth_token")).toBeNull();
+});
+
+test("ServerProvider exposes token identity and persists device-local stream preferences after sign-out", async () => {
+  const plain = makeMemoryStorage();
+  const secure = makeMemoryStorage();
+  const payload = Buffer.from(JSON.stringify({
+    sub: "user-3", email: "jules@example.com", user_metadata: { full_name: "Jules Park" },
+  })).toString("base64url");
+  await secure.setItem("wc_auth_token", `header.${payload}.signature`);
+  await plain.setItem("wc_stream_preferences", JSON.stringify({
+    quality: "1080", showHudOnConnect: true, haptics: true, hideRailWhilePlaying: false,
+  }));
+
+  const { getByTestId, getByText } = render(
+    <ServerProvider plainStorage={plain} secureStorage={secure}>
+      <PreferencesProbe />
+    </ServerProvider>
+  );
+
+  await waitFor(() => expect(getByTestId("identity").textContent).toBe("user-3:Jules Park"));
+  expect(getByTestId("preferences").textContent).toBe(JSON.stringify({
+    quality: "1080", showHudOnConnect: true, haptics: true, hideRailWhilePlaying: false,
+  }));
+
+  await act(async () => { getByText("update preferences").click(); });
+  expect(await plain.getItem("wc_stream_preferences")).toBe(JSON.stringify({
+    quality: "720", showHudOnConnect: true, haptics: false, hideRailWhilePlaying: false,
+  }));
+
+  await act(async () => { getByText("clear auth").click(); });
+  expect(await plain.getItem("wc_stream_preferences")).toBe(JSON.stringify({
+    quality: "720", showHudOnConnect: true, haptics: false, hideRailWhilePlaying: false,
+  }));
 });

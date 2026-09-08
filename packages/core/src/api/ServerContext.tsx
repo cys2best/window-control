@@ -1,9 +1,14 @@
-import React, { createContext, useContext, useEffect, useMemo, useState, useCallback } from "react";
+import React, { createContext, useContext, useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { makeClient } from "./client";
 import { classifyHostRoute, probeHost, type HostReachability } from "./hostProbe";
 import { normalizeBase } from "./urls";
-import { isJwtExpired } from "./supabaseAuth";
+import { authIdentityFromToken, isJwtExpired, type AuthIdentity } from "./supabaseAuth";
 import type { SecureStorageAdapter } from "./storage";
+import {
+  DEFAULT_STREAM_PREFERENCES,
+  parseStreamPreferences,
+  type StreamPreferences,
+} from "./preferences";
 
 type ApiClient = ReturnType<typeof makeClient>;
 
@@ -13,6 +18,9 @@ type Ctx = {
   client: ApiClient | null;
   setServer: (base: string, token: string) => Promise<ApiClient>;
   clearAuth: () => Promise<void>;
+  identity: AuthIdentity | null;
+  preferences: StreamPreferences;
+  updatePreferences: (patch: Partial<StreamPreferences>) => Promise<void>;
   ready: boolean;
   hostReachability: HostReachability;
   supabaseUrl: string;
@@ -21,6 +29,7 @@ type Ctx = {
 const ServerCtx = createContext<Ctx | null>(null);
 const BASE_KEY = "wc_base";
 const TOKEN_KEY = "wc_auth_token";
+const PREFERENCES_KEY = "wc_stream_preferences";
 
 export function ServerProvider({
   children,
@@ -40,6 +49,9 @@ export function ServerProvider({
   const [authToken, setAuthTokenState] = useState<string | null>(null);
   const [baseLoaded, setBaseLoaded] = useState(false);
   const [tokenLoaded, setTokenLoaded] = useState(false);
+  const [preferencesLoaded, setPreferencesLoaded] = useState(false);
+  const [preferences, setPreferences] = useState<StreamPreferences>(DEFAULT_STREAM_PREFERENCES);
+  const preferencesRef = useRef<StreamPreferences>(DEFAULT_STREAM_PREFERENCES);
   const [hostReachability, setHostReachability] = useState<HostReachability>(() => ({
     state: "checking",
     route: base ? classifyHostRoute(base) : "lan",
@@ -57,6 +69,13 @@ export function ServerProvider({
         }
       })
       .finally(() => setBaseLoaded(true));
+    plainStorage.getItem(PREFERENCES_KEY)
+      .then((v) => {
+        const loaded = parseStreamPreferences(v);
+        preferencesRef.current = loaded;
+        setPreferences(loaded);
+      })
+      .finally(() => setPreferencesLoaded(true));
     secureStorage.getItem(TOKEN_KEY)
       .then((v) => {
         if (v) {
@@ -88,6 +107,13 @@ export function ServerProvider({
     setAuthTokenState(token || null);
     return makeClient(norm, token || null, clearAuth);
   }, [plainStorage, secureStorage, clearAuth]);
+
+  const updatePreferences = useCallback(async (patch: Partial<StreamPreferences>) => {
+    const next = { ...preferencesRef.current, ...patch };
+    preferencesRef.current = next;
+    setPreferences(next);
+    await plainStorage.setItem(PREFERENCES_KEY, JSON.stringify(next));
+  }, [plainStorage]);
 
   // Support Supabase email confirmation / magic link / OAuth redirects containing tokens in hash or query
   useEffect(() => {
@@ -121,6 +147,7 @@ export function ServerProvider({
     () => (base ? makeClient(base, authToken, clearAuth) : null),
     [base, authToken, clearAuth]
   );
+  const identity = useMemo(() => authIdentityFromToken(authToken), [authToken]);
 
   const [supabaseUrl, setSupabaseUrl] = useState("");
   const [supabaseAnonKey, setSupabaseAnonKey] = useState("");
@@ -161,9 +188,9 @@ export function ServerProvider({
     };
   }, [base]);
 
-  const ready = baseLoaded && tokenLoaded;
+  const ready = baseLoaded && tokenLoaded && preferencesLoaded;
   return (
-    <ServerCtx.Provider value={{ base, authToken, client, setServer, clearAuth, ready, hostReachability, supabaseUrl, supabaseAnonKey }}>
+    <ServerCtx.Provider value={{ base, authToken, client, setServer, clearAuth, identity, preferences, updatePreferences, ready, hostReachability, supabaseUrl, supabaseAnonKey }}>
       {children}
     </ServerCtx.Provider>
   );
