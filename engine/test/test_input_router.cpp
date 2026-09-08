@@ -215,25 +215,18 @@ TEST(InputRouter, UnknownKeyNameIsIgnoredWithoutCrashing) {
 }
 
 TEST(InputRouter, MapsRecentAppsToAndroidAppSwitchKey) {
-    FakeScrcpyServer fake;
-    fake.Serve();
-    PeerRegistry registry;
-    ScrcpySource source(registry);
-    source.ConnectInitial(fake.Port());
-    InputRouter router(source);
+    NegotiatedInputPeer peer;
+    ASSERT_TRUE(peer.Connect("input-test-app-switch"));
 
-    // HandleMessageForTest reaches the production JSON handler directly;
-    // inspect the fake control client's captured key packets, rather than
-    // merely checking the table lookup.
-    router.HandleMessageForTest(R"({"type":"key","key":"AppSwitch"})");
-    ASSERT_TRUE(PollUntil([&]() { return fake.ControlBytesReceived() >= 28u; }));
+    // Exercise the production DataChannel -> PeerSession input callback ->
+    // InputRouter path, then inspect the fake control client's key packets.
+    peer.Send(R"({"type":"key","key":"AppSwitch"})");
+    ASSERT_TRUE(PollUntil([&]() { return peer.fake.ControlBytesReceived() >= 28u; }));
 
-    const auto control = fake.ControlDataReceived();
+    const auto control = peer.fake.ControlDataReceived();
     ASSERT_GE(control.size(), 28u); // 14-byte key-down + 14-byte key-up
     EXPECT_EQ(ReadU32BE(control, 2), 187u);
     EXPECT_EQ(ReadU32BE(control, 16), 187u);
-
-    fake.Stop();
 }
 
 TEST(InputRouter, RateLimitsRapidIdrRequests) {
