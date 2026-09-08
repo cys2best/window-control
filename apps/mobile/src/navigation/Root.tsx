@@ -1,6 +1,7 @@
 import React from "react";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { RTCPeerConnection } from "react-native-webrtc";
+import * as Haptics from "expo-haptics";
 import { Account, Login, InstanceList, Stream } from "@wc/ui";
 import { VideoView } from "../platform/VideoView";
 import { useServer } from "@wc/core";
@@ -8,7 +9,14 @@ import { useServer } from "@wc/core";
 const Stack = createNativeStackNavigator();
 
 function StreamScreen(props: any) {
-  return <Stream {...props} RTCImpl={RTCPeerConnection} VideoView={VideoView} />;
+  return (
+    <Stream
+      {...props}
+      RTCImpl={RTCPeerConnection}
+      VideoView={VideoView}
+      performHaptic={() => { void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); }}
+    />
+  );
 }
 
 export function RootNavigator() {

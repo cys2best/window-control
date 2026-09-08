@@ -5,11 +5,12 @@
     "version": "1.0.0",
     "orientation": "default",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "dark",
     "jsEngine": "hermes",
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
+        "UIUserInterfaceStyle": "Dark",
         "NSCameraUsageDescription": "Required by the WebRTC engine; the app does not use the camera.",
         "NSMicrophoneUsageDescription": "Required by the WebRTC engine; the app does not use the microphone.",
         "ITSAppUsesNonExemptEncryption": false,
@@ -22,7 +23,7 @@
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#06070b",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"

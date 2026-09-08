@@ -45,6 +45,9 @@ export default function StreamPageClient() {
       }}
       RTCImpl={typeof window !== "undefined" ? window.RTCPeerConnection : undefined}
       VideoView={VideoView}
+      performHaptic={() => {
+        if (typeof navigator !== "undefined") navigator.vibrate?.(10);
+      }}
     />
   );
 }
