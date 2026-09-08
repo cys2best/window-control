@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useCallback } from "react";
 import { View, TextInput, PanResponder } from "react-native";
 import * as ScreenOrientation from "expo-screen-orientation";
 import type { VideoViewComponent } from "../video/VideoView";
-import { useServer, connectEngineSession, EngineSession, normalizeCoords, makeAdaptive, DEFAULT_STREAM_PREFERENCES } from "@wc/core";
+import { useServer, connectEngineSession, EngineSession, normalizeCoords, makeAdaptive, makeTelemetrySampler, DEFAULT_STREAM_PREFERENCES, type StreamTelemetry } from "@wc/core";
 import { theme } from "../theme/tokens";
 import { StreamRail, STREAM_RAIL_WIDTH } from "../components/StreamRail";
 import { SwapControl } from "../components/SwapControl";
@@ -27,7 +27,7 @@ export function Stream({
   VideoView: VideoViewComponent;
   performHaptic?: () => void;
 }) {
-  const { client, authToken, clearAuth, preferences = DEFAULT_STREAM_PREFERENCES } = useServer() as any;
+  const { client, authToken, clearAuth, preferences = DEFAULT_STREAM_PREFERENCES, updatePreferences = () => {} } = useServer() as any;
   const { serial } = route.params;
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [net, setNet] = useState<Net>("connecting");
@@ -38,13 +38,14 @@ export function Stream({
   const [statsOn, setStatsOn] = useState(false);
   const [tier, setTier] = useState("auto");
   const [instances, setInstances] = useState<any[]>([]);
-  const [rtt, setRtt] = useState<number | null>(null);
+  const [telemetry, setTelemetry] = useState<StreamTelemetry>({ rttMs: null, loss: null, decodeMs: null, networkMs: null, inputMs: null, jitterMs: null, bitrateMbps: null, droppedFrames: null, transport: "LAN" });
   const [railOpen, setRailOpen] = useState(true);
   const rect = useRef({ width: 1, height: 1 });
   const content = useRef({ w: 1, h: 1 });
   const session = useRef<EngineSession | null>(null);
   const adaptive = useRef<any>(null);
   const inputHealth = useRef<any>(null);
+  const sampler = useRef<ReturnType<typeof makeTelemetrySampler> | null>(null);
   const scrollLast = useRef(0);
   const keyInput = useRef<TextInput>(null);
   const dragStarted = useRef(false);
@@ -68,6 +69,10 @@ export function Stream({
     wakeRail();
     return () => { if (railTimer.current) clearTimeout(railTimer.current); };
   }, [wakeRail]);
+  useEffect(() => {
+    setTier(preferences.quality);
+    setStatsOn(preferences.showHudOnConnect);
+  }, [preferences.quality, preferences.showHudOnConnect]);
 
   const releaseActiveDrag = useCallback((input = session.current?.input) => {
     if (input && dragStarted.current) {
@@ -104,7 +109,7 @@ export function Stream({
           if (gen !== startGen.current) return;
           nextStream = stream;
         },
-        onInputRtt: (ms) => { if (gen === startGen.current) setRtt(ms); },
+        onInputRtt: (ms) => { if (gen === startGen.current) sampler.current?.setInputRtt(ms); },
         onState: (st) => {
           if (gen !== startGen.current) return;
           setNet(st);
@@ -128,6 +133,9 @@ export function Stream({
       // session negotiates.
       const previous = session.current;
       session.current = s;
+      sampler.current?.stop();
+      sampler.current = makeTelemetrySampler({ pc: s.pc, transport: s.kind, onSample: setTelemetry });
+      sampler.current.start();
       if (nextStream) setStream(nextStream);
       if (previous) {
         releaseActiveDrag(previous.input);
@@ -183,6 +191,8 @@ export function Stream({
       startGen.current += 1;
       if (inputHealth.current) clearInterval(inputHealth.current);
       inputHealth.current = null;
+      sampler.current?.stop();
+      sampler.current = null;
       session.current?.close();
       adaptive.current?.stop();
     };
@@ -313,8 +323,6 @@ export function Stream({
   const KEYMAP: Record<string, string> = { Enter: "Return", Backspace: "BackSpace" };
   const sendKey = (k: string) => session.current?.input.send({ type: "key", key: KEYMAP[k] ?? k });
 
-  const statsLines = `TIER   ${tier}\ninput  ${rtt == null ? "—" : `${rtt}ms`}`; // full stats sampling wired in device pass
-
   return (
     <View style={{ flex: 1, backgroundColor: theme.color.streamBg }}>
       <View collapsable={false} style={{ flex: 1, marginHorizontal: STREAM_RAIL_WIDTH }} {...panResponder.panHandlers}
@@ -322,9 +330,9 @@ export function Stream({
         {stream ? <VideoView stream={stream} /> : null}
       </View>
 
-      {statsOn && !failed ? <StatsOverlay lines={statsLines} /> : null}
+      {statsOn && !failed ? <StatsOverlay telemetry={telemetry} /> : null}
 
-      <StreamRail visible={railOpen && overlay === null} telemetry={{ rttMs: rtt, loss: 0, decodeMs: null, networkMs: rtt, inputMs: rtt, jitterMs: null, bitrateMbps: null, droppedFrames: null, transport: "LAN" }}
+      <StreamRail visible={railOpen && overlay === null} telemetry={telemetry}
         connected={net === "connected"} keyboardOn={keyboardOn} settingsOn={overlay === "settings"}
         onDiagnostics={() => setStatsOn((v) => !v)}
         onKeyboard={() => (keyboardOn ? keyInput.current?.blur() : keyInput.current?.focus())}
@@ -354,11 +362,11 @@ export function Stream({
         style={{ position: "absolute", opacity: 0, height: 1, width: 1 }} />
 
       {overlay === "drawer" ? (
-        <SwitchDrawer instances={instances} activeSerial={serial} onPick={switchTo} onClose={() => setOverlay(null)} />
+        <SwitchDrawer instances={instances} activeSerial={serial} previewSource={(value) => client.previewSource(value)} onPick={switchTo} onClose={() => setOverlay(null)} />
       ) : null}
       {overlay === "settings" ? (
-        <SettingsModal tier={tier} onPick={pickTier} statsOn={statsOn}
-          onToggleStats={() => setStatsOn((v) => !v)} onClose={() => setOverlay(null)} />
+        <SettingsModal preferences={preferences} onPickQuality={(value) => { pickTier(value); void updatePreferences({ quality: value }); }}
+          onPreferences={(patch) => { void updatePreferences(patch); if (patch.showHudOnConnect !== undefined) setStatsOn(patch.showHudOnConnect); }} onClose={() => setOverlay(null)} />
       ) : null}
       {failed ? <ErrorOverlay onReconnect={reconnect} onBack={() => navigation.navigate("InstanceList")} reconnecting={reconnecting} /> : null}
     </View>

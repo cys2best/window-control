@@ -1,11 +1,6 @@
 import React from "react";
 import { View, Text } from "react-native";
+import type { StreamTelemetry } from "@wc/core";
 import { theme } from "../theme/tokens";
-export function StatsOverlay({ lines }: { lines: string }) {
-  return (
-    <View style={{ position: "absolute", top: 16, left: 18, padding: 13, borderRadius: theme.radius.input,
-      backgroundColor: theme.color.glass }}>
-      <Text style={{ fontFamily: theme.font.mono, fontSize: 10.5, lineHeight: 19, color: theme.color.text }}>{lines}</Text>
-    </View>
-  );
-}
+const value = (n: number | null, suffix: string) => n === null ? "—" : `${n.toFixed(n % 1 ? 1 : 0)}${suffix}`;
+export function StatsOverlay({ telemetry }: { telemetry: StreamTelemetry }) { const bad = (telemetry.loss ?? 0) > .08 || (telemetry.rttMs ?? 0) > 60 || (telemetry.droppedFrames ?? 0) > 0; const rows = [["DECODE", value(telemetry.decodeMs, " ms")], ["NETWORK", value(telemetry.networkMs, " ms")], ["INPUT→HOST", value(telemetry.inputMs, " ms")], ["JITTER", value(telemetry.jitterMs, " ms")], ["BITRATE", value(telemetry.bitrateMbps, " Mb/s")], ["DROPPED", telemetry.droppedFrames === null ? "—" : String(telemetry.droppedFrames)]]; return <View style={{ position: "absolute", left: 0, top: 18, width: 68, padding: 8, backgroundColor: theme.color.glass, borderRightWidth: 1, borderColor: theme.color.border }}><View style={{ height: 3, backgroundColor: bad ? theme.color.live : theme.color.telemetry, marginBottom: 8 }} />{rows.map(([label, reading]) => <View key={label} style={{ marginBottom: 7 }}><Text style={{ color: theme.color.textDim, fontFamily: theme.font.mono, fontSize: 7 }}>{label}</Text><Text style={{ color: theme.color.text, fontFamily: theme.font.monoBold, fontSize: 8 }}>{reading}</Text></View>)}</View>; }

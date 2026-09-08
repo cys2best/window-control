@@ -2,10 +2,16 @@ import React from "react";
 import { render, fireEvent } from "@testing-library/react-native";
 import { SettingsModal } from "./SettingsModal";
 
-test("picking a tier fires onPick with the tier string", async () => {
-  const onPick = jest.fn();
-  const { getByText } = await render(
-    <SettingsModal tier="720" onPick={onPick} statsOn={false} onToggleStats={() => {}} onClose={() => {}} />);
-  fireEvent.press(getByText("1080p"));
-  expect(onPick).toHaveBeenCalledWith("1080");
+test("quality segments come from TIER_ORDER plus Auto", async () => {
+  const view = await render(<SettingsModal preferences={{ quality: "720", showHudOnConnect: false, haptics: true, hideRailWhilePlaying: true }} onPickQuality={jest.fn()} onPreferences={jest.fn()} onClose={jest.fn()} />);
+  expect(["Auto", "480p", "720p", "1080p", "1440p"].every((label) => view.getByText(label))).toBe(true);
+});
+
+test("settings persist HUD and haptic preferences", async () => {
+  const onPreferences = jest.fn();
+  const view = await render(<SettingsModal preferences={{ quality: "auto", showHudOnConnect: false, haptics: true, hideRailWhilePlaying: true }} onPickQuality={jest.fn()} onPreferences={onPreferences} onClose={jest.fn()} />);
+  await fireEvent.press(view.getByRole("switch", { name: "Diagnostic HUD" }));
+  await fireEvent.press(view.getByRole("switch", { name: "Touch haptics" }));
+  expect(onPreferences).toHaveBeenCalledWith({ showHudOnConnect: true });
+  expect(onPreferences).toHaveBeenCalledWith({ haptics: false });
 });
