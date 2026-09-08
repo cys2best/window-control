@@ -1,6 +1,6 @@
 import { makeTelemetrySampler, signalLevel, StreamTelemetry } from "./telemetry";
 
-function stats({ bytesReceived, timestamp }: { bytesReceived: number; timestamp: number }) {
+function stats({ bytesReceived, timestamp }: { bytesReceived: number; timestamp?: number }) {
   return new Map([
     ["inbound-video", {
       type: "inbound-rtp", kind: "video", bytesReceived, timestamp,
@@ -57,6 +57,27 @@ test("preserves unavailable metrics as null and accepts input echo RTT", async (
     rttMs: null, loss: null, decodeMs: null, networkMs: null, inputMs: 11,
     jitterMs: null, bitrateMbps: null, droppedFrames: null, transport: "RELAY",
   });
+});
+
+test("leaves bitrate unavailable when inbound RTC stats omit timestamps", async () => {
+  let now = 1_000;
+  const reports = [
+    stats({ bytesReceived: 1_000_000, timestamp: undefined }),
+    stats({ bytesReceived: 2_000_000, timestamp: undefined }),
+  ];
+  const samples: StreamTelemetry[] = [];
+  const sampler = makeTelemetrySampler({
+    pc: { getStats: jest.fn().mockImplementation(async () => reports.shift()) },
+    transport: "local",
+    onSample: (sample) => samples.push(sample),
+    now: () => now,
+  });
+
+  await sampler.sample();
+  now = 2_000;
+  await sampler.sample();
+
+  expect(samples[1].bitrateMbps).toBeNull();
 });
 
 test.each([

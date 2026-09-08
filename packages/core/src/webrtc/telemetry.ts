@@ -70,16 +70,16 @@ export function makeTelemetrySampler({ pc, transport, onSample, sampleMs = 1_000
     const emitted = numberOrNull(inbound?.jitterBufferEmittedCount);
     const jitterDelay = numberOrNull(inbound?.jitterBufferDelay);
     const bytes = numberOrNull(inbound?.bytesReceived);
-    const timestamp = numberOrNull(inbound?.timestamp) ?? now();
+    const timestamp = numberOrNull(inbound?.timestamp);
     const totalPackets = received !== null && lost !== null ? received + lost : null;
     const loss = totalPackets !== null && totalPackets > 0 && lost !== null ? lost / totalPackets : null;
     const decodeMs = decoded !== null && decoded > 0 && decodeTime !== null ? 1_000 * decodeTime / decoded : null;
     const jitterMs = emitted !== null && emitted > 0 && jitterDelay !== null ? 1_000 * jitterDelay / emitted : null;
-    const bitrateMbps = bytes !== null && lastBytes !== null && lastTimestamp !== null && timestamp > lastTimestamp
+    const bitrateMbps = bytes !== null && timestamp !== null && lastBytes !== null && lastTimestamp !== null && timestamp > lastTimestamp
       ? 8 * (bytes - lastBytes) / (timestamp - lastTimestamp) / 1_000
       : null;
 
-    if (bytes !== null) {
+    if (bytes !== null && timestamp !== null) {
       lastBytes = bytes;
       lastTimestamp = timestamp;
     }
