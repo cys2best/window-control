@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useState } from "react";
-import { View, Text, FlatList, ScrollView, RefreshControl } from "react-native";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { View, Text, FlatList, Pressable, useWindowDimensions } from "react-native";
 import Svg, { Rect, Path, Circle } from "react-native-svg";
 import { useServer } from "@wc/core";
 import { theme } from "../theme/tokens";
@@ -9,15 +9,23 @@ import { BottomNav } from "../components/BottomNav";
 import type { Instance } from "@wc/core";
 
 export function InstanceList({ navigation }: { navigation: any }) {
-  const { client, base, clearAuth, hostReachability } = useServer() as any;
+  const { client, clearAuth, hostReachability } = useServer() as any;
+  const { width } = useWindowDimensions();
+  const listRef = useRef<FlatList<Instance>>(null);
   const [items, setItems] = useState<Instance[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [reachable, setReachable] = useState(true);
+  const [rtt, setRtt] = useState<number | null>(null);
+  const [instancesOffset, setInstancesOffset] = useState(0);
+  const columns = Math.max(1, Math.floor((width - 48 + 16) / (260 + 16)));
+  const activeInstance = items.find((item) => item.active) ?? items[0];
 
   const load = useCallback(async () => {
     if (!client) return;
     try {
-      setItems(await client.instances());
+      const [nextItems, nextRtt] = await Promise.all([client.instances(), client.ping()]);
+      setItems(nextItems);
+      setRtt(nextRtt);
       setReachable(true);
     } catch (err: any) {
       if (err?.status === 401) {
@@ -29,6 +37,7 @@ export function InstanceList({ navigation }: { navigation: any }) {
         }
         return;
       }
+      setRtt(null);
       setReachable(false);
     }
   }, [client, navigation, clearAuth]);
@@ -40,24 +49,26 @@ export function InstanceList({ navigation }: { navigation: any }) {
   }, [load]);
 
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
-  const open = (inst: Instance) => {
+  const open = (inst?: Instance) => {
+    if (!inst) return;
     client?.keyframe(inst.serial);
     navigation.navigate("Stream", { serial: inst.serial, title: inst.title });
   };
-  const host = (base ?? "").replace(/^https?:\/\//, "");
 
   const header = (
     <View>
-      <View style={{ flexDirection: "row", alignItems: "center", gap: 14, padding: 16, marginBottom: 22,
-        backgroundColor: theme.color.card, borderRadius: theme.radius.card,
-        shadowColor: "#1c1a19", shadowOpacity: 0.06, shadowRadius: 6, shadowOffset: { width: 0, height: 1 }, elevation: 1 }}>
+      <View testID="host-status-card" style={{ flexDirection: "row", alignItems: "center", gap: 14, padding: 16, marginBottom: 22,
+        backgroundColor: theme.color.surfaceRaised, borderRadius: 14, borderWidth: 1, borderColor: theme.color.border }}>
         <View style={{ flex: 1, minWidth: 0 }}>
-          <Text style={{ fontFamily: theme.font.regular, fontSize: 12.5, color: theme.color.textMuted, marginBottom: 5 }}>Server</Text>
-          <Text numberOfLines={1} style={{ fontFamily: theme.font.semibold, fontSize: 15, color: theme.color.text }}>{host}</Text>
+          <Text style={{ fontFamily: theme.font.mono, fontSize: 11, color: theme.color.textMuted, marginBottom: 5 }}>HOST STATUS</Text>
+          <Text numberOfLines={1} style={{ fontFamily: theme.font.semibold, fontSize: 15, color: theme.color.text }}>{hostReachability?.host ?? "Host unavailable"}</Text>
         </View>
-        {hostReachability ? <NetChip route={hostReachability.route} state={hostReachability.state} host={hostReachability.host} /> : null}
+        <View style={{ alignItems: "flex-end", gap: 5 }}>
+          {rtt !== null ? <Text style={{ fontFamily: theme.font.mono, fontSize: 18, color: theme.color.accent }}>{rtt} ms</Text> : null}
+          {hostReachability ? <NetChip route={hostReachability.route} state={hostReachability.state} host={hostReachability.host} /> : null}
+        </View>
       </View>
-      <View style={{ flexDirection: "row", alignItems: "baseline", gap: 10, marginBottom: 12 }}>
+      <View testID="instances-heading" onLayout={(event) => setInstancesOffset(event.nativeEvent.layout.y)} style={{ flexDirection: "row", alignItems: "baseline", gap: 10, marginBottom: 12 }}>
         <Text style={{ flex: 1, fontFamily: theme.font.semibold, fontSize: 16, color: theme.color.text }}>Instances</Text>
         <Text style={{ fontFamily: theme.font.regular, fontSize: 12.5, color: theme.color.textMuted }}>{refreshing ? "Syncing…" : `${items.length} online`}</Text>
       </View>
@@ -77,37 +88,20 @@ export function InstanceList({ navigation }: { navigation: any }) {
           <Path d="M22.6 21.8 32.8 27l-4.2 1.1-1.1 4.2z" fill={theme.color.text} stroke={theme.color.accent} strokeWidth={1.6} strokeLinejoin="round" />
         </Svg>
         <Text style={{ flex: 1, fontFamily: theme.font.bold, fontSize: 26, color: theme.color.text }}>Windows</Text>
+        <Pressable accessibilityRole="button" accessibilityLabel="Account" onPress={() => navigation.navigate("Account")}>
+          <Text style={{ fontFamily: theme.font.monoMedium, fontSize: 11, color: theme.color.accent }}>ACCOUNT</Text>
+        </Pressable>
       </View>
-      {items.length === 0 ? (
-        <ScrollView
-          contentContainerStyle={{ flexGrow: 1, padding: 24 }}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
-          {header}
-          <View style={{ padding: 34, backgroundColor: theme.color.card, borderRadius: theme.radius.card, alignItems: "center" }}>
-            <Text style={{ fontFamily: theme.font.semibold, fontSize: 17, color: theme.color.text, marginBottom: 8 }}>
-              {reachable ? "No windows found" : "Can't reach the server"}
-            </Text>
-            <Text style={{ fontFamily: theme.font.regular, fontSize: 13, textAlign: "center", color: theme.color.textMuted }}>
-              {reachable
-                ? "The server answered, but nothing is running. Start an instance in LDPlayer, then pull to refresh."
-                : "We couldn't reach the server on its last check. Confirm it's running and reachable, then pull to refresh."}
-            </Text>
-          </View>
-        </ScrollView>
-      ) : (
-        <FlatList data={items} keyExtractor={(i) => i.id}
-          ListHeaderComponent={header}
-          refreshing={refreshing} onRefresh={onRefresh}
-          contentContainerStyle={{ paddingHorizontal: 24, paddingTop: 8, paddingBottom: 120 }}
-          renderItem={({ item }) => (
-            <InstanceRow instance={item} active={false}
-              previewSource={client!.previewSource(item.serial)} onPress={() => open(item)} />
-          )} />
-      )}
-      <BottomNav active="windows"
-        onWindows={() => {}}
-        onStream={() => { if (items[0]) open(items[0]); }}
-        onSetup={() => {}} />
+      <FlatList testID="instance-grid" accessibilityLabel={`Instance grid, ${columns} columns`} ref={listRef} data={items} key={`grid-${columns}`} numColumns={columns} keyExtractor={(i) => i.id}
+        ListHeaderComponent={header} refreshing={refreshing} onRefresh={onRefresh}
+        contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 120, flexGrow: 1 }}
+        ListEmptyComponent={<View style={{ padding: 34, backgroundColor: theme.color.surfaceRaised, borderRadius: 14, alignItems: "center" }}>
+          <Text style={{ fontFamily: theme.font.semibold, fontSize: 17, color: theme.color.text, marginBottom: 8 }}>{reachable ? "No windows found" : "Can't reach the server"}</Text>
+          <Text style={{ fontFamily: theme.font.regular, fontSize: 13, textAlign: "center", color: theme.color.textMuted }}>{reachable ? "The server answered, but nothing is running. Start an instance in LDPlayer, then pull to refresh." : "We couldn't reach the server on its last check. Confirm it's running and reachable, then pull to refresh."}</Text>
+        </View>}
+        renderItem={({ item }) => <InstanceRow instance={item} previewSource={client!.previewSource(item.serial)} onPress={() => open(item)} />} />
+      <BottomNav onInstances={() => listRef.current?.scrollToOffset({ offset: instancesOffset, animated: true })}
+        onResume={() => open(activeInstance)} onHealth={() => listRef.current?.scrollToOffset({ offset: 0, animated: true })} />
     </View>
   );
 }
