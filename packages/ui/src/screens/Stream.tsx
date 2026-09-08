@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useCallback } from "react";
 import { View, TextInput, PanResponder } from "react-native";
 import * as ScreenOrientation from "expo-screen-orientation";
 import type { VideoViewComponent } from "../video/VideoView";
-import { useServer, connectEngineSession, EngineSession, normalizeCoords, makeAdaptive, makeTelemetrySampler, DEFAULT_STREAM_PREFERENCES, type StreamTelemetry } from "@wc/core";
+import { useServer, connectEngineSession, EngineSession, normalizeCoords, makeAdaptive, makeTelemetrySampler, DEFAULT_STREAM_PREFERENCES, type QualitySelection, type StreamTelemetry } from "@wc/core";
 import { theme } from "../theme/tokens";
 import { StreamRail, STREAM_RAIL_WIDTH } from "../components/StreamRail";
 import { SwapControl } from "../components/SwapControl";
@@ -36,7 +36,6 @@ export function Stream({
   const [overlay, setOverlay] = useState<null | "settings" | "drawer">(null);
   const [keyboardOn, setKeyboardOn] = useState(false);
   const [statsOn, setStatsOn] = useState(false);
-  const [tier, setTier] = useState("auto");
   const [instances, setInstances] = useState<any[]>([]);
   const [telemetry, setTelemetry] = useState<StreamTelemetry>({ rttMs: null, loss: null, decodeMs: null, networkMs: null, inputMs: null, jitterMs: null, bitrateMbps: null, droppedFrames: null, transport: "LAN" });
   const [railOpen, setRailOpen] = useState(true);
@@ -46,6 +45,7 @@ export function Stream({
   const adaptive = useRef<any>(null);
   const inputHealth = useRef<any>(null);
   const sampler = useRef<ReturnType<typeof makeTelemetrySampler> | null>(null);
+  const appliedTier = useRef<QualitySelection | null>(null);
   const scrollLast = useRef(0);
   const keyInput = useRef<TextInput>(null);
   const dragStarted = useRef(false);
@@ -70,8 +70,12 @@ export function Stream({
     return () => { if (railTimer.current) clearTimeout(railTimer.current); };
   }, [wakeRail]);
   useEffect(() => {
-    setTier(preferences.quality);
     setStatsOn(preferences.showHudOnConnect);
+    if (adaptive.current && appliedTier.current !== preferences.quality) {
+      if (preferences.quality === "auto") adaptive.current.setAuto();
+      else adaptive.current.pin(preferences.quality);
+      appliedTier.current = preferences.quality;
+    }
   }, [preferences.quality, preferences.showHudOnConnect]);
 
   const releaseActiveDrag = useCallback((input = session.current?.input) => {
@@ -153,6 +157,9 @@ export function Stream({
         serial,
         onApply: (t) => client.setQuality(serial, t),
       });
+      if (preferences.quality === "auto") adaptive.current.setAuto();
+      else adaptive.current.pin(preferences.quality);
+      appliedTier.current = preferences.quality;
     } catch (error: any) {
       if (error?.status === 401) {
         if (clearAuth) await clearAuth();
@@ -313,10 +320,10 @@ export function Stream({
     return true;
   };
 
-  const pickTier = (t: string) => {
-    setTier(t);
+  const pickTier = (t: QualitySelection) => {
     if (t === "auto") adaptive.current?.setAuto();
     else adaptive.current?.pin(t);
+    appliedTier.current = t;
   };
   const reconnect = async () => {
     releaseActiveDrag();

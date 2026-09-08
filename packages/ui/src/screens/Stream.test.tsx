@@ -13,6 +13,7 @@ jest.mock("@wc/core", () => {
     useServer: jest.fn(),
     connectEngineSession: jest.fn(),
     makeAdaptive: jest.fn(),
+    makeTelemetrySampler: jest.fn(),
   };
 });
 
@@ -42,6 +43,7 @@ jest.mock("react-native-gesture-handler", () => {
 
 function makeFakeSession() {
   return {
+    kind: "local" as const,
     pc: { getStats: jest.fn(async () => new Map()) },
     input: {
       dragStart: jest.fn(),
@@ -53,6 +55,14 @@ function makeFakeSession() {
     },
     close: jest.fn(async () => {}),
   };
+}
+
+function makeFakeSampler() {
+  return { start: jest.fn(), stop: jest.fn(), setInputRtt: jest.fn() };
+}
+
+function makeFakeAdaptive() {
+  return { start: jest.fn(), stop: jest.fn(), pin: jest.fn(), setAuto: jest.fn() };
 }
 
 function selectResp(overrides: any = {}) {
@@ -69,6 +79,11 @@ function selectResp(overrides: any = {}) {
 afterEach(() => {
   jest.restoreAllMocks();
   jest.clearAllMocks();
+});
+
+beforeEach(() => {
+  (Core.makeTelemetrySampler as jest.Mock).mockReturnValue(makeFakeSampler());
+  (Adaptive.makeAdaptive as jest.Mock).mockReturnValue(makeFakeAdaptive());
 });
 
 function touch(x: number, y: number, count = 1) {
@@ -419,4 +434,69 @@ test("two-finger scroll begins after crossing the HUD threshold with a fresh bas
   await act(async () => { pan.onPanResponderMove(touch(15, 25, 2), { dx: 0, dy: 5 }); });
 
   expect(session.input.scroll).toHaveBeenCalledTimes(1);
+});
+
+test("starts the winning telemetry sampler and sends it input RTT readings", async () => {
+  const session = makeFakeSession();
+  const sampler = makeFakeSampler();
+  let onInputRtt!: (ms: number) => void;
+  (Core.makeTelemetrySampler as jest.Mock).mockReturnValue(sampler);
+  (Core.connectEngineSession as jest.Mock).mockImplementation((opts: any) => {
+    onInputRtt = opts.onInputRtt;
+    return Promise.resolve(session as any);
+  });
+  const client = {
+    select: jest.fn().mockResolvedValue(selectResp()), instances: jest.fn().mockResolvedValue([]),
+    setQuality: jest.fn(), keyframe: jest.fn(),
+  };
+  (SC.useServer as jest.Mock).mockReturnValue({ base: "http://h", client, setBase: jest.fn(), ready: true } as any);
+
+  await render(<Stream route={{ params: { serial: "A" } }} navigation={{ navigate: jest.fn(), setParams: jest.fn() }} RTCImpl={FakeRTCPeerConnection} VideoView={FakeVideoView} />);
+  await waitFor(() => expect(sampler.start).toHaveBeenCalledTimes(1));
+  await act(async () => { onInputRtt(23); });
+
+  expect(Core.makeTelemetrySampler).toHaveBeenCalledWith(expect.objectContaining({ pc: session.pc, transport: "local" }));
+  expect(sampler.setInputRtt).toHaveBeenCalledWith(23);
+});
+
+test("stops the prior telemetry sampler before a replacement session becomes current", async () => {
+  const firstSession = makeFakeSession();
+  const secondSession = makeFakeSession();
+  const firstSampler = makeFakeSampler();
+  const secondSampler = makeFakeSampler();
+  (Core.makeTelemetrySampler as jest.Mock).mockReturnValueOnce(firstSampler).mockReturnValueOnce(secondSampler);
+  (Core.connectEngineSession as jest.Mock)
+    .mockResolvedValueOnce(firstSession as any)
+    .mockResolvedValueOnce(secondSession as any);
+  const client = {
+    select: jest.fn().mockImplementation(async (serial: string) => selectResp({ serial })), instances: jest.fn().mockResolvedValue([]),
+    setQuality: jest.fn(), keyframe: jest.fn(),
+  };
+  (SC.useServer as jest.Mock).mockReturnValue({ base: "http://h", client, setBase: jest.fn(), ready: true } as any);
+
+  const view = await render(<Stream route={{ params: { serial: "A" } }} navigation={{ navigate: jest.fn(), setParams: jest.fn() }} RTCImpl={FakeRTCPeerConnection} VideoView={FakeVideoView} />);
+  await waitFor(() => expect(firstSampler.start).toHaveBeenCalledTimes(1));
+  await view.rerender(<Stream route={{ params: { serial: "B" } }} navigation={{ navigate: jest.fn(), setParams: jest.fn() }} RTCImpl={FakeRTCPeerConnection} VideoView={FakeVideoView} />);
+  await waitFor(() => expect(secondSampler.start).toHaveBeenCalledTimes(1));
+
+  expect(firstSampler.stop).toHaveBeenCalledTimes(1);
+  expect(firstSampler.stop.mock.invocationCallOrder[0]).toBeLessThan(secondSampler.start.mock.invocationCallOrder[0]);
+});
+
+test("applies a saved manual quality through the adaptive pin path when the session wins", async () => {
+  const session = makeFakeSession();
+  const adaptive = makeFakeAdaptive();
+  (Adaptive.makeAdaptive as jest.Mock).mockReturnValue(adaptive);
+  (Core.connectEngineSession as jest.Mock).mockResolvedValue(session as any);
+  const client = {
+    select: jest.fn().mockResolvedValue(selectResp()), instances: jest.fn().mockResolvedValue([]),
+    setQuality: jest.fn(), keyframe: jest.fn(),
+  };
+  (SC.useServer as jest.Mock).mockReturnValue({
+    base: "http://h", client, setBase: jest.fn(), ready: true,
+    preferences: { quality: "1080", showHudOnConnect: false, haptics: true, hideRailWhilePlaying: true },
+  } as any);
+
+  await render(<Stream route={{ params: { serial: "A" } }} navigation={{ navigate: jest.fn(), setParams: jest.fn() }} RTCImpl={FakeRTCPeerConnection} VideoView={FakeVideoView} />);
+  await waitFor(() => expect(adaptive.pin).toHaveBeenCalledWith("1080"));
 });

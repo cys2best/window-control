@@ -1,10 +1,11 @@
 import React from "react";
 import { render, fireEvent } from "@testing-library/react-native";
+import { TIER_ORDER } from "@wc/core";
 import { SettingsModal } from "./SettingsModal";
 
 test("quality segments come from TIER_ORDER plus Auto", async () => {
   const view = await render(<SettingsModal preferences={{ quality: "720", showHudOnConnect: false, haptics: true, hideRailWhilePlaying: true }} onPickQuality={jest.fn()} onPreferences={jest.fn()} onClose={jest.fn()} />);
-  expect(["Auto", "480p", "720p", "1080p", "1440p"].every((label) => view.getByText(label))).toBe(true);
+  expect(["Auto", ...TIER_ORDER.map((tier) => `${tier}p`)].every((label) => view.getByText(label))).toBe(true);
 });
 
 test("settings persist HUD and haptic preferences", async () => {
