@@ -6,10 +6,15 @@ from PyQt5.QtWidgets import (
     QPushButton, QLabel, QGroupBox, QDialog, QFrame
 )
 from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtGui import QFont, QFontMetrics
 
 from config import PORT, VERSION, SUPABASE_URL, SUPABASE_ANON_KEY, VPS_SIGNALING_URL
 from server.tailscale import has_tailscale, detect_local_ip, detect_tailscale_ip
 from updater import check_for_update
+from gui.theme import (
+    CANVAS, CYAN, DIM, HAIRLINE, INK, MINT, MUTED, SURFACE,
+    SURFACE_RAISED, TANGERINE, DESTRUCTIVE_HOVER, register_fonts,
+)
 
 
 def maybe_show_login(parent=None) -> bool:
@@ -37,6 +42,7 @@ class LauncherWindow(QMainWindow):
         self._on_stop_server = on_stop_server
         self._active_streams_count = 0
         self._pending_update_version = None
+        self._fonts = register_fonts()
 
         self._setup_ui()
         self._refresh_status()
@@ -64,9 +70,11 @@ class LauncherWindow(QMainWindow):
 
         title_row = QHBoxLayout()
         title_label = QLabel("EmuCtrl Host")
-        title_label.setStyleSheet("font-size: 18px; font-weight: 700; color: #e8eaed;")
+        title_label.setFont(self._ui_font(18, QFont.Bold))
+        title_label.setStyleSheet(f"color: {INK};")
         version_label = QLabel(f"v{VERSION}")
-        version_label.setStyleSheet("font-size: 12px; color: #8a8f98; padding-top: 4px;")
+        version_label.setFont(self._mono_font(9.5))
+        version_label.setStyleSheet(f"color: {DIM}; padding-top: 4px;")
         title_row.addWidget(title_label)
         title_row.addWidget(version_label)
         title_row.addStretch()
@@ -77,16 +85,65 @@ class LauncherWindow(QMainWindow):
 
         self._status_dot = QWidget()
         self._status_dot.setFixedSize(10, 10)
-        self._status_dot.setStyleSheet("background: #22c55e; border-radius: 5px;")
+        self._status_dot.setStyleSheet(f"background: {MINT}; border-radius: 5px;")
         status_row.addWidget(self._status_dot)
 
         self._status_label = QLabel(f"Server Running: :{PORT}")
-        self._status_label.setStyleSheet("font-size: 13px; font-weight: 600; color: #22c55e;")
+        self._status_label.setFont(self._mono_font(10, QFont.DemiBold))
+        self._status_label.setStyleSheet(f"color: {MINT};")
         status_row.addWidget(self._status_label)
         status_row.addStretch()
         header_layout.addLayout(status_row)
 
         layout.addWidget(header_widget)
+
+        # --- Account ---
+        self._account_band = QWidget()
+        self._account_band.setFixedHeight(47)
+        self._account_band.setStyleSheet(
+            f"background: {SURFACE}; border: 1px solid {HAIRLINE}; border-radius: 6px;"
+        )
+        account_layout = QHBoxLayout(self._account_band)
+        account_layout.setContentsMargins(9, 6, 9, 6)
+        account_layout.setSpacing(8)
+
+        self._account_avatar = QLabel()
+        self._account_avatar.setAlignment(Qt.AlignCenter)
+        self._account_avatar.setFixedSize(28, 28)
+        self._account_avatar.setStyleSheet(
+            f"background: {CYAN}; color: {CANVAS}; border-radius: 14px;"
+        )
+        self._account_avatar.setFont(self._ui_font(11, QFont.DemiBold))
+        account_layout.addWidget(self._account_avatar)
+
+        account_text = QWidget()
+        account_text_layout = QVBoxLayout(account_text)
+        account_text_layout.setContentsMargins(0, 0, 0, 0)
+        account_text_layout.setSpacing(0)
+        self._account_name = QLabel()
+        self._account_name.setFont(self._ui_font(12, QFont.DemiBold))
+        self._account_name.setStyleSheet(f"color: {INK};")
+        self._account_email_role = QLabel()
+        self._account_email_role.setFont(self._mono_font(9.5))
+        self._account_email_role.setStyleSheet(f"color: {MUTED};")
+        account_text_layout.addWidget(self._account_name)
+        account_text_layout.addWidget(self._account_email_role)
+        account_layout.addWidget(account_text, 1)
+
+        self._sign_out_btn = QPushButton("Sign out")
+        self._sign_out_btn.setFixedHeight(28)
+        self._sign_out_btn.setStyleSheet(
+            self._btn_style(SURFACE_RAISED, DESTRUCTIVE_HOVER, INK)
+        )
+        self._sign_out_btn.clicked.connect(self._sign_out)
+        account_layout.addWidget(self._sign_out_btn)
+
+        self._sign_in_btn = QPushButton("Sign in")
+        self._sign_in_btn.setFixedHeight(28)
+        self._sign_in_btn.setStyleSheet(self._btn_style(SURFACE_RAISED, CYAN, INK))
+        self._sign_in_btn.clicked.connect(self._show_sign_in)
+        account_layout.addWidget(self._sign_in_btn)
+        layout.addWidget(self._account_band)
 
         # --- Status Card ---
         status_group = QGroupBox("Host Status")
@@ -94,29 +151,15 @@ class LauncherWindow(QMainWindow):
         group_layout.setSpacing(12)
         group_layout.setContentsMargins(14, 14, 14, 14)
 
-        # 1. Account
-        acc_layout = QVBoxLayout()
-        acc_layout.setSpacing(2)
-        acc_title = QLabel("Account")
-        acc_title.setStyleSheet("font-size: 11px; font-weight: 600; color: #8a8f98; text-transform: uppercase;")
-        self._account_label = QLabel("Detecting…")
-        self._account_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        self._account_label.setStyleSheet("font-size: 13px; color: #e8eaed;")
-        acc_layout.addWidget(acc_title)
-        acc_layout.addWidget(self._account_label)
-        group_layout.addLayout(acc_layout)
-
-        # Divider
-        group_layout.addWidget(self._create_divider())
-
-        # 2. Network
+        # 1. Network
         net_layout = QVBoxLayout()
         net_layout.setSpacing(2)
         net_title = QLabel("Network")
-        net_title.setStyleSheet("font-size: 11px; font-weight: 600; color: #8a8f98; text-transform: uppercase;")
+        net_title.setStyleSheet(f"font-size: 11px; font-weight: 600; color: {MUTED};")
         self._ip_label = QLabel("Detecting…")
         self._ip_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        self._ip_label.setStyleSheet("font-size: 13px; color: #e8eaed;")
+        self._ip_label.setFont(self._mono_font(10))
+        self._ip_label.setStyleSheet(f"color: {INK};")
         net_layout.addWidget(net_title)
         net_layout.addWidget(self._ip_label)
         group_layout.addLayout(net_layout)
@@ -124,14 +167,15 @@ class LauncherWindow(QMainWindow):
         # Divider
         group_layout.addWidget(self._create_divider())
 
-        # 3. VPS Relay
+        # 2. VPS Relay
         relay_layout = QVBoxLayout()
         relay_layout.setSpacing(2)
         relay_title = QLabel("VPS Relay")
-        relay_title.setStyleSheet("font-size: 11px; font-weight: 600; color: #8a8f98; text-transform: uppercase;")
+        relay_title.setStyleSheet(f"font-size: 11px; font-weight: 600; color: {MUTED};")
         self._relay_label = QLabel("Checking…")
         self._relay_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        self._relay_label.setStyleSheet("font-size: 13px; color: #e8eaed;")
+        self._relay_label.setFont(self._mono_font(10))
+        self._relay_label.setStyleSheet(f"color: {INK};")
         relay_layout.addWidget(relay_title)
         relay_layout.addWidget(self._relay_label)
         group_layout.addLayout(relay_layout)
@@ -139,13 +183,14 @@ class LauncherWindow(QMainWindow):
         # Divider
         group_layout.addWidget(self._create_divider())
 
-        # 4. Active Streams
+        # 3. Active Streams
         streams_layout = QVBoxLayout()
         streams_layout.setSpacing(2)
         streams_title = QLabel("Active Streams")
-        streams_title.setStyleSheet("font-size: 11px; font-weight: 600; color: #8a8f98; text-transform: uppercase;")
+        streams_title.setStyleSheet(f"font-size: 11px; font-weight: 600; color: {MUTED};")
         self._streams_label = QLabel("Idle")
-        self._streams_label.setStyleSheet("font-size: 13px; color: #6fd7d1; font-weight: 600;")
+        self._streams_label.setFont(self._mono_font(10, QFont.DemiBold))
+        self._streams_label.setStyleSheet(f"color: {MINT};")
         streams_layout.addWidget(streams_title)
         streams_layout.addWidget(self._streams_label)
         group_layout.addLayout(streams_layout)
@@ -155,20 +200,21 @@ class LauncherWindow(QMainWindow):
         # --- Update banner ---
         self._update_banner = QWidget()
         self._update_banner.setStyleSheet(
-            "background: rgba(234,179,8,0.12); border: 1px solid rgba(234,179,8,0.4); border-radius: 6px;"
+            f"background: {SURFACE_RAISED}; border: 1px solid {TANGERINE}; border-radius: 6px;"
         )
         banner_layout = QVBoxLayout(self._update_banner)
         banner_layout.setContentsMargins(10, 8, 10, 8)
         banner_layout.setSpacing(6)
 
         self._update_label = QLabel()
-        self._update_label.setStyleSheet("color:#eab308; font-size:13px; background:transparent; border:none;")
+        self._update_label.setFont(self._ui_font(12))
+        self._update_label.setStyleSheet(f"color: {TANGERINE}; background: transparent; border: none;")
         self._update_label.setWordWrap(True)
         banner_layout.addWidget(self._update_label)
 
         self._install_btn = QPushButton("Install Update")
         self._install_btn.setMinimumHeight(32)
-        self._install_btn.setStyleSheet(self._btn_style("#d97706", "#b45309", "#ffffff"))
+        self._install_btn.setStyleSheet(self._btn_style(TANGERINE, INK, CANVAS))
         self._install_btn.clicked.connect(self._on_install_update)
         banner_layout.addWidget(self._install_btn)
 
@@ -183,13 +229,13 @@ class LauncherWindow(QMainWindow):
 
         self._minimize_btn = QPushButton("Minimize to Tray")
         self._minimize_btn.setMinimumHeight(38)
-        self._minimize_btn.setStyleSheet(self._btn_style("rgba(255,255,255,0.08)", "rgba(255,255,255,0.14)", "#e8eaed"))
+        self._minimize_btn.setStyleSheet(self._btn_style(SURFACE_RAISED, HAIRLINE, INK))
         self._minimize_btn.clicked.connect(self.hide)
         actions_layout.addWidget(self._minimize_btn)
 
         self._stop_btn = QPushButton("Stop Server")
         self._stop_btn.setMinimumHeight(38)
-        self._stop_btn.setStyleSheet(self._btn_style("rgba(239,68,68,0.16)", "rgba(239,68,68,0.28)", "#ef4444", border="1px solid rgba(239,68,68,0.4)"))
+        self._stop_btn.setStyleSheet(self._btn_style(SURFACE_RAISED, TANGERINE, TANGERINE, border=f"1px solid {TANGERINE}"))
         self._stop_btn.clicked.connect(self._handle_stop_server)
         actions_layout.addWidget(self._stop_btn)
 
@@ -199,30 +245,42 @@ class LauncherWindow(QMainWindow):
         divider = QFrame()
         divider.setFrameShape(QFrame.HLine)
         divider.setFrameShadow(QFrame.Sunken)
-        divider.setStyleSheet("border: none; background: rgba(255,255,255,0.06); min-height: 1px; max-height: 1px;")
+        divider.setStyleSheet(f"border: none; background: {HAIRLINE}; min-height: 1px; max-height: 1px;")
         return divider
 
     def _setup_style(self):
-        self.setStyleSheet("""
-            QMainWindow { background: #12141a; }
-            QWidget { background: transparent; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
-            QGroupBox {
+        self.setStyleSheet(f"""
+            QMainWindow {{ background: {CANVAS}; }}
+            QWidget {{ background: transparent; font-family: '{self._fonts.ui}'; }}
+            QGroupBox {{
                 font-size: 13px;
                 font-weight: 600;
-                color: #e8eaed;
-                border: 1px solid rgba(255,255,255,0.09);
+                color: {INK};
+                border: 1px solid {HAIRLINE};
                 border-radius: 6px;
                 margin-top: 10px;
                 padding-top: 12px;
-                background: #1b1e26;
-            }
-            QGroupBox::title {
+                background: {SURFACE_RAISED};
+            }}
+            QGroupBox::title {{
                 subcontrol-origin: margin;
                 left: 12px;
                 padding: 0 6px;
-                color: #8a8f98;
-            }
+                color: {MUTED};
+            }}
         """)
+
+    def _ui_font(self, point_size: float, weight: int = QFont.Normal) -> QFont:
+        font = QFont(self._fonts.ui)
+        font.setPointSizeF(point_size)
+        font.setWeight(weight)
+        return font
+
+    def _mono_font(self, point_size: float, weight: int = QFont.Normal) -> QFont:
+        font = QFont(self._fonts.mono)
+        font.setPointSizeF(point_size)
+        font.setWeight(weight)
+        return font
 
     def _btn_style(self, bg: str, hover: str, text_color: str, border: str = "none") -> str:
         return f"""
@@ -237,7 +295,7 @@ class LauncherWindow(QMainWindow):
             }}
             QPushButton:hover {{ background: {hover}; }}
             QPushButton:pressed {{ background: {hover}; }}
-            QPushButton:disabled {{ background: rgba(255,255,255,0.04); color: #4a4e58; border: none; }}
+            QPushButton:disabled {{ background: {SURFACE}; color: {DIM}; border: none; }}
         """
 
     def _refresh_status(self):
@@ -248,19 +306,63 @@ class LauncherWindow(QMainWindow):
 
     def _refresh_account(self):
         if not SUPABASE_URL:
-            self._account_label.setText("Auth disabled (LAN mode)")
+            self._set_account_state("EC", "Auth disabled (LAN mode)", "", signed_in=False)
             return
         try:
             from gui.supabase_login import load_cached_session
             session = load_cached_session()
             if session:
                 user = session.get("user", {})
+                metadata = user.get("user_metadata") or {}
                 email = user.get("email") or user.get("id") or "Signed in"
-                self._account_label.setText(email)
+                name = metadata.get("display_name") or email
+                role = metadata.get("role") or user.get("role")
+                detail = f"{email} · {role}" if role else email
+                self._set_account_state(self._initials(name), name, detail, signed_in=True)
             else:
-                self._account_label.setText("Not signed in")
+                self._set_account_state("?", "Not signed in", "", signed_in=False)
         except Exception:
-            self._account_label.setText("Not signed in")
+            self._set_account_state("?", "Not signed in", "", signed_in=False)
+
+    def _set_account_state(self, avatar: str, name: str, detail: str, *, signed_in: bool) -> None:
+        self._account_avatar.setText(avatar)
+        self._account_name.setText(name)
+        self._account_full_email_role = detail
+        self._elide_account_detail()
+        self._sign_out_btn.setVisible(signed_in)
+        self._sign_in_btn.setVisible(not signed_in and bool(SUPABASE_URL))
+
+    def _initials(self, name: str) -> str:
+        words = [word for word in name.split() if word]
+        if len(words) >= 2:
+            return (words[0][0] + words[-1][0]).upper()
+        return name[:2].upper()
+
+    def _elide_account_detail(self) -> None:
+        available = max(0, self._account_email_role.width())
+        self._account_email_role.setText(
+            QFontMetrics(self._account_email_role.font()).elidedText(
+                self._account_full_email_role, Qt.ElideRight, available
+            )
+        )
+
+    def _sign_out(self) -> None:
+        from gui.supabase_login import clear_cached_session
+        clear_cached_session()
+        self._refresh_account()
+
+    def _show_sign_in(self) -> None:
+        if not SUPABASE_URL:
+            return
+        from gui.supabase_login import LoginDialog
+        dialog = LoginDialog(SUPABASE_URL, SUPABASE_ANON_KEY, self)
+        if dialog.exec_() == QDialog.Accepted:
+            self._refresh_account()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, "_account_email_role"):
+            self._elide_account_detail()
 
     def _refresh_ip(self):
         lan = detect_local_ip()
@@ -273,29 +375,29 @@ class LauncherWindow(QMainWindow):
     def _refresh_relay(self):
         if VPS_SIGNALING_URL:
             self._relay_label.setText("Connected")
-            self._relay_label.setStyleSheet("color: #22c55e; font-size: 13px; font-weight: 500;")
+            self._relay_label.setStyleSheet(f"color: {MINT};")
         else:
             self._relay_label.setText("Offline (disabled)")
-            self._relay_label.setStyleSheet("color: #8a8f98; font-size: 13px; font-weight: 500;")
+            self._relay_label.setStyleSheet(f"color: {MUTED};")
 
     def update_active_streams(self, count: int):
         self._active_streams_count = count
         if count <= 0:
             self._streams_label.setText("Idle")
-            self._streams_label.setStyleSheet("font-size: 13px; color: #8a8f98; font-weight: 500;")
+            self._streams_label.setStyleSheet(f"color: {MUTED};")
         elif count == 1:
             self._streams_label.setText("1 client streaming")
-            self._streams_label.setStyleSheet("font-size: 13px; color: #22c55e; font-weight: 600;")
+            self._streams_label.setStyleSheet(f"color: {MINT};")
         else:
             self._streams_label.setText(f"{count} clients streaming")
-            self._streams_label.setStyleSheet("font-size: 13px; color: #22c55e; font-weight: 600;")
+            self._streams_label.setStyleSheet(f"color: {MINT};")
 
     def _handle_stop_server(self):
         if self._on_stop_server is not None:
             self._on_stop_server()
-        self._status_dot.setStyleSheet("background: #ef4444; border-radius: 5px;")
+        self._status_dot.setStyleSheet(f"background: {TANGERINE}; border-radius: 5px;")
         self._status_label.setText("Server Stopped")
-        self._status_label.setStyleSheet("font-size: 13px; font-weight: 600; color: #ef4444;")
+        self._status_label.setStyleSheet(f"color: {TANGERINE};")
         self._stop_btn.setEnabled(False)
 
     def _on_update_available(self, latest: str):

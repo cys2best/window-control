@@ -41,3 +41,18 @@ def test_save_session_swallows_os_error(mock_makedirs):
     # convenience. A disk/permission failure here must never propagate and
     # block or crash an otherwise-successful sign-in.
     save_session({"access_token": "jwt-123"})  # must not raise
+
+
+def test_clear_cached_session_removes_only_the_session_file(tmp_path, monkeypatch):
+    from gui.supabase_login import clear_cached_session
+
+    path = tmp_path / "session.json"
+    ownership = tmp_path / "install_owner.txt"
+    path.write_text('{"access_token":"secret"}')
+    ownership.write_text("owner")
+    monkeypatch.setattr("gui.supabase_login._session_path", lambda: str(path))
+
+    clear_cached_session()
+
+    assert not path.exists()
+    assert ownership.read_text() == "owner"

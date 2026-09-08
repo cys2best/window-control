@@ -54,8 +54,7 @@ def test_launcher_window_status_card_lan_mode(qapp, monkeypatch):
     with patch("gui.launcher.check_for_update"):
         from gui.launcher import LauncherWindow
         window = LauncherWindow()
-        assert hasattr(window, "_account_label")
-        assert "Auth disabled (LAN mode)" in window._account_label.text()
+        assert "Auth disabled (LAN mode)" in window._account_name.text()
         assert hasattr(window, "_relay_label")
         assert hasattr(window, "_streams_label")
         assert "192.168.1.50" in window._ip_label.text()
@@ -68,13 +67,52 @@ def test_launcher_window_status_card_account_and_tailscale(qapp, monkeypatch):
     monkeypatch.setattr("gui.launcher.detect_tailscale_ip", lambda: "100.80.90.100")
     monkeypatch.setattr("gui.launcher.has_tailscale", lambda: True)
 
+    session = {
+        "access_token": "jwt-123",
+        "user": {
+            "email": "host@test.com",
+            "user_metadata": {"display_name": "Host Operator", "role": "owner"},
+            "role": "authenticated",
+        },
+    }
     with patch("gui.launcher.check_for_update"), \
-         patch("gui.supabase_login.load_cached_session", return_value={"user": {"email": "host@test.com"}}):
+         patch("gui.supabase_login.load_cached_session", return_value=session):
         from gui.launcher import LauncherWindow
         window = LauncherWindow()
-        assert "host@test.com" in window._account_label.text()
+        assert window._account_name.text() == "Host Operator"
+        assert window._account_email_role.text() == "host@test.com · owner"
+        assert window._account_avatar.text() == "HO"
+        assert hasattr(window, "_sign_out_btn")
         assert "100.80.90.100" in window._ip_label.text()
         assert "192.168.1.50" in window._ip_label.text()
+
+
+def test_sign_out_clears_device_session_without_changing_server_state(qapp, monkeypatch):
+    monkeypatch.setattr("gui.launcher.SUPABASE_URL", "https://example.supabase.co")
+    cleared = []
+    server_actions = []
+    session = {
+        "access_token": "jwt-123",
+        "user": {
+            "email": "host@test.com",
+            "user_metadata": {"display_name": "Host Operator", "role": "owner"},
+            "role": "authenticated",
+        },
+    }
+
+    with patch("gui.launcher.check_for_update"), \
+         patch("gui.supabase_login.load_cached_session", side_effect=[session, None]), \
+         patch("gui.supabase_login.clear_cached_session", side_effect=lambda: cleared.append(True)):
+        from gui.launcher import LauncherWindow
+        window = LauncherWindow(on_stop_server=lambda: server_actions.append("stop"))
+        window.server_start_requested.connect(lambda: server_actions.append("start"))
+
+        window._sign_out_btn.click()
+
+        assert cleared == [True]
+        assert window._account_name.text() == "Not signed in"
+        assert window._sign_in_btn.text() == "Sign in"
+        assert server_actions == []
 
 
 def test_launcher_window_active_streams_update(qapp):

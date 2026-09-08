@@ -16,6 +16,8 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt
 
+from gui.theme import CANVAS, CYAN, HAIRLINE, INK, MUTED, SURFACE_RAISED, TANGERINE
+
 
 class AuthError(Exception):
     pass
@@ -54,6 +56,14 @@ def load_cached_session() -> dict | None:
         return None
 
 
+def clear_cached_session() -> None:
+    """Forget this device's login without changing install ownership."""
+    try:
+        os.remove(_session_path())
+    except FileNotFoundError:
+        pass
+
+
 def save_session(session: dict) -> None:
     path = _session_path()
     try:
@@ -77,29 +87,29 @@ class LoginDialog(QDialog):
         self._anon_key = anon_key
         self.session: dict | None = None
 
-        self.setStyleSheet("""
-            QDialog { background: #12141a; }
-            QLabel { color: #ef4444; font-size: 13px; background: transparent; }
-            QLineEdit {
-                background: #1b1e26;
-                border: 1px solid rgba(255,255,255,0.09);
+        self.setStyleSheet(f"""
+            QDialog {{ background: {CANVAS}; }}
+            QLabel {{ color: {TANGERINE}; font-size: 13px; background: transparent; }}
+            QLineEdit {{
+                background: {SURFACE_RAISED};
+                border: 1px solid {HAIRLINE};
                 border-radius: 4px;
-                color: #e8eaed;
+                color: {INK};
                 font-size: 14px;
                 padding: 10px;
-            }
-            QLineEdit:focus { border: 1px solid #6fd7d1; }
-            QPushButton {
-                background: #6fd7d1;
-                color: #12141a;
+            }}
+            QLineEdit:focus {{ border: 1px solid {CYAN}; }}
+            QPushButton {{
+                background: {CYAN};
+                color: {CANVAS};
                 border: none;
                 border-radius: 4px;
                 font-size: 14px;
                 font-weight: 600;
                 padding: 10px;
-            }
-            QPushButton:hover { background: #8ae0db; }
-            QPushButton:pressed { background: #5bc4be; }
+            }}
+            QPushButton:hover {{ background: {CYAN}; }}
+            QPushButton:pressed {{ background: {CYAN}; }}
         """)
 
         layout = QVBoxLayout(self)
@@ -108,12 +118,12 @@ class LoginDialog(QDialog):
 
         title = QLabel("EmuCtrl")
         title.setAlignment(Qt.AlignCenter)
-        title.setStyleSheet("color: #e8eaed; font-size: 20px; font-weight: 600; background: transparent;")
+        title.setStyleSheet(f"color: {INK}; font-size: 20px; font-weight: 600; background: transparent;")
         layout.addWidget(title)
 
         subtitle = QLabel("Sign in to continue")
         subtitle.setAlignment(Qt.AlignCenter)
-        subtitle.setStyleSheet("color: #8a8f98; font-size: 13px; background: transparent;")
+        subtitle.setStyleSheet(f"color: {MUTED}; font-size: 13px; background: transparent;")
         layout.addWidget(subtitle)
 
         self._email = QLineEdit(placeholderText="Email")
