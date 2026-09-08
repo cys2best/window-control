@@ -29,6 +29,15 @@ Supabase auth, live instance/telemetry data), never from the design mockup's
 illustrative sample data (fake instance names, fake user "Kai Hoang", fake
 IPs, random RTT numbers).
 
+A frozen snapshot of the design project's source files (`EmuCtrl.dc.html`,
+`EmuCtrl-Logo.dc.html`, `Stream Options.dc.html`, `ios-frame.jsx`, both
+`StreamScreen.*.jsx` reference implementations) lives in
+`docs/design/emuctrl-ui-redesign/` — pulled 2026-09-08 so implementation
+doesn't need a live `claude-design` MCP call to re-check the design. See
+that folder's `README.md` for what each file is and its one caveat (the
+background screenshot asset was truncated on pull; non-critical, it's mockup
+filler, not spec content).
+
 ## Non-goals
 
 - No new styling framework (Tailwind/NativeWind) — `packages/ui` keeps its
