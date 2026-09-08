@@ -22,12 +22,13 @@ export function InstanceList({ navigation }: { navigation: any }) {
 
   const load = useCallback(async () => {
     if (!client) return;
-    try {
-      const [nextItems, nextRtt] = await Promise.all([client.instances(), client.ping()]);
-      setItems(nextItems);
-      setRtt(nextRtt);
+    const [instancesResult, pingResult] = await Promise.allSettled([client.instances(), client.ping()]);
+
+    if (instancesResult.status === "fulfilled") {
+      setItems(instancesResult.value);
       setReachable(true);
-    } catch (err: any) {
+    } else {
+      const err = instancesResult.reason as any;
       if (err?.status === 401) {
         if (clearAuth) await clearAuth();
         if (navigation?.replace) {
@@ -37,9 +38,10 @@ export function InstanceList({ navigation }: { navigation: any }) {
         }
         return;
       }
-      setRtt(null);
       setReachable(false);
     }
+
+    setRtt(pingResult.status === "fulfilled" ? pingResult.value : null);
   }, [client, navigation, clearAuth]);
 
   useEffect(() => {

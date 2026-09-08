@@ -119,6 +119,14 @@ test("failed instance refresh shows the unreachable empty state without fabricat
   expect(screen.queryByText(/\d+ ms/)).toBeNull();
 });
 
+test("initial ping failure preserves instances without displaying latency", async () => {
+  client.ping.mockRejectedValue(new Error("auth config unavailable"));
+  const screen = await render(<InstanceList navigation={nav} />);
+  expect(await screen.findByText("LDP-01")).toBeTruthy();
+  expect(screen.queryByText("Can't reach the server")).toBeNull();
+  expect(screen.queryByText(/\d+ ms/)).toBeNull();
+});
+
 test("redirects to Login on 401 response and clears auth", async () => {
   client.instances.mockRejectedValue(Object.assign(new Error("401"), { status: 401 }));
   await render(<InstanceList navigation={nav} />);
