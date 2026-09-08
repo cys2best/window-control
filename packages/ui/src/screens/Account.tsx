@@ -1,19 +1,10 @@
 import React, { useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
-import { useServer, type QualitySelection } from "@wc/core";
+import { TIER_ORDER, useServer, type QualitySelection } from "@wc/core";
 import { Toggle } from "../components/Toggle";
 import { theme } from "../theme/tokens";
 
-const QUALITY_OPTIONS: QualitySelection[] = ["auto", "480", "720", "1080", "1440"];
-
-function hostFromBase(base: string | null): string {
-  if (!base) return "Host unavailable";
-  try {
-    return new URL(base).host;
-  } catch {
-    return base;
-  }
-}
+const QUALITY_OPTIONS: QualitySelection[] = ["auto", ...TIER_ORDER];
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -29,9 +20,10 @@ function Row({ children, borderColor = theme.color.border }: { children: React.R
 }
 
 export function Account({ navigation }: { navigation: any }) {
-  const { identity, base, hostReachability, preferences, updatePreferences, clearAuth } = useServer() as any;
+  const { identity, hostReachability, preferences, updatePreferences, clearAuth } = useServer() as any;
   const [signingOut, setSigningOut] = useState(false);
-  const host = hostReachability?.host || hostFromBase(base);
+  const host = hostReachability?.host || null;
+  const route = hostReachability?.route || null;
   const quality = preferences?.quality ?? "auto";
 
   const selectNextQuality = () => {
@@ -82,20 +74,20 @@ export function Account({ navigation }: { navigation: any }) {
           <Row><Toggle label="Hide rail while playing" value={Boolean(preferences?.hideRailWhilePlaying)} onChange={(value) => void updatePreferences({ hideRailWhilePlaying: value })} /></Row>
         </Section>
 
-        <Section title="HOST & NETWORK">
-          <Row>
+        {host || route ? <Section title="HOST & NETWORK">
+          {host ? <Row>
             <View style={{ flexDirection: "row", justifyContent: "space-between", gap: 16 }}>
               <Text style={{ fontFamily: theme.font.medium, fontSize: 14, color: theme.color.text }}>Current host</Text>
               <Text numberOfLines={1} style={{ flexShrink: 1, fontFamily: theme.font.mono, fontSize: 12, color: theme.color.textMuted }}>{host}</Text>
             </View>
-          </Row>
-          <Row>
+          </Row> : null}
+          {route ? <Row>
             <View style={{ flexDirection: "row", justifyContent: "space-between", gap: 16 }}>
               <Text style={{ fontFamily: theme.font.medium, fontSize: 14, color: theme.color.text }}>Connection route</Text>
-              <Text style={{ fontFamily: theme.font.mono, fontSize: 12, color: theme.color.textMuted }}>{hostReachability?.route === "relay" ? "RELAY" : "LAN"}</Text>
+              <Text style={{ fontFamily: theme.font.mono, fontSize: 12, color: theme.color.textMuted }}>{route.toUpperCase()}</Text>
             </View>
-          </Row>
-        </Section>
+          </Row> : null}
+        </Section> : null}
 
         <Section title="SESSION">
           <Row borderColor={theme.color.live}>
