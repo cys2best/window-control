@@ -6,11 +6,6 @@
     "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
-    "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#06070b"
-    },
     "jsEngine": "hermes",
     "ios": {
       "supportsTablet": true,
@@ -54,7 +49,12 @@
     "plugins": [
       "@config-plugins/react-native-webrtc",
       "expo-font",
-      "expo-secure-store"
+      "expo-secure-store",
+      ["expo-splash-screen", {
+        "backgroundColor": "#06070b",
+        "image": "./assets/splash-icon.png",
+        "imageWidth": 200
+      }]
     ],
     "extra": {
       "eas": {
