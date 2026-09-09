@@ -4,6 +4,19 @@ All notable changes to this app are recorded here.
 
 ---
 
+## [v3.1.2] — September 10, 2026
+
+This release brings a unified dark UI, a real-telemetry stream rail, and a matching identity across web, mobile, and the Windows host.
+
+### What's New
+- **Dark Shared UI**: Web, mobile, and desktop now share one dark visual language — consistent colors, typography, and control styling across every screen.
+- **Edge Rail & Real Telemetry**: The stream view's edge rail now surfaces live connection signal strength and diagnostic values measured from the active session, replacing placeholder readings.
+- **Account Screen & Preferences**: A dedicated Account screen shows your real signed-in identity and lets you manage preferences (including haptics) and sign out, on both web and mobile.
+- **Windows Host Reskin**: The desktop host widget has been restyled to match the new shared visual identity.
+- **Unified Brand Assets**: App icons, splash screens, and the tray/launcher mark are now generated from one canonical brand asset set across all platforms.
+
+---
+
 ## [v3.1.0] — September 06, 2026
 
 This release introduces zero-config auto-discovery and dual-transport WebRTC streaming, removes manual server configuration screens across web and mobile clients, and transitions the Windows host desktop interface into a lightweight status monitor widget.
