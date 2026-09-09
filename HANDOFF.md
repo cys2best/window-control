@@ -17,6 +17,110 @@ Plan/task identifiers belong here and in workflow state, not in commit subjects.
 ```
 <!-- agent-sync:handoff-template:end -->
 
+### 2026-09-09 01:45 — codex
+- Claiming: emuctrl-ui-redesign/task-12
+- Finished: emuctrl-ui-redesign/task-11
+
+### 2026-09-09 01:20 — codex
+- Claiming: emuctrl-ui-redesign/task-11
+- Finished: emuctrl-ui-redesign/task-10
+
+### 2026-09-09 01:00 — codex
+- Claiming: emuctrl-ui-redesign/task-10
+
+### 2026-09-09 00:45 — codex
+- Finished: emuctrl-ui-redesign/task-7, emuctrl-ui-redesign/task-8, emuctrl-ui-redesign/task-9
+- Next: emuctrl-ui-redesign/task-10
+- Blockers: none
+
+### 2026-09-09 00:10 — codex
+- Claiming: emuctrl-ui-redesign/task-9
+
+### 2026-09-09 00:00 — codex
+- Claiming: emuctrl-ui-redesign/task-8
+- Finished: emuctrl-ui-redesign/task-8
+- Next: emuctrl-ui-redesign/task-9
+- Blockers: none
+
+### 2026-09-09 00:00 — codex
+- Claiming: emuctrl-ui-redesign/task-7
+- Finished: emuctrl-ui-redesign/task-7
+- Next: emuctrl-ui-redesign/task-8
+- Blockers: none
+
+### 2026-09-08 14:40 — codex
+- Finished: emuctrl-ui-redesign/task-6
+- Next: emuctrl-ui-redesign/task-7
+- Blockers: none
+
+### 2026-09-08 14:30 — codex
+- Claiming: emuctrl-ui-redesign/task-6
+- Finished: emuctrl-ui-redesign/task-5
+- Next: emuctrl-ui-redesign/task-6
+- Blockers: none
+
+### 2026-09-08 14:20 — codex
+- Claiming: emuctrl-ui-redesign/task-5
+
+### 2026-09-08 14:10 — codex
+- Finished: emuctrl-ui-redesign/task-5
+- Next: none
+- Blockers: none
+
+### 2026-09-08 13:12 — codex
+- Claiming: emuctrl-ui-redesign/task-5
+- Finished: emuctrl-ui-redesign/task-4
+- Next: emuctrl-ui-redesign/task-5
+- Blockers: none
+
+### 2026-09-08 12:38 — codex
+- Claiming: emuctrl-ui-redesign/task-4
+- Finished: emuctrl-ui-redesign/task-3
+- Next: emuctrl-ui-redesign/task-4
+- Blockers: none
+
+### 2026-09-08 12:27 — codex
+- Claiming: emuctrl-ui-redesign/task-3
+- Finished: emuctrl-ui-redesign/task-2
+- Next: emuctrl-ui-redesign/task-3
+- Blockers: none
+
+### 2026-09-08 12:25 — codex
+- Finished: emuctrl-ui-redesign/task-2
+
+### 2026-09-08 12:15 — codex
+- Claiming: emuctrl-ui-redesign/task-2
+
+### 2026-09-08 11:36 — codex
+- Claiming: emuctrl-ui-redesign/task-2
+- Finished: emuctrl-ui-redesign/task-1
+- Next: emuctrl-ui-redesign/task-2
+- Blockers: none
+
+### 2026-09-08 11:28 — codex
+- Claiming: emuctrl-ui-redesign/task-1
+- Finished: none
+- Next: emuctrl-ui-redesign/task-1
+- Blockers: none
+
+### 2026-09-08 11:20 — codex
+- Claiming: none
+- Finished: none
+- Next: none
+- Blockers: none
+
+### 2026-09-08 10:49 — codex
+- Claiming: none
+- Finished: emuctrl-ui-redesign/plan
+- Next: emuctrl-ui-redesign/task-1
+- Blockers: none
+
+### 2026-09-08 09:52 — codex
+- Claiming: emuctrl-ui-redesign/plan
+- Finished: none
+- Next: emuctrl-ui-redesign/plan
+- Blockers: none
+
 ### 2026-09-08 00:30 — codex
 - Claiming: video-crop-fix/task-1
 - Finished: video-crop-fix/task-1
@@ -123,4 +227,42 @@ Plan/task identifiers belong here and in workflow state, not in commit subjects.
 - Claiming: frontend-cutover-verifier/task-1
 - Finished: none
 - Next: frontend-cutover-verifier/task-1 is ready
+- Blockers: none
+
+### 2026-09-08 12:10 — codex
+- Finished: emuctrl-ui-redesign/task-1
+
+### 2026-09-08 12:01 — codex
+- Finished: emuctrl-ui-redesign/task-3
+
+### 2026-09-09 00:30 — codex
+- Finished: emuctrl-ui-redesign/task-9
+- Next: none
+- Blockers: none
+
+### 2026-09-09 01:00 — codex
+- Finished: emuctrl-ui-redesign/task-8
+
+### 2026-09-09 01:10 — codex
+- Finished: emuctrl-ui-redesign/task-8
+
+### 2026-09-09 01:20 — codex
+- Finished: emuctrl-ui-redesign/task-8
+
+### 2026-09-09 01:30 — codex
+- Finished: emuctrl-ui-redesign/task-10
+
+### 2026-09-09 01:35 — codex
+- Finished: emuctrl-ui-redesign/task-11
+
+### 2026-09-10 00:30 — claude
+- Claiming: emuctrl-ui-redesign/task-12
+- Finished: none
+- Next: emuctrl-ui-redesign/task-13
+- Blockers: none
+
+### 2026-09-10 01:00 — claude
+- Claiming: none
+- Finished: emuctrl-ui-redesign/task-12
+- Next: emuctrl-ui-redesign/task-13
 - Blockers: none
