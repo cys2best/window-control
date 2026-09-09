@@ -23,16 +23,24 @@ def test_tray_icon_construction():
     assert tray._icon is None
 
 
-def test_load_tray_icon_fallback(tmp_path, monkeypatch):
-    """Falls back to blue square when tray_icon.png missing."""
+def test_load_tray_icon_missing_raises(tmp_path, monkeypatch):
+    """Raises FileNotFoundError when tray_icon.png is missing (no silent placeholder)."""
     import tray as tray_mod
     import importlib
     importlib.reload(tray_mod)
     # Patch ASSETS_DIR after reload so the monkeypatch isn't undone by the reload
     monkeypatch.setattr(tray_mod, 'ASSETS_DIR', str(tmp_path))
+    with pytest.raises(FileNotFoundError):
+        tray_mod._load_tray_icon()
+
+
+def test_load_tray_icon_loads_generated_asset():
+    """Loads the real generated tray_icon.png asset when present."""
+    import tray as tray_mod
+    import importlib
+    importlib.reload(tray_mod)
     img = tray_mod._load_tray_icon()
     assert img.size == (64, 64)
-    assert img.mode == "RGB"
 
 
 def test_handle_exit_calls_callback():

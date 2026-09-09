@@ -6,6 +6,11 @@
     "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#06070b"
+    },
     "jsEngine": "hermes",
     "ios": {
       "supportsTablet": true,

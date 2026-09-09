@@ -10,6 +10,11 @@
   "scripts": {
     "test:core": "npm test -w packages/core",
     "test:ui": "npm test -w packages/ui",
-    "test:signaling": "npm test -w infra/vps/signaling"
+    "test:signaling": "npm test -w infra/vps/signaling",
+    "generate:brand": "node scripts/generate-brand-assets.mjs"
+  },
+  "devDependencies": {
+    "png-to-ico": "^3.0.2",
+    "sharp": "^0.35.4"
   }
 }

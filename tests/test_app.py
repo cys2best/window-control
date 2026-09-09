@@ -346,15 +346,33 @@ def test_manifest_and_icon_are_served_for_pwa_installability(tmp_path):
     import server.app as app_module
     (tmp_path / "manifest.json").write_text('{"name":"EmuCtrl"}')
     (tmp_path / "icon-192.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    (tmp_path / "icon-512.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    (tmp_path / "favicon.ico").write_bytes(b"\x00\x00\x01\x00")
     with patch.object(app_module, "WEB_BUILD_DIR", str(tmp_path)):
         client, _ = _make_client()
         manifest = client.get("/manifest.json")
         icon = client.get("/icon-192.png")
+        icon_512 = client.get("/icon-512.png")
+        favicon = client.get("/favicon.ico")
     assert manifest.status_code == 200
     assert manifest.headers["content-type"].startswith("application/manifest+json")
     assert manifest.json() == {"name": "EmuCtrl"}
     assert icon.status_code == 200
     assert icon.headers["content-type"].startswith("image/png")
+    assert icon_512.status_code == 200
+    assert icon_512.headers["content-type"].startswith("image/png")
+    assert favicon.status_code == 200
+    assert favicon.headers["content-type"].startswith("image/x-icon")
+
+
+def test_favicon_and_icon_512_are_auth_exempt():
+    """Static brand assets must load before/without a login, same as
+    icon-192.png and manifest.json. (Full 401-vs-200 auth-enabled behavior
+    for exempt paths is covered end-to-end in test_app_auth.py; this just
+    guards the exemption list itself, which is the thing Step 6 changes.)"""
+    import server.app as app_module
+    assert "/icon-512.png" in app_module._AUTH_EXEMPT_PATHS
+    assert "/favicon.ico" in app_module._AUTH_EXEMPT_PATHS
 
 
 def test_android_mjpeg_runtime_is_absent():

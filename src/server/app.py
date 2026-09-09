@@ -38,7 +38,7 @@ _tunnel_task: "asyncio.Task | None" = None
 _AUTH_EXEMPT_PATHS = {
     "/", "/login", "/stream", "/auth/config",
     "/index.txt", "/login.txt", "/stream.txt", "/instances.txt", "/account.txt",
-    "/manifest.json", "/icon-192.png", "/404.html",
+    "/manifest.json", "/icon-192.png", "/icon-512.png", "/favicon.ico", "/404.html",
 }
 
 # apps/web's static export emits one `<route>.txt` file per route. Only
@@ -399,6 +399,14 @@ def create_app(instance_manager: InstanceManager) -> FastAPI:
     @app.get("/icon-192.png")
     async def web_icon():
         return _serve_web_file("icon-192.png", "image/png")
+
+    @app.get("/icon-512.png")
+    async def web_icon_512():
+        return _serve_web_file("icon-512.png", "image/png")
+
+    @app.get("/favicon.ico")
+    async def web_favicon():
+        return _serve_web_file("favicon.ico", "image/x-icon")
 
     @app.get("/{page}.txt")
     async def web_rsc_payload(page: str):

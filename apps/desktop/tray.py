@@ -10,10 +10,13 @@ from config import ASSETS_DIR
 
 def _load_tray_icon() -> Image.Image:
     icon_path = Path(ASSETS_DIR) / "tray_icon.png"
-    if icon_path.exists():
-        return Image.open(icon_path)
-    # Fallback: solid blue 64x64 square
-    return Image.new("RGB", (64, 64), color=(30, 120, 200))
+    if not icon_path.exists():
+        raise FileNotFoundError(
+            f"Tray icon asset missing: {icon_path}. Run "
+            "`npm run generate:brand` to regenerate it from "
+            "assets/brand/emuctrl-mark.svg."
+        )
+    return Image.open(icon_path)
 
 
 class TrayIcon:
