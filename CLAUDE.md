@@ -20,7 +20,41 @@ shared files below so other agents see the same thing.
   3. Never execute a managed task manually or create or edit Superpowers-owned artifacts directly.
   4. If the required workflow cannot be invoked, stop and report the blocker.
   Do not substitute a manual or generic execution path once engaged.
-- Read `HANDOFF.md` to see which agent (Codex) last touched
+- For superpowers, when running as claude, use planning=sonnet,
+  implementation=haiku, review=sonnet,
+  escalation=ask.
+  Read the matching entry in `.agent-sync/config.json` before each phase;
+  it is authoritative if changed since setup. Schema: `modelPolicy[workflowId][agentId]`
+  is `"balanced"` (preset: planning=sonnet, implementation=haiku, review=sonnet)
+  or `{planning, implementation, review, escalation}` (`auto`|`ask`|`never`);
+  a removed policy disables routing. A missing preset definition or invalid entry
+  requires correction before dispatch.
+  Planning includes discovery, design, plan writing, and substantive replanning.
+  Review includes task/spec/code reviews and the final whole-branch review.
+  Implementation includes coding and running the plan's checks only after
+  the workflow's plan approval/readiness gate is satisfied, with concrete
+  scope and acceptance checks. If the plan is absent or materially ambiguous,
+  return to planning before implementation. Model choice never skips tests,
+  approval gates, or required reviews.
+  Use the supported subagent model option or a custom subagent model field when the workflow dispatches a phase. For work in the main session, the user can select the model with /model. Verify host overrides have not forced a different model.
+  Keep the workflow's official dispatch, prompts, tools, and reports. Apply
+  the model through that dispatch's supported controls; do not replace its
+  lifecycle or edit its owned state or installed skills. Do not change
+  global/default model settings for all phases.
+  If a selected model is unavailable, model selection is unsupported, or
+  host overrides conflict, report the requested model and the limitation
+  and request a supported replacement or manual switch before that phase.
+  Never claim a model switch without host evidence; report the requested
+  model and actual model if exposed, otherwise mark actual model unverified.
+  If implementation requires redesign or repeats the same failure after two
+  attempted fixes, use the planning model for diagnosis/replanning under
+  escalation=auto and report why. With escalation=ask, ask first; with
+  escalation=never, stop that task and report the blocker. Return to the
+  implementation model once the revised plan is ready. Final review always
+  uses the configured review model regardless of escalation.
+  Record routing decisions in the workflow's normal report if supported, or
+  the conversation; keep HANDOFF.md limited to task IDs.
+- Read `HANDOFF.md` to see which agent (Codex, Antigravity) last touched
   each plan/task and what's next.
 - Before claiming or executing a plan task, check whether the user's prompt
   explicitly names a configured workflow tool or its artifacts. Only then use

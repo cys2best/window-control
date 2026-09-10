@@ -1,4 +1,32 @@
 {
-  "agents": ["claude", "codex"],
-  "workflowTools": ["superpowers"]
+  "agents": [
+    "claude",
+    "codex",
+    "antigravity"
+  ],
+  "workflowTools": [
+    "superpowers"
+  ],
+  "modelPolicy": {
+    "superpowers": {
+      "claude": {
+        "planning": "sonnet",
+        "implementation": "haiku",
+        "review": "sonnet",
+        "escalation": "ask"
+      },
+      "antigravity": {
+        "planning": "gemini-flash3.7",
+        "implementation": "gemini-flash3.7",
+        "review": "gemini-flash3.7",
+        "escalation": "ask"
+      },
+      "codex": {
+        "planning": "gpt-5.6-sol",
+        "implementation": "gpt-5.6-luna",
+        "review": "gpt-5.6-sol",
+        "escalation": "ask"
+      }
+    }
+  }
 }

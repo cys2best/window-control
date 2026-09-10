@@ -1,19 +1,18 @@
 # Handoff Log
 
 <!-- agent-sync:handoff-template:start -->
-<!-- Newest entry on top. Each agent appends one entry at session end,
-     and one "Claiming" line when picking up a task. Multiple plans can
-     appear here at once — always include the plan name. -->
+<!-- Keep entries minimal: task IDs only. Do not write summaries or progress prose here
+     — detailed briefs, reports, and reviews belong in your workflow tool (e.g. .superpowers/sdd/). -->
 
 Plan/task identifiers belong here and in workflow state, not in commit subjects.
 
 ## Template for new entries
 ```
-### YYYY-MM-DD HH:MM — [claude|codex]
-- Claiming: plan-name/task-N (if starting new work)
-- Finished: plan-name/task-N, other-plan/task-M
-- Next: plan-name/task-K is ready, depends on plan-name/task-N
-- Blockers: none / describe
+### YYYY-MM-DD HH:MM — [claude|codex|antigravity]
+- Claiming: plan-name/task-N
+- Finished: plan-name/task-N
+- Next: plan-name/task-K (or none)
+- Blockers: none (or 1-line reason)
 ```
 <!-- agent-sync:handoff-template:end -->
 
@@ -265,4 +264,10 @@ Plan/task identifiers belong here and in workflow state, not in commit subjects.
 - Claiming: none
 - Finished: emuctrl-ui-redesign/task-12
 - Next: emuctrl-ui-redesign/task-13
+- Blockers: none
+
+### 2026-09-10 01:30 — claude
+- Claiming: emuctrl-ui-redesign/task-13
+- Finished: emuctrl-ui-redesign/task-12 (review clean after 1 fix round)
+- Next: emuctrl-ui-redesign/task-13 is ready — last task in the plan
 - Blockers: none
