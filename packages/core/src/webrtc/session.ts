@@ -228,7 +228,14 @@ async function defaultStartPublic(
       const offer = await pc.createOffer();
       if (closed) return;
       await pc.setLocalDescription(offer);
-      await waitForIceGatheringComplete(pc, Math.max(0, deadline - Date.now()));
+      // Public signaling is non-trickle: wait until the TURN candidate is in
+      // the offer, but reserve the rest of the session deadline for the
+      // signaling answer and ICE connection itself.
+      await waitForIceGatheringComplete(
+        pc,
+        Math.min(4000, Math.max(0, deadline - Date.now())),
+        "relay"
+      );
       if (closed) return;
 
       const connectSignaling = opts.connectSignalingViewerImpl || connectSignalingViewer;

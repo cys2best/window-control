@@ -475,4 +475,49 @@ describe("connectEngineSession", () => {
     expect(rtts.length).toBe(1);
     expect(rtts[0]).toBeGreaterThanOrEqual(0);
   });
+
+  test("public signaling starts when a TURN relay candidate is gathered", async () => {
+    const pc = fakePc();
+    pc.iceGatheringState = "gathering";
+    const connectSignalingViewerImpl = jest.fn(async () => ({
+      answerSdp: "REMOTE_ANSWER",
+      close: () => {},
+    }));
+
+    const promise = connectEngineSession({
+      selection: {
+        whep_url: "",
+        whep_token: "",
+        signaling_url: "wss://relay.example.com/ws",
+        public_session: "user.inst1",
+        ice_servers: [{ urls: "turn:relay.example.com:3478", username: "u", credential: "c" }],
+      } as any,
+      authToken: "auth-token",
+      RTCImpl: function () {
+        return pc;
+      } as any,
+      connectSignalingViewerImpl,
+    });
+
+    await Promise.resolve();
+    await Promise.resolve();
+    pc._fire("icecandidate", {
+      candidate: { candidate: "candidate:1 1 UDP 1 203.0.113.2 5000 typ srflx" },
+    });
+    await Promise.resolve();
+    expect(connectSignalingViewerImpl).not.toHaveBeenCalled();
+
+    pc._fire("icecandidate", {
+      candidate: { candidate: "candidate:2 1 UDP 1 203.0.113.3 5001 typ relay" },
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(connectSignalingViewerImpl).toHaveBeenCalledTimes(1);
+
+    pc._fire("track", { track: { kind: "video" }, streams: [{ id: "public-stream" }] });
+    pc.iceConnectionState = "connected";
+    pc._fire("iceconnectionstatechange", {});
+    pc.dc._fire("open", {});
+    await promise;
+  });
 });
