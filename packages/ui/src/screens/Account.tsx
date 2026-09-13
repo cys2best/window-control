@@ -71,7 +71,6 @@ export function Account({ navigation }: { navigation: any }) {
           </Row>
           <Row><Toggle label="Show HUD on connect" value={Boolean(preferences?.showHudOnConnect)} onChange={(value) => void updatePreferences({ showHudOnConnect: value })} /></Row>
           <Row><Toggle label="Touch haptics" value={Boolean(preferences?.haptics)} onChange={(value) => void updatePreferences({ haptics: value })} /></Row>
-          <Row><Toggle label="Hide rail while playing" value={Boolean(preferences?.hideRailWhilePlaying)} onChange={(value) => void updatePreferences({ hideRailWhilePlaying: value })} /></Row>
         </Section>
 
         {host || route ? <Section title="HOST & NETWORK">

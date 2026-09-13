@@ -58,11 +58,9 @@ test("stream defaults persist only the preference selected by each row", async (
   await fireEvent.press(view.getByLabelText("Stream quality"));
   await fireEvent.press(view.getByLabelText("Show HUD on connect"));
   await fireEvent.press(view.getByLabelText("Touch haptics"));
-  await fireEvent.press(view.getByLabelText("Hide rail while playing"));
   await waitFor(() => expect(updatePreferences).toHaveBeenCalledWith({ quality: "1440" }));
   expect(updatePreferences).toHaveBeenCalledWith({ showHudOnConnect: true });
   expect(updatePreferences).toHaveBeenCalledWith({ haptics: false });
-  expect(updatePreferences).toHaveBeenCalledWith({ hideRailWhilePlaying: false });
 });
 
 test("quality cycling follows the core tier order", async () => {

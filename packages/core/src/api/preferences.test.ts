@@ -40,7 +40,7 @@ describe("stream preferences", () => {
       quality: "auto",
       showHudOnConnect: false,
       haptics: false,
-      hideRailWhilePlaying: true,
+      hideRailWhilePlaying: false,
     });
   });
 });

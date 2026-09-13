@@ -11,7 +11,7 @@ export const DEFAULT_STREAM_PREFERENCES: StreamPreferences = {
   quality: "auto",
   showHudOnConnect: false,
   haptics: true,
-  hideRailWhilePlaying: true,
+  hideRailWhilePlaying: false,
 };
 
 const QUALITY_SELECTIONS: QualitySelection[] = ["auto", "480", "720", "1080", "1440"];

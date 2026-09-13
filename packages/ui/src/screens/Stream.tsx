@@ -12,7 +12,6 @@ import { StatsOverlay } from "../components/StatsOverlay";
 import { ErrorOverlay } from "../components/ErrorOverlay";
 
 type Net = "connected" | "connecting" | "disconnected";
-const IDLE_COLLAPSE_MS = 4000;
 
 export function Stream({
   route,
@@ -52,26 +51,15 @@ export function Stream({
   const dragStarted = useRef(false);
   const isScroll = useRef(false);
   const lastTouch = useRef({ x: 0, y: 0 });
-  const railTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const twoFingerMoved = useRef(false);
 
   currentQuality.current = preferences.quality;
 
-  const wakeRail = useCallback(() => {
-    setRailOpen(true);
-    if (railTimer.current) clearTimeout(railTimer.current);
-    if (preferences.hideRailWhilePlaying) {
-      railTimer.current = setTimeout(() => setRailOpen(false), IDLE_COLLAPSE_MS);
-    }
-  }, [preferences.hideRailWhilePlaying]);
+  const wakeRail = useCallback(() => setRailOpen(true), []);
   const tick = useCallback(() => {
     if (preferences.haptics) performHaptic?.();
   }, [performHaptic, preferences.haptics]);
 
-  useEffect(() => {
-    wakeRail();
-    return () => { if (railTimer.current) clearTimeout(railTimer.current); };
-  }, [wakeRail]);
   useEffect(() => {
     setStatsOn(preferences.showHudOnConnect);
     if (adaptive.current && appliedTier.current !== preferences.quality) {
@@ -366,8 +354,6 @@ export function Stream({
             navigation.navigate("InstanceList");
           }}
         onWake={wakeRail} tick={tick} />
-      {!railOpen && overlay === null ? <View testID="rail-wake-target" onTouchEnd={wakeRail}
-        style={{ position: "absolute", top: 0, right: 0, bottom: 0, width: 12 }} /> : null}
       {overlay === null ? <SwapControl activeIndex={Math.max(0, instances.findIndex((x) => x.serial === serial))} count={instances.length}
         onOpen={() => setOverlay("drawer")} onCycle={cycleInstance} onWake={wakeRail} tick={tick} /> : null}
 
