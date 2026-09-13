@@ -21,7 +21,7 @@ test("keeps the headroom neutral until network health is measured, then alerts o
   expect(headroom()).toEqual(expect.objectContaining({ backgroundColor: theme.color.live }));
 });
 
-test("anchors the HUD directly above the centered SWAP control", async () => {
+test("anchors the HUD in the top-left stream gutter", async () => {
   const view = await render(<StatsOverlay telemetry={{ decodeMs: null, networkMs: null, inputMs: null, jitterMs: null, bitrateMbps: null, droppedFrames: null, rttMs: null, loss: null, transport: "LAN" }} />);
-  expect(StyleSheet.flatten(view.getByTestId("diagnostic-hud").props.style)).toEqual(expect.objectContaining({ bottom: "50%", marginBottom: 66 }));
+  expect(StyleSheet.flatten(view.getByTestId("diagnostic-hud").props.style)).toEqual(expect.objectContaining({ top: 0, left: 0, width: 68 }));
 });

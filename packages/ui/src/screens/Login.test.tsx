@@ -122,10 +122,10 @@ describe("Login", () => {
     expect(navigation.replace).not.toHaveBeenCalled();
   });
 
-  test("renders only the real reachable private host", async () => {
+  test("renders the real reachable private host with the neutral relay state", async () => {
     const screen = await render(<Login navigation={navigation} />);
     expect(screen.getByText("LAN · 192.168.1.8:8080")).toHaveStyle({ color: theme.color.telemetry });
-    expect(screen.queryByText(/RELAY/)).toBeNull();
+    expect(screen.getByText("RELAY IDLE")).toHaveStyle({ color: theme.color.textMuted });
   });
 
   test("renders a public base as relay and updates a failed probe without an invented RTT", async () => {

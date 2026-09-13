@@ -37,8 +37,7 @@ class LauncherWindow(QMainWindow):
     def __init__(self, parent=None, on_stop_server=None):
         super().__init__(parent)
         self.setWindowTitle(f"EmuCtrl Host v{VERSION}")
-        self.resize(400, 460)
-        self.setMinimumWidth(380)
+        self.setFixedSize(400, 460)
         self._on_stop_server = on_stop_server
         self._active_streams_count = 0
         self._pending_update_version = None

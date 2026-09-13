@@ -25,7 +25,7 @@ export function StatsOverlay({ telemetry }: { telemetry: StreamTelemetry }) {
     : unhealthy ? theme.color.live : theme.color.telemetry;
   const rows = [["DECODE", value(telemetry.decodeMs, " ms")], ["NETWORK", value(telemetry.networkMs, " ms")], ["INPUT→HOST", value(telemetry.inputMs, " ms")], ["JITTER", value(telemetry.jitterMs, " ms")], ["BITRATE", value(telemetry.bitrateMbps, " Mb/s")], ["DROPPED", telemetry.droppedFrames === null ? "—" : String(telemetry.droppedFrames)]];
 
-  return <View testID="diagnostic-hud" style={{ position: "absolute", left: 0, bottom: "50%" as any, marginBottom: SWAP_CONTROL_HALF_HEIGHT + 8, width: 68, padding: 8, backgroundColor: theme.color.glass, borderRightWidth: 1, borderColor: theme.color.border }}>
+  return <View testID="diagnostic-hud" style={{ position: "absolute", left: 0, top: 0, width: 68, padding: 8, backgroundColor: theme.color.glass, borderRightWidth: 1, borderBottomWidth: 1, borderColor: theme.color.border }}>
     <View testID="diagnostic-hud-headroom" style={{ height: 3, backgroundColor: headroomColor, marginBottom: 8 }} />
     {rows.map(([label, reading]) => <View key={label} style={{ marginBottom: 7 }}><Text style={{ color: theme.color.textDim, fontFamily: theme.font.mono, fontSize: 7 }}>{label}</Text><Text style={{ color: theme.color.text, fontFamily: theme.font.monoBold, fontSize: 8 }}>{reading}</Text></View>)}
   </View>;

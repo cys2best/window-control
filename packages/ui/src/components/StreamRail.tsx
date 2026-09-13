@@ -56,7 +56,7 @@ export function StreamRail(props: StreamRailProps) {
     </View>
     <View style={{ borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.10)", paddingVertical: 8 }}>
       <RailKey testID="rail-exit" label="Exit stream" onPress={action(props.onExit)}>
-        <Text style={{ color: iconStroke, fontFamily: theme.font.monoBold, fontSize: 9, letterSpacing: 0.7 }}>EXIT</Text>
+        <View style={{ alignItems: "center", gap: 2 }}><Text style={{ color: iconStroke, fontSize: 16, lineHeight: 16 }}>×</Text><Text style={{ color: iconStroke, fontFamily: theme.font.monoBold, fontSize: 7, letterSpacing: 0.8 }}>EXIT</Text></View>
       </RailKey>
     </View>
   </View>;

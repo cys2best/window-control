@@ -44,19 +44,19 @@ export function Account({ navigation }: { navigation: any }) {
   return (
     <View style={{ flex: 1, backgroundColor: theme.color.screen }}>
       <ScrollView contentContainerStyle={{ padding: 24, paddingTop: 56, paddingBottom: 48 }}>
-        <Text style={{ fontFamily: theme.font.bold, fontSize: 26, color: theme.color.text }}>Account</Text>
+        <Text style={{ fontFamily: theme.font.semibold, fontSize: 22, letterSpacing: -0.2, color: theme.color.text, marginBottom: 2 }}>Settings</Text>
         <Section title="IDENTITY">
           <Row>
             <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
-              <View style={{ width: 56, height: 56, borderRadius: 28, alignItems: "center", justifyContent: "center", backgroundColor: theme.color.surfaceRaised }}>
+              <View style={{ width: 56, height: 56, borderRadius: 16, borderWidth: 1, borderColor: theme.color.border, alignItems: "center", justifyContent: "center", backgroundColor: theme.color.surfaceRaised }}>
                 <Text style={{ fontFamily: theme.font.monoMedium, fontSize: 18, color: theme.color.accent }}>{identity?.initials || "?"}</Text>
               </View>
               <View style={{ flex: 1, minWidth: 0 }}>
                 <Text numberOfLines={1} style={{ fontFamily: theme.font.semibold, fontSize: 17, color: theme.color.text }}>{identity?.displayName || "Signed in"}</Text>
                 <Text numberOfLines={1} style={{ marginTop: 2, fontFamily: theme.font.mono, fontSize: 12, color: theme.color.textMuted }}>{identity?.email || ""}</Text>
               </View>
-              <Pressable accessibilityRole="button" accessibilityLabel="Edit profile" disabled>
-                <Text style={{ fontFamily: theme.font.monoMedium, fontSize: 11, color: theme.color.textDim }}>EDIT</Text>
+              <Pressable accessibilityRole="button" accessibilityLabel="Edit profile" disabled style={{ padding: 7 }}>
+                <Text style={{ fontFamily: theme.font.monoMedium, fontSize: 9.5, letterSpacing: 1.1, color: theme.color.accent }}>EDIT</Text>
               </Pressable>
             </View>
           </Row>
@@ -65,8 +65,8 @@ export function Account({ navigation }: { navigation: any }) {
         <Section title="STREAM DEFAULTS">
           <Row>
             <Pressable accessibilityRole="button" accessibilityLabel="Stream quality" onPress={selectNextQuality} style={{ minHeight: 56, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-              <Text style={{ fontFamily: theme.font.medium, fontSize: 14, color: theme.color.text }}>Quality</Text>
-              <Text style={{ fontFamily: theme.font.monoMedium, fontSize: 12, color: theme.color.accent }}>{quality === "auto" ? "AUTO" : `${quality}P`}</Text>
+              <Text style={{ fontFamily: theme.font.medium, fontSize: 14.5, color: theme.color.text }}>Default quality</Text>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}><Text style={{ fontFamily: theme.font.monoMedium, fontSize: 12, color: theme.color.textMuted }}>{quality === "auto" ? "AUTO" : `${quality}P`}</Text><Text style={{ fontFamily: theme.font.mono, fontSize: 14, color: theme.color.textDim }}>›</Text></View>
             </Pressable>
           </Row>
           <Row><Toggle label="Show HUD on connect" value={Boolean(preferences?.showHudOnConnect)} onChange={(value) => void updatePreferences({ showHudOnConnect: value })} /></Row>
@@ -77,14 +77,14 @@ export function Account({ navigation }: { navigation: any }) {
         {host || route ? <Section title="HOST & NETWORK">
           {host ? <Row>
             <View style={{ flexDirection: "row", justifyContent: "space-between", gap: 16 }}>
-              <Text style={{ fontFamily: theme.font.medium, fontSize: 14, color: theme.color.text }}>Current host</Text>
-              <Text numberOfLines={1} style={{ flexShrink: 1, fontFamily: theme.font.mono, fontSize: 12, color: theme.color.textMuted }}>{host}</Text>
+              <Text style={{ fontFamily: theme.font.medium, fontSize: 14.5, color: theme.color.text }}>Current host</Text>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexShrink: 1 }}><Text numberOfLines={1} style={{ flexShrink: 1, fontFamily: theme.font.mono, fontSize: 12, color: theme.color.textMuted }}>{host}</Text><Text style={{ fontFamily: theme.font.mono, fontSize: 14, color: theme.color.textDim }}>›</Text></View>
             </View>
           </Row> : null}
           {route ? <Row>
             <View style={{ flexDirection: "row", justifyContent: "space-between", gap: 16 }}>
-              <Text style={{ fontFamily: theme.font.medium, fontSize: 14, color: theme.color.text }}>Connection route</Text>
-              <Text style={{ fontFamily: theme.font.mono, fontSize: 12, color: theme.color.textMuted }}>{route.toUpperCase()}</Text>
+              <Text style={{ fontFamily: theme.font.medium, fontSize: 14.5, color: theme.color.text }}>Connection route</Text>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}><Text style={{ fontFamily: theme.font.mono, fontSize: 12, color: theme.color.textMuted }}>{route.toUpperCase()}</Text><Text style={{ fontFamily: theme.font.mono, fontSize: 14, color: theme.color.textDim }}>›</Text></View>
             </View>
           </Row> : null}
         </Section> : null}

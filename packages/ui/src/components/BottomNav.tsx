@@ -22,16 +22,16 @@ export function BottomNav({ onInstances, onResume, onHealth }: BottomNavProps) {
     ? { top: 24 }
     : { bottom: Platform.OS === "web" ? "calc(34px + env(safe-area-inset-bottom, 0px))" : insets.bottom + 34 };
   return (
-    <View testID="navigation-capsule" style={{ position: "absolute", left: 20, right: 20, height: 60, flexDirection: "row",
-      alignItems: "center", paddingHorizontal: 8, backgroundColor: "rgba(19,22,31,.82)", borderRadius: theme.radius.pill, ...position } as any}>
+    <View testID="navigation-capsule" style={{ position: "absolute", left: 16, right: 16, height: 60, flexDirection: "row",
+      alignItems: "center", paddingHorizontal: 6, backgroundColor: "rgba(19,22,31,.82)", borderWidth: 1, borderColor: "#262b3c", borderRadius: theme.radius.pill, ...position } as any}>
       <Pressable accessibilityRole="button" accessibilityLabel="Instances" onPress={onInstances} style={{ flex: 1, height: 50, alignItems: "center", justifyContent: "center" }}>
-        <Text style={{ fontFamily: theme.font.monoMedium, fontSize: 11, color: theme.color.textMuted }}>Instances</Text>
+        <Text style={{ fontFamily: theme.font.monoMedium, fontSize: 8.5, letterSpacing: 1, color: theme.color.accent }}>INSTANCES</Text>
       </Pressable>
-      <Pressable accessibilityRole="button" accessibilityLabel="Resume" onPress={onResume} style={{ width: 50, height: 50, borderRadius: 25, alignItems: "center", justifyContent: "center", backgroundColor: theme.color.accent }}>
+      <Pressable accessibilityRole="button" accessibilityLabel="Resume" onPress={onResume} style={{ width: 66, height: 48, borderRadius: 25, alignItems: "center", justifyContent: "center", backgroundColor: theme.color.accent, shadowColor: theme.color.accent, shadowOpacity: .35, shadowRadius: 13, elevation: 5 }}>
         <Text style={{ fontFamily: theme.font.monoBold, fontSize: 11, color: theme.color.bg }}>▶</Text>
       </Pressable>
       <Pressable accessibilityRole="button" accessibilityLabel="Health" onPress={onHealth} style={{ flex: 1, height: 50, alignItems: "center", justifyContent: "center" }}>
-        <Text style={{ fontFamily: theme.font.monoMedium, fontSize: 11, color: theme.color.textMuted }}>Health</Text>
+        <Text style={{ fontFamily: theme.font.monoMedium, fontSize: 8.5, letterSpacing: 1, color: theme.color.textMuted }}>HEALTH</Text>
       </Pressable>
     </View>
   );

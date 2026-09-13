@@ -41,7 +41,7 @@ test("host card displays measured ping as its largest value and the current reac
   const screen = await render(<InstanceList navigation={nav} />);
   const rtt = await screen.findByText("23 ms");
   expect(StyleSheet.flatten(rtt.props.style)).toMatchObject({ fontSize: 18, fontFamily: "JetBrainsMono_400Regular" });
-  expect(screen.getByText("actual-host:8080")).toBeTruthy();
+  expect(screen.getAllByText("actual-host:8080")).toHaveLength(2);
   expect(screen.getByLabelText("LAN · actual-host:8080, reachable")).toBeTruthy();
   expect(StyleSheet.flatten(rtt.props.style)).toMatchObject({ fontSize: 18 });
   expect(screen.queryByText(/GPU|different-base|99 ms/)).toBeNull();
