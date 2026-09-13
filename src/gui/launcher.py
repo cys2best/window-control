@@ -5,7 +5,7 @@ from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QGroupBox, QDialog, QFrame
 )
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QFont, QFontMetrics
 
 from config import PORT, VERSION, SUPABASE_URL, SUPABASE_ANON_KEY, VPS_SIGNALING_URL
@@ -38,6 +38,7 @@ class LauncherWindow(QMainWindow):
         super().__init__(parent)
         self.setWindowTitle(f"EmuCtrl Host v{VERSION}")
         self.setFixedSize(400, 460)
+        self._enable_windows_dark_title_bar()
         self._on_stop_server = on_stop_server
         self._active_streams_count = 0
         self._pending_update_version = None
@@ -116,13 +117,18 @@ class LauncherWindow(QMainWindow):
         account_layout.addWidget(self._account_avatar)
 
         account_text = QWidget()
+        account_text.setFixedHeight(30)
         account_text_layout = QVBoxLayout(account_text)
         account_text_layout.setContentsMargins(0, 0, 0, 0)
-        account_text_layout.setSpacing(0)
+        account_text_layout.setSpacing(1)
         self._account_name = QLabel()
+        self._account_name.setFixedHeight(15)
+        self._account_name.setWordWrap(False)
         self._account_name.setFont(self._ui_font(12, QFont.DemiBold))
         self._account_name.setStyleSheet(f"color: {INK};")
         self._account_email_role = QLabel()
+        self._account_email_role.setFixedHeight(14)
+        self._account_email_role.setWordWrap(False)
         self._account_email_role.setFont(self._mono_font(9.5))
         self._account_email_role.setStyleSheet(f"color: {MUTED};")
         account_text_layout.addWidget(self._account_name)
@@ -240,6 +246,20 @@ class LauncherWindow(QMainWindow):
 
         layout.addLayout(actions_layout)
 
+    def _enable_windows_dark_title_bar(self) -> None:
+        """Use native dark Windows chrome; other platforms keep their default."""
+        if sys.platform != "win32":
+            return
+        try:
+            import ctypes
+            enabled = ctypes.c_int(1)
+            # DWMWA_USE_IMMERSIVE_DARK_MODE is 20 on current Windows 11.
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                int(self.winId()), 20, ctypes.byref(enabled), ctypes.sizeof(enabled)
+            )
+        except Exception:
+            pass
+
     def _create_divider(self) -> QFrame:
         divider = QFrame()
         divider.setFrameShape(QFrame.HLine)
@@ -325,9 +345,14 @@ class LauncherWindow(QMainWindow):
 
     def _set_account_state(self, avatar: str, name: str, detail: str, *, signed_in: bool) -> None:
         self._account_avatar.setText(avatar)
-        self._account_name.setText(name)
+        self._account_full_name = name
         self._account_full_email_role = detail
-        self._elide_account_detail()
+        self._account_name.setText(name)
+        self._account_email_role.setText(detail)
+        # The first refresh runs before Qt has assigned the label's final
+        # width. Re-elide on the next event-loop turn to avoid overlapping
+        # account text in the compact 47px strip.
+        QTimer.singleShot(0, self._elide_account_detail)
         self._sign_out_btn.setVisible(signed_in)
         self._sign_in_btn.setVisible(not signed_in and bool(SUPABASE_URL))
 
@@ -342,6 +367,12 @@ class LauncherWindow(QMainWindow):
         self._account_email_role.setText(
             QFontMetrics(self._account_email_role.font()).elidedText(
                 self._account_full_email_role, Qt.ElideRight, available
+            )
+        )
+        name_width = max(0, self._account_name.width())
+        self._account_name.setText(
+            QFontMetrics(self._account_name.font()).elidedText(
+                self._account_full_name, Qt.ElideRight, name_width
             )
         )
 

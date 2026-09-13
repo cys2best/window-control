@@ -1,3 +1,11 @@
+import { Platform } from "react-native";
+
+// Expo registers the native families under their asset names. The web app
+// loads the same faces from Google Fonts, where CSS requires their family
+// names instead. Using the Expo identifiers in a browser silently falls back
+// to a serif system face.
+const isWeb = Platform.OS === "web";
+
 export const theme = {
   color: {
     bg: "#06070b",
@@ -27,12 +35,12 @@ export const theme = {
   },
   radius: { card: 14, input: 11, pill: 999, sm: 8 },
   font: {
-    regular: "SpaceGrotesk_400Regular",
-    medium: "SpaceGrotesk_500Medium",
-    semibold: "SpaceGrotesk_600SemiBold",
-    bold: "SpaceGrotesk_700Bold",
-    mono: "JetBrainsMono_400Regular",
-    monoMedium: "JetBrainsMono_500Medium",
-    monoBold: "JetBrainsMono_700Bold",
+    regular: isWeb ? "Space Grotesk" : "SpaceGrotesk_400Regular",
+    medium: isWeb ? "Space Grotesk" : "SpaceGrotesk_500Medium",
+    semibold: isWeb ? "Space Grotesk" : "SpaceGrotesk_600SemiBold",
+    bold: isWeb ? "Space Grotesk" : "SpaceGrotesk_700Bold",
+    mono: isWeb ? "JetBrains Mono" : "JetBrainsMono_400Regular",
+    monoMedium: isWeb ? "JetBrains Mono" : "JetBrainsMono_500Medium",
+    monoBold: isWeb ? "JetBrains Mono" : "JetBrainsMono_700Bold",
   },
 } as const;

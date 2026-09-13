@@ -8,13 +8,15 @@ from PyQt5.QtGui import QFontDatabase
 from config import ASSETS_DIR
 
 
-CANVAS = "#06070b"
-SURFACE = "#090a0f"
-SURFACE_RAISED = "#13161f"
-HAIRLINE = "#222738"
-INK = "#E6EAF2"
-MUTED = "#7A8496"
-DIM = "#5C6679"
+# The host widget follows Windows 11 Fluent/Mica rather than the mobile/web
+# cyber canvas. Cyan remains the single shared brand accent.
+CANVAS = "#1c1c1c"
+SURFACE = "#1c1c1c"
+SURFACE_RAISED = "#232323"
+HAIRLINE = "#333333"
+INK = "#e0e0e0"
+MUTED = "#a0a0a0"
+DIM = "#808080"
 CYAN = "#00E5FF"
 TANGERINE = "#FF5722"
 MINT = "#10B981"
