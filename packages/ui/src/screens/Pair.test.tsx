@@ -114,3 +114,38 @@ test("on web there is no host field and the page's own host is used", async () =
 
   await waitFor(() => expect(pairDevice).toHaveBeenCalledWith("http://192.168.1.8:8080", "123456", "Browser"));
 });
+
+test.each([
+  ["192.168.1.8", "http://192.168.1.8:8080"],
+  ["192.168.1.8:9000", "http://192.168.1.8:9000"],
+  ["http://192.168.1.8", "http://192.168.1.8:8080"],
+  ["[fd7a:115c:a1e0::1]", "http://[fd7a:115c:a1e0::1]:8080"],
+  ["[fd7a:115c:a1e0::1]:9000", "http://[fd7a:115c:a1e0::1]:9000"],
+])("host %s is sent as %s", async (typed, sent) => {
+  const screen = await render(<Pair navigation={navigation} />);
+  await fireEvent.changeText(screen.getByPlaceholderText("Host address"), typed);
+  await fireEvent.changeText(screen.getByPlaceholderText("Pairing code"), "123456");
+  await fireEvent.press(screen.getByText("Pair"));
+
+  await waitFor(() => expect(pairDevice).toHaveBeenCalledWith(sent, "123456", "iPhone"));
+});
+
+test("an invalid host is reported and nothing is sent", async () => {
+  const screen = await render(<Pair navigation={navigation} />);
+  await fireEvent.changeText(screen.getByPlaceholderText("Host address"), "https://");
+  await fireEvent.changeText(screen.getByPlaceholderText("Pairing code"), "123456");
+  await fireEvent.press(screen.getByText("Pair"));
+
+  expect(await screen.findByText("That host address isn't valid")).toBeTruthy();
+  expect(pairDevice).not.toHaveBeenCalled();
+});
+
+test("on web the page's own origin gets no port added", async () => {
+  jest.replaceProperty(Platform, "OS", "web");
+  mockServer({ base: "https://host.example" });
+  const screen = await render(<Pair navigation={navigation} />);
+  await fireEvent.changeText(screen.getByPlaceholderText("Pairing code"), "123456");
+  await fireEvent.press(screen.getByText("Pair"));
+
+  await waitFor(() => expect(pairDevice).toHaveBeenCalledWith("https://host.example", "123456", "Browser"));
+});

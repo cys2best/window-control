@@ -12,6 +12,20 @@ function deviceName(): string {
   return "Browser";
 }
 
+const DEFAULT_HOST_PORT = "8080";
+
+// The host app listens on 8080; a host typed without a port would otherwise
+// go to port 80. Parsed by hand because React Native's URL does not implement
+// `port`/`hostname`. Bracketed IPv6 literals keep working.
+function withDefaultPort(url: string): string {
+  const match = /^(https?:\/\/)([^/?#]*)(.*)$/i.exec(url);
+  if (!match) return url;
+  const [, scheme, authority, rest] = match;
+  const hostPart = authority.slice(authority.lastIndexOf("@") + 1);
+  const hasPort = hostPart.startsWith("[") ? /\]:\d+$/.test(hostPart) : /:\d+$/.test(hostPart);
+  return hasPort ? url : `${scheme}${authority}:${DEFAULT_HOST_PORT}${rest}`;
+}
+
 export function Pair({ navigation }: { navigation: any }) {
   const { base, setServer, hostReachability } = useServer();
   // The web app is served by the host it talks to; a native app has to be
@@ -37,9 +51,16 @@ export function Pair({ navigation }: { navigation: any }) {
       setError("Enter the pairing code shown on your PC");
       return;
     }
-    const target = normalizeBase(/^https?:\/\//.test(entered) ? entered : `http://${entered}`);
     setBusy(true);
     try {
+      let target: string;
+      try {
+        target = normalizeBase(/^https?:\/\//.test(entered) ? entered : `http://${entered}`);
+        if (needsHost) target = withDefaultPort(target);
+      } catch {
+        setError("That host address isn't valid");
+        return;
+      }
       const result = await pairDevice(target, digits, deviceName());
       if ("error" in result) {
         setError(result.error);
