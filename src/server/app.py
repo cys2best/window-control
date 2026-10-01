@@ -11,68 +11,114 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from starlette.requests import HTTPConnection
 from starlette.routing import Match
 
 from config import WEB_BUILD_DIR, STUN_PORT, TIER_ORDER
 from server import adb_manager
-from server import auth
-from server import install_identity
-from server.ice_config import get_ice_servers
 from server.instance_manager import InstanceManager
-from server.http_tunnel import run_tunnel_with_reconnect
-from server.supabase_client import SupabaseClient, SupabaseUnavailable
+from server.network_gate import is_allowed_peer, is_loopback_peer
+from server.pairing import PairingStore, bearer_token
 from server.tailscale import get_best_ip
 
 log = logging.getLogger(__name__)
 
-_tunnel_task: "asyncio.Task | None" = None
-
-# Routes reachable without a JWT even when Supabase auth is enabled —
-# just enough to load the login/register UI and its Supabase config. These
-# are apps/web's page-shell HTML routes, the matching build-time-prerendered
-# `.txt` RSC payloads its client-side router fetches for the same shells,
-# and the PWA manifest/icon: each is static build output with no embedded
-# user data (same reasoning that exempted the old single-page client's "/"
-# wholesale) -- the actual protected data lives behind the JSON API routes
-# below, which stay gated.
-_AUTH_EXEMPT_PATHS = {
-    "/", "/login", "/stream", "/auth/config",
-    "/index.txt", "/login.txt", "/stream.txt", "/instances.txt", "/account.txt",
+# Routes an unpaired device may load: the pairing API and the static app
+# shell that renders the pairing screen. Each is build output with no user
+# data; the protected data lives behind the JSON API routes, which stay
+# gated.
+_PAIRING_EXEMPT_PATHS = {
+    "/", "/pair", "/pair/status", "/stream",
+    "/index.txt", "/pair.txt", "/stream.txt", "/instances.txt", "/account.txt",
     "/manifest.json", "/icon-192.png", "/icon-512.png", "/favicon.ico", "/404.html",
 }
 
 # apps/web's static export emits one `<route>.txt` file per route. Only
-# flat, alphanumeric names exist (index/login/setup/stream/instances); the
-# route below refuses anything else so a crafted name can never escape
-# WEB_BUILD_DIR through os.path.join (on Windows a backslash is a
-# separator too, and `{page}`'s default converter allows it).
+# flat, alphanumeric names exist; the route below refuses anything else so a
+# crafted name can never escape WEB_BUILD_DIR through os.path.join (on
+# Windows a backslash is a separator too, and `{page}`'s default converter
+# allows it).
 _RSC_PAYLOAD_NAME = re.compile(r"[A-Za-z0-9_-]+")
 
 
-def _prefers_html(request: Request) -> bool:
+def _prefers_html(request: HTTPConnection) -> bool:
     """True when the caller is a browser doing a top-level navigation.
 
     Browsers send `Accept: text/html,...` for document navigations;
     packages/core's API client and apps/mobile use plain `fetch()` with no
     Accept header at all (default `*/*`), so this cleanly separates "load
     the page" from "give me the JSON list" on the one path that must do
-    both. Used by BOTH the auth gate and GET /instances, deliberately the
+    both. Used by BOTH the access gate and GET /instances, deliberately the
     same single predicate on the same request — if the two ever disagreed,
-    an unauthenticated request could be waved past the gate and then
-    answered with real instance data.
+    an unpaired request could be waved past the gate and then answered with
+    real instance data.
     """
     return "text/html" in request.headers.get("accept", "")
 
 
-def _is_public_web_asset(request: Request) -> bool:
-    """Static apps/web build output that must load before/without a login."""
-    path = request.url.path
-    if path in _AUTH_EXEMPT_PATHS or path.startswith("/_next/"):
+def _is_pairing_exempt(scope) -> bool:
+    path = scope["path"]
+    if path in _PAIRING_EXEMPT_PATHS or path.startswith("/_next/"):
         return True
     # Browser navigation shells have no user data, while API-shaped requests
-    # on the shared paths remain protected (the /instances JSON list has a
-    # contract to preserve; /account intentionally has no JSON endpoint).
-    return request.method == "GET" and path in {"/instances", "/account"} and _prefers_html(request)
+    # on the shared paths remain protected.
+    return (
+        scope["method"] == "GET"
+        and path in {"/instances", "/account"}
+        and _prefers_html(HTTPConnection(scope))
+    )
+
+
+def _request_token(request: HTTPConnection) -> str | None:
+    return bearer_token(request.headers.get("authorization")) or request.query_params.get("token")
+
+
+class AccessGate:
+    """Network allowlist, then device pairing.
+
+    Pure ASGI rather than `@app.middleware("http")` so WebSocket scopes are
+    covered too: an HTTP-only middleware would let a future WebSocket route
+    bypass both checks.
+    """
+
+    def __init__(self, app, pairing: PairingStore):
+        self.app = app
+        self.pairing = pairing
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] not in ("http", "websocket"):
+            await self.app(scope, receive, send)
+            return
+        client = scope.get("client")
+        host = client[0] if client else None
+        if not is_allowed_peer(host):
+            await self._reject(scope, receive, send, 403, "Forbidden")
+            return
+        if not is_loopback_peer(host) and self._needs_token(scope):
+            if not self.pairing.is_valid_token(_request_token(HTTPConnection(scope))):
+                await self._reject(scope, receive, send, 401, "Not paired")
+                return
+        await self.app(scope, receive, send)
+
+    def _needs_token(self, scope) -> bool:
+        if scope["type"] == "websocket":
+            return True
+        if _is_pairing_exempt(scope):
+            return False
+        # Only gate paths that resolve to a registered route, so an unknown
+        # path still falls through to the router's normal 404.
+        return any(
+            route.matches(scope)[0] != Match.NONE
+            for route in scope["app"].router.routes
+        )
+
+    async def _reject(self, scope, receive, send, status: int, detail: str):
+        if scope["type"] == "websocket":
+            await send({"type": "websocket.close", "code": 1008})
+            return
+        headers = {"WWW-Authenticate": "Bearer"} if status == 401 else None
+        response = JSONResponse({"detail": detail}, status_code=status, headers=headers)
+        await response(scope, receive, send)
 
 
 def _log(msg: str):
@@ -198,11 +244,6 @@ async def _capture_preview(serial: str) -> Response:
     return Response(content=data, media_type="image/jpeg")
 
 
-def current_user(request: Request) -> auth.UserClaims | None:
-    token = auth.bearer_token(request.headers.get("authorization"))
-    if not token:
-        token = request.query_params.get("token")
-    return auth.verify_supabase_jwt(token)
 
 
 def _format_host(host: str) -> str:
@@ -212,98 +253,21 @@ def _format_host(host: str) -> str:
 
 
 def _selection_ice_servers(host: str) -> list[dict]:
-    """Place embedded request-host STUN first and de-duplicate URLs in order."""
-    servers = [{"urls": f"stun:{_format_host(host)}:{STUN_PORT}"}]
-    seen = {servers[0]["urls"]}
-    for server in get_ice_servers():
-        urls = server.get("urls")
-        values = urls if isinstance(urls, list) else [urls]
-        unique = []
-        for url in values:
-            if url and url not in seen:
-                seen.add(url)
-                unique.append(url)
-        if not unique:
-            continue
-        item = dict(server)
-        item["urls"] = unique if isinstance(urls, list) else unique[0]
-        servers.append(item)
-    return servers
+    return [{"urls": f"stun:{_format_host(host)}:{STUN_PORT}"}]
 
 
-def create_app(instance_manager: InstanceManager) -> FastAPI:
+class PairRequest(BaseModel):
+    code: str
+    device_name: str = ""
+
+
+def create_app(instance_manager: InstanceManager,
+               pairing: PairingStore | None = None) -> FastAPI:
     import asyncio
-    from config import (
-        PUBLIC_UI_URL, TUNNEL_SECRET, SUPABASE_URL, SUPABASE_ANON_KEY,
-        SUPABASE_SERVICE_ROLE_KEY,
-    )
-    if PUBLIC_UI_URL and not auth.auth_enabled():
-        raise RuntimeError("PUBLIC_UI_URL requires SUPABASE_URL to be set")
-    if PUBLIC_UI_URL and not TUNNEL_SECRET:
-        raise RuntimeError("PUBLIC_UI_URL requires TUNNEL_SECRET to be set")
-    if os.environ.get("AUTH_TOKEN") and not auth.auth_enabled():
-        log.warning(
-            "AUTH_TOKEN is set but SUPABASE_URL is not — AUTH_TOKEN no longer "
-            "does anything (it was replaced by Supabase auth); this deployment "
-            "is now UNAUTHENTICATED. Set SUPABASE_URL to re-enable auth, or "
-            "unset AUTH_TOKEN to acknowledge LAN-only mode."
-        )
+    if pairing is None:
+        pairing = PairingStore()
     app = FastAPI()
-
-    supabase = SupabaseClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY) if auth.auth_enabled() else None
-    _install_public_key = None
-    if auth.auth_enabled():
-        _, _install_public_key = install_identity.get_or_create_install_keypair()
-    _cached_owner_user_id = install_identity.get_cached_owner_user_id()
-
-    @app.middleware("http")
-    async def _auth_gate(request: Request, call_next):
-        request.state.user = None
-        # This middleware runs before Starlette's router does path matching,
-        # so a naive "not exempt -> require auth" check would 401 requests
-        # to *nonexistent* routes too (e.g. the removed POST /login) instead
-        # of letting them fall through to the router's normal 404. Only gate
-        # paths that actually resolve to a registered route.
-        if auth.auth_enabled() and not _is_public_web_asset(request) \
-                and any(route.matches(request.scope)[0] != Match.NONE
-                         for route in app.router.routes):
-            user = current_user(request)
-            if user is None:
-                return JSONResponse(
-                    {"detail": "Not authenticated"}, status_code=401,
-                    headers={"WWW-Authenticate": "Bearer"},
-                )
-            request.state.user = user
-
-            nonlocal _cached_owner_user_id
-            if _cached_owner_user_id is None:
-                # First-use claim: this install has no owner yet, adopt
-                # whoever successfully authenticates first.
-                # Best-effort: a Supabase hiccup here must not fail this
-                # unrelated request. The cache only advances on success, so
-                # the next request naturally retries.
-                try:
-                    await asyncio.to_thread(supabase.upsert_install, user.user_id, _install_public_key)
-                except SupabaseUnavailable:
-                    pass
-                else:
-                    install_identity.set_cached_owner_user_id(user.user_id)
-                    _cached_owner_user_id = user.user_id
-            elif user.user_id != _cached_owner_user_id:
-                # A different account than this install's already-claimed
-                # owner. Deliberately does NOT re-upsert or adopt -- an
-                # authenticated HTTP request alone must never be able to
-                # transfer ownership of an already-claimed install away
-                # from its real owner. Switching owners requires local
-                # filesystem access to this machine (delete
-                # install_owner.txt, see install_identity.py), matching the
-                # "attacker needs filesystem access to this specific PC"
-                # bar the rest of this design already assumes.
-                return JSONResponse(
-                    {"detail": "This install belongs to a different account"},
-                    status_code=403,
-                )
-        return await call_next(request)
+    app.add_middleware(AccessGate, pairing=pairing)
 
     @app.on_event("startup")
     async def _startup():
@@ -313,23 +277,6 @@ def create_app(instance_manager: InstanceManager) -> FastAPI:
         # Discover LDPlayer instances on startup
         import threading
         threading.Thread(target=instance_manager.refresh, daemon=True).start()
-
-        global _tunnel_task
-        if PUBLIC_UI_URL:
-            log.info("tunnel: starting task for %s", PUBLIC_UI_URL)
-            _tunnel_task = asyncio.create_task(
-                run_tunnel_with_reconnect(PUBLIC_UI_URL, TUNNEL_SECRET))
-
-    @app.on_event("shutdown")
-    async def _shutdown():
-        global _tunnel_task
-        if _tunnel_task is not None and not _tunnel_task.done():
-            log.info("tunnel: cancelling task on shutdown")
-            _tunnel_task.cancel()
-            try:
-                await _tunnel_task
-            except asyncio.CancelledError:
-                pass
 
     # ── Static / index ───────────────────────────────────────────────────────
     # apps/web (Next.js, output: "export") replaces the old hand-rolled
@@ -373,9 +320,24 @@ def create_app(instance_manager: InstanceManager) -> FastAPI:
     async def index():
         return _serve_web_page("index.html")
 
-    @app.get("/login")
-    async def login_page():
-        return _serve_web_page("login.html")
+    @app.get("/pair")
+    async def pair_page():
+        return _serve_web_page("pair.html")
+
+    @app.post("/pair")
+    async def pair_device(req: PairRequest):
+        token = await asyncio.to_thread(pairing.pair, req.code, req.device_name)
+        if token is None:
+            raise HTTPException(status_code=403, detail="Invalid or expired pairing code")
+        return {"token": token}
+
+    @app.get("/pair/status")
+    async def pair_status(request: Request):
+        host = request.client.host if request.client else None
+        return {
+            "paired": is_loopback_peer(host)
+            or pairing.is_valid_token(_request_token(request)),
+        }
 
     @app.get("/stream")
     async def stream_page():
@@ -434,14 +396,6 @@ def create_app(instance_manager: InstanceManager) -> FastAPI:
             headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
         )
 
-    @app.get("/auth/config")
-    async def auth_config():
-        return {
-            "auth_enabled": auth.auth_enabled(),
-            "supabase_url": SUPABASE_URL or "",
-            "supabase_anon_key": SUPABASE_ANON_KEY,
-        }
-
     # ── Instance management ──────────────────────────────────────────────────
 
     @app.get("/instances")
@@ -478,8 +432,6 @@ def create_app(instance_manager: InstanceManager) -> FastAPI:
             "h": selection.height,
             "whep_url": selection.whep_url,
             "whep_token": selection.whep_token,
-            "signaling_url": selection.signaling_url,
-            "public_session": selection.public_session,
             "ice_servers": _selection_ice_servers(host),
             "generation": selection.generation,
         }
@@ -563,7 +515,6 @@ def create_app(instance_manager: InstanceManager) -> FastAPI:
                 "w": selection.width, "h": selection.height,
                 "whep_url": selection.whep_url,
                 "stun_url": f"stun:{host}:{STUN_PORT}",
-                "signaling_url": selection.signaling_url,
                 "ice_servers": _selection_ice_servers(host)}
 
     # ── Preview (legacy URL) ─────────────────────────────────────────────────

@@ -130,31 +130,22 @@ def test_instance_select_returns_exact_engine_contract():
     manager.select.return_value = EngineSelection(
         whep_url="http://100.64.1.4:51000/whep",
         whep_token="whep-token",
-        signaling_url="wss://signal.example",
-        public_session="owner-1.instance0",
+        signaling_url=None,
+        public_session=None,
         generation=3,
         width=720,
         height=1280,
     )
-    with patch("server.app.get_best_ip", return_value="100.64.1.4"), \
-         patch("server.app.get_ice_servers", return_value=[
-             {"urls": "stun:100.64.1.4:3478"},
-             {"urls": "stun:stun.l.google.com:19302"},
-         ]):
+    with patch("server.app.get_best_ip", return_value="100.64.1.4"):
         response = client.post("/instances/emulator-5554/select")
     assert response.status_code == 200
     body = response.json()
     assert set(body) == {
         "ok", "id", "serial", "name", "w", "h", "whep_url",
-        "whep_token", "signaling_url", "public_session", "ice_servers",
-        "generation",
+        "whep_token", "ice_servers", "generation",
     }
-    assert body["public_session"] == "owner-1.instance0"
     assert body["whep_token"] == "whep-token"
-    assert body["ice_servers"] == [
-        {"urls": "stun:100.64.1.4:3478"},
-        {"urls": "stun:stun.l.google.com:19302"},
-    ]
+    assert body["ice_servers"] == [{"urls": "stun:100.64.1.4:3478"}]
     manager.select.assert_called_once_with("emulator-5554", "100.64.1.4")
 
 
@@ -168,23 +159,7 @@ def test_instance_select_statuses_are_distinct():
     assert client.post("/instances/emulator-5554/select").status_code == 503
 
 
-def test_instance_select_nulls_disabled_public_capabilities_together():
-    client, manager = _make_client()
-    manager.get.return_value = make_instance()
-    manager.select.return_value = EngineSelection(
-        whep_url="http://100.64.1.4:51000/whep", whep_token="whep-token",
-        signaling_url=None, public_session=None, generation=4,
-        width=1280, height=720,
-    )
-
-    response = client.post("/instances/emulator-5554/select")
-
-    assert response.status_code == 200
-    assert response.json()["signaling_url"] is None
-    assert response.json()["public_session"] is None
-
-
-def test_instance_select_formats_ipv6_stun_and_removes_duplicate_urls():
+def test_instance_select_formats_ipv6_stun():
     client, manager = _make_client()
     manager.get.return_value = make_instance()
     manager.select.return_value = EngineSelection(
@@ -192,17 +167,12 @@ def test_instance_select_formats_ipv6_stun_and_removes_duplicate_urls():
         signaling_url=None, public_session=None, generation=4,
         width=1280, height=720,
     )
-    with patch("server.app.get_best_ip", return_value="fd7a:115c:a1e0::1"), \
-         patch("server.app.get_ice_servers", return_value=[
-             {"urls": "stun:[fd7a:115c:a1e0::1]:3478"},
-             {"urls": ["stun:other", "stun:other"]},
-         ]):
+    with patch("server.app.get_best_ip", return_value="fd7a:115c:a1e0::1"):
         response = client.post("/instances/emulator-5554/select")
 
     assert response.status_code == 200
     assert response.json()["ice_servers"] == [
         {"urls": "stun:[fd7a:115c:a1e0::1]:3478"},
-        {"urls": ["stun:other"]},
     ]
 
 
@@ -307,7 +277,7 @@ def test_instances_json_contract_is_unchanged_for_api_consumers(headers, tmp_pat
 @pytest.mark.parametrize("path,name", [
     ("/instances.txt", "instances.txt"),
     ("/index.txt", "index.txt"),
-    ("/login.txt", "login.txt"),
+    ("/pair.txt", "pair.txt"),
 ])
 def test_rsc_payloads_are_served_so_soft_navigation_does_not_hard_reload(
     path, name, tmp_path
@@ -365,14 +335,10 @@ def test_manifest_and_icon_are_served_for_pwa_installability(tmp_path):
     assert favicon.headers["content-type"].startswith("image/x-icon")
 
 
-def test_favicon_and_icon_512_are_auth_exempt():
-    """Static brand assets must load before/without a login, same as
-    icon-192.png and manifest.json. (Full 401-vs-200 auth-enabled behavior
-    for exempt paths is covered end-to-end in test_app_auth.py; this just
-    guards the exemption list itself, which is the thing Step 6 changes.)"""
+def test_favicon_and_icon_512_are_pairing_exempt():
     import server.app as app_module
-    assert "/icon-512.png" in app_module._AUTH_EXEMPT_PATHS
-    assert "/favicon.ico" in app_module._AUTH_EXEMPT_PATHS
+    assert "/icon-512.png" in app_module._PAIRING_EXEMPT_PATHS
+    assert "/favicon.ico" in app_module._PAIRING_EXEMPT_PATHS
 
 
 def test_android_mjpeg_runtime_is_absent():
