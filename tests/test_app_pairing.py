@@ -17,7 +17,8 @@ def _make(peer, pairing=None, instances=None, **client_kwargs):
     manager = MagicMock()
     manager.list_instances.return_value = instances or []
     manager.active = None
-    pairing = pairing or PairingStore()
+    if pairing is None:
+        pairing = PairingStore()
     with patch("server.app.get_best_ip", return_value="127.0.0.1"):
         app = create_app(manager, pairing)
     return TestClient(app, client=peer, **client_kwargs), pairing
@@ -162,6 +163,62 @@ def test_garbage_tokens_are_rejected():
     for value in ("Bearer nope", "Basic abc", "Bearer ", "nope"):
         assert client.get("/instances", headers={"Authorization": value}).status_code == 401
     assert client.get("/instances?token=nope").status_code == 401
+
+
+# -- html shell exemption (regression) ──────────────────────────────────────
+
+def test_instances_html_shell_exemption_for_unpaired_lan_peer(tmp_path):
+    import server.app as app_module
+    (tmp_path / "instances.html").write_text("<html>instances shell</html>")
+    with patch.object(app_module, "WEB_BUILD_DIR", str(tmp_path)):
+        client, _ = _make(LAN, instances=[{"id": "adb:a", "serial": "a", "name": "test"}])
+        # HTML preference → shell, not instance data (which would leak details to unpaired peer)
+        response = client.get("/instances", headers={"Accept": "text/html"})
+        assert response.status_code == 200
+        assert response.text == "<html>instances shell</html>"
+
+
+def test_instances_json_api_requires_pairing_for_unpaired_lan_peer(tmp_path):
+    import server.app as app_module
+    (tmp_path / "instances.html").write_text("<html>instances shell</html>")
+    with patch.object(app_module, "WEB_BUILD_DIR", str(tmp_path)):
+        client, _ = _make(LAN, instances=[{"id": "adb:a", "serial": "a"}])
+        # JSON-like Accept headers → require pairing
+        for headers in [{}, {"Accept": "*/*"}, {"Accept": "application/json"}]:
+            response = client.get("/instances", headers=headers)
+            assert response.status_code == 401, f"Failed for headers {headers}"
+            assert response.headers["www-authenticate"] == "Bearer"
+
+
+def test_account_html_shell_exemption_for_unpaired_lan_peer(tmp_path):
+    import server.app as app_module
+    (tmp_path / "account.html").write_text("<html>account shell</html>")
+    with patch.object(app_module, "WEB_BUILD_DIR", str(tmp_path)):
+        client, _ = _make(LAN)
+        # HTML preference → shell
+        response = client.get("/account", headers={"Accept": "text/html"})
+        assert response.status_code == 200
+        assert response.text == "<html>account shell</html>"
+
+
+def test_account_json_api_requires_pairing_for_unpaired_lan_peer():
+    client, _ = _make(LAN)
+    # JSON-like Accept → require pairing
+    response = client.get("/account", headers={"Accept": "application/json"})
+    assert response.status_code == 401
+    assert response.headers["www-authenticate"] == "Bearer"
+
+
+def test_loopback_and_paired_peers_get_json_without_html_header():
+    client_loopback, _ = _make(LOOPBACK, instances=[{"id": "adb:a", "serial": "a"}])
+    assert client_loopback.get("/instances").headers["content-type"].startswith("application/json")
+    assert client_loopback.get("/instances", headers={"Accept": "*/*"}).headers["content-type"].startswith("application/json")
+
+    client_lan, pairing = _make(LAN, instances=[{"id": "adb:a", "serial": "a"}])
+    token = _pair(client_lan, pairing)
+    headers = {"Authorization": f"Bearer {token}"}
+    assert client_lan.get("/instances", headers=headers).headers["content-type"].startswith("application/json")
+    assert client_lan.get("/instances", headers={**headers, "Accept": "*/*"}).headers["content-type"].startswith("application/json")
 
 
 # -- websocket scopes ------------------------------------------------------
