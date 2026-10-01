@@ -39,44 +39,26 @@ Grab the latest `WindowControlInstaller.exe` from the [Releases](../../releases)
 
 Works on the same Wi-Fi network. Use the LAN IP shown in the launcher.
 
-## Multi-user authentication (optional)
+## Access and pairing
 
-By default (no `SUPABASE_URL` set) auth is fully disabled — LAN-only mode,
-open to anyone who can reach the app. To require sign-in with a real
-account — and to bind this install to a single owning account, so only
-that account's logins can drive it or use its public-relay path — create a
-[Supabase](https://supabase.com) project and set:
+EmuCtrl answers only devices on the same local network or on your Tailscale
+network. Requests from any other address are refused.
 
-- `SUPABASE_URL` — the project URL; unset means auth disabled. Also the
-  source of the public JWKS endpoint used to verify access tokens
-  (`<SUPABASE_URL>/auth/v1/.well-known/jwks.json`, ES256 — Supabase's
-  current default signing key type; no shared secret needed)
-- `SUPABASE_ANON_KEY` — public, safe to ship to browser/mobile/tray
-  clients; used only to talk to Supabase's Auth REST API directly for
-  login/register
-- `SUPABASE_SERVICE_ROLE_KEY` — server-only, full-access Postgres REST
-  credential used solely for the `installs` table, after FastAPI has
-  already authenticated the caller — it registers this install's
-  Ed25519 public key against the owning account so the public signaling
-  relay can verify the engine's identity
+A device has to be paired once before it can use the app:
 
-Before setting these in production, apply
-[infra/supabase/installs.sql](infra/supabase/installs.sql) once against
-the project's Supabase Postgres — via the Supabase SQL editor, or
-`supabase db push`. It is not run by any automated migration.
+1. On the PC, open EmuCtrl Host and click **Pair device**. A 6-digit code
+   appears for 5 minutes.
+2. On the phone or browser, open the app and enter the code. On the mobile
+   app, also enter the PC's address (for example `100.101.102.103:8080`).
+3. The device is remembered. Remove it from **Paired Devices** in the host
+   window to revoke its access.
 
-### Install ownership
+The window on the PC itself needs no pairing.
 
-Ownership is per *install*, not per instance: whichever account
-authenticates first against a fresh install claims it (trust-on-first-use),
-and every subsequent login by that account sees all of that PC's
-instances. After the claim the install is locked — a request from any
-other authenticated account is rejected with `403`, so no self-registered
-account can seize an install it doesn't own. Transferring an install to a
-different account therefore requires local access to the machine: delete
-`install_owner.txt` from the writable data directory
-(`C:\ProgramData\WindowControl\` on Windows) before the new account's
-first login, and it will be claimed again by whoever logs in next.
+Traffic on the local network is plain HTTP, so anyone able to intercept
+traffic on that network can read a pairing code or a device's token.
+Tailscale traffic is encrypted. On networks you do not control, connect over
+Tailscale.
 
 ## Troubleshooting
 
