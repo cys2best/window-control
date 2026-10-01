@@ -205,12 +205,13 @@ test("terminal input failure releases an active drag before reconnecting", async
   expect(client.select).toHaveBeenCalledTimes(2);
 });
 
-test("adaptive stall leaves the connected peer in place", async () => {
+test("adaptive stall requests a keyframe and leaves the connected peer in place", async () => {
   const session = makeFakeSession();
   let adaptiveOptions: any;
+  const adaptive = makeFakeAdaptive();
   (Adaptive.makeAdaptive as jest.Mock).mockImplementation((opts: any) => {
     adaptiveOptions = opts;
-    return { start: jest.fn(), stop: jest.fn(), pin: jest.fn(), setAuto: jest.fn() } as any;
+    return adaptive as any;
   });
   (Core.connectEngineSession as jest.Mock).mockResolvedValue(session as any);
   const client = {
@@ -224,7 +225,11 @@ test("adaptive stall leaves the connected peer in place", async () => {
   await render(<Stream route={{ params: { serial: "A" } }} navigation={{ navigate: jest.fn(), setParams: jest.fn() }} RTCImpl={FakeRTCPeerConnection} VideoView={FakeVideoView} />);
   await waitFor(() => expect(adaptiveOptions).toBeDefined());
 
-  expect(adaptiveOptions.onStall).toBeUndefined();
+  await waitFor(() => expect(adaptive.start).toHaveBeenCalledWith(session.pc));
+  session.input.send.mockClear();
+  adaptiveOptions.onStall();
+
+  expect(session.input.send).toHaveBeenCalledWith({ type: "idr" });
   expect(client.select).toHaveBeenCalledTimes(1);
   expect(Core.connectEngineSession).toHaveBeenCalledTimes(1);
   expect(session.close).not.toHaveBeenCalled();

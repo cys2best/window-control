@@ -146,7 +146,12 @@ export function Stream({
       adaptive.current = makeAdaptive({
         serial,
         onApply: (t) => client.setQuality(serial, t),
+        // The engine does not answer RTCP PLI, so a decoder that lost a
+        // frame stays frozen until the next keyframe. Ask for one on the
+        // live peer rather than tearing the session down.
+        onStall: () => { if (session.current === s) s.input.send({ type: "idr" }); },
       });
+      adaptive.current.start(s.pc);
       const quality = currentQuality.current;
       if (quality === "auto") adaptive.current.setAuto();
       else adaptive.current.pin(quality);
