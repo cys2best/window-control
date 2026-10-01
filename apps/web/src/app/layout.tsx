@@ -44,6 +44,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap"
           rel="stylesheet"
         />
+        {/* react-native-web screens size themselves with `flex: 1`, which
+            only fills the viewport when the body is a full-height flex
+            column; otherwise they collapse to content height and the
+            default white page shows below. 100dvh (falling back to 100%)
+            tracks mobile Safari's collapsing toolbar. */}
+        <style>{"html,body{height:100%;margin:0;background:#06070b}body{display:flex;flex-direction:column;height:100dvh;overflow:hidden}"}</style>
       </head>
       <body>
         <Providers>{children}</Providers>

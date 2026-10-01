@@ -25,7 +25,7 @@ export type StreamRailProps = {
 function RailKey({ label, active, onPress, children, testID = "rail-key" }: { label: string; active?: boolean; onPress: () => void; children: React.ReactNode; testID?: string }) {
   return <Pressable testID={testID} accessibilityRole="button" accessibilityLabel={label}
     onPress={() => { onPress(); }}
-    style={({ pressed }) => ({ width: 52, height: 52, alignItems: "center", justifyContent: "center",
+    style={({ pressed }) => ({ width: 52, height: 52, flexShrink: 1, minHeight: 28, alignItems: "center", justifyContent: "center",
       backgroundColor: pressed ? "rgba(255,87,34,0.18)" : active ? "rgba(0,229,255,0.13)" : "transparent",
       borderWidth: active ? 1 : 0, borderColor: theme.color.accent })}>
     {children}

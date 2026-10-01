@@ -24,6 +24,14 @@ test("rail exposes the locked key order and system commands", async () => {
   expect(props.onSystemKey).toHaveBeenCalledWith("AppSwitch");
 });
 
+test("rail keys shrink instead of overlapping on a short viewport", async () => {
+  const view = await render(<StreamRail {...makeRailProps()} />);
+  for (const key of view.getAllByTestId("rail-key")) {
+    const style = key.props.style;
+    expect(style).toMatchObject({ flexShrink: 1, minHeight: 28 });
+  }
+});
+
 test("EXIT is separated and invokes exit", async () => {
   const props = makeRailProps();
   const view = await render(<StreamRail {...props} />);
