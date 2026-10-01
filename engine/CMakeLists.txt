@@ -7,9 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 if(MSVC)
   # MSVC's __cplusplus macro is stuck at 199711L unless this is set, no
-  # matter what /std: flag is active — websocketpp's C++11 feature
-  # detection (random.hpp's std::random vs. Boost fallback) reads
-  # __cplusplus directly and silently picks the Boost path without it.
+  # matter what /std: flag is active; library feature detection reads it.
   add_compile_options(/Zc:__cplusplus)
 endif()
 
@@ -18,8 +16,6 @@ if(NOT WIN32)
 endif()
 
 find_package(libdatachannel CONFIG REQUIRED)
-find_package(websocketpp CONFIG REQUIRED)
-find_package(asio CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(httplib CONFIG REQUIRED)
 find_package(OpenSSL REQUIRED)
@@ -30,7 +26,6 @@ find_package(GTest CONFIG REQUIRED)
 add_library(engine_core
   src/scrcpy_video.cpp
   src/scrcpy_control.cpp
-  src/signaling_client.cpp
   src/peer_session.cpp
   src/peer_registry.cpp
   src/h264_nalu.cpp
@@ -41,28 +36,22 @@ add_library(engine_core
   src/scrcpy_source.cpp
   src/source_video_fanout.cpp
   src/admin_handler.cpp
-  src/public_signaling.cpp
   src/input_router.cpp
   src/engine_config.cpp
 )
 target_include_directories(engine_core PUBLIC src)
-target_compile_definitions(engine_core PUBLIC ASIO_STANDALONE)
 target_link_libraries(engine_core PUBLIC
   LibDataChannel::LibDataChannel
-  websocketpp::websocketpp
-  asio::asio
   nlohmann_json::nlohmann_json
   httplib::httplib
   OpenSSL::SSL
   OpenSSL::Crypto
   ws2_32.lib
-  crypt32.lib
 )
 
 add_executable(engine_tests
   test/test_scrcpy_video.cpp
   test/test_scrcpy_control.cpp
-  test/test_signaling_client.cpp
   test/test_h264_nalu.cpp
   test/test_http_server.cpp
   test/test_peer_session.cpp
@@ -72,7 +61,6 @@ add_executable(engine_tests
   test/test_scrcpy_source.cpp
   test/test_source_video_fanout.cpp
   test/test_admin_handler.cpp
-  test/test_public_signaling.cpp
   test/test_input_router.cpp
   test/test_main_wiring.cpp
 )

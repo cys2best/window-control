@@ -4,10 +4,8 @@
 #include "http_server.h"
 #include "input_router.h"
 #include "peer_registry.h"
-#include "public_signaling.h"
 #include "ready_record.h"
 #include "scrcpy_source.h"
-#include "signaling_client.h"
 #include "whep_capability.h"
 #include "whep_handler.h"
 #include <atomic>
@@ -65,9 +63,7 @@ int main(int argc, char** argv) {
     if (argc < 3) {
         std::cerr << "Usage: engine.exe <instance_name> <scrcpy_port>\n"
                      "Environment: ENGINE_WHEP_CAPABILITY_SECRET, "
-                     "ENGINE_LOCAL_ICE_SERVERS, ENGINE_SIGNALING_URL, "
-                     "ENGINE_SIGNALING_TOKEN, ENGINE_SESSION, "
-                     "ENGINE_PUBLIC_ICE_SERVERS\n";
+                     "ENGINE_LOCAL_ICE_SERVERS\n";
         return 1;
     }
 
@@ -96,22 +92,6 @@ int main(int argc, char** argv) {
         adminHandler.RegisterRoutes(adminServer.Server());
         adminServer.Start();
 
-        std::unique_ptr<PublicSignalingBridge> publicBridge;
-        // Destroy the transport first on exceptional exits so its callback
-        // cannot outlive the bridge object it captures.
-        std::unique_ptr<SignalingClient> signaling;
-        std::string signalingUrl = GetEnvOrEmpty("ENGINE_SIGNALING_URL");
-        if (!signalingUrl.empty()) {
-            std::string signalingToken = GetEnvOrEmpty("ENGINE_SIGNALING_TOKEN");
-            std::string session = GetEnvOrEmpty("ENGINE_SESSION");
-            if (session.empty()) session = instanceName;
-            signaling = std::make_unique<SignalingClient>(
-                signalingUrl, session, "engine", signalingToken);
-            auto publicIceServers = ParseCommaSeparatedList(GetEnvOrEmpty("ENGINE_PUBLIC_ICE_SERVERS"));
-            publicBridge = std::make_unique<PublicSignalingBridge>(*signaling, registry, publicIceServers, inputRouter);
-            publicBridge->Start();
-        }
-
         auto status = source.Status();
         std::string ready = BuildReadyRecord(
             instanceName, GetProcId(), whepServer.Port(), adminServer.Port(),
@@ -130,7 +110,6 @@ int main(int argc, char** argv) {
 
         whepServer.Stop();
         adminServer.Stop();
-        if (signaling) signaling->Disconnect();
         inputPeerShutdown.Run();
         std::cout << "Stopped.\n";
         return 0;

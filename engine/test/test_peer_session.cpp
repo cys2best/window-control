@@ -32,7 +32,7 @@ std::shared_ptr<rtc::Track> AddRecvOnlyH264Video(
 
 // Drives a bare rtc::PeerConnection through the *offerer* side, waiting
 // for its own ICE gathering to complete before returning the offer SDP —
-// mirrors what a real browser/mobile WHEP or VPS-signaling client does.
+// mirrors what a real browser/mobile WHEP client does.
 std::string CreateGatheredOffer(rtc::PeerConnection& pc, OfferChannels& channels) {
     channels.video = AddRecvOnlyH264Video(pc);
     channels.input = pc.createDataChannel("input");
