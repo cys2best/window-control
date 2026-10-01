@@ -178,6 +178,12 @@ def main():
             _log(f"[GUI] firewall rule ensured for STUN {STUN_PORT}")
         threading.Thread(target=_win32_setup, daemon=True).start()
 
+    # Must be set before the application exists. Without them Qt 5 on a
+    # scaled Windows display grows point-size text but not pixel sizes, and
+    # the fixed-size host window clips its own content.
+    from PyQt5.QtCore import Qt
+    QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
+    QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
 

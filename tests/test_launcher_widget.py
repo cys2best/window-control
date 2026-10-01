@@ -191,3 +191,38 @@ def test_removal_that_is_saved_shows_no_warning(qapp, tmp_path):
         window.show()
         window._unpair_all_btn.click()
         assert window._save_warning_label.isHidden()
+
+
+def _content_height(window):
+    return window.centralWidget().sizeHint().height()
+
+
+def test_window_is_tall_enough_for_its_content(qapp):
+    from server.pairing import PairingStore
+    store = PairingStore()
+    store.pair(store.start_pairing(), "Phone")
+    with patch("gui.launcher.check_for_update"):
+        from gui.launcher import LauncherWindow
+        window = LauncherWindow(pairing=store)
+        assert window.height() >= _content_height(window)
+
+
+def test_window_grows_when_the_update_banner_and_save_warning_appear(qapp, tmp_path):
+    from server.pairing import PairingStore
+    blocker = tmp_path / "blocker"
+    blocker.write_text("a file where a directory is needed")
+    store = PairingStore(str(blocker / "paired_devices.json"))
+    store.pair(store.start_pairing(), "Phone")
+    with patch("gui.launcher.check_for_update"):
+        from gui.launcher import LauncherWindow
+        window = LauncherWindow(pairing=store)
+        before = window.height()
+
+        window._on_update_available("9.9.9")
+        window._unpair_all()
+        qapp.processEvents()
+
+        assert window._save_warning_label.isVisibleTo(window)
+        assert window.height() > before
+        assert window.height() >= _content_height(window)
+        assert window.width() == 400

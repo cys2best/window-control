@@ -60,8 +60,14 @@ class _FakeThread:
 
 
 class _FakeApplication:
+    attributes: list = []
+
     def __init__(self, argv):
         self.argv = argv
+
+    @classmethod
+    def setAttribute(cls, attribute, on=True):
+        cls.attributes.append((attribute, on))
 
     def setQuitOnLastWindowClosed(self, value):
         pass
@@ -273,3 +279,14 @@ def test_uvicorn_binds_all_interfaces_and_ignores_forwarded_headers():
     kwargs = {kw.arg: kw.value for kw in configs[0].keywords}
     assert isinstance(kwargs["host"], ast.Constant) and kwargs["host"].value == "0.0.0.0"
     assert isinstance(kwargs["proxy_headers"], ast.Constant) and kwargs["proxy_headers"].value is False
+
+
+def test_high_dpi_scaling_is_enabled_before_the_application_is_created():
+    # Without it, Qt 5 on a scaled Windows display grows point-size text but
+    # keeps pixel sizes, so the fixed-size host window clips its own content.
+    # The attributes only take effect when set before QApplication exists.
+    source = (Path(__file__).parent.parent / "src" / "main.py").read_text()
+    created = source.index("QApplication(sys.argv)")
+    for attribute in ("AA_EnableHighDpiScaling", "AA_UseHighDpiPixmaps"):
+        assert attribute in source, attribute
+        assert source.index(attribute) < created, attribute

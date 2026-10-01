@@ -38,6 +38,7 @@ class LauncherWindow(QMainWindow):
 
         self._setup_ui()
         self._refresh_status()
+        self._fit_height()
         # The server thread pairs devices and the code expires on its own, so
         # the group is polled rather than pushed to.
         self._pairing_timer = QTimer(self)
@@ -45,6 +46,16 @@ class LauncherWindow(QMainWindow):
         self._pairing_timer.timeout.connect(self._refresh_pairing)
         self._pairing_timer.start()
         check_for_update(self._on_update_available)
+
+    def _fit_height(self) -> None:
+        """Keep the fixed width but never be shorter than the content: the
+        update banner and the save warning appear after construction. Callers
+        that just showed or hid a widget schedule this through the event loop,
+        because Qt refreshes the affected size hints only once the pending
+        layout requests have been delivered."""
+        central = self.centralWidget()
+        central.layout().activate()
+        self.setFixedSize(400, max(560, central.sizeHint().height()))
 
     def closeEvent(self, event):
         """Minimize to tray on window close."""
@@ -356,6 +367,7 @@ class LauncherWindow(QMainWindow):
 
     def _show_save_warning(self):
         self._save_warning_label.setVisible(not self._pairing.last_save_ok)
+        QTimer.singleShot(0, self._fit_height)
 
     def update_active_streams(self, count: int):
         self._active_streams_count = count
@@ -383,6 +395,7 @@ class LauncherWindow(QMainWindow):
         self._install_btn.setText("Install Update")
         self._install_btn.setEnabled(True)
         self._update_banner.show()
+        QTimer.singleShot(0, self._fit_height)
 
     def _on_install_update(self):
         from updater import download_and_install
