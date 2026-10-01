@@ -69,3 +69,41 @@ def test_cmake_keeps_the_dependencies_local_whep_needs():
     for token in ("libdatachannel", "nlohmann_json", "httplib", "OpenSSL",
                   "ws2_32.lib", "engine_tests"):
         assert token in cmake, token
+
+
+REPO = Path(__file__).parent.parent
+
+REMOVED_VERIFIER_FILES = (
+    "scripts/verify_engine_cutover.py",
+    "scripts/verify_python_orchestration.py",
+    "scripts/verify_frontend_cutover.py",
+    "scripts/verify_lib.py",
+    "scripts/measure_engine_cutover.py",
+    "engine/verify-engine-cutover.ps1",
+    "engine/verify-python-orchestration.ps1",
+    "engine/verify-frontend-cutover.ps1",
+    "engine/measure-engine-cutover.ps1",
+    "engine/test/cutover_metrics_page.html",
+    "engine/test/python_orchestration_verifier.html",
+    "tests/test_engine_cutover_verifier.py",
+    "tests/test_windows_verifier.py",
+    "tests/test_frontend_cutover_verifier.py",
+    "tests/test_measure_engine_cutover.py",
+    "tests/test_verify_lib.py",
+)
+
+
+@pytest.mark.parametrize("relative", REMOVED_VERIFIER_FILES)
+def test_removed_verifier_files_are_gone(relative):
+    assert not (REPO / relative).exists(), relative
+
+
+def test_kept_verification_entry_points_remain():
+    assert (REPO / "scripts" / "verify_all.py").exists()
+    assert (REPO / "engine" / "verify-all.ps1").exists()
+    assert (REPO / "engine" / "test.ps1").exists()
+
+
+def test_websockets_is_no_longer_a_dependency():
+    for name in ("pyproject.toml", "requirements.txt"):
+        assert "websockets" not in (REPO / name).read_text(encoding="utf-8").lower(), name

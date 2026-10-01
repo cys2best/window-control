@@ -87,20 +87,3 @@ def test_ci_runs_engine_tests_between_build_and_staging():
     assert build < tests < stage
 
 
-def test_engine_cutover_wrapper_forwards_the_complete_safety_contract():
-    wrapper = REPO_ROOT / "engine" / "verify-engine-cutover.ps1"
-    assert wrapper.exists()
-    text = wrapper.read_text(encoding="utf-8")
-    for parameter in (
-        "$Serials",
-        "$PerformanceEvidenceDir",
-        "$PublicSignalingUrl",
-        "$SoakHours",
-        "$KeepOnFailure",
-        "$FilePrompts",
-        "$Confirm",
-    ):
-        assert parameter in text
-    assert "scripts.verify_engine_cutover" in text
-    assert "engine-cutover-" in text
-    assert "--performance-override" in text

@@ -101,13 +101,13 @@ def test_spawn_excludes_auth_token_and_preserves_engine_environment(monkeypatch)
     monkeypatch.setenv("WINDOWCONTROL_PARENT_SENTINEL", "present")
     monkeypatch.setenv("AUTH_TOKEN", "raw-native-control-secret")
     instance, captured = make_capturing_instance(
-        env_overrides={"ENGINE_SIGNALING_TOKEN": "engine-jwt",
+        env_overrides={"ENGINE_LOCAL_ICE_SERVERS": "stun:100.64.1.4:3478",
                         "FAKE_ENGINE_MODE": "ready"}
     )
     try:
         instance.start()
         assert captured["env"]["WINDOWCONTROL_PARENT_SENTINEL"] == "present"
-        assert captured["env"]["ENGINE_SIGNALING_TOKEN"] == "engine-jwt"
+        assert captured["env"]["ENGINE_LOCAL_ICE_SERVERS"] == "stun:100.64.1.4:3478"
         assert "AUTH_TOKEN" not in captured["env"]
     finally:
         instance.stop()
