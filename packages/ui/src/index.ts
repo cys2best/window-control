@@ -15,7 +15,7 @@ export * from "./components/SwapControl";
 export * from "./components/SignalMeter";
 export * from "./components/SwitchDrawer";
 export * from "./components/SettingsModal";
-export * from "./screens/Login";
+export * from "./screens/Pair";
 export * from "./screens/InstanceList";
 export * from "./screens/Account";
 export * from "./video/VideoView";

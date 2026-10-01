@@ -26,7 +26,7 @@ export function Stream({
   VideoView: VideoViewComponent;
   performHaptic?: () => void;
 }) {
-  const { client, authToken, clearAuth, preferences = DEFAULT_STREAM_PREFERENCES, updatePreferences = () => {} } = useServer() as any;
+  const { client, clearAuth, preferences = DEFAULT_STREAM_PREFERENCES, updatePreferences = () => {} } = useServer() as any;
   const { serial } = route.params;
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [net, setNet] = useState<Net>("connecting");
@@ -98,7 +98,6 @@ export function Stream({
       let nextStream: any = null;
       const s = await connectEngineSession({
         selection: sel,
-        authToken,
         RTCImpl,
         onStream: (stream) => {
           if (gen !== startGen.current) return;
@@ -156,15 +155,15 @@ export function Stream({
       if (error?.status === 401) {
         if (clearAuth) await clearAuth();
         if (navigation?.replace) {
-          navigation.replace("Login");
+          navigation.replace("Pair");
         } else if (navigation?.navigate) {
-          navigation.navigate("Login");
+          navigation.navigate("Pair");
         }
         return;
       }
       if (gen === startGen.current) { setFailed(true); setNet("disconnected"); }
     }
-  }, [client, authToken, clearAuth, serial, releaseActiveDrag, navigation]);
+  }, [client, clearAuth, serial, releaseActiveDrag, navigation]);
 
   // Instance list is owned by the client identity, not by `start`.
   useEffect(() => {
@@ -173,9 +172,9 @@ export function Stream({
       if (err?.status === 401) {
         if (clearAuth) clearAuth();
         if (navigation?.replace) {
-          navigation.replace("Login");
+          navigation.replace("Pair");
         } else if (navigation?.navigate) {
-          navigation.navigate("Login");
+          navigation.navigate("Pair");
         }
       }
     });

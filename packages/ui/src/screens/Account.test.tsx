@@ -13,9 +13,9 @@ const navigation = { navigate: jest.fn(), replace: jest.fn() };
 
 function mockServer(overrides: Record<string, unknown> = {}) {
   (SC.useServer as jest.Mock).mockReturnValue({
-    identity: { id: "u1", email: "owner@example.com", displayName: "Owner", initials: "O" },
-    base: "https://relay.example",
-    hostReachability: { state: "reachable", route: "relay", host: "relay.example", rttMs: 31 },
+    authToken: "dev-tok",
+    base: "http://192.168.1.8:8080",
+    hostReachability: { state: "reachable", host: "192.168.1.8:8080", rttMs: 31, paired: true },
     preferences: { quality: "auto", showHudOnConnect: false, haptics: true, hideRailWhilePlaying: true },
     updatePreferences: jest.fn().mockResolvedValue(undefined),
     clearAuth: jest.fn().mockResolvedValue(undefined),
@@ -28,27 +28,29 @@ beforeEach(() => {
   mockServer();
 });
 
-test("renders only signed-in identity and real host state", async () => {
-  mockServer({
-    identity: { id: "u1", email: "owner@example.com", displayName: "Owner", initials: "O" },
-    base: "https://relay.example",
-    hostReachability: { state: "reachable", route: "relay", host: "relay.example", rttMs: 31 },
-  });
+test("shows the real host and no account identity", async () => {
   const view = await render(<Account navigation={navigation} />);
-  expect(view.getByText("Owner")).toBeTruthy();
-  expect(view.getByText("owner@example.com")).toBeTruthy();
-  expect(view.getByText("relay.example")).toBeTruthy();
-  expect(view.queryByText(/Kai Hoang|DESKTOP-7K2N|NVENC/)).toBeNull();
+  expect(view.getByText("192.168.1.8:8080")).toBeTruthy();
+  expect(view.queryByText("IDENTITY")).toBeNull();
+  expect(view.queryByText("Connection route")).toBeNull();
+  expect(view.queryByText(/Sign out/)).toBeNull();
 });
 
-test("sign out clears only this device and returns to Login", async () => {
+test("unpairing clears this device's access and returns to Pair", async () => {
   const clearAuth = jest.fn().mockResolvedValue(undefined);
   const replace = jest.fn();
   mockServer({ clearAuth });
   const view = await render(<Account navigation={{ replace }} />);
-  await fireEvent.press(view.getByText("Sign out on this device"));
+  await fireEvent.press(view.getByText("Unpair this device"));
   await waitFor(() => expect(clearAuth).toHaveBeenCalled());
-  expect(replace).toHaveBeenCalledWith("Login");
+  expect(replace).toHaveBeenCalledWith("Pair");
+});
+
+test("a device with no token (the PC itself) has nothing to unpair", async () => {
+  mockServer({ authToken: null });
+  const view = await render(<Account navigation={navigation} />);
+  expect(view.queryByText("Unpair this device")).toBeNull();
+  expect(view.getByText("Default quality")).toBeTruthy();
 });
 
 test("stream defaults persist only the preference selected by each row", async () => {
@@ -74,11 +76,9 @@ test("quality cycling follows the core tier order", async () => {
   await waitFor(() => expect(updatePreferences).toHaveBeenCalledWith({ quality: "auto" }));
 });
 
-test("omits host and route rows when reachability has no real values", async () => {
+test("omits the host row when reachability has no real value", async () => {
   mockServer({ base: null, hostReachability: null });
   const view = await render(<Account navigation={navigation} />);
   expect(view.queryByText("Current host")).toBeNull();
-  expect(view.queryByText("Connection route")).toBeNull();
   expect(view.queryByText("Host unavailable")).toBeNull();
-  expect(view.queryByText("LAN")).toBeNull();
 });

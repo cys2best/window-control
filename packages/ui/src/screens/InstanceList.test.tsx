@@ -25,7 +25,7 @@ beforeEach(() => {
   clearAuth = jest.fn().mockResolvedValue(undefined);
   (useWindowDimensions as jest.Mock).mockReturnValue({ width: 390, height: 844, scale: 1, fontScale: 1 });
   (SC.useServer as jest.Mock).mockReturnValue({ base: "http://different-base", client, clearAuth,
-    hostReachability: { route: "lan", state: "reachable", host: "actual-host:8080", rttMs: 99 } });
+    hostReachability: { state: "reachable", host: "actual-host:8080", rttMs: 99, paired: true } });
 });
 afterEach(() => { jest.restoreAllMocks(); jest.clearAllMocks(); jest.useRealTimers(); });
 
@@ -127,9 +127,9 @@ test("initial ping failure preserves instances without displaying latency", asyn
   expect(screen.queryByText(/\d+ ms/)).toBeNull();
 });
 
-test("redirects to Login on 401 response and clears auth", async () => {
+test("redirects to Pair on 401 response and clears auth", async () => {
   client.instances.mockRejectedValue(Object.assign(new Error("401"), { status: 401 }));
   await render(<InstanceList navigation={nav} />);
   await waitFor(() => expect(clearAuth).toHaveBeenCalled());
-  expect(nav.replace).toHaveBeenCalledWith("Login");
+  expect(nav.replace).toHaveBeenCalledWith("Pair");
 });

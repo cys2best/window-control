@@ -69,7 +69,6 @@ function selectResp(overrides: any = {}) {
   return {
     ok: true, id: "A", serial: "A", name: "A", w: 1080, h: 1920,
     whep_url: "http://h/whep/A", whep_token: "tok-A",
-    signaling_url: "wss://relay.example.com/ws", signaling_token: null, public_session: "user1.A",
     ice_servers: [{ urls: "stun:h:3478" }],
     generation: 1,
     ...overrides,
@@ -115,10 +114,7 @@ test("connects via client.select() + connectEngineSession() on mount, not the ol
   await waitFor(() => expect(connectEngineSessionSpy).toHaveBeenCalledWith(expect.objectContaining({
     selection: expect.objectContaining({
       whep_url: "http://h/whep/A",
-      signaling_url: "wss://relay.example.com/ws",
-      public_session: "user1.A",
     }),
-    authToken: "auth-tok-123",
     RTCImpl: FakeRTCPeerConnection,
   })));
   expect((client as any).inputWsUrl).toBeUndefined();
