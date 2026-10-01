@@ -54,6 +54,12 @@ export function Stream({
   const twoFingerMoved = useRef(false);
 
   currentQuality.current = preferences.quality;
+  // Hosts (the web pages) build `navigation` inline, so its identity changes
+  // on every parent render, such as each 30s host probe. Reading it through
+  // a ref keeps it out of the effect deps below; as a dep it tore the live
+  // session down and reconnected on every one of those renders.
+  const navigationRef = useRef(navigation);
+  navigationRef.current = navigation;
 
   const wakeRail = useCallback(() => setRailOpen(true), []);
   const tick = useCallback(() => {
@@ -159,16 +165,17 @@ export function Stream({
     } catch (error: any) {
       if (error?.status === 401) {
         if (clearAuth) await clearAuth();
-        if (navigation?.replace) {
-          navigation.replace("Pair");
-        } else if (navigation?.navigate) {
-          navigation.navigate("Pair");
+        const nav = navigationRef.current;
+        if (nav?.replace) {
+          nav.replace("Pair");
+        } else if (nav?.navigate) {
+          nav.navigate("Pair");
         }
         return;
       }
       if (gen === startGen.current) { setFailed(true); setNet("disconnected"); }
     }
-  }, [client, clearAuth, serial, releaseActiveDrag, navigation]);
+  }, [client, clearAuth, serial, releaseActiveDrag]);
 
   // Instance list is owned by the client identity, not by `start`.
   useEffect(() => {
@@ -176,14 +183,15 @@ export function Stream({
     client.instances().then(setInstances).catch((err: any) => {
       if (err?.status === 401) {
         if (clearAuth) clearAuth();
-        if (navigation?.replace) {
-          navigation.replace("Pair");
-        } else if (navigation?.navigate) {
-          navigation.navigate("Pair");
+        const nav = navigationRef.current;
+        if (nav?.replace) {
+          nav.replace("Pair");
+        } else if (nav?.navigate) {
+          nav.navigate("Pair");
         }
       }
     });
-  }, [client, navigation, clearAuth]);
+  }, [client, clearAuth]);
 
   // WHEP session + input channel + adaptive quality follow `start`
   // (serial/client changes).

@@ -532,3 +532,30 @@ test("reconnecting after a saved quality change pins the replacement controller 
   await waitFor(() => expect(Core.connectEngineSession).toHaveBeenCalledTimes(2));
   await waitFor(() => expect(replacementAdaptive.pin).toHaveBeenCalledWith("1080"));
 });
+
+test("a re-render with a new navigation object keeps the live session", async () => {
+  // The web pages build `navigation` inline, so it is a new object on every
+  // render of the page (for example each 30s host probe). That must not tear
+  // the stream down and reconnect it.
+  const session = makeFakeSession();
+  (Core.connectEngineSession as jest.Mock).mockResolvedValue(session as any);
+  const client = {
+    select: jest.fn().mockResolvedValue(selectResp()), instances: jest.fn().mockResolvedValue([]),
+    setQuality: jest.fn(), keyframe: jest.fn(),
+  };
+  (SC.useServer as jest.Mock).mockReturnValue({ base: "http://h", client, setBase: jest.fn(), ready: true } as any);
+  const element = () => (
+    <Stream route={{ params: { serial: "A" } }} navigation={{ navigate: jest.fn(), replace: jest.fn(), setParams: jest.fn() }} RTCImpl={FakeRTCPeerConnection} VideoView={FakeVideoView} />
+  );
+
+  const view = await render(element());
+  await waitFor(() => expect(Core.connectEngineSession).toHaveBeenCalledTimes(1));
+
+  await view.rerender(element());
+  await view.rerender(element());
+
+  expect(client.select).toHaveBeenCalledTimes(1);
+  expect(client.instances).toHaveBeenCalledTimes(1);
+  expect(Core.connectEngineSession).toHaveBeenCalledTimes(1);
+  expect(session.close).not.toHaveBeenCalled();
+});
