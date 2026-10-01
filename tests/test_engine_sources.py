@@ -137,3 +137,62 @@ def test_verify_all_does_not_run_or_install_the_relay():
     for removed in ("test:signaling", "signaling", "Signaling", "jose", "infra"):
         assert removed not in text, removed
     assert "pair.html" in text
+
+
+LIVE_DOCS = (
+    "README.md",
+    "CHECKLIST.md",
+    "MEMORY.md",
+    "docs/WINDOWS_MANUAL_VALIDATION.md",
+    "docs/TROUBLESHOOTING.md",
+    "engine/BUILD_WINDOWS.md",
+    "engine/test/README_e2e.md",
+)
+
+DEAD_DOC_TERMS = (
+    "infra/vps/signaling",
+    "test:signaling",
+    "VPS_SIGNALING_URL",
+    "ENGINE_SIGNALING",
+    "ENGINE_TEST_WSS_PORT",
+    "verify-engine-cutover",
+    "verify-python-orchestration",
+    "verify-frontend-cutover",
+    "measure-engine-cutover",
+    "verify_engine_cutover",
+    "verify_python_orchestration",
+    "verify_frontend_cutover",
+    "websocketpp",
+    "coturn",
+    "TURN_",
+)
+
+
+@pytest.mark.parametrize("relative", LIVE_DOCS)
+def test_live_docs_do_not_describe_removed_infrastructure(relative):
+    text = (REPO / relative).read_text(encoding="utf-8")
+    for term in DEAD_DOC_TERMS:
+        assert term not in text, f"{relative} still mentions {term}"
+
+
+@pytest.mark.parametrize("relative", (
+    "engine/test/README.md",
+    "engine/test/README_engine_cutover.md",
+    "engine/test/README_python_orchestration.md",
+))
+def test_removed_engine_docs_are_gone(relative):
+    assert not (REPO / relative).exists(), relative
+
+
+@pytest.mark.parametrize("relative", LIVE_DOCS)
+def test_live_docs_do_not_link_to_removed_docs(relative):
+    text = (REPO / relative).read_text(encoding="utf-8")
+    for link in ("test/README.md", "README_engine_cutover", "README_python_orchestration"):
+        assert link not in text, f"{relative} still links to {link}"
+
+
+def test_memory_has_no_signaling_lesson_and_changelog_records_the_release():
+    assert "Signaling Tests" not in (REPO / "MEMORY.md").read_text(encoding="utf-8")
+    changelog = (REPO / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert "## [v3.2.0]" in changelog
+    assert changelog.index("## [v3.2.0]") < changelog.index("## [v3.1.2]")

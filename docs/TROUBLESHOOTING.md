@@ -115,10 +115,9 @@ fixed port to collide on) and a loopback-only admin port.
 ### Building/running the engine directly
 
 See [engine/BUILD_WINDOWS.md](../engine/BUILD_WINDOWS.md) for the CMake/vcpkg
-build, and [engine/test/README.md](../engine/test/README.md) /
-[engine/test/README_e2e.md](../engine/test/README_e2e.md) for running
-`engine_tests.exe` (including the live signaling suite, which needs the
-repository's Node relay at `infra/vps/signaling`).
+build, and [engine/test/README_e2e.md](../engine/test/README_e2e.md) for the
+manual end-to-end run. `engine_tests.exe` runs the complete suite and needs no
+relay.
 
 ---
 

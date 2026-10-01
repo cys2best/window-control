@@ -4,6 +4,19 @@ All notable changes to this app are recorded here.
 
 ---
 
+## [v3.2.0] — October 1, 2026
+
+EmuCtrl is now local-only: it answers devices on your network or Tailscale, and each device is paired once with a code shown on the PC.
+
+### What's New
+- **Device Pairing**: Click **Pair device** in the host window, enter the 6-digit code on the phone or browser, and the device is remembered. Remove it from **Paired Devices** to revoke access.
+- **Local-Only Access**: Requests from outside the local network and Tailscale are refused.
+
+### Removed
+- **Accounts and Public Access**: Sign-in, the internet relay, TURN and the public tunnel are gone, along with the engine's signaling client, the cutover verifier scripts and the relay's infrastructure code.
+
+---
+
 ## [v3.1.2] — September 10, 2026
 
 This release brings a unified dark UI, a real-telemetry stream rail, and a matching identity across web, mobile, and the Windows host.

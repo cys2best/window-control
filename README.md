@@ -11,7 +11,7 @@ Stream specific Windows 11 application windows to your iPhone over Tailscale.
   DataChannel (no polling)
 - Auto-reconnect if connection drops
 - Tailscale integration for secure remote access from anywhere; embedded
-  STUN/TURN keeps WebRTC working over Tailscale and LAN
+  STUN keeps WebRTC working over Tailscale and LAN
 - PWA — add to Home Screen on iPhone for full-screen experience
 - System tray with Show / Stop / Exit controls
 
@@ -168,7 +168,6 @@ build/
   build.bat                  # Build engine + stage assets + build EXE
   build_installer.bat        # Build EXE + installer
   installer.iss               # Inno Setup 6 script; owns the engine firewall rule
-infra/vps/signaling/         # Node signaling relay used by public sessions and CI
 .github/workflows/
   build.yml                  # CI: build engine, run full engine_tests.exe, build installer
 tests/                       # pytest suite

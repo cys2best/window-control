@@ -10,9 +10,6 @@
 | Validation Phase                 | Command (Windows PowerShell)                                                            | Command (macOS / Linux)                                                                                                                 |
 | :-------------------------------- | :--------------------------------------------------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------- |
 | **All Automated Suites**         | `.\engine\verify-all.ps1`                                                               | `python3 scripts/verify_all.py`                                                                                                         |
-| **Live Server &amp; Web Routes** | `.\engine\verify-frontend-cutover.ps1 -SkipManualGates -SkipInstaller`                  | `uv run python -m scripts.verify_frontend_cutover --skip-manual-gates --skip-installer --evidence-dir .evidence --installer-path dummy` |
-| **Package &amp; Firewall**       | `.\engine\verify-frontend-cutover.ps1 -Only installed_app_launch,frozen_package_layout` | *(Windows only)*                                                                                                                        |
-
 
 ---
 
@@ -27,22 +24,7 @@
   - [ ] `adb` on PATH (`adb version`)
 - [ ] **1.3. Android Emulator / Device**:
   - [ ] At least one LDPlayer emulator instance running, or physical Android device connected via ADB (`adb devices` lists active device).
-- [ ] **1.4. Environment Variables Configured (via `.env` file in repo root)**:
-  > **Tip**: You can create a `.env` file in the repo root (gitignored). Both the Python dev server (`src/main.py`), verification scripts, and PowerShell runners (`verify-all.ps1`, `verify-frontend-cutover.ps1`) automatically load `.env`!
-  ```ini
-  SUPABASE_URL=https://<your-project>.supabase.co
-  SUPABASE_ANON_KEY=eyJ...
-  SUPABASE_SERVICE_ROLE_KEY=eyJ...
-  VPS_SIGNALING_URL=ws://<VPS_IP>:8443
-  # Optional:
-  PUBLIC_UI_URL=wss://tunnel.example.com/__tunnel/register
-  TUNNEL_SECRET=...
-  ```
-  - [ ] `SUPABASE_URL`
-  - [ ] `SUPABASE_ANON_KEY`
-  - [ ] `SUPABASE_SERVICE_ROLE_KEY`
-  - [ ] `VPS_SIGNALING_URL` (e.g. `ws://<VPS_IP>:8443`)
-  - [ ] *(Optional)* Tailscale signed in on host and mobile client.
+- [ ] **1.4. Optional**: Tailscale signed in on host and mobile client.
 
 ---
 
@@ -68,20 +50,14 @@ Execute the full automated test suite:
   - [x] `apps/web/out/stream.html` exists
   - [x] `apps/web/out/404.html` exists
   - [x] `apps/web/out/setup.html` **does NOT exist** (retired manual setup screen)
-- [x] **2.8. VPS Signaling Bridge Relay**: 18 passed (`npm test -w infra/vps/signaling`). *(Verified on Windows)*
 
 ---
 
 ## Section 3: Live Server Cutover &amp; Content Negotiation
 
-Execute the automated HTTP server verifier:
+Check the dev server and web routes by hand:
 
-```powershell
-.\engine\verify-frontend-cutover.ps1 -SkipManualGates -SkipInstaller
-# (macOS/Linux: uv run python -m scripts.verify_frontend_cutover --repo-root . --skip-manual-gates --skip-installer)
-```
-
-- [x] **3.1. Server Health**: Dev app boots cleanly on port 8080 (`/auth/config` and web server respond). *(Verified on Windows)*
+- [x] **3.1. Server Health**: Dev app boots cleanly on port 8080 (web server responds). *(Verified on Windows)*
 - [x] **3.2. Web Route Servicing**: *(Verified on Windows)*
   - [x] `GET http://127.0.0.1:8080/` -&gt; 200 text/html
   - [x] `GET http://127.0.0.1:8080/login` -&gt; 200 text/html
@@ -92,9 +68,6 @@ Execute the automated HTTP server verifier:
   - [x] `Accept: text/html` returns the HTML page shell.
   - [x] `Accept: application/json` returns JSON instance list or 401.
   - [x] No Accept header defaults to JSON API response.
-- [x] **3.4. Supabase Auth Gate**: *(Verified on Windows via automated cutover verifier)*
-  - [x] Unauthenticated API request to `/instances` returns `401 Unauthorized`.
-  - [x] Garbage token (`Bearer not-a-real-token`) returns `401 Unauthorized`.
 
 ---
 
@@ -108,33 +81,7 @@ cmake --build engine\build --config Release
 ```
 
 - [x] **4.1. Engine Binary Built**: `engine\build\Release\engine.exe` exists with 0 compiler errors. *(Verified on Windows)*
-- [x] **4.2. Offline GTest Suite**: *(Verified on Windows)*
-  ```powershell
-  cmake --build engine\build --config Release --target engine_tests
-  .\engine\build\Release\engine_tests.exe --gtest_filter=-SignalingClient.*:PublicSignalingBridge.*
-  ```
-
-  All offline engine tests pass (excluding tests that require the live Node signaling relay).
-- [x] **4.3. Live Signaling Relay GTest**: *(Verified on Windows)*
-  1. In a dedicated terminal, launch the signaling relay with test TLS certs:
-    ```powershell
-     cd infra\vps\signaling
-     $repoRoot = (Resolve-Path ..\..\..).Path
-     $env:JWT_SECRET = ""
-     $env:SIGNALING_TLS_CERT_FILE = Join-Path $repoRoot "engine\test\tls\localhost-cert.pem"
-     $env:SIGNALING_TLS_KEY_FILE = Join-Path $repoRoot "engine\test\tls\localhost-key.pem"
-     $env:SIGNALING_TLS_PORT = "8444"
-     npm start
-    ```
-  2. In your engine test terminal (from repo root):
-    ```powershell
-     $env:SSL_CERT_FILE = (Resolve-Path "engine\test\tls\ca-cert.pem").Path
-     $env:ENGINE_TEST_WSS_PORT = "8444"
-     cmake --build engine\build --config Release --target engine_tests
-     .\engine\build\Release\engine_tests.exe --gtest_filter="SignalingClient.*:PublicSignalingBridge.*"
-    ```
-  
-    WebRTC signaling handshake and public peer bridge pass against local relay.
+- [x] **4.2. Engine Test Suite**: Run `engine\build\Release\engine_tests.exe` (the complete suite; CI runs the same). *(Verified on Windows)*
 
 ---
 
@@ -166,10 +113,7 @@ cd ..
      .\release\WindowControlInstaller.exe /VERYSILENT /NORESTART
      ```
      *(Or double-click `release\WindowControlInstaller.exe` to run the graphical wizard with admin privileges).*
-- [x] **5.3. Automated Installer Gate**: *(Verified on Windows)*
-  ```powershell
-  .\engine\verify-frontend-cutover.ps1 -Only installed_app_launch,frozen_package_layout
-  ```
+- [x] **5.3. Installer Gate**: *(Verified on Windows)*
   - [x] Service launches from `C:\Program Files\WindowControl\`.
   - [x] Windows Defender firewall rule `WindowControl-Engine` points to `_internal\assets\engine\engine.exe`.
   - [x] Single-process verification passes (no child webview spawned).
@@ -187,7 +131,6 @@ Start host: `uv run python src\main.py` (or launch installed `WindowControl.exe`
   - [x] Header displays: `WindowControl Host v3.1.0` with green running dot and `:8080`.
   - [x] Account row displays logged-in email (or "Auth disabled (LAN mode)").
   - [x] Network row displays detected Local LAN IP and Tailscale IP (if active).
-  - [x] VPS Relay row displays connection status (Connected / Disabled).
   - [x] Active Streams row shows current viewer count ("Idle" when 0).
 - [x] **6.3. Minimize to Tray Button**: Click **Minimize to Tray** button -> window hides to tray. *(Verified on Windows)*
 - [x] **6.4. Window [X] Button**: Open window again, click **[X]** titlebar close button -> window minimizes to tray instead of quitting. *(Verified on Windows)*

@@ -25,7 +25,7 @@ This document provides a comprehensive breakdown of the **WindowControl** applic
 * **Networking & Streaming**:
   * Dual-path zero-config connection:
     1. *Local / Tailscale*: Direct WebRTC via WHEP protocol.
-    2. *Remote WAN*: Cloud signaling bridge via VPS + Coturn TURN relay.
+    2. *Remote WAN*: Cloud signaling bridge via VPS + Coturn TURN relay (removed; access is LAN and Tailscale only).
   * Adaptive bitrate streaming with manual resolution pinning (480p, 720p, 1080p, 1440p).
   * Binary & DataChannel input protocol: Touch events, multi-touch drag, wheel scroll, and soft keyboard relay.
 * **Authentication & Ownership**:
@@ -186,7 +186,7 @@ journey
   2. **Host Status Cards**:
      * **Claimed Account**: Supabase user email or "Unclaimed (Open to link)".
      * **Network Endpoints**: Detected Local IP (e.g., `192.168.1.100`), Tailscale IP (e.g., `100.x.y.z`), and port.
-     * **VPS Relay Connectivity**: Status of cloud signaling bridge and public tunnel.
+     * **VPS Relay Connectivity**: Status of cloud signaling bridge and public tunnel (removed; access is LAN and Tailscale only).
      * **Active Streams Counter**: Number of connected viewers (e.g., `1 active stream`).
   3. **Auto-Updater Card**: Notice when a new client/server version is available with a 1-click "Install Update" button.
   4. **System Tray Integration**: Background running with quick-access tray menu (Open Host Monitor, Restart Service, Stop Server).

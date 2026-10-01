@@ -23,9 +23,6 @@ recorded:
 6. The browser(s), engine, static server, and ADB forwards are shut down
    cleanly.
 
-This is a local/dev gate. It does not validate the public signaling path,
-authentication, TURN, or a deployed client.
-
 ## Prerequisites
 
 - Windows PowerShell, Visual Studio/vcpkg/CMake configured as described in
@@ -49,28 +46,11 @@ In window B, run the plan's Windows build and offline suite first:
 
 ```powershell
 cmake --build engine\build --config Release
-.\engine\build\Release\engine_tests.exe --gtest_filter=-SignalingClient.*:PublicSignalingBridge.*
+.\engine\build\Release\engine_tests.exe
 ```
 
-The filtered executable command is the offline check. The CTest registration
-is unfiltered and includes tests that connect to `ws://localhost:8443` and
-verified `wss://localhost:8444`; run it only after starting both listeners in
-the repository's Node relay in another window:
-
-```powershell
-Set-Location infra\vps\signaling
-$repoRoot = (Resolve-Path ..\..\..).Path
-$env:JWT_SECRET = ""
-$env:SIGNALING_TLS_CERT_FILE = Join-Path $repoRoot "engine\test\tls\localhost-cert.pem"
-$env:SIGNALING_TLS_KEY_FILE = Join-Path $repoRoot "engine\test\tls\localhost-key.pem"
-$env:SIGNALING_TLS_PORT = "8444"
-$env:SSL_CERT_FILE = Join-Path $repoRoot "engine\test\tls\ca-cert.pem"
-$env:ENGINE_TEST_WSS_PORT = "8444"
-npm install
-npm start
-```
-
-Then run CTest from the repository root:
+The engine tests need no relay or other external service. Then run CTest from
+the repository root:
 
 ```powershell
 ctest --test-dir engine\build -C Release --output-on-failure
@@ -109,8 +89,7 @@ $tier = "720"
 ## Launch the engine and capture its ready record
 
 In window A, repeat the selected launch values and clear optional engine
-configuration so no stale environment enables WHEP capability auth or public
-signaling. Environment variables and PowerShell variables are per-window:
+configuration so no stale environment enables WHEP capability auth. Environment variables and PowerShell variables are per-window:
 
 ```powershell
 $serial = "emulator-5554"  # use the serial selected in window B
@@ -119,9 +98,6 @@ $scid = 1
 $tier = "720"
 Remove-Item Env:ENGINE_WHEP_CAPABILITY_SECRET -ErrorAction SilentlyContinue
 Remove-Item Env:ENGINE_LOCAL_ICE_SERVERS -ErrorAction SilentlyContinue
-Remove-Item Env:ENGINE_SIGNALING_URL -ErrorAction SilentlyContinue
-Remove-Item Env:ENGINE_SIGNALING_TOKEN -ErrorAction SilentlyContinue
-Remove-Item Env:ENGINE_PUBLIC_ICE_SERVERS -ErrorAction SilentlyContinue
 ```
 
 Preferred launch (window A): `test.ps1` builds unless `-SkipBuild` is supplied,
