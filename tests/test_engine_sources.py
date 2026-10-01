@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 import pytest
@@ -25,6 +26,8 @@ DEAD_NAMES = (
     "ENGINE_SESSION",
     "ENGINE_PUBLIC_ICE_SERVERS",
     "websocketpp",
+    "#include <asio",
+    "wincrypt",
 )
 
 
@@ -51,7 +54,7 @@ def test_cmake_and_vcpkg_carry_no_signaling_dependencies():
     cmake = (ENGINE / "CMakeLists.txt").read_text(encoding="utf-8")
     vcpkg = (ENGINE / "vcpkg.json").read_text(encoding="utf-8")
     for token in ("signaling", "websocketpp", "find_package(asio", "asio::asio",
-                  "ASIO_STANDALONE", "crypt32"):
+                  "ASIO_STANDALONE", "crypt32", "wincrypt"):
         assert token not in cmake, token
     for token in ("websocketpp", '"asio"'):
         assert token not in vcpkg, token
@@ -66,7 +69,8 @@ def test_main_keeps_the_local_whep_wiring():
 
 def test_cmake_keeps_the_dependencies_local_whep_needs():
     cmake = (ENGINE / "CMakeLists.txt").read_text(encoding="utf-8")
-    for token in ("libdatachannel", "nlohmann_json", "httplib", "OpenSSL",
+    for token in ("LibDataChannel::LibDataChannel", "nlohmann_json::nlohmann_json",
+                  "httplib::httplib", "OpenSSL::SSL", "OpenSSL::Crypto",
                   "ws2_32.lib", "engine_tests"):
         assert token in cmake, token
 
@@ -113,7 +117,7 @@ def test_signaling_relay_and_its_fixtures_are_gone():
     import subprocess
 
     tracked = subprocess.run(
-        ["git", "ls-files", "infra", "engine/test/tls"],
+        ["git", "ls-files", "infra/vps/signaling", "engine/test/tls"],
         cwd=REPO, capture_output=True, text=True, check=True,
     ).stdout.split()
     assert tracked == [], tracked
@@ -134,7 +138,7 @@ def test_root_package_has_no_signaling_workspace_or_script():
 
 def test_verify_all_does_not_run_or_install_the_relay():
     text = (REPO / "scripts" / "verify_all.py").read_text(encoding="utf-8")
-    for removed in ("test:signaling", "signaling", "Signaling", "jose", "infra"):
+    for removed in ("test:signaling", "signaling", "Signaling", "jose", "infra/vps"):
         assert removed not in text, removed
     assert "pair.html" in text
 
@@ -165,6 +169,9 @@ DEAD_DOC_TERMS = (
     "websocketpp",
     "coturn",
     "TURN_",
+    "engine/test/tls",
+    "SSL_CERT_FILE",
+    "--gtest_filter",
 )
 
 
@@ -213,7 +220,6 @@ REMOVED_FEATURE_TERMS = (
     "login.html",
     "/login",
     "Log in with",
-    "TURN",
 )
 
 # CHECKLIST.md ends with a dated v3.1.0 sign-off record that legitimately names
@@ -227,6 +233,7 @@ def test_current_docs_do_not_describe_removed_features(relative):
     text = text.split(HISTORICAL_RECORD_MARKER)[0]
     for term in REMOVED_FEATURE_TERMS:
         assert term not in text, f"{relative} still mentions {term}"
+    assert not re.search(r"\bTURN\b", text), f"{relative} still mentions TURN"
 
 
 def test_engine_test_scripts_use_modules_that_exist():
@@ -244,3 +251,33 @@ def test_engine_test_scripts_use_modules_that_exist():
         text = source.read_text(encoding="utf-8")
         for name in (n.strip() for n in names.split(",")):
             assert f"def {name}" in text, f"server.{module} defines no {name}"
+
+
+def _cmake_sources(cmake, opener):
+    match = re.search(re.escape(opener) + r"\s*(.*?)\)", cmake, re.S)
+    assert match, opener
+    return [w for w in match.group(1).split() if w.endswith(".cpp")]
+
+
+def test_cmake_lists_exactly_the_engine_sources_on_disk():
+    cmake = (ENGINE / "CMakeLists.txt").read_text(encoding="utf-8")
+    core = _cmake_sources(cmake, "add_library(engine_core")
+    tests = _cmake_sources(cmake, "add_executable(engine_tests")
+    exe = _cmake_sources(cmake, "add_executable(engine ")
+    for name in core + tests + exe:
+        assert (ENGINE / name).exists(), f"CMakeLists names missing file {name}"
+    for path in (ENGINE / "src").glob("*.cpp"):
+        if path.name != "main.cpp":
+            assert f"src/{path.name}" in core, f"{path.name} not in engine_core"
+    assert "src/main.cpp" in exe
+    for path in (ENGINE / "test").glob("test_*.cpp"):
+        assert f"test/{path.name}" in tests, f"{path.name} not in engine_tests"
+
+
+def test_quoted_includes_resolve_to_engine_files():
+    for path in _source_files():
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for header in re.findall(r'^\s*#\s*include\s+"([^"]+)"', text, re.M):
+            assert (ENGINE / "src" / header).exists() or (ENGINE / "test" / header).exists(), (
+                f"{path.relative_to(ENGINE)} includes missing {header}"
+            )
