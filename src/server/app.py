@@ -321,7 +321,8 @@ def create_app(instance_manager: InstanceManager,
     import asyncio
     if pairing is None:
         pairing = PairingStore()
-    app = FastAPI()
+    # No generated docs/schema routes: nothing here needs them.
+    app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     app.add_middleware(AccessGate, pairing=pairing)
 
     @app.on_event("startup")
@@ -336,7 +337,7 @@ def create_app(instance_manager: InstanceManager,
     # ── Static / index ───────────────────────────────────────────────────────
     # apps/web (Next.js, output: "export") replaces the old hand-rolled
     # src/client single-page app. Its build emits one static HTML file per
-    # route (index/login/setup/instances/stream) plus content-hashed
+    # route (index/pair/instances/account/stream) plus content-hashed
     # `_next/static/**` chunk filenames -- e.g. `main-app-<hash>.js` -- so
     # the old ?v=<VERSION> query-string cache-busting rewrite (which existed
     # solely because the previous client's app.js/style.css URLs never

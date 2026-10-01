@@ -99,9 +99,6 @@ def main() -> int:
     overall_pass = True
 
     pytest_env = {
-        "SUPABASE_URL": "",
-        "PUBLIC_UI_URL": "",
-        "TUNNEL_SECRET": "",
         "AUTH_TOKEN": "",
     }
 

@@ -374,3 +374,9 @@ def test_legacy_select_advertises_the_address_the_lan_client_reached():
     assert response.status_code == 200
     assert response.json()["stun_url"] == "stun:192.168.1.10:3478"
     manager.select.assert_called_once_with("a", "192.168.1.10")
+
+
+def test_api_docs_routes_do_not_exist():
+    client, _ = _make(LOOPBACK, base_url=LOCAL_BASE)
+    for path in ("/docs", "/redoc", "/openapi.json"):
+        assert client.get(path).status_code == 404
