@@ -1,4 +1,6 @@
-export const TIER_ORDER = ["480", "720", "1080", "1440"] as const;
+// Must match TIER_ORDER in src/config.py. "360" is the low-bitrate tier for
+// relayed links.
+export const TIER_ORDER = ["360", "480", "720", "1080", "1440"] as const;
 export const DOWNGRADE_STREAK = 3;
 
 export function stepTier(current: string, dir: -1 | 1): string {

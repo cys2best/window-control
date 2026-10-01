@@ -1,4 +1,6 @@
-export type QualitySelection = "auto" | "480" | "720" | "1080" | "1440";
+import { TIER_ORDER } from "../quality/tiers";
+
+export type QualitySelection = "auto" | (typeof TIER_ORDER)[number];
 
 export type StreamPreferences = {
   quality: QualitySelection;
@@ -14,7 +16,7 @@ export const DEFAULT_STREAM_PREFERENCES: StreamPreferences = {
   hideRailWhilePlaying: false,
 };
 
-const QUALITY_SELECTIONS: QualitySelection[] = ["auto", "480", "720", "1080", "1440"];
+const QUALITY_SELECTIONS: QualitySelection[] = ["auto", ...TIER_ORDER];
 
 export function parseStreamPreferences(value: string | null): StreamPreferences {
   try {

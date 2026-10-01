@@ -1,7 +1,8 @@
 import { TIER_ORDER, stepTier, shouldDowngrade, nextBadStreak, DOWNGRADE_STREAK } from "./tiers";
 
 test("stepTier clamps at both ends", () => {
-  expect(stepTier("480", -1)).toBe("480");
+  expect(stepTier("360", -1)).toBe("360");
+  expect(stepTier("480", -1)).toBe("360");
   expect(stepTier("1440", 1)).toBe("1440");
   expect(stepTier("720", -1)).toBe("480");
   expect(stepTier("720", 1)).toBe("1080");
@@ -18,4 +19,8 @@ test("bad streak accumulates then resets", () => {
   s = nextBadStreak(s, true); s = nextBadStreak(s, true); s = nextBadStreak(s, true);
   expect(s).toBe(DOWNGRADE_STREAK);
   expect(nextBadStreak(s, false)).toBe(0);
+});
+
+test("tiers match the server's order, lowest first", () => {
+  expect([...TIER_ORDER]).toEqual(["360", "480", "720", "1080", "1440"]);
 });

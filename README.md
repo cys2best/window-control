@@ -69,18 +69,19 @@ Safari mDNS / STUN WebRTC bug (`write queue is full`) and how to read
 
 ## Streaming Quality
 
-The server encodes video at one of four adaptive quality tiers:
+The server encodes video at one of five quality tiers:
 
 | Tier | Resolution | Max Bitrate | Max FPS |
 |------|-----------|-------------|--------|
+| 360  | up to 360p | ~0.8 Mbps | 30 |
 | 480  | up to 480p | ~2 Mbps | 30 |
 | 720  | up to 720p | ~4 Mbps | 30 |
 | 1080 | up to 1080p | ~8 Mbps | 60 |
 | 1440 | up to 1440p | ~12 Mbps | 60 |
 
-**Adaptive:** The client monitors network conditions (packet loss, RTT) every 5 seconds and automatically steps the tier up or down to maintain playback quality without buffering.
+**Adaptive:** The client monitors network conditions (packet loss, RTT) every 5 seconds and steps the tier down when the link is congested. It does not step back up on its own; pick a higher tier in stream settings. On a relayed Tailscale connection (`tailscale ping` reports `via DERP`), use 360.
 
-**Manual control:** Override the active tier anytime via the UI or HTTP API (`POST /instances/{serial}/quality {tier: 480|720|1080|1440}`).
+**Manual control:** Override the active tier anytime via the UI or HTTP API (`POST /instances/{serial}/quality {tier: 360|480|720|1080|1440}`).
 
 ## Building from Source
 

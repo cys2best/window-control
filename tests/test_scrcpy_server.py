@@ -111,3 +111,33 @@ def test_server_cleanup_targets_only_the_selected_android_server_process(monkeyp
     assert re.search(pattern, observed_server)
     assert not re.search(pattern, cleanup_process)
     assert not re.search(pattern, other_server)
+
+
+def test_bitrate_is_sent_under_the_key_the_server_accepts():
+    from server.scrcpy_server import build_scrcpy_args
+
+    args = build_scrcpy_args("480", 1)
+
+    assert "video_bit_rate=2000000" in args
+    assert not any(arg.startswith("bit_rate=") for arg in args)
+
+
+def test_every_argument_key_is_known_to_the_bundled_server():
+    # scrcpy-server logs "Unknown server option" and drops a key it does not
+    # know, so a misnamed option silently does nothing.
+    import zipfile
+    from pathlib import Path
+
+    import pytest
+
+    from server.scrcpy_server import build_scrcpy_args
+
+    jar = Path(__file__).parent.parent / "src" / "assets" / "scrcpy" / "scrcpy-server"
+    if not jar.exists():
+        pytest.skip("bundled scrcpy-server is not downloaded")
+    dex = zipfile.ZipFile(jar).read("classes.dex")
+    for arg in build_scrcpy_args("720", 1):
+        key = arg.split("=", 1)[0]
+        # A dex string is stored as <length><bytes>\0, which rules out a
+        # match inside a longer name.
+        assert bytes([len(key)]) + key.encode() + b"\x00" in dex, key

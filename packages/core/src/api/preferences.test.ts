@@ -43,4 +43,14 @@ describe("stream preferences", () => {
       hideRailWhilePlaying: false,
     });
   });
+
+  test("accepts every server tier, including the low one for relayed links", () => {
+    const { parseStreamPreferences } = preferencesApi();
+    const { TIER_ORDER } = require("../quality/tiers");
+
+    for (const tier of TIER_ORDER) {
+      expect(parseStreamPreferences(JSON.stringify({ quality: tier })).quality).toBe(tier);
+    }
+    expect(parseStreamPreferences(JSON.stringify({ quality: "360" })).quality).toBe("360");
+  });
 });

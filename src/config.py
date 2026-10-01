@@ -6,13 +6,16 @@ DEV_MODE = sys.platform != "win32"
 VERSION = "3.2.0"
 GITHUB_REPO = "cys2best/window-control"
 
-TIER_ORDER = ["480", "720", "1080", "1440"]
+TIER_ORDER = ["360", "480", "720", "1080", "1440"]
 DEFAULT_TIER = "720"
+# bit_rate is bits per second. "360" exists for relayed links: a Tailscale
+# DERP relay was measured passing about 1.7 Mbps.
 QUALITY_TIERS = {
-    "480":  {"max_size": 480,  "bit_rate": "2M",  "max_fps": 30},
-    "720":  {"max_size": 720,  "bit_rate": "4M",  "max_fps": 30},
-    "1080": {"max_size": 1080, "bit_rate": "8M",  "max_fps": 60},
-    "1440": {"max_size": 1440, "bit_rate": "12M", "max_fps": 60},
+    "360":  {"max_size": 360,  "bit_rate": 800_000,    "max_fps": 30},
+    "480":  {"max_size": 480,  "bit_rate": 2_000_000,  "max_fps": 30},
+    "720":  {"max_size": 720,  "bit_rate": 4_000_000,  "max_fps": 30},
+    "1080": {"max_size": 1080, "bit_rate": 8_000_000,  "max_fps": 60},
+    "1440": {"max_size": 1440, "bit_rate": 12_000_000, "max_fps": 60},
 }
 assert DEFAULT_TIER in QUALITY_TIERS
 assert set(TIER_ORDER) == set(QUALITY_TIERS)

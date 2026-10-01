@@ -50,14 +50,17 @@ def build_scrcpy_args(tier: str, scid: int) -> list[str]:
     """Build scrcpy-server arguments from a quality tier.
 
     Returns the app_process arg tokens (the part after `com.genymobile.scrcpy.Server 3.1`).
-    Includes max_size, bit_rate, max_fps from the tier, plus video_encoder_options and scid.
+    Includes max_size, video_bit_rate, max_fps from the tier, plus video_codec_options and scid.
     """
     t = QUALITY_TIERS.get(tier, QUALITY_TIERS[DEFAULT_TIER])
     return [
         "tunnel_forward=true",
         "video_codec=h264",
         f"max_size={t['max_size']}",
-        f"bit_rate={t['bit_rate']}",
+        # The key is video_bit_rate and the value an integer: the server
+        # drops an unknown key such as bit_rate without failing, which left
+        # every tier at the encoder's default bitrate.
+        f"video_bit_rate={t['bit_rate']}",
         f"max_fps={t['max_fps']}",
         "send_device_meta=true",
         "send_frame_meta=true",

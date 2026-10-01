@@ -35,18 +35,29 @@ def test_web_build_dir_resolves_development_and_frozen_layouts(monkeypatch):
 
 def test_quality_tiers_shape():
     from config import QUALITY_TIERS, TIER_ORDER, DEFAULT_TIER
-    assert TIER_ORDER == ["480", "720", "1080", "1440"]
+    assert TIER_ORDER == ["360", "480", "720", "1080", "1440"]
     assert DEFAULT_TIER == "720"
     for t in TIER_ORDER:
         tier = QUALITY_TIERS[t]
         assert isinstance(tier["max_size"], int)
-        assert tier["bit_rate"].endswith("M")
+        # Bits per second as an integer: scrcpy-server parses video_bit_rate
+        # with Integer.parseInt and rejects suffixes such as "2M".
+        assert isinstance(tier["bit_rate"], int) and tier["bit_rate"] >= 100_000
         assert tier["max_fps"] in (30, 60)
+
+
+def test_lowest_tier_fits_a_relayed_link():
+    # A Tailscale DERP relay was measured passing about 1.7 Mbps; the lowest
+    # tier has to sit well under that to be watchable over one.
+    from config import QUALITY_TIERS, TIER_ORDER
+    assert QUALITY_TIERS[TIER_ORDER[0]]["bit_rate"] <= 1_000_000
 
 def test_quality_tiers_monotonic():
     from config import QUALITY_TIERS, TIER_ORDER
     sizes = [QUALITY_TIERS[t]["max_size"] for t in TIER_ORDER]
     assert sizes == sorted(sizes)
+    rates = [QUALITY_TIERS[t]["bit_rate"] for t in TIER_ORDER]
+    assert rates == sorted(rates)
 
 
 def test_engine_exe_path_resolves_development_and_frozen_layouts(monkeypatch):
