@@ -446,7 +446,7 @@ Run: `grep -rn "websockets" --include="*.py" src scripts tests apps`
 Expected: no output (nothing imports it). If something does, stop and report it; do not remove the dependency.
 
 Run: `uv lock && uv sync`
-Expected: `uv.lock` updates; `websockets` is removed unless another package requires it (check `uv tree --invert --package websockets` if it stays and say so in the report).
+Expected: `uv.lock` loses the project's direct `websockets` requirement (the `specifier = ">=14.0"` line). The `websockets` package itself stays locked because `uvicorn[standard]` depends on it; that is correct, and `build/window_control.spec` still lists `uvicorn.protocols.websockets` as a hidden import. Do not remove it from the lock by hand.
 
 - [ ] **Step 6: Confirm nothing dangling**
 
@@ -552,7 +552,7 @@ Delete `    "infra/vps/signaling"` from `workspaces` (and the comma after the pr
 
 Run: `npm install`
 Run: `git diff --stat package-lock.json`
-Expected: only removals of the `infra/vps/signaling` workspace entries and of packages no other workspace uses (for example `jose`); no version bumps of packages used by `packages/*`, `apps/web`, `apps/mobile`. If the diff contains unrelated version changes, run `git checkout -- package-lock.json` is NOT allowed: instead edit the lock back by hand to the removals only, or stop and report.
+Expected: only removals of the `infra/vps/signaling` workspace entries and of packages no other workspace uses (for example `jose`); no version bumps of packages used by `packages/*`, `apps/web`, `apps/mobile`. If the diff contains version changes for packages that other workspaces use, stop and report the diff stat and the changed package names; do not commit it and do not discard it with `git checkout`.
 
 Run: `npm run test:core && npm run test:ui && npm test -w apps/web`
 Expected: all pass (92, 80, 16).
@@ -642,6 +642,20 @@ def test_live_docs_do_not_describe_removed_infrastructure(relative):
 ))
 def test_removed_engine_docs_are_gone(relative):
     assert not (REPO / relative).exists(), relative
+
+
+@pytest.mark.parametrize("relative", LIVE_DOCS)
+def test_live_docs_do_not_link_to_removed_docs(relative):
+    text = (REPO / relative).read_text(encoding="utf-8")
+    for link in ("test/README.md", "README_engine_cutover", "README_python_orchestration"):
+        assert link not in text, f"{relative} still links to {link}"
+
+
+def test_memory_has_no_signaling_lesson_and_changelog_records_the_release():
+    assert "Signaling Tests" not in (REPO / "MEMORY.md").read_text(encoding="utf-8")
+    changelog = (REPO / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert "## [v3.2.0]" in changelog
+    assert changelog.index("## [v3.2.0]") < changelog.index("## [v3.1.2]")
 ```
 
 - [ ] **Step 2: Run to verify it fails**
@@ -661,11 +675,27 @@ git rm -q engine/test/README.md engine/test/README_engine_cutover.md engine/test
 - `engine/BUILD_WINDOWS.md`: update the CI summary (around lines 14–16) to "configure, build, run `engine_tests.exe`"; remove `websocketpp`/`asio` from the dependency list (around lines 50–53); delete the websocketpp pin section (around lines 71–86), the `signaling_client` mentions (around lines 90 and 102), the relay requirement (around lines 109–110) and the VPS/coturn fourth-argument section (around lines 115–120).
 - `CHECKLIST.md`: remove the verifier rows from the quick-reference table except `verify-all.ps1` / `verify_all.py`; remove the `VPS_SIGNALING_URL` instructions (around lines 36–44), item 2.8 (relay, around line 71), and the gtest-filter / live-relay sections 4.2–4.3 (around lines 114–137, including the TLS environment setup), replacing them with one line: "Run `engine\build\Release\engine_tests.exe` (the complete suite; CI runs the same)". Remove remaining verifier commands (around lines 54–55, 80–81, 171).
 - `docs/WINDOWS_MANUAL_VALIDATION.md`: remove `verify-frontend-cutover` and signaling-test mentions and counts (around lines 6, 15–20, 31, 89, 163) so it refers only to `.\engine\verify-all.ps1`; delete the `VPS_SIGNALING_URL` plus Supabase variable instructions (around line 59). Add one step to its pairing-relevant part: "On the PC click Pair device in the launcher; pair a phone and a browser; reload and confirm no code is asked; remove the device and confirm the client returns to pairing; stream from a device on the LAN without Tailscale and from a Tailscale device."
-- `docs/TROUBLESHOOTING.md`: edit the `engine_tests` / relay paragraph (around lines 117–121) so it says the engine tests need no relay; keep the link to `engine/BUILD_WINDOWS.md`.
+- `docs/TROUBLESHOOTING.md`: edit the `engine_tests` / relay paragraph (around lines 117–121) so it says the engine tests need no relay; remove the link to `engine/test/README.md` (line 118; that file is deleted) and keep the links to `engine/BUILD_WINDOWS.md` and `engine/test/README_e2e.md`.
+- `engine/BUILD_WINDOWS.md` line 110 points at `engine/test/README.md`: delete that pointer along with the relay requirement it belongs to.
 - `docs/UI_UX_REDESIGN_SPEC.md`: at the "Remote WAN via VPS and Coturn" line (around line 28) and the "VPS Relay Connectivity" item (around line 189) add the words "(removed; access is LAN and Tailscale only)" instead of rewriting the historical spec.
 - `README.md`: delete the `infra/vps/signaling` line from the file-structure tree (around line 171) and any other line mentioning the removed directories.
 - `MEMORY.md`: delete the "Signaling Tests" learning (around line 9). The file then holds four lessons.
-- `CHANGELOG.md`: add an entry under the newest unreleased/top section (read the file's existing format first) saying: "Removed: the engine's public signaling client, the cutover verifier scripts, the CI signaling-relay step and `infra/vps/signaling`; the engine now serves local WHEP only."
+- `CHANGELOG.md`: the newest section is `## [v3.1.2] — September 10, 2026`, but the version is already 3.2.0 with no entry. Insert a new section directly above it (after the `---` line under the intro), in the file's existing style:
+
+```markdown
+## [v3.2.0] — October 1, 2026
+
+EmuCtrl is now local-only: it answers devices on your network or Tailscale, and each device is paired once with a code shown on the PC.
+
+### What's New
+- **Device Pairing**: Click **Pair device** in the host window, enter the 6-digit code on the phone or browser, and the device is remembered. Remove it from **Paired Devices** to revoke access.
+- **Local-Only Access**: Requests from outside the local network and Tailscale are refused.
+
+### Removed
+- **Accounts and Public Access**: Sign-in, the internet relay, TURN and the public tunnel are gone, along with the engine's signaling client, the cutover verifier scripts and the relay's infrastructure code.
+
+---
+```
 
 - [ ] **Step 5: Run the guard and the greps**
 
