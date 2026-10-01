@@ -8,7 +8,6 @@ export * from "./api/preferences";
 export * from "./api/storage";
 export * from "./api/ServerContext";
 export * from "./webrtc/whep";
-export * from "./webrtc/signaling";
 export * from "./webrtc/session";
 export * from "./webrtc/telemetry";
 export * from "./input/inputChannel";

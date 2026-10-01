@@ -1,361 +1,63 @@
 import { connectEngineSession } from "./session";
+import * as core from "../index";
 
-function fakePc() {
-  const listeners: Record<string, Function[]> = {};
-  const dc = {
-    readyState: "connecting",
-    bufferedAmount: 0,
-    sent: [] as string[],
-    closed: false,
-    listeners: {} as Record<string, Function[]>,
-    send(payload: string) {
-      this.sent.push(payload);
-    },
-    close() {
-      this.closed = true;
-      this.readyState = "closed";
-    },
-    addEventListener(type: string, fn: Function) {
-      (this.listeners[type] ||= []).push(fn);
-    },
-    _fire(type: string, e?: any) {
-      (this.listeners[type] || []).forEach((f) => f(e));
-    },
-  };
-  const pc = {
-    iceConnectionState: "new",
-    iceGatheringState: "complete",
-    localDescription: { sdp: "OFFER" },
-    dc,
-    calls: [] as string[],
-    listeners,
-    addEventListener: (k: string, f: Function) => {
-      (listeners[k] ||= []).push(f);
-    },
-    removeEventListener: () => {},
-    addTransceiver: (...args: any[]) => {
-      pc.calls.push("addTransceiver");
-      return { receiver: {} };
-    },
-    createDataChannel: (...args: any[]) => {
-      pc.calls.push("createDataChannel:" + args[0]);
-      return dc;
-    },
-    createOffer: async () => {
-      pc.calls.push("createOffer");
-      return { type: "offer", sdp: "OFFER" };
-    },
-    setLocalDescription: async () => {
-      pc.calls.push("setLocalDescription");
-    },
-    setRemoteDescription: jest.fn(async () => {
-      pc.calls.push("setRemoteDescription");
-    }),
-    close: jest.fn(),
-    _fire: (k: string, e: any) => (listeners[k] || []).forEach((f) => f(e)),
-  } as any;
-  return pc;
-}
+const localSelection = {
+  whep_url: "http://192.168.1.10:8080/whep",
+  whep_token: "tokLocal",
+  ice_servers: [],
+} as any;
+
+const fakeInput = () => ({ close: () => {}, send: () => {} }) as any;
 
 describe("connectEngineSession", () => {
-  test("connectEngineSession adopts the faster transport and closes the other (local wins fast)", async () => {
-    let localClosed = false;
-    let publicClosed = false;
-
+  test("connects over the local transport", async () => {
     const session = await connectEngineSession({
-      selection: {
-        whep_url: "http://192.168.1.10:8080/whep",
-        whep_token: "tokLocal",
-        signaling_url: "wss://relay.example.com/ws",
-        public_session: "user.inst1",
-        ice_servers: [],
-      } as any,
-      authToken: "jwt",
-      startLocalImpl: async () => {
-        // Local wins fast
-        return {
-          kind: "local",
-          stream: { id: "stream-local" } as any,
-          input: { close: () => {}, send: () => {} } as any,
-          close: async () => {
-            localClosed = true;
-          },
-        };
-      },
-      startPublicImpl: async () => {
-        await new Promise((r) => setTimeout(r, 50));
-        return {
-          kind: "public",
-          stream: { id: "stream-public" } as any,
-          input: { close: () => {}, send: () => {} } as any,
-          close: async () => {
-            publicClosed = true;
-          },
-        };
-      },
+      selection: localSelection,
+      startLocalImpl: async () => ({
+        kind: "local",
+        stream: { id: "local-vid" } as any,
+        input: fakeInput(),
+        close: async () => {},
+      }),
     });
 
     expect(session.kind).toBe("local");
-    expect(session.stream).toEqual({ id: "stream-local" });
-
-    // The slower public attempt should be closed
-    await new Promise((r) => setTimeout(r, 80));
-    expect(publicClosed).toBe(true);
-    expect(localClosed).toBe(false);
-
-    // Closing the adopted session closes local
-    await session.close();
-    expect(localClosed).toBe(true);
+    expect(session.stream).toEqual({ id: "local-vid" });
   });
 
-  test("connectEngineSession adopts the faster transport and closes the other (public wins fast)", async () => {
-    let localClosed = false;
-    let publicClosed = false;
-
-    const session = await connectEngineSession({
-      selection: {
-        whep_url: "http://192.168.1.10:8080/whep",
-        whep_token: "tokLocal",
-        signaling_url: "wss://relay.example.com/ws",
-        public_session: "user.inst1",
-        ice_servers: [],
-      } as any,
-      authToken: "jwt",
-      startLocalImpl: async () => {
-        await new Promise((r) => setTimeout(r, 60));
-        return {
-          kind: "local",
-          stream: { id: "stream-local" } as any,
-          input: { close: () => {}, send: () => {} } as any,
-          close: async () => {
-            localClosed = true;
-          },
-        };
-      },
-      startPublicImpl: async () => {
-        // Public wins fast
-        return {
-          kind: "public",
-          stream: { id: "stream-public" } as any,
-          input: { close: () => {}, send: () => {} } as any,
-          close: async () => {
-            publicClosed = true;
-          },
-        };
-      },
-    });
-
-    expect(session.kind).toBe("public");
-    expect(session.stream).toEqual({ id: "stream-public" });
-
-    // Slower local attempt should be closed
-    await new Promise((r) => setTimeout(r, 80));
-    expect(localClosed).toBe(true);
-    expect(publicClosed).toBe(false);
-
-    // Closing the adopted session closes public
-    await session.close();
-    expect(publicClosed).toBe(true);
+  test("rejects when no transport is configured", async () => {
+    await expect(connectEngineSession({
+      selection: { whep_url: "", whep_token: "", ice_servers: [] } as any,
+    })).rejects.toThrow("No engine session transport is configured");
   });
 
-  test("falls back to public when local fails", async () => {
-    let publicClosed = false;
-
-    const session = await connectEngineSession({
-      selection: {
-        whep_url: "http://192.168.1.10:8080/whep",
-        whep_token: "tokLocal",
-        signaling_url: "wss://relay.example.com/ws",
-        public_session: "user.inst1",
-        ice_servers: [],
-      } as any,
-      authToken: "jwt",
-      startLocalImpl: async () => {
-        throw new Error("WHEP 404 Not Found");
-      },
-      startPublicImpl: async () => {
-        await new Promise((r) => setTimeout(r, 30));
-        return {
-          kind: "public",
-          stream: { id: "stream-pub" } as any,
-          input: { close: () => {}, send: () => {} } as any,
-          close: async () => {
-            publicClosed = true;
-          },
-        };
-      },
-    });
-
-    expect(session.kind).toBe("public");
-    expect(publicClosed).toBe(false);
+  test("rejects with the local transport's own error", async () => {
+    const states: string[] = [];
+    await expect(connectEngineSession({
+      selection: localSelection,
+      onState: (state) => states.push(state),
+      startLocalImpl: async () => { throw new Error("Local failed"); },
+    })).rejects.toThrow("Local failed");
+    expect(states).toEqual(["connecting"]);
   });
 
-  test("falls back to local when public fails", async () => {
-    let localClosed = false;
-
-    const session = await connectEngineSession({
-      selection: {
-        whep_url: "http://192.168.1.10:8080/whep",
-        whep_token: "tokLocal",
-        signaling_url: "wss://relay.example.com/ws",
-        public_session: "user.inst1",
-        ice_servers: [],
-      } as any,
-      authToken: "jwt",
-      startLocalImpl: async () => {
-        await new Promise((r) => setTimeout(r, 30));
-        return {
-          kind: "local",
-          stream: { id: "stream-loc" } as any,
-          input: { close: () => {}, send: () => {} } as any,
-          close: async () => {
-            localClosed = true;
-          },
-        };
-      },
-      startPublicImpl: async () => {
-        throw new Error("Signaling connection closed");
-      },
-    });
-
-    expect(session.kind).toBe("local");
-    expect(localClosed).toBe(false);
-  });
-
-  test("rejects if all configured transports fail", async () => {
-    const promise = connectEngineSession({
-      selection: {
-        whep_url: "http://192.168.1.10:8080/whep",
-        whep_token: "tokLocal",
-        signaling_url: "wss://relay.example.com/ws",
-        public_session: "user.inst1",
-        ice_servers: [],
-      } as any,
-      authToken: "jwt",
-      startLocalImpl: async () => {
-        throw new Error("Local failed");
-      },
-      startPublicImpl: async () => {
-        throw new Error("Public failed");
-      },
-    });
-
-    await expect(promise).rejects.toThrow("All engine session attempts failed");
-  });
-
-  test("rejects if no transports are configured", async () => {
-    const promise = connectEngineSession({
-      selection: {
-        whep_url: "",
-        whep_token: "",
-        signaling_url: null,
-        public_session: null,
-        ice_servers: [],
-      } as any,
-      authToken: "jwt",
-    });
-
-    await expect(promise).rejects.toThrow("No engine session transport is configured");
-  });
-
-  test("only runs local when public is not configured", async () => {
-    let publicCalled = false;
-    let localCalled = false;
-
-    const session = await connectEngineSession({
-      selection: {
-        whep_url: "http://192.168.1.10:8080/whep",
-        whep_token: "tokLocal",
-        signaling_url: null,
-        public_session: null,
-        ice_servers: [],
-      } as any,
-      startLocalImpl: async () => {
-        localCalled = true;
-        return {
-          kind: "local",
-          stream: {} as any,
-          input: { close: () => {}, send: () => {} } as any,
-          close: async () => {},
-        };
-      },
-      startPublicImpl: async () => {
-        publicCalled = true;
-        return {} as any;
-      },
-    });
-
-    expect(localCalled).toBe(true);
-    expect(publicCalled).toBe(false);
-    expect(session.kind).toBe("local");
-  });
-
-  test("only runs public when local is not configured", async () => {
-    let publicCalled = false;
-    let localCalled = false;
-
-    const session = await connectEngineSession({
-      selection: {
-        whep_url: "",
-        whep_token: "",
-        signaling_url: "wss://relay.example.com/ws",
-        public_session: "user.inst1",
-        ice_servers: [],
-      } as any,
-      startLocalImpl: async () => {
-        localCalled = true;
-        return {} as any;
-      },
-      startPublicImpl: async () => {
-        publicCalled = true;
-        return {
-          kind: "public",
-          stream: {} as any,
-          input: { close: () => {}, send: () => {} } as any,
-          close: async () => {},
-        };
-      },
-    });
-
-    expect(publicCalled).toBe(true);
-    expect(localCalled).toBe(false);
-    expect(session.kind).toBe("public");
-  });
-
-  test("forwards callbacks (onStream, onInputRtt, onState) from winner and fires disconnected on close", async () => {
+  test("forwards callbacks and fires disconnected on close", async () => {
     const states: string[] = [];
     const streams: any[] = [];
     const rtts: number[] = [];
     let capturedRttCb: ((ms: number) => void) | null = null;
+    let capturedStateCb: ((state: any) => void) | null = null;
 
     const session = await connectEngineSession({
-      selection: {
-        whep_url: "http://192.168.1.10:8080/whep",
-        whep_token: "tokLocal",
-        signaling_url: "wss://relay.example.com/ws",
-        public_session: "user.inst1",
-        ice_servers: [],
-      } as any,
+      selection: localSelection,
       onState: (st) => states.push(st),
       onStream: (st) => streams.push(st),
       onInputRtt: (ms) => rtts.push(ms),
       connectWhepImpl: async (opts) => {
         capturedRttCb = opts.onInputRtt;
+        capturedStateCb = opts.onState;
         opts.onStream({ id: "local-vid" });
-        return {
-          pc: {} as any,
-          input: { close: () => {}, send: () => {} } as any,
-          close: async () => {},
-        };
-      },
-      startPublicImpl: async () => {
-        await new Promise((r) => setTimeout(r, 50));
-        return {
-          kind: "public",
-          stream: { id: "pub-vid" } as any,
-          input: { close: () => {}, send: () => {} } as any,
-          close: async () => {},
-        };
+        return { pc: {} as any, input: fakeInput(), close: async () => {} };
       },
     });
 
@@ -363,62 +65,55 @@ describe("connectEngineSession", () => {
     expect(states).toEqual(["connecting", "connected"]);
     expect(streams).toEqual([{ id: "local-vid" }]);
 
-    // Trigger and assert onInputRtt forwarding
-    expect(capturedRttCb).not.toBeNull();
     capturedRttCb!(42);
     expect(rtts).toEqual([42]);
 
-    // Closing session fires disconnected state
+    capturedStateCb!("disconnected");
+    expect(states).toEqual(["connecting", "connected", "disconnected"]);
+
     await session.close();
     expect(states).toEqual(["connecting", "connected", "disconnected"]);
   });
 
-  test("uses defaultStartLocal with connectWhepImpl when startLocalImpl not specified", async () => {
-    let whepCalled = false;
+  test("close fires disconnected exactly once", async () => {
+    const states: string[] = [];
     const session = await connectEngineSession({
-      selection: {
-        whep_url: "http://192.168.1.10:8080/whep",
-        whep_token: "tokLocal",
-        signaling_url: null,
-        public_session: null,
-        ice_servers: [],
-      } as any,
+      selection: localSelection,
+      onState: (st) => states.push(st),
+      connectWhepImpl: async () => ({ pc: {} as any, input: fakeInput(), close: async () => {} }),
+    });
+    await session.close();
+    await session.close();
+    expect(states).toEqual(["connecting", "connected", "disconnected"]);
+  });
+
+  test("passes the selection's WHEP details to connectWhep", async () => {
+    let captured: any = null;
+    const session = await connectEngineSession({
+      selection: { ...localSelection, ice_servers: [{ urls: "stun:192.168.1.10:3478" }] },
       connectWhepImpl: async (opts) => {
-        whepCalled = true;
+        captured = opts;
         opts.onStream({ id: "whep-stream" });
-        return {
-          pc: {} as any,
-          input: { close: () => {}, send: () => {} } as any,
-          close: async () => {},
-        };
+        return { pc: {} as any, input: fakeInput(), close: async () => {} };
       },
     });
 
-    expect(whepCalled).toBe(true);
-    expect(session.kind).toBe("local");
+    expect(captured.whepUrl).toBe("http://192.168.1.10:8080/whep");
+    expect(captured.whepToken).toBe("tokLocal");
+    expect(captured.iceServers).toEqual([{ urls: "stun:192.168.1.10:3478" }]);
     expect(session.stream).toEqual({ id: "whep-stream" });
   });
 
-  test("defaultStartLocal falls back to globalThis.RTCPeerConnection if opts.RTCImpl omitted", async () => {
+  test("falls back to globalThis.RTCPeerConnection when RTCImpl is omitted", async () => {
     let capturedRTC: any = null;
     const origRTC = (globalThis as any).RTCPeerConnection;
     try {
       (globalThis as any).RTCPeerConnection = function FakeGlobalRTC() {};
       await connectEngineSession({
-        selection: {
-          whep_url: "http://192.168.1.10:8080/whep",
-          whep_token: "tok",
-          signaling_url: null,
-          public_session: null,
-          ice_servers: [],
-        } as any,
+        selection: localSelection,
         connectWhepImpl: async (opts) => {
           capturedRTC = opts.RTCImpl;
-          return {
-            pc: {} as any,
-            input: { close: () => {}, send: () => {} } as any,
-            close: async () => {},
-          };
+          return { pc: {} as any, input: fakeInput(), close: async () => {} };
         },
       });
       expect(capturedRTC).toBe((globalThis as any).RTCPeerConnection);
@@ -427,97 +122,7 @@ describe("connectEngineSession", () => {
     }
   });
 
-  test("uses defaultStartPublic with connectSignalingViewerImpl and receives RTT echo", async () => {
-    const pc = fakePc();
-    let signalingCalled = false;
-    const rtts: number[] = [];
-
-    const promise = connectEngineSession({
-      selection: {
-        whep_url: "",
-        whep_token: "",
-        signaling_url: "wss://relay.example.com/ws",
-        public_session: "user.inst1",
-        ice_servers: [],
-      } as any,
-      authToken: "auth-token",
-      onInputRtt: (ms) => rtts.push(ms),
-      RTCImpl: function () {
-        return pc;
-      } as any,
-      connectSignalingViewerImpl: async (opts: any) => {
-        signalingCalled = true;
-        expect(opts.signalingUrl).toBe("wss://relay.example.com/ws");
-        expect(opts.sessionId).toBe("user.inst1");
-        expect(opts.token).toBe("auth-token");
-        return {
-          answerSdp: "REMOTE_ANSWER",
-          close: () => {},
-        };
-      },
-    });
-
-    await Promise.resolve();
-    await Promise.resolve();
-    // Simulate public connection events
-    pc._fire("track", { track: { kind: "video" }, streams: [{ id: "public-stream" }] });
-    pc.iceConnectionState = "connected";
-    pc._fire("iceconnectionstatechange", {});
-    pc.dc._fire("open", {});
-
-    const session = await promise;
-    expect(signalingCalled).toBe(true);
-    expect(session.kind).toBe("public");
-    expect(session.stream).toEqual({ id: "public-stream" });
-
-    // Simulate echo data channel message for RTT
-    pc.dc._fire("message", { data: JSON.stringify({ type: "echo", t: Date.now() - 55 }) });
-    expect(rtts.length).toBe(1);
-    expect(rtts[0]).toBeGreaterThanOrEqual(0);
-  });
-
-  test("public signaling starts when a TURN relay candidate is gathered", async () => {
-    const pc = fakePc();
-    pc.iceGatheringState = "gathering";
-    const connectSignalingViewerImpl = jest.fn(async () => ({
-      answerSdp: "REMOTE_ANSWER",
-      close: () => {},
-    }));
-
-    const promise = connectEngineSession({
-      selection: {
-        whep_url: "",
-        whep_token: "",
-        signaling_url: "wss://relay.example.com/ws",
-        public_session: "user.inst1",
-        ice_servers: [{ urls: "turn:relay.example.com:3478", username: "u", credential: "c" }],
-      } as any,
-      authToken: "auth-token",
-      RTCImpl: function () {
-        return pc;
-      } as any,
-      connectSignalingViewerImpl,
-    });
-
-    await Promise.resolve();
-    await Promise.resolve();
-    pc._fire("icecandidate", {
-      candidate: { candidate: "candidate:1 1 UDP 1 203.0.113.2 5000 typ srflx" },
-    });
-    await Promise.resolve();
-    expect(connectSignalingViewerImpl).not.toHaveBeenCalled();
-
-    pc._fire("icecandidate", {
-      candidate: { candidate: "candidate:2 1 UDP 1 203.0.113.3 5001 typ relay" },
-    });
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(connectSignalingViewerImpl).toHaveBeenCalledTimes(1);
-
-    pc._fire("track", { track: { kind: "video" }, streams: [{ id: "public-stream" }] });
-    pc.iceConnectionState = "connected";
-    pc._fire("iceconnectionstatechange", {});
-    pc.dc._fire("open", {});
-    await promise;
+  test("the public signaling client is not exported", () => {
+    expect((core as any).connectSignalingViewer).toBeUndefined();
   });
 });

@@ -8,11 +8,7 @@ import type { IceServer } from "../api/client";
 type MediaStream = any;
 type RTCPeerConnection = any;
 
-export function waitForIceGatheringComplete(
-  pc: any,
-  capMs = 4000,
-  fastPathType?: "srflx" | "relay"
-): Promise<void> {
+export function waitForIceGatheringComplete(pc: any, capMs = 4000): Promise<void> {
   if (pc.iceGatheringState === "complete") return Promise.resolve();
   return new Promise((resolve, reject) => {
     let done = false;
@@ -20,7 +16,6 @@ export function waitForIceGatheringComplete(
     const cleanup = () => {
       if (timer !== null) clearTimeout(timer);
       pc.removeEventListener("icegatheringstatechange", check);
-      if (fastPathType) pc.removeEventListener("icecandidate", onCandidate);
     };
     const finish = () => {
       if (done) return;
@@ -29,12 +24,6 @@ export function waitForIceGatheringComplete(
       resolve();
     };
     const check = () => { if (pc.iceGatheringState === "complete") finish(); };
-    const onCandidate = (event: any) => {
-      const candidate = event?.candidate?.candidate;
-      if (fastPathType && typeof candidate === "string" && candidate.includes(`typ ${fastPathType}`)) {
-        finish();
-      }
-    };
     const expire = () => {
       if (done) return;
       done = true;
@@ -42,7 +31,6 @@ export function waitForIceGatheringComplete(
       reject(whepError("ice-gathering-timeout", "ICE gathering timed out"));
     };
     pc.addEventListener("icegatheringstatechange", check);
-    if (fastPathType) pc.addEventListener("icecandidate", onCandidate);
     timer = setTimeout(expire, Math.max(0, capMs));
     check();
   });

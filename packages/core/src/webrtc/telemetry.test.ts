@@ -46,7 +46,7 @@ test("preserves unavailable metrics as null and accepts input echo RTT", async (
   const samples: StreamTelemetry[] = [];
   const sampler = makeTelemetrySampler({
     pc: { getStats: async () => new Map() },
-    transport: "public",
+    transport: "local",
     onSample: (sample) => samples.push(sample),
   });
 
@@ -55,7 +55,7 @@ test("preserves unavailable metrics as null and accepts input echo RTT", async (
 
   expect(samples[0]).toEqual({
     rttMs: null, loss: null, decodeMs: null, networkMs: null, inputMs: 11,
-    jitterMs: null, bitrateMbps: null, droppedFrames: null, transport: "RELAY",
+    jitterMs: null, bitrateMbps: null, droppedFrames: null, transport: "LAN",
   });
 });
 
