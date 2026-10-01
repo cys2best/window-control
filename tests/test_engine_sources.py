@@ -126,6 +126,11 @@ def test_root_package_has_no_signaling_workspace_or_script():
     assert "infra/vps/signaling" not in package["workspaces"]
     assert "test:signaling" not in package["scripts"]
 
+    # Verify the lock file has no stale relay entry
+    lock = json.loads((REPO / "package-lock.json").read_text(encoding="utf-8"))
+    assert "infra/vps/signaling" not in lock["packages"]
+    assert "node_modules/jose" not in lock["packages"]
+
 
 def test_verify_all_does_not_run_or_install_the_relay():
     text = (REPO / "scripts" / "verify_all.py").read_text(encoding="utf-8")
