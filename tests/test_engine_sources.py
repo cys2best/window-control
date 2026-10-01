@@ -227,3 +227,20 @@ def test_current_docs_do_not_describe_removed_features(relative):
     text = text.split(HISTORICAL_RECORD_MARKER)[0]
     for term in REMOVED_FEATURE_TERMS:
         assert term not in text, f"{relative} still mentions {term}"
+
+
+def test_engine_test_scripts_use_modules_that_exist():
+    import re
+
+    script = (REPO / "engine" / "test.ps1").read_text(encoding="utf-8")
+    readme = (REPO / "engine" / "test" / "README_e2e.md").read_text(encoding="utf-8")
+    assert "scrcpy_session" not in script
+    assert "scrcpy_session" not in readme
+    imports = re.findall(r"from server\.(\w+) import ([\w, ]+)", script)
+    assert imports, "test.ps1 no longer imports from server"
+    for module, names in imports:
+        source = REPO / "src" / "server" / f"{module}.py"
+        assert source.exists(), f"server.{module} does not exist"
+        text = source.read_text(encoding="utf-8")
+        for name in (n.strip() for n in names.split(",")):
+            assert f"def {name}" in text, f"server.{module} defines no {name}"

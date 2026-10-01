@@ -30,7 +30,7 @@ recorded:
 - A physical Android device (USB debugging authorized) or a running emulator.
   Do not assume `emulator-5554`: select the serial reported by `adb devices`.
 - The repository's scrcpy server asset at `src/assets/scrcpy/scrcpy-server`.
-  `test.ps1` uses the existing Python `_start_server` helper to push it, start
+  `test.ps1` uses the existing Python `start_server` helper to push it, start
   scrcpy 3.1, and create the required ADB forward.
 - Chrome or Edge on the Host PC. Keep its WebRTC diagnostics open during the
   test. A second browser profile/incognito window is useful for the second
@@ -137,7 +137,7 @@ isolating a launcher problem, is:
 
 ```powershell
 $env:PYTHONPATH = "src"
-uv run python -c "import sys; from server.scrcpy_session import _start_server, _find_adb; adb = _find_adb(); raise SystemExit(0 if adb and _start_server(adb, sys.argv[1], int(sys.argv[2]), scid=int(sys.argv[3]), tier=sys.argv[4]) else 1)" $serial $scrcpyPort $scid $tier
+uv run python -c "import sys; from server.scrcpy_server import start_server, find_adb; adb = find_adb(); raise SystemExit(0 if adb and start_server(adb, sys.argv[1], int(sys.argv[2]), scid=int(sys.argv[3]), tier=sys.argv[4]) else 1)" $serial $scrcpyPort $scid $tier
 if ($LASTEXITCODE -ne 0) { throw "Fresh scrcpy-server start failed." }
 & .\engine\build\Release\engine.exe poc-instance $scrcpyPort |
   Tee-Object -FilePath .\engine\test\e2e-engine.stdout.log
@@ -242,7 +242,7 @@ if (-not $adminUrl) { throw "adminUrl is missing; derive it from the ready recor
 $healthBefore = Invoke-RestMethod -Method Get -Uri "$adminUrl/admin/health"
 $nextGeneration = [uint64](([uint64]$healthBefore.generation) + 1)
 
-uv run python -c "import sys; from server.scrcpy_session import _start_server, _find_adb; adb = _find_adb(); raise SystemExit(0 if adb and _start_server(adb, sys.argv[1], int(sys.argv[2]), scid=int(sys.argv[3]), tier=sys.argv[4]) else 1)" $serial $reconnectPort $scid $tier
+uv run python -c "import sys; from server.scrcpy_server import start_server, find_adb; adb = find_adb(); raise SystemExit(0 if adb and start_server(adb, sys.argv[1], int(sys.argv[2]), scid=int(sys.argv[3]), tier=sys.argv[4]) else 1)" $serial $reconnectPort $scid $tier
 if ($LASTEXITCODE -ne 0) { throw "Replacement scrcpy-server start failed." }
 & $adb -s $serial forward --list
 

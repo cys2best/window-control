@@ -35,15 +35,15 @@ if (-not $SkipStartServer) {
     Push-Location $repoRoot
     $env:PYTHONPATH = "src"
     uv run python -c @"
-from server.scrcpy_session import _start_server
+from server.scrcpy_server import start_server
 from server.adb_manager import _find_adb
 adb = _find_adb()
-ok = _start_server(adb, '$Serial', $Port, scid=$Scid, tier='$Tier')
+ok = start_server(adb, '$Serial', $Port, scid=$Scid, tier='$Tier')
 print('start_server ok=' + str(ok))
 "@
     Pop-Location
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "[test.ps1] _start_server failed, aborting." -ForegroundColor Red
+        Write-Host "[test.ps1] start_server failed, aborting." -ForegroundColor Red
         exit 1
     }
     # engine.exe must connect while the server is fresh — see the freshness
