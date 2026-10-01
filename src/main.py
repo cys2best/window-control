@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Without this, the root logger defaults to WARNING and every module's
-# log.info() (tunnel connect/disconnect, engine lifecycle, etc.) is silently
+# log.info() (engine lifecycle, pairing, etc.) is silently
 # dropped even when stdout/stderr are captured to a file.
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 
@@ -122,27 +122,10 @@ def build_engine_orchestrator() -> "EngineOrchestrator":
     from server.engine_orchestrator import EngineOrchestrator
     from server.engine_runtime import EngineRuntimeConfig
 
-    from server import install_identity
-
-    signaling_url = config.VPS_SIGNALING_URL or ""
-    signaling_private_key = None
-    if signaling_url and not config.SUPABASE_URL:
-        _log(
-            "[config] VPS_SIGNALING_URL is set but SUPABASE_URL isn't -- "
-            "the public signaling path needs a real account to route by, "
-            "keeping it disabled. Set SUPABASE_URL to enable it."
-        )
-        signaling_url = ""
-    elif signaling_url:
-        signaling_private_key, _ = install_identity.get_or_create_install_keypair()
-
     runtime_config = EngineRuntimeConfig(
         exe_path=exe_path,
         whep_secret=secrets.token_hex(32),
-        signaling_url=signaling_url,
-        signaling_private_key=signaling_private_key,
         local_ice_servers=config.ENGINE_LOCAL_ICE_SERVERS,
-        public_ice_servers=config.ENGINE_PUBLIC_ICE_SERVERS,
     )
     return EngineOrchestrator(runtime_config)
 

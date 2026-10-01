@@ -122,3 +122,31 @@ def test_removed_config_exports_are_absent():
         "DEFAULT_QUALITY",
     ):
         assert not hasattr(config, name)
+
+
+def test_public_access_config_and_modules_are_absent():
+    import config
+
+    for name in (
+        "VPS_SIGNALING_URL", "ENGINE_PUBLIC_ICE_SERVERS",
+        "TURN_HOST", "TURN_PORT", "TURN_USERNAME", "TURN_CREDENTIAL",
+        "SUPABASE_URL", "SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY",
+        "SUPABASE_JWT_SECRET", "PUBLIC_UI_URL", "TUNNEL_SECRET",
+    ):
+        assert not hasattr(config, name), name
+
+    repo = Path(__file__).parent.parent
+    for relative in (
+        "src/server/auth.py", "src/server/supabase_client.py",
+        "src/server/install_identity.py", "src/server/http_tunnel.py",
+        "src/server/ice_config.py", "src/gui/supabase_login.py",
+    ):
+        assert not (repo / relative).exists(), relative
+
+    source = "\n".join(
+        path.read_text(errors="replace") for path in (repo / "src").rglob("*.py")
+    )
+    for removed in ("supabase", "SUPABASE", "ENGINE_SIGNALING", "ENGINE_SESSION",
+                    "TUNNEL_SECRET", "TURN_HOST", "public_session", "import jwt"):
+        assert removed not in source, removed
+    assert "pyjwt" not in (repo / "pyproject.toml").read_text().lower()

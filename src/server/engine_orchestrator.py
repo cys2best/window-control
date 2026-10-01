@@ -25,9 +25,7 @@ class EngineOrchestrator:
         self._runtimes: dict[str, EngineRuntime] = {}
         self._closed = False
         self._admin = EngineAdminClient()
-        self._token_issuer = EngineTokenIssuer(
-            config.whep_secret, config.signaling_private_key
-        )
+        self._token_issuer = EngineTokenIssuer(config.whep_secret)
 
     def add_instance(self, serial: str, instance_name: str,
                      instance_index: int, tier: str) -> None:

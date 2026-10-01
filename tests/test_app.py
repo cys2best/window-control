@@ -19,8 +19,6 @@ def _make_client(instances=None):
     im.select.return_value = EngineSelection(
         whep_url="http://100.64.1.4:51000/whep",
         whep_token="whep-token",
-        signaling_url=None,
-        public_session=None,
         generation=0,
         width=720,
         height=1280,
@@ -95,10 +93,7 @@ def test_get_instances_with_data():
 
 
 def test_legacy_select_includes_name():
-    # Legacy /select must stay in sync with /instances/{id}/select -- both
-    # already agree on whep_url/stun_url; "name" was missing here, which
-    # breaks any caller reusing the public-path wiring against this endpoint
-    # (session=undefined on the VPS signaling relay).
+    # Legacy /select must stay in sync with /instances/{id}/select.
     inst = MagicMock()
     inst.serial = "emulator-5554"
     inst.id = "adb:emulator-5554"
@@ -130,8 +125,6 @@ def test_instance_select_returns_exact_engine_contract():
     manager.select.return_value = EngineSelection(
         whep_url="http://100.64.1.4:51000/whep",
         whep_token="whep-token",
-        signaling_url=None,
-        public_session=None,
         generation=3,
         width=720,
         height=1280,
@@ -164,7 +157,7 @@ def test_instance_select_formats_ipv6_stun():
     manager.get.return_value = make_instance()
     manager.select.return_value = EngineSelection(
         whep_url="http://[fd7a:115c:a1e0::1]:51000/whep", whep_token="whep-token",
-        signaling_url=None, public_session=None, generation=4,
+        generation=4,
         width=1280, height=720,
     )
     with patch("server.app.get_best_ip", return_value="fd7a:115c:a1e0::1"):
@@ -180,8 +173,8 @@ def test_instance_select_mints_fresh_capabilities_each_time():
     client, manager = _make_client()
     manager.get.return_value = make_instance()
     manager.select.side_effect = [
-        EngineSelection("http://host/whep", "first", None, None, 1, 1280, 720),
-        EngineSelection("http://host/whep", "second", None, None, 1, 1280, 720),
+        EngineSelection("http://host/whep", "first", 1, 1280, 720),
+        EngineSelection("http://host/whep", "second", 1, 1280, 720),
     ]
 
     first = client.post("/instances/emulator-5554/select")

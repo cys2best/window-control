@@ -24,58 +24,9 @@ SYSTEM_WINDOW_TITLES = {
 
 # Engine / scrcpy
 STUN_PORT = 3478       # embedded STUN server, bound to Tailscale IP (see stun_server.py)
-VPS_SIGNALING_URL = os.environ.get("VPS_SIGNALING_URL")  # e.g. "ws://VPS_IP:8443"; None disables the public bridge path
 ENGINE_LOCAL_ICE_SERVERS = tuple(filter(None, os.environ.get(
     "ENGINE_LOCAL_ICE_SERVERS", ""
 ).split(",")))
-ENGINE_PUBLIC_ICE_SERVERS = tuple(filter(None, os.environ.get(
-    "ENGINE_PUBLIC_ICE_SERVERS", ""
-).split(",")))
-# TURN (+ a public STUN fallback) for the *public* WebRTC path specifically
-# (initWebRTCPublic() in the client) -- the local/Tailscale path above keeps
-# using the embedded STUN_PORT server unchanged. A NAT'd PC has no publicly
-# reachable ICE candidate on its own; without a TURN relay, ICE on the public
-# path fails after signaling succeeds and the client silently falls back to
-# local WHEP (unreachable off-Tailscale) -- see ice_config.py. TURN is
-# optional: absent TURN_HOST, get_ice_servers() returns STUN-only.
-TURN_HOST = os.environ.get("TURN_HOST")
-TURN_PORT = os.environ.get("TURN_PORT", "3478")
-TURN_USERNAME = os.environ.get("TURN_USERNAME")
-TURN_CREDENTIAL = os.environ.get("TURN_CREDENTIAL")
-# NOTE: if the web client is ever served over HTTPS, this must be "wss://" —
-# browsers block plaintext ws:// as mixed content under HTTPS, which fails
-# silently (ws.onerror fires, client falls back to a local URL a public
-# client can't reach). No TLS termination exists yet, so this is still
-# ws://. Also: session ids on the VPS signaling relay are sequential/
-# enumerable and there is no auth on that path yet — not safe to expose
-# publicly without the planned follow-up auth work.
-
-# Supabase project — unset SUPABASE_URL = auth disabled (LAN-only /
-# trusted-network deployments). Set before exposing the app past a
-# trusted LAN — every route is otherwise open to anyone with the URL.
-SUPABASE_URL = os.environ.get("SUPABASE_URL")
-# Public, safe to ship to browser/mobile/tray clients — used only to talk
-# to Supabase's Auth REST API directly for login/register.
-SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY", "")
-# Server-only. Full-access Postgres REST credential used solely by
-# supabase_client.py for the installs table, after FastAPI has already
-# authenticated the caller — it registers this install's Ed25519 public
-# key against the owning account so the public signaling relay can verify
-# the engine. An install locks to the first account that authenticates
-# against it; releasing it for a different account means deleting
-# install_owner.txt locally (see server/install_identity.py).
-SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
-# Optional server-only secret for local HS256 JWT signature verification
-SUPABASE_JWT_SECRET = os.environ.get("SUPABASE_JWT_SECRET", "")
-
-# Public-internet UI tunnel (VPS relay). Unset = tunnel disabled, matching
-# the VPS_SIGNALING_URL auto-start-only-if-configured pattern above. Full
-# URL including path, e.g. "wss://tunnel.example.com/__tunnel/register".
-PUBLIC_UI_URL = os.environ.get("PUBLIC_UI_URL")
-# Authenticates the tunnel *link* (PC <-> VPS), separate from AUTH_TOKEN
-# which authenticates the *browser user* — a leaked one doesn't compromise
-# the other. Required whenever PUBLIC_UI_URL is set.
-TUNNEL_SECRET = os.environ.get("TUNNEL_SECRET")
 
 ADB_PATH = "adb"       # overridden at runtime by _find_adb()
 SCRCPY_PATH = os.path.join("assets", "scrcpy", "scrcpy.exe")

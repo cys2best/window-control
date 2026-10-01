@@ -359,9 +359,6 @@ def test_watchdog_removal_waits_for_recovery_then_stops_engine_and_forward(monke
         def whep(self, _instance_name):
             return "whep"
 
-        def engine_token(self, _session):
-            return "signal"
-
     engine = Engine()
     launcher = ScrcpyServerLauncher(
         serial,
@@ -373,10 +370,7 @@ def test_watchdog_removal_waits_for_recovery_then_stops_engine_and_forward(monke
     config = EngineRuntimeConfig(
         exe_path=r"C:\engine\engine.exe",
         whep_secret="whep-secret",
-        signaling_url="",
-        signaling_private_key=None,
         local_ice_servers=(),
-        public_ice_servers=(),
     )
 
     def runtime_factory(*args):
