@@ -31,9 +31,8 @@ def test_launcher_window_dimensions_and_close_event(qapp):
     with patch("gui.launcher.check_for_update"):
         from gui.launcher import LauncherWindow
         window = LauncherWindow()
-        # Option B layout is ~400px width, ~460px height
         assert 380 <= window.width() <= 420
-        assert 440 <= window.height() <= 480
+        assert 540 <= window.height() <= 580
 
         # Close event should ignore event and hide window (minimize to tray)
         event = MagicMock()
@@ -44,75 +43,24 @@ def test_launcher_window_dimensions_and_close_event(qapp):
         assert window.isHidden()
 
 
-def test_launcher_window_status_card_lan_mode(qapp, monkeypatch):
-    monkeypatch.setattr("gui.launcher.SUPABASE_URL", None)
-    monkeypatch.setattr("gui.launcher.VPS_SIGNALING_URL", None)
-    monkeypatch.setattr("gui.launcher.detect_local_ip", lambda: "192.168.1.50")
-    monkeypatch.setattr("gui.launcher.detect_tailscale_ip", lambda: None)
-    monkeypatch.setattr("gui.launcher.has_tailscale", lambda: False)
-
-    with patch("gui.launcher.check_for_update"):
-        from gui.launcher import LauncherWindow
-        window = LauncherWindow()
-        assert "Auth disabled (LAN mode)" in window._account_name.text()
-        assert hasattr(window, "_relay_label")
-        assert hasattr(window, "_streams_label")
-        assert "192.168.1.50" in window._ip_label.text()
-
-
-def test_launcher_window_status_card_account_and_tailscale(qapp, monkeypatch):
-    monkeypatch.setattr("gui.launcher.SUPABASE_URL", "https://example.supabase.co")
-    monkeypatch.setattr("gui.launcher.VPS_SIGNALING_URL", "wss://relay.example.com/ws")
+def test_launcher_window_status_card_shows_lan_and_tailscale(qapp, monkeypatch):
     monkeypatch.setattr("gui.launcher.detect_local_ip", lambda: "192.168.1.50")
     monkeypatch.setattr("gui.launcher.detect_tailscale_ip", lambda: "100.80.90.100")
     monkeypatch.setattr("gui.launcher.has_tailscale", lambda: True)
 
-    session = {
-        "access_token": "jwt-123",
-        "user": {
-            "email": "host@test.com",
-            "user_metadata": {"display_name": "Host Operator", "role": "owner"},
-            "role": "authenticated",
-        },
-    }
-    with patch("gui.launcher.check_for_update"), \
-         patch("gui.supabase_login.load_cached_session", return_value=session):
+    with patch("gui.launcher.check_for_update"):
         from gui.launcher import LauncherWindow
         window = LauncherWindow()
-        assert window._account_name.text() == "Host Operator"
-        assert window._account_email_role.text() == "host@test.com · owner"
-        assert window._account_avatar.text() == "HO"
-        assert hasattr(window, "_sign_out_btn")
-        assert "100.80.90.100" in window._ip_label.text()
         assert "192.168.1.50" in window._ip_label.text()
+        assert "100.80.90.100" in window._ip_label.text()
+        assert hasattr(window, "_streams_label")
+        for removed in ("_relay_label", "_account_band", "_sign_in_btn", "_sign_out_btn"):
+            assert not hasattr(window, removed)
 
 
-def test_sign_out_clears_device_session_without_changing_server_state(qapp, monkeypatch):
-    monkeypatch.setattr("gui.launcher.SUPABASE_URL", "https://example.supabase.co")
-    cleared = []
-    server_actions = []
-    session = {
-        "access_token": "jwt-123",
-        "user": {
-            "email": "host@test.com",
-            "user_metadata": {"display_name": "Host Operator", "role": "owner"},
-            "role": "authenticated",
-        },
-    }
-
-    with patch("gui.launcher.check_for_update"), \
-         patch("gui.supabase_login.load_cached_session", side_effect=[session, None]), \
-         patch("gui.supabase_login.clear_cached_session", side_effect=lambda: cleared.append(True)):
-        from gui.launcher import LauncherWindow
-        window = LauncherWindow(on_stop_server=lambda: server_actions.append("stop"))
-        window.server_start_requested.connect(lambda: server_actions.append("start"))
-
-        window._sign_out_btn.click()
-
-        assert cleared == [True]
-        assert window._account_name.text() == "Not signed in"
-        assert window._sign_in_btn.text() == "Sign in"
-        assert server_actions == []
+def test_launcher_has_no_login_prompt():
+    import gui.launcher as launcher
+    assert not hasattr(launcher, "maybe_show_login")
 
 
 def test_launcher_window_active_streams_update(qapp):
@@ -142,3 +90,70 @@ def test_launcher_window_action_buttons(qapp):
 
         window._stop_btn.click()
         assert stop_called == [True]
+
+
+def test_pair_device_button_shows_a_code(qapp):
+    from server.pairing import PairingStore
+    store = PairingStore()
+    with patch("gui.launcher.check_for_update"):
+        from gui.launcher import LauncherWindow
+        window = LauncherWindow(pairing=store)
+        assert window._pair_code_label.text() == ""
+        assert window._pair_btn.text() == "Pair device"
+        assert store.active_code() is None
+
+        window._pair_btn.click()
+
+        code, _remaining = store.active_code()
+        assert f"{code[:3]} {code[3:]}" in window._pair_code_label.text()
+        assert window._pair_btn.text() == "New code"
+
+
+def test_code_clears_and_device_appears_once_the_code_is_used(qapp):
+    from server.pairing import PairingStore
+    store = PairingStore()
+    with patch("gui.launcher.check_for_update"):
+        from gui.launcher import LauncherWindow
+        window = LauncherWindow(pairing=store)
+        window._pair_btn.click()
+        store.pair(store.active_code()[0], "Phone")
+
+        window._refresh_pairing()
+
+        assert window._pair_code_label.text() == ""
+        assert window._pair_btn.text() == "Pair device"
+        assert window._device_list.count() == 1
+        assert "Phone" in window._device_list.item(0).text()
+
+
+def test_paired_devices_can_be_removed_one_at_a_time_or_all(qapp):
+    from server.pairing import PairingStore
+    store = PairingStore()
+    store.pair(store.start_pairing(), "Phone")
+    store.pair(store.start_pairing(), "Tablet")
+    with patch("gui.launcher.check_for_update"):
+        from gui.launcher import LauncherWindow
+        window = LauncherWindow(pairing=store)
+        assert window._device_list.count() == 2
+
+        window._device_list.setCurrentRow(0)
+        window._remove_device_btn.click()
+        assert [d.name for d in store.list_devices()] == ["Tablet"]
+        assert window._device_list.count() == 1
+
+        window._unpair_all_btn.click()
+        assert store.list_devices() == []
+        assert window._device_list.count() == 0
+        assert not window._unpair_all_btn.isEnabled()
+
+
+def test_remove_with_nothing_selected_is_a_no_op(qapp):
+    from server.pairing import PairingStore
+    store = PairingStore()
+    store.pair(store.start_pairing(), "Phone")
+    with patch("gui.launcher.check_for_update"):
+        from gui.launcher import LauncherWindow
+        window = LauncherWindow(pairing=store)
+        window._device_list.setCurrentRow(-1)
+        window._remove_device_btn.click()
+        assert len(store.list_devices()) == 1

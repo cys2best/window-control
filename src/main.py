@@ -66,7 +66,8 @@ try:
     from config import PORT
     from server.app import create_app
     from server.instance_manager import InstanceManager
-    from gui.launcher import LauncherWindow, maybe_show_login
+    from gui.launcher import LauncherWindow
+    from server.pairing import PairingStore, default_store_path
     from tray import TrayIcon
     _log_early("[gui-imports] app modules OK")
 except Exception:
@@ -200,7 +201,8 @@ def main():
     engine_orchestrator = build_engine_orchestrator()
     instance_manager = InstanceManager(engine_orchestrator)
 
-    fastapi_app = create_app(instance_manager)
+    pairing = PairingStore(default_store_path())
+    fastapi_app = create_app(instance_manager, pairing=pairing)
 
     server = None
     _server_thread = None
@@ -208,16 +210,9 @@ def main():
     def start_server():
         nonlocal _server_thread, server
         # Fresh uvicorn Server each restart (uvicorn cannot be re-run after exit)
-        # proxy_headers=False is load-bearing, not a default restated:
-        # uvicorn defaults it to True and trusts 127.0.0.1 as a forwarding
-        # proxy, so its ProxyHeadersMiddleware would rewrite
-        # request.client.host from an attacker-supplied X-Forwarded-For on any
-        # request whose direct peer is loopback. The public HTTP tunnel relays
-        # requests through a local httpx client (loopback from this app's
-        # perspective) and does not strip x-forwarded-for -- which would make
-        # app.py's localhost-only guard on /internal/ spoofable. The tunnel
-        # already refuses to forward /internal/ at all; this keeps the
-        # app-level guard actually meaning what it documents.
+        # proxy_headers=False is load-bearing: uvicorn's default trusts
+        # X-Forwarded-For from loopback peers and rewrites the client
+        # address, which is the address the access gate checks.
         config = uvicorn.Config(fastapi_app, host="0.0.0.0", port=PORT,
                                 log_level="warning", log_config=None,
                                 proxy_headers=False)
@@ -263,11 +258,7 @@ def main():
                     _log(f"[GUI] watchdog restart failed: {_tb.format_exc()[:300]}")
     threading.Thread(target=_watchdog, daemon=True).start()
 
-    if not maybe_show_login():
-        _log("[GUI] login cancelled — exiting without showing launcher")
-        return
-
-    launcher = LauncherWindow(on_stop_server=stop_server)
+    launcher = LauncherWindow(on_stop_server=stop_server, pairing=pairing)
 
     def show_launcher():
         launcher.show()

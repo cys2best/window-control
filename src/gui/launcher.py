@@ -1,14 +1,16 @@
 # src/gui/launcher.py
 import sys
 import subprocess
+import time
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QLabel, QGroupBox, QDialog, QFrame
+    QPushButton, QLabel, QGroupBox, QFrame, QListWidget, QListWidgetItem
 )
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal
-from PyQt5.QtGui import QFont, QFontMetrics
+from PyQt5.QtGui import QFont
 
-from config import PORT, VERSION, SUPABASE_URL, SUPABASE_ANON_KEY, VPS_SIGNALING_URL
+from config import PORT, VERSION
+from server.pairing import PairingStore
 from server.tailscale import has_tailscale, detect_local_ip, detect_tailscale_ip
 from updater import check_for_update
 from gui.theme import (
@@ -17,35 +19,31 @@ from gui.theme import (
 )
 
 
-def maybe_show_login(parent=None) -> bool:
-    """Return True if it's OK to proceed to the main window (auth disabled,
-    or the user completed sign-in / had a cached session)."""
-    if not SUPABASE_URL:
-        return True
-    from gui.supabase_login import LoginDialog, load_cached_session
-    if load_cached_session() is not None:
-        return True
-    dialog = LoginDialog(SUPABASE_URL, SUPABASE_ANON_KEY, parent)
-    return dialog.exec_() == QDialog.Accepted
-
-
 class LauncherWindow(QMainWindow):
     server_start_requested = pyqtSignal()
     server_stop_requested = pyqtSignal()
     window_selected = pyqtSignal(str)
 
-    def __init__(self, parent=None, on_stop_server=None):
+    def __init__(self, parent=None, on_stop_server=None, pairing=None):
         super().__init__(parent)
         self.setWindowTitle(f"EmuCtrl Host v{VERSION}")
-        self.setFixedSize(400, 460)
+        self.setFixedSize(400, 560)
         self._enable_windows_dark_title_bar()
         self._on_stop_server = on_stop_server
+        self._pairing = pairing if pairing is not None else PairingStore()
+        self._device_ids: list[str] | None = None
         self._active_streams_count = 0
         self._pending_update_version = None
         self._fonts = register_fonts()
 
         self._setup_ui()
         self._refresh_status()
+        # The server thread pairs devices and the code expires on its own, so
+        # the group is polled rather than pushed to.
+        self._pairing_timer = QTimer(self)
+        self._pairing_timer.setInterval(1000)
+        self._pairing_timer.timeout.connect(self._refresh_pairing)
+        self._pairing_timer.start()
         check_for_update(self._on_update_available)
 
     def closeEvent(self, event):
@@ -97,59 +95,6 @@ class LauncherWindow(QMainWindow):
 
         layout.addWidget(header_widget)
 
-        # --- Account ---
-        self._account_band = QWidget()
-        self._account_band.setFixedHeight(47)
-        self._account_band.setStyleSheet(
-            f"background: {SURFACE}; border: 1px solid {HAIRLINE}; border-radius: 6px;"
-        )
-        account_layout = QHBoxLayout(self._account_band)
-        account_layout.setContentsMargins(9, 6, 9, 6)
-        account_layout.setSpacing(8)
-
-        self._account_avatar = QLabel()
-        self._account_avatar.setAlignment(Qt.AlignCenter)
-        self._account_avatar.setFixedSize(28, 28)
-        self._account_avatar.setStyleSheet(
-            f"background: {CYAN}; color: {CANVAS}; border-radius: 14px;"
-        )
-        self._account_avatar.setFont(self._ui_font(11, QFont.DemiBold))
-        account_layout.addWidget(self._account_avatar)
-
-        account_text = QWidget()
-        account_text.setFixedHeight(30)
-        account_text_layout = QVBoxLayout(account_text)
-        account_text_layout.setContentsMargins(0, 0, 0, 0)
-        account_text_layout.setSpacing(1)
-        self._account_name = QLabel()
-        self._account_name.setFixedHeight(15)
-        self._account_name.setWordWrap(False)
-        self._account_name.setFont(self._ui_font(12, QFont.DemiBold))
-        self._account_name.setStyleSheet(f"color: {INK};")
-        self._account_email_role = QLabel()
-        self._account_email_role.setFixedHeight(14)
-        self._account_email_role.setWordWrap(False)
-        self._account_email_role.setFont(self._mono_font(9.5))
-        self._account_email_role.setStyleSheet(f"color: {MUTED};")
-        account_text_layout.addWidget(self._account_name)
-        account_text_layout.addWidget(self._account_email_role)
-        account_layout.addWidget(account_text, 1)
-
-        self._sign_out_btn = QPushButton("Sign out")
-        self._sign_out_btn.setFixedHeight(28)
-        self._sign_out_btn.setStyleSheet(
-            self._btn_style(SURFACE_RAISED, DESTRUCTIVE_HOVER, INK)
-        )
-        self._sign_out_btn.clicked.connect(self._sign_out)
-        account_layout.addWidget(self._sign_out_btn)
-
-        self._sign_in_btn = QPushButton("Sign in")
-        self._sign_in_btn.setFixedHeight(28)
-        self._sign_in_btn.setStyleSheet(self._btn_style(SURFACE_RAISED, CYAN, INK))
-        self._sign_in_btn.clicked.connect(self._show_sign_in)
-        account_layout.addWidget(self._sign_in_btn)
-        layout.addWidget(self._account_band)
-
         # --- Status Card ---
         status_group = QGroupBox("Host Status")
         group_layout = QVBoxLayout(status_group)
@@ -172,23 +117,7 @@ class LauncherWindow(QMainWindow):
         # Divider
         group_layout.addWidget(self._create_divider())
 
-        # 2. VPS Relay
-        relay_layout = QVBoxLayout()
-        relay_layout.setSpacing(2)
-        relay_title = QLabel("VPS Relay")
-        relay_title.setStyleSheet(f"font-size: 11px; font-weight: 600; color: {MUTED};")
-        self._relay_label = QLabel("Checking…")
-        self._relay_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        self._relay_label.setFont(self._mono_font(10))
-        self._relay_label.setStyleSheet(f"color: {INK};")
-        relay_layout.addWidget(relay_title)
-        relay_layout.addWidget(self._relay_label)
-        group_layout.addLayout(relay_layout)
-
-        # Divider
-        group_layout.addWidget(self._create_divider())
-
-        # 3. Active Streams
+        # 2. Active Streams
         streams_layout = QVBoxLayout()
         streams_layout.setSpacing(2)
         streams_title = QLabel("Active Streams")
@@ -201,6 +130,51 @@ class LauncherWindow(QMainWindow):
         group_layout.addLayout(streams_layout)
 
         layout.addWidget(status_group)
+
+        # --- Paired devices ---
+        devices_group = QGroupBox("Paired Devices")
+        devices_layout = QVBoxLayout(devices_group)
+        devices_layout.setSpacing(8)
+        devices_layout.setContentsMargins(14, 14, 14, 14)
+
+        pair_row = QHBoxLayout()
+        pair_row.setSpacing(10)
+        self._pair_btn = QPushButton("Pair device")
+        self._pair_btn.setFixedHeight(32)
+        self._pair_btn.setStyleSheet(self._btn_style(SURFACE, CYAN, INK))
+        self._pair_btn.clicked.connect(self._start_pairing)
+        pair_row.addWidget(self._pair_btn)
+        self._pair_code_label = QLabel("")
+        self._pair_code_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self._pair_code_label.setFont(self._mono_font(13, QFont.DemiBold))
+        self._pair_code_label.setStyleSheet(f"color: {MINT};")
+        pair_row.addWidget(self._pair_code_label, 1)
+        devices_layout.addLayout(pair_row)
+
+        self._device_list = QListWidget()
+        self._device_list.setFixedHeight(64)
+        self._device_list.setFont(self._mono_font(10))
+        self._device_list.setStyleSheet(
+            f"QListWidget {{ background: {SURFACE}; color: {INK};"
+            f" border: 1px solid {HAIRLINE}; border-radius: 6px; }}"
+        )
+        devices_layout.addWidget(self._device_list)
+
+        device_actions = QHBoxLayout()
+        device_actions.setSpacing(10)
+        self._remove_device_btn = QPushButton("Remove selected")
+        self._remove_device_btn.setFixedHeight(32)
+        self._remove_device_btn.setStyleSheet(self._btn_style(SURFACE, DESTRUCTIVE_HOVER, INK))
+        self._remove_device_btn.clicked.connect(self._remove_selected_device)
+        device_actions.addWidget(self._remove_device_btn)
+        self._unpair_all_btn = QPushButton("Unpair all")
+        self._unpair_all_btn.setFixedHeight(32)
+        self._unpair_all_btn.setStyleSheet(self._btn_style(SURFACE, DESTRUCTIVE_HOVER, INK))
+        self._unpair_all_btn.clicked.connect(self._unpair_all)
+        device_actions.addWidget(self._unpair_all_btn)
+        devices_layout.addLayout(device_actions)
+
+        layout.addWidget(devices_group)
 
         # --- Update banner ---
         self._update_banner = QWidget()
@@ -318,81 +292,9 @@ class LauncherWindow(QMainWindow):
         """
 
     def _refresh_status(self):
-        self._refresh_account()
         self._refresh_ip()
-        self._refresh_relay()
+        self._refresh_pairing()
         self.update_active_streams(0)
-
-    def _refresh_account(self):
-        if not SUPABASE_URL:
-            self._set_account_state("EC", "Auth disabled (LAN mode)", "", signed_in=False)
-            return
-        try:
-            from gui.supabase_login import load_cached_session
-            session = load_cached_session()
-            if session:
-                user = session.get("user", {})
-                metadata = user.get("user_metadata") or {}
-                email = user.get("email") or user.get("id") or "Signed in"
-                name = metadata.get("display_name") or email
-                role = metadata.get("role") or user.get("role")
-                detail = f"{email} · {role}" if role else email
-                self._set_account_state(self._initials(name), name, detail, signed_in=True)
-            else:
-                self._set_account_state("?", "Not signed in", "", signed_in=False)
-        except Exception:
-            self._set_account_state("?", "Not signed in", "", signed_in=False)
-
-    def _set_account_state(self, avatar: str, name: str, detail: str, *, signed_in: bool) -> None:
-        self._account_avatar.setText(avatar)
-        self._account_full_name = name
-        self._account_full_email_role = detail
-        self._account_name.setText(name)
-        self._account_email_role.setText(detail)
-        # The first refresh runs before Qt has assigned the label's final
-        # width. Re-elide on the next event-loop turn to avoid overlapping
-        # account text in the compact 47px strip.
-        QTimer.singleShot(0, self._elide_account_detail)
-        self._sign_out_btn.setVisible(signed_in)
-        self._sign_in_btn.setVisible(not signed_in and bool(SUPABASE_URL))
-
-    def _initials(self, name: str) -> str:
-        words = [word for word in name.split() if word]
-        if len(words) >= 2:
-            return (words[0][0] + words[-1][0]).upper()
-        return name[:2].upper()
-
-    def _elide_account_detail(self) -> None:
-        available = max(0, self._account_email_role.width())
-        self._account_email_role.setText(
-            QFontMetrics(self._account_email_role.font()).elidedText(
-                self._account_full_email_role, Qt.ElideRight, available
-            )
-        )
-        name_width = max(0, self._account_name.width())
-        self._account_name.setText(
-            QFontMetrics(self._account_name.font()).elidedText(
-                self._account_full_name, Qt.ElideRight, name_width
-            )
-        )
-
-    def _sign_out(self) -> None:
-        from gui.supabase_login import clear_cached_session
-        clear_cached_session()
-        self._refresh_account()
-
-    def _show_sign_in(self) -> None:
-        if not SUPABASE_URL:
-            return
-        from gui.supabase_login import LoginDialog
-        dialog = LoginDialog(SUPABASE_URL, SUPABASE_ANON_KEY, self)
-        if dialog.exec_() == QDialog.Accepted:
-            self._refresh_account()
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        if hasattr(self, "_account_email_role"):
-            self._elide_account_detail()
 
     def _refresh_ip(self):
         lan = detect_local_ip()
@@ -402,13 +304,45 @@ class LauncherWindow(QMainWindow):
         else:
             self._ip_label.setText(f"LAN: {lan}:{PORT}\nTailscale: Inactive")
 
-    def _refresh_relay(self):
-        if VPS_SIGNALING_URL:
-            self._relay_label.setText("Connected")
-            self._relay_label.setStyleSheet(f"color: {MINT};")
+    def _start_pairing(self):
+        self._pairing.start_pairing()
+        self._refresh_pairing()
+
+    def _refresh_pairing(self):
+        active = self._pairing.active_code()
+        if active is None:
+            self._pair_code_label.setText("")
+            self._pair_btn.setText("Pair device")
         else:
-            self._relay_label.setText("Offline (disabled)")
-            self._relay_label.setStyleSheet(f"color: {MUTED};")
+            code, remaining = active
+            self._pair_code_label.setText(
+                f"{code[:3]} {code[3:]}  ·  {remaining // 60}:{remaining % 60:02d}"
+            )
+            self._pair_btn.setText("New code")
+
+        devices = self._pairing.list_devices()
+        ids = [device.id for device in devices]
+        if ids != self._device_ids:
+            self._device_ids = ids
+            self._device_list.clear()
+            for device in devices:
+                paired_on = time.strftime("%Y-%m-%d", time.localtime(device.created_at))
+                item = QListWidgetItem(f"{device.name}  ·  {paired_on}")
+                item.setData(Qt.UserRole, device.id)
+                self._device_list.addItem(item)
+        self._remove_device_btn.setEnabled(bool(devices))
+        self._unpair_all_btn.setEnabled(bool(devices))
+
+    def _remove_selected_device(self):
+        item = self._device_list.currentItem()
+        if item is None:
+            return
+        self._pairing.remove_device(item.data(Qt.UserRole))
+        self._refresh_pairing()
+
+    def _unpair_all(self):
+        self._pairing.remove_all()
+        self._refresh_pairing()
 
     def update_active_streams(self, count: int):
         self._active_streams_count = count

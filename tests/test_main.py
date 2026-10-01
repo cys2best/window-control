@@ -158,7 +158,7 @@ def _patch_main_startup(monkeypatch, main_mod, manager_calls):
             pass
 
     monkeypatch.setattr(main_mod, "InstanceManager", FakeManager)
-    monkeypatch.setattr(main_mod, "create_app", lambda *args: object())
+    monkeypatch.setattr(main_mod, "create_app", lambda *args, **kwargs: object())
 
 
 def test_main_constructs_only_engine_instance_manager(monkeypatch):
@@ -211,6 +211,7 @@ def test_main_starts_server_without_android_mjpeg_pipeline(monkeypatch):
     assert exit_info.value.code == 0
     assert len(app_calls) == 1
     assert len(app_calls[0][0]) == 1
+    assert set(app_calls[0][1]) == {"pairing"}
     assert all(getattr(target, "__name__", "") != "capture_loop" for target in thread_targets)
 
 
