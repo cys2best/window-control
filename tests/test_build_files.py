@@ -62,6 +62,16 @@ def test_ci_builds_apps_web_before_packaging():
     assert build_step_idx < pyinstaller_idx
 
 
+def test_ci_cmd_steps_call_npm_so_later_lines_still_run():
+    # In a cmd script, invoking the npm.cmd shim without `call` ends the
+    # script, silently skipping every line after it.
+    text = (REPO_ROOT / ".github" / "workflows" / "build.yml").read_text()
+    npm_lines = [line.strip() for line in text.splitlines()
+                 if line.strip().startswith(("npm ", "call npm "))]
+    assert npm_lines
+    assert all(line.startswith("call npm ") for line in npm_lines), npm_lines
+
+
 def test_build_bat_builds_apps_web_before_packaging():
     text = (BUILD_DIR / "build.bat").read_text()
     build_step_idx = text.index("npm run build -w apps/web")

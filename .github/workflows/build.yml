@@ -95,9 +95,11 @@ jobs:
           node-version: '20'
 
       - name: Build apps/web's static export
+        # npm is a .cmd shim: without `call`, cmd ends the script after the
+        # first one and the build line never runs.
         run: |
-          npm install
-          npm run build -w apps/web
+          call npm install || exit /b 1
+          call npm run build -w apps/web || exit /b 1
         shell: cmd
 
       - name: Build EXE with PyInstaller
