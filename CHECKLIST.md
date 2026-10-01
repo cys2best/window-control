@@ -30,6 +30,8 @@
 
 ## Section 2: Automated Monorepo Verification (Run First)
 
+Prerequisites on a fresh clone: `uv sync` and `npm install`.
+
 Execute the full automated test suite:
 
 ```powershell
@@ -43,7 +45,7 @@ Execute the full automated test suite:
 - [x] **2.4. Shared UI Components**: 18 passed across 7 suites (`npm run test:ui`). *(Verified on Windows)*
 - [x] **2.5. Web Client Routing &amp; Redirection**: 7 passed across 4 suites (`npm test -w apps/web`). *(Verified on Windows)*
 - [x] **2.6. Next.js Static Export Build**: Succeeds into `apps/web/out` in 8.81s (`npm run build -w apps/web`). *(Verified on Windows)*
-- [x] **2.7. Web Export Artifact Integrity**: *(Verified on Windows)*
+- [ ] **2.7. Web Export Artifact Integrity**: *(re-verify for v3.2.0: pairing steps not yet run)*
   - [x] `apps/web/out/index.html` exists
   - [ ] `apps/web/out/pair.html` exists
   - [x] `apps/web/out/instances.html` exists
@@ -58,13 +60,13 @@ Execute the full automated test suite:
 Check the dev server and web routes by hand:
 
 - [x] **3.1. Server Health**: Dev app boots cleanly on port 8080 (web server responds). *(Verified on Windows)*
-- [x] **3.2. Web Route Servicing**: *(Verified on Windows)*
+- [ ] **3.2. Web Route Servicing**: *(re-verify for v3.2.0: pairing steps not yet run)*
   - [x] `GET http://127.0.0.1:8080/` -&gt; 200 text/html
   - [ ] `GET http://127.0.0.1:8080/pair` -&gt; 200 text/html
   - [x] `GET http://127.0.0.1:8080/instances` -&gt; 200 text/html (when requesting HTML shell)
   - [x] `GET http://127.0.0.1:8080/stream` -&gt; 200 text/html
   - [x] `GET http://127.0.0.1:8080/setup` -&gt; 404 (retired route rejected)
-- [x] **3.3. Content Negotiation on `/instances`**: *(Verified on Windows)*
+- [ ] **3.3. Content Negotiation on `/instances`**: *(re-verify for v3.2.0: pairing steps not yet run)*
   - [x] `Accept: text/html` returns the HTML page shell.
   - [ ] `Accept: application/json` returns the JSON instance list from the PC itself (127.0.0.1) and `401` from an unpaired LAN device.
   - [x] No Accept header defaults to JSON API response.
@@ -125,10 +127,10 @@ cd ..
 Start host: `uv run python src\main.py` (or launch installed `WindowControl.exe`):
 
 - [x] **6.1. System Tray Icon**: WindowControl icon appears in Windows system tray (near clock). *(Verified on Windows)*
-- [x] **6.2. Minimal Host Monitor Widget (Option B)**: *(Verified on Windows)*
+- [ ] **6.2. Minimal Host Monitor Widget (Option B)**: *(re-verify for v3.2.0: pairing steps not yet run)*
   - Right-click or double-click tray icon -> click **Show**.
   - [x] Window opens (~400px width, ~460px height).
-  - [x] Header displays: `WindowControl Host v3.2.0` with green running dot and `:8080`.
+  - [x] Header displays: `EmuCtrl Host v3.2.0` with green running dot and `:8080`.
   - [ ] A **Paired Devices** group lists paired devices ("Remove selected", "Unpair all"); there is no account row.
   - [x] Network row displays detected Local LAN IP and Tailscale IP (if active).
   - [x] Active Streams row shows current viewer count ("Idle" when 0).
@@ -204,7 +206,7 @@ Run app via Expo dev build or Expo Go on physical phone:
 
 ## Section 10: Sign-Off & Result Logging
 
-- [x] All automated tests verified green (Section 2 full monorepo & Section 3.1-3.3 live server verified on macOS).
+- [ ] All automated tests verified green (Section 2 full monorepo & Section 3.1-3.3 live server verified on macOS). *(re-verify for v3.2.0: pairing steps not yet run)*
 - [x] Engine compilation verified on Windows (Section 4).
 - [x] Installer built and verified (Section 5).
 - [x] Host Monitor Widget Option B visually confirmed (Section 6).

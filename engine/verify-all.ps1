@@ -1,4 +1,4 @@
-# Windows PowerShell one-command automated verification for WindowControl v3.1.0
+# Windows PowerShell one-command automated verification for WindowControl
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 
@@ -15,6 +15,6 @@ if (Test-Path $envFile) {
     }
 }
 
-Write-Host "Starting WindowControl v3.1.0 Automated Monorepo Verification..." -ForegroundColor Cyan
+Write-Host "Starting WindowControl Automated Monorepo Verification..." -ForegroundColor Cyan
 & uv run python (Join-Path $repoRoot "scripts\verify_all.py")
 exit $LASTEXITCODE

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Unified Automated Monorepo Verifier for WindowControl (v3.1.0).
+"""Unified Automated Monorepo Verifier for WindowControl.
 
 Runs all automated backend, frontend and desktop checks in a single command
 with zero manual prompts, proving system integrity before any manual hardware checks.
@@ -52,7 +52,7 @@ def _run_step(name: str, cmd: list[str], cwd: Path | None = None, env: dict[str,
 
 def main() -> int:
     print("=" * 72)
-    print(" WINDOWCONTROL v3.1.0 — ZERO-CONFIG MONOREPO AUTOMATED VERIFICATION")
+    print(" WINDOWCONTROL — ZERO-CONFIG MONOREPO AUTOMATED VERIFICATION")
     print("=" * 72)
 
     steps = [

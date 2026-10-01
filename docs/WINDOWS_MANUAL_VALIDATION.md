@@ -10,6 +10,7 @@
 ## Executive Summary Checklist (Follow in Order)
 
 ### Phase 1: Full Automated Validation (0 Manual Steps)
+- [ ] **Prerequisites (fresh clone)**: `uv sync` and `npm install`.
 - [ ] **Run all automated gates**:
   ```powershell
   .\engine\verify-all.ps1
@@ -99,7 +100,7 @@ npm run test:core; npm run test:ui; npm test -w apps/web
 1. Locate WindowControl icon in the Windows taskbar system tray.
 2. Click **Show**:
    - Minimal Host Monitor window opens (~400px width, ~460px height).
-   - Header shows `WindowControl Host v3.2.0` with green running dot and `:8080`.
+   - Header shows `EmuCtrl Host v3.2.0` with green running dot and `:8080`.
    - Network row displays Local LAN IP and Tailscale IP.
    - Streams row displays active viewer count.
 3. Click **Minimize to Tray** -> window hides.

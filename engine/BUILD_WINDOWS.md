@@ -1,16 +1,13 @@
 # Building engine.exe on Windows
 
-This project has never been compiled — all of Tasks 5-9 were written and
-reviewed on a Darwin host with no Windows toolchain available. Everything
-below is verified by reading `CMakeLists.txt`/`vcpkg.json` and cross-
-checking against the code, not by a successful build. Expect to debug real
-compile errors on the first attempt; this doc gets you to that point with
-the least wasted time.
+CI builds the engine and runs `engine_tests.exe` (the `build-engine` job in
+`.github/workflows/build.yml`, on `v*` tags and manual dispatch). Local Windows
+builds follow the steps below.
 
 ## Option A: GitHub Actions (no local Windows box needed)
 
 `.github/workflows/build.yml` has a `build-engine` job (Windows runner,
-`workflow_dispatch`-only — run it from the Actions tab, "Run workflow").
+runs on `v*` tags and on manual dispatch — run it from the Actions tab, "Run workflow").
 It configures with vcpkg, builds `Release`, runs `engine_tests.exe`, and
 uploads `engine.exe` as a workflow artifact. This is the
 fastest way to get a real compiler's verdict on this code without owning
@@ -50,6 +47,8 @@ cmake -S engine -B engine\build `
 `gtest`, `nlohmann-json` automatically on first configure — expect this step to take a while (libdatachannel has a large dependency
 tree: OpenSSL, usrsctp, etc.). No manual `vcpkg install` needed.
 
+`engine/vcpkg-configuration.json` pins the vcpkg baseline; moving it is deferred because it needs a CI build to confirm.
+
 ## Build
 
 ```
@@ -64,22 +63,9 @@ cmake --build engine\build --target engine_tests --config Release
 cmake --build engine\build --target engine --config Release
 ```
 
-## Known friction points (read before debugging blind)
-
-1. **`ScrcpyControlClient::RequestIdr()` and the RTP-timestamp fix in
-   `peer.cpp` were added in the final review's fix wave (commit
-   `27c2be2`) and have never compiled.** If the build fails specifically
-   in `peer.cpp` or `scrcpy_control.cpp`/`.h`, check those files first —
-   they're the newest, least-scrutinized-by-compiler code in the tree.
-
-2. **All C++ across Tasks 5-9 (`scrcpy_video.*`, `scrcpy_control.*`,
-   `peer.*`, `main.cpp`) is equally unverified.**
-   Don't assume earlier files are "more trustworthy" than later ones —
-   none of it has seen a compiler yet.
-
 ## After it builds
 
-1. Run the engine tests (no scrcpy, relay or network needed):
+1. Run the engine tests (no scrcpy or network needed):
    ```
    engine\build\Release\engine_tests.exe
    ```
@@ -89,6 +75,4 @@ cmake --build engine\build --target engine --config Release
 ## If you hit a build error not covered here
 
 Report back the exact error (file:line, compiler message) rather than
-guessing at a fix — this is genuinely first-contact-with-a-compiler code,
-and the fastest path is diagnosing the real error, not pattern-matching
-against what "should" be wrong.
+guessing at a fix; the fastest path is diagnosing the real error.
