@@ -4,9 +4,6 @@
     "codex",
     "antigravity"
   ],
-  "workflowTools": [
-    "superpowers"
-  ],
   "modelPolicy": {
     "superpowers": {
       "claude": {
