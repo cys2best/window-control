@@ -197,3 +197,37 @@ def test_device_names_are_trimmed_capped_and_defaulted(given, expected):
 ])
 def test_bearer_token_accepts_exactly_one_credential(header, expected):
     assert bearer_token(header) == expected
+
+
+def _unwritable_path(tmp_path):
+    blocker = tmp_path / "blocker"
+    blocker.write_text("not a directory")
+    return str(blocker / "paired_devices.json")
+
+
+def test_last_save_ok_tracks_the_most_recent_save(tmp_path):
+    store = PairingStore(_unwritable_path(tmp_path))
+    assert store.last_save_ok is True
+    token = store.pair(store.start_pairing(), "Phone")
+    assert store.last_save_ok is False
+    # revocation still takes effect in memory
+    device_id = store.list_devices()[0].id
+    assert store.remove_device(device_id) is True
+    assert store.last_save_ok is False
+    assert not store.is_valid_token(token)
+
+    store.pair(store.start_pairing(), "Tablet")
+    store.remove_all()
+    assert store.list_devices() == []
+    assert store.last_save_ok is False
+
+    good = PairingStore(str(tmp_path / "ok.json"))
+    good.pair(good.start_pairing(), "Phone")
+    good.remove_all()
+    assert good.last_save_ok is True
+
+
+def test_failed_save_log_mentions_revocations(tmp_path, caplog):
+    store = PairingStore(_unwritable_path(tmp_path))
+    store.pair(store.start_pairing(), "Phone")
+    assert "revocations" in caplog.text

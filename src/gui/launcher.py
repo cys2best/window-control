@@ -174,6 +174,14 @@ class LauncherWindow(QMainWindow):
         device_actions.addWidget(self._unpair_all_btn)
         devices_layout.addLayout(device_actions)
 
+        # Shown only when a removal could not be written to disk. A separate
+        # label because the code label is rewritten on every refresh tick.
+        self._save_warning_label = QLabel("Could not save; device may return after restart")
+        self._save_warning_label.setWordWrap(True)
+        self._save_warning_label.setStyleSheet(f"color: {DESTRUCTIVE_HOVER};")
+        self._save_warning_label.setVisible(False)
+        devices_layout.addWidget(self._save_warning_label)
+
         layout.addWidget(devices_group)
 
         # --- Update banner ---
@@ -339,10 +347,15 @@ class LauncherWindow(QMainWindow):
             return
         self._pairing.remove_device(item.data(Qt.UserRole))
         self._refresh_pairing()
+        self._show_save_warning()
 
     def _unpair_all(self):
         self._pairing.remove_all()
         self._refresh_pairing()
+        self._show_save_warning()
+
+    def _show_save_warning(self):
+        self._save_warning_label.setVisible(not self._pairing.last_save_ok)
 
     def update_active_streams(self, count: int):
         self._active_streams_count = count

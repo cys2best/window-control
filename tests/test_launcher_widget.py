@@ -157,3 +157,37 @@ def test_remove_with_nothing_selected_is_a_no_op(qapp):
         window._device_list.setCurrentRow(-1)
         window._remove_device_btn.click()
         assert len(store.list_devices()) == 1
+
+
+def test_removal_that_cannot_be_saved_warns_the_user(qapp, tmp_path):
+    from server.pairing import PairingStore
+    blocker = tmp_path / "blocker"
+    blocker.write_text("not a directory")
+    store = PairingStore(str(blocker / "paired_devices.json"))
+    store.pair(store.start_pairing(), "Phone")
+    store.pair(store.start_pairing(), "Tablet")
+    with patch("gui.launcher.check_for_update"):
+        from gui.launcher import LauncherWindow
+        window = LauncherWindow(pairing=store)
+        window.show()
+        assert window._save_warning_label.isHidden()
+
+        window._device_list.setCurrentRow(0)
+        window._remove_device_btn.click()
+        assert not window._save_warning_label.isHidden()
+        assert "return after restart" in window._save_warning_label.text()
+
+        window._unpair_all_btn.click()
+        assert "return after restart" in window._save_warning_label.text()
+
+
+def test_removal_that_is_saved_shows_no_warning(qapp, tmp_path):
+    from server.pairing import PairingStore
+    store = PairingStore(str(tmp_path / "paired_devices.json"))
+    store.pair(store.start_pairing(), "Phone")
+    with patch("gui.launcher.check_for_update"):
+        from gui.launcher import LauncherWindow
+        window = LauncherWindow(pairing=store)
+        window.show()
+        window._unpair_all_btn.click()
+        assert window._save_warning_label.isHidden()

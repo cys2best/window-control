@@ -62,7 +62,13 @@ class PairingStore:
         self._code: str | None = None
         self._code_expires_at = 0.0
         self._failed_attempts = 0
+        self._last_save_ok = True
         self._devices: list[dict] = self._load()
+
+    @property
+    def last_save_ok(self) -> bool:
+        """False when the latest write failed: changes then die with the process."""
+        return self._last_save_ok
 
     # -- pairing code ------------------------------------------------------
 
@@ -102,7 +108,7 @@ class PairingStore:
                 "created_at": self._clock(),
                 "token_sha256": _digest(token),
             })
-            self._save_locked()
+            self._last_save_ok = self._save_locked()
             return token
 
     # -- device tokens -----------------------------------------------------
@@ -130,13 +136,13 @@ class PairingStore:
             if len(remaining) == len(self._devices):
                 return False
             self._devices = remaining
-            self._save_locked()
+            self._last_save_ok = self._save_locked()
             return True
 
     def remove_all(self) -> None:
         with self._lock:
             self._devices = []
-            self._save_locked()
+            self._last_save_ok = self._save_locked()
 
     # -- internals ---------------------------------------------------------
 
@@ -168,9 +174,9 @@ class PairingStore:
             and isinstance(d.get("created_at"), (int, float))
         ]
 
-    def _save_locked(self) -> None:
+    def _save_locked(self) -> bool:
         if not self._path:
-            return
+            return True
         directory = os.path.dirname(self._path)
         tmp_path = None
         try:
@@ -184,8 +190,10 @@ class PairingStore:
             # new one, never a half-written one.
             os.replace(tmp_path, self._path)
             tmp_path = None
+            return True
         except Exception:
-            log.warning("pairing: could not write %s; paired devices will not survive a restart", self._path)
+            log.warning("pairing: could not write %s; pairings and revocations will not survive a restart", self._path)
+            return False
         finally:
             if tmp_path is not None:
                 try:
