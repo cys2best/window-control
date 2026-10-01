@@ -25,8 +25,6 @@ export type SelectResp = {
   h: number;
   whep_url: string;
   whep_token: string;
-  signaling_url: string | null;
-  public_session: string | null;
   ice_servers: IceServer[];
   generation: number;
 };
@@ -81,7 +79,7 @@ export function makeClient(
     },
     async ping(): Promise<number> {
       const started = Date.now();
-      await request("/auth/config");
+      await request("/pair/status");
       return Math.max(0, Date.now() - started);
     },
     async select(serial: string): Promise<SelectResp> {

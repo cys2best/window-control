@@ -44,12 +44,13 @@ test("instances preserves active state and numeric fps metadata", async () => {
   ]);
 });
 
-test("ping returns the elapsed auth-config request time", async () => {
+test("ping returns the elapsed pair-status request time", async () => {
   const now = jest.spyOn(Date, "now").mockReturnValueOnce(100).mockReturnValueOnce(137);
   global.fetch = jest.fn(async () => okJson({})) as any;
   const client = makeClient("https://host", "tok");
 
   await expect(client.ping()).resolves.toBe(37);
+  expect((global.fetch as jest.Mock).mock.calls[0][0]).toBe("https://host/pair/status");
   now.mockRestore();
 });
 
@@ -63,8 +64,6 @@ test("parses the exact final selection shape", async () => {
     h: 720,
     whep_url: "https://host/whep/emulator-5554",
     whep_token: "whep-tok",
-    signaling_url: "wss://relay/ws",
-    signaling_token: "sig-tok",
     ice_servers: [{ urls: "stun:stun.example.com:3478" }],
     generation: 1,
   };

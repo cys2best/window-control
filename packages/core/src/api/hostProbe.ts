@@ -1,37 +1,33 @@
 export type HostReachability = {
   state: "checking" | "reachable" | "unreachable";
-  route: "lan" | "relay";
   host: string;
   rttMs: number | null;
+  // null until the host has answered; an unreachable host says nothing
+  // about whether this device is paired.
+  paired: boolean | null;
 };
-
-export function classifyHostRoute(base: string): "lan" | "relay" {
-  const host = new URL(base).hostname;
-  if (host === "localhost" || host === "127.0.0.1" || host === "::1") return "lan";
-  if (/^10\./.test(host) || /^192\.168\./.test(host)) return "lan";
-  const second = Number(host.split(".")[1]);
-  if (/^172\./.test(host) && second >= 16 && second <= 31) return "lan";
-  if (/^100\./.test(host)) return "lan";
-  return "relay";
-}
 
 export async function probeHost(
   base: string,
+  token: string | null = null,
   fetchImpl: typeof fetch = fetch,
   now: () => number = Date.now,
 ): Promise<HostReachability> {
   const url = new URL(base);
   const started = now();
   try {
-    const response = await fetchImpl(`${base.replace(/\/+$/, "")}/auth/config`, { method: "GET" });
+    const response = await fetchImpl(`${base.replace(/\/+$/, "")}/pair/status`, {
+      method: "GET",
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    });
     if (!response.ok) throw new Error(String(response.status));
-    return {
-      state: "reachable",
-      route: classifyHostRoute(base),
-      host: url.host,
-      rttMs: Math.max(0, now() - started),
-    };
+    const rttMs = Math.max(0, now() - started);
+    let paired = false;
+    try {
+      paired = (await response.json())?.paired === true;
+    } catch {}
+    return { state: "reachable", host: url.host, rttMs, paired };
   } catch {
-    return { state: "unreachable", route: classifyHostRoute(base), host: url.host, rttMs: null };
+    return { state: "unreachable", host: url.host, rttMs: null, paired: null };
   }
 }
