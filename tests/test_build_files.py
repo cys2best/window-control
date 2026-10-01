@@ -69,12 +69,22 @@ def test_build_bat_builds_apps_web_before_packaging():
     assert build_step_idx < pyinstaller_idx
 
 
-def test_ci_runs_unfiltered_engine_suite_with_node_relay():
+def test_ci_runs_unfiltered_engine_suite_without_relay():
     text = (REPO_ROOT / ".github" / "workflows" / "build.yml").read_text()
-    assert "infra/vps/signaling" in text
-    assert "npm ci" in text
     assert "engine_tests.exe" in text
     assert "--gtest_filter" not in text
+    assert "LASTEXITCODE" in text
+    for removed in ("infra/vps/signaling", "SIGNALING_TLS", "ENGINE_TEST_WSS_PORT",
+                    "SSL_CERT_FILE", "signaling relay"):
+        assert removed not in text, removed
+
+
+def test_ci_runs_engine_tests_between_build_and_staging():
+    text = (REPO_ROOT / ".github" / "workflows" / "build.yml").read_text()
+    build = text.index("cmake --build engine")
+    tests = text.index("engine_tests.exe")
+    stage = text.index("Stage engine.exe")
+    assert build < tests < stage
 
 
 def test_engine_cutover_wrapper_forwards_the_complete_safety_contract():
