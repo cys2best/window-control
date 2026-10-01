@@ -1,0 +1,194 @@
+"""Device pairing: a short-lived code shown on the PC is exchanged once for
+a long-lived device token. Only the token's SHA-256 digest is stored."""
+
+import hashlib
+import hmac
+import json
+import logging
+import os
+import secrets
+import sys
+import tempfile
+import threading
+import time
+import uuid
+from dataclasses import dataclass
+from typing import Callable
+
+log = logging.getLogger(__name__)
+
+CODE_TTL_SECONDS = 300
+MAX_FAILED_ATTEMPTS = 5
+_MAX_NAME_LENGTH = 64
+_MAX_TOKEN_LENGTH = 256
+_DEVICE_STRING_FIELDS = ("id", "name", "token_sha256")
+
+
+@dataclass(frozen=True)
+class PairedDevice:
+    id: str
+    name: str
+    created_at: float
+
+
+def bearer_token(authorization: str | None) -> str | None:
+    """Return one exact Bearer credential, rejecting every other form."""
+    if not authorization or not authorization.startswith("Bearer "):
+        return None
+    token = authorization[7:]
+    if not token or token.strip() != token or " " in token:
+        return None
+    return token
+
+
+def default_store_path() -> str:
+    if sys.platform == "win32":
+        directory = r"C:\ProgramData\EmuCtrl"
+    else:
+        directory = os.path.join(os.path.expanduser("~"), ".emuctrl")
+    return os.path.join(directory, "paired_devices.json")
+
+
+def _digest(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+class PairingStore:
+    def __init__(self, path: str | None = None,
+                 clock: Callable[[], float] = time.time):
+        self._path = path
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._code: str | None = None
+        self._code_expires_at = 0.0
+        self._failed_attempts = 0
+        self._devices: list[dict] = self._load()
+
+    # -- pairing code ------------------------------------------------------
+
+    def start_pairing(self) -> str:
+        with self._lock:
+            self._code = f"{secrets.randbelow(1_000_000):06d}"
+            self._code_expires_at = self._clock() + CODE_TTL_SECONDS
+            self._failed_attempts = 0
+            return self._code
+
+    def active_code(self) -> tuple[str, int] | None:
+        with self._lock:
+            code = self._active_code_locked()
+            if code is None:
+                return None
+            return code, int(self._code_expires_at - self._clock())
+
+    def pair(self, code: str, device_name: str) -> str | None:
+        if not isinstance(code, str):
+            return None
+        candidate = "".join(code.split())
+        with self._lock:
+            active = self._active_code_locked()
+            if active is None:
+                return None
+            if not hmac.compare_digest(candidate.encode("utf-8"), active.encode("utf-8")):
+                self._failed_attempts += 1
+                if self._failed_attempts >= MAX_FAILED_ATTEMPTS:
+                    self._code = None
+                return None
+            self._code = None
+            token = secrets.token_urlsafe(32)
+            name = (device_name or "").strip()[:_MAX_NAME_LENGTH] or "Device"
+            self._devices.append({
+                "id": uuid.uuid4().hex[:8],
+                "name": name,
+                "created_at": self._clock(),
+                "token_sha256": _digest(token),
+            })
+            self._save_locked()
+            return token
+
+    # -- device tokens -----------------------------------------------------
+
+    def is_valid_token(self, token: str | None) -> bool:
+        if not isinstance(token, str) or not token or len(token) > _MAX_TOKEN_LENGTH:
+            return False
+        digest = _digest(token)
+        with self._lock:
+            return any(
+                hmac.compare_digest(digest, device["token_sha256"])
+                for device in self._devices
+            )
+
+    def list_devices(self) -> list[PairedDevice]:
+        with self._lock:
+            return [
+                PairedDevice(d["id"], d["name"], d["created_at"])
+                for d in self._devices
+            ]
+
+    def remove_device(self, device_id: str) -> bool:
+        with self._lock:
+            remaining = [d for d in self._devices if d["id"] != device_id]
+            if len(remaining) == len(self._devices):
+                return False
+            self._devices = remaining
+            self._save_locked()
+            return True
+
+    def remove_all(self) -> None:
+        with self._lock:
+            self._devices = []
+            self._save_locked()
+
+    # -- internals ---------------------------------------------------------
+
+    def _active_code_locked(self) -> str | None:
+        if self._code is None:
+            return None
+        if self._clock() >= self._code_expires_at:
+            self._code = None
+            return None
+        return self._code
+
+    def _load(self) -> list[dict]:
+        if not self._path:
+            return []
+        try:
+            with open(self._path, "r", encoding="utf-8") as f:
+                devices = json.load(f)["devices"]
+        except FileNotFoundError:
+            return []
+        except Exception:
+            log.warning("pairing: %s is unreadable; starting with no paired devices", self._path)
+            return []
+        if not isinstance(devices, list):
+            return []
+        return [
+            d for d in devices
+            if isinstance(d, dict)
+            and all(isinstance(d.get(key), str) for key in _DEVICE_STRING_FIELDS)
+            and isinstance(d.get("created_at"), (int, float))
+        ]
+
+    def _save_locked(self) -> None:
+        if not self._path:
+            return
+        directory = os.path.dirname(self._path)
+        tmp_path = None
+        try:
+            os.makedirs(directory, exist_ok=True)
+            fd, tmp_path = tempfile.mkstemp(prefix=".paired_devices.", suffix=".tmp", dir=directory)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump({"devices": self._devices}, f)
+                f.flush()
+                os.fsync(f.fileno())
+            # Atomic on POSIX and Windows: the file holds the old list or the
+            # new one, never a half-written one.
+            os.replace(tmp_path, self._path)
+            tmp_path = None
+        except Exception:
+            log.warning("pairing: could not write %s; paired devices will not survive a restart", self._path)
+        finally:
+            if tmp_path is not None:
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
