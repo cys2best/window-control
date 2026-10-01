@@ -25,3 +25,13 @@ test("anchors the HUD in the top-left stream gutter", async () => {
   const view = await render(<StatsOverlay telemetry={{ decodeMs: null, networkMs: null, inputMs: null, jitterMs: null, bitrateMbps: null, droppedFrames: null, rttMs: null, loss: null, transport: "LAN" }} />);
   expect(StyleSheet.flatten(view.getByTestId("diagnostic-hud").props.style)).toEqual(expect.objectContaining({ top: 0, left: 0, width: 68 }));
 });
+
+test("reports its height so the gutter can lay out around it", async () => {
+  const { fireEvent } = require("@testing-library/react-native");
+  const onHeight = jest.fn();
+  const view = await render(<StatsOverlay onHeight={onHeight} telemetry={{ decodeMs: null, networkMs: null, inputMs: null, jitterMs: null, bitrateMbps: null, droppedFrames: null, rttMs: null, loss: null, transport: "LAN" }} />);
+
+  await fireEvent(view.getByTestId("diagnostic-hud"), "layout", { nativeEvent: { layout: { x: 0, y: 0, width: 68, height: 204 } } });
+
+  expect(onHeight).toHaveBeenCalledWith(204);
+});

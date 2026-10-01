@@ -38,6 +38,7 @@ export function Stream({
   const [instances, setInstances] = useState<any[]>([]);
   const [telemetry, setTelemetry] = useState<StreamTelemetry>({ rttMs: null, loss: null, decodeMs: null, networkMs: null, inputMs: null, jitterMs: null, bitrateMbps: null, droppedFrames: null, transport: "LAN" });
   const [railOpen, setRailOpen] = useState(true);
+  const [hudHeight, setHudHeight] = useState(0);
   const rect = useRef({ width: 1, height: 1 });
   const content = useRef({ w: 1, h: 1 });
   const session = useRef<EngineSession | null>(null);
@@ -341,6 +342,8 @@ export function Stream({
   const KEYMAP: Record<string, string> = { Enter: "Return", Backspace: "BackSpace" };
   const sendKey = (k: string) => session.current?.input.send({ type: "key", key: KEYMAP[k] ?? k });
 
+  const hudShown = statsOn && !failed;
+
   return (
     <View style={{ flex: 1, backgroundColor: theme.color.streamBg }}>
       <View collapsable={false} style={{ flex: 1, marginHorizontal: STREAM_RAIL_WIDTH }} {...panResponder.panHandlers}
@@ -348,7 +351,7 @@ export function Stream({
         {stream ? <VideoView stream={stream} /> : null}
       </View>
 
-      {statsOn && !failed ? <StatsOverlay telemetry={telemetry} /> : null}
+      {hudShown ? <StatsOverlay telemetry={telemetry} onHeight={setHudHeight} /> : null}
 
       <StreamRail visible={railOpen && overlay === null} telemetry={telemetry}
         connected={net === "connected"} keyboardOn={keyboardOn} settingsOn={overlay === "settings"}
@@ -366,7 +369,7 @@ export function Stream({
             navigation.navigate("InstanceList");
           }}
         onWake={wakeRail} tick={tick} />
-      {overlay === null ? <SwapControl activeIndex={Math.max(0, instances.findIndex((x) => x.serial === serial))} count={instances.length}
+      {overlay === null ? <SwapControl topInset={hudShown ? hudHeight : 0} activeIndex={Math.max(0, instances.findIndex((x) => x.serial === serial))} count={instances.length}
         onOpen={() => setOverlay("drawer")} onCycle={cycleInstance} onWake={wakeRail} tick={tick} /> : null}
 
       <TextInput ref={keyInput} testID="stream-key-input" onKeyPress={(e) => sendKey(e.nativeEvent.key)}

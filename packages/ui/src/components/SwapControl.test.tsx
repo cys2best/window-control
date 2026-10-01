@@ -27,3 +27,17 @@ test("vertical gestures cycle one bounded instance", async () => {
   mockOnEnd?.({ translationY: 56 });
   expect(onCycle.mock.calls).toEqual([[1], [-1]]);
 });
+
+test("centres in the whole gutter by default and below the HUD when one is shown", async () => {
+  const { StyleSheet } = require("react-native");
+  const props = { activeIndex: 0, count: 2, onOpen: jest.fn(), onCycle: jest.fn(), onWake: jest.fn(), tick: jest.fn() };
+  const view = await render(<SwapControl {...props} />);
+  const slot = () => StyleSheet.flatten(view.getByTestId("swap-control").props.style);
+
+  expect(slot()).toEqual(expect.objectContaining({ position: "absolute", left: 0, top: 0, bottom: 0, width: 68, justifyContent: "center" }));
+
+  // On a short landscape phone the HUD reaches past the middle of the
+  // screen; the control must take the space under it instead of overlapping.
+  await view.rerender(<SwapControl {...props} topInset={204} />);
+  expect(slot()).toEqual(expect.objectContaining({ top: 204, bottom: 0, justifyContent: "center" }));
+});

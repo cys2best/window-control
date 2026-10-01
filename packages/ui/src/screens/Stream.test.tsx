@@ -1,5 +1,5 @@
 import React from "react";
-import { render, waitFor, act } from "@testing-library/react-native";
+import { render, waitFor, act, fireEvent } from "@testing-library/react-native";
 import { PanResponder, StyleSheet } from "react-native";
 import { Stream } from "./Stream";
 import * as SC from "@wc/core";
@@ -558,4 +558,29 @@ test("a re-render with a new navigation object keeps the live session", async ()
   expect(client.instances).toHaveBeenCalledTimes(1);
   expect(Core.connectEngineSession).toHaveBeenCalledTimes(1);
   expect(session.close).not.toHaveBeenCalled();
+});
+
+test("the swap control moves below the diagnostic HUD while it is shown", async () => {
+  const { StyleSheet } = require("react-native");
+  const session = makeFakeSession();
+  (Core.connectEngineSession as jest.Mock).mockResolvedValue(session as any);
+  const client = {
+    select: jest.fn().mockResolvedValue(selectResp()), instances: jest.fn().mockResolvedValue([]),
+    setQuality: jest.fn(), keyframe: jest.fn(),
+  };
+  (SC.useServer as jest.Mock).mockReturnValue({
+    base: "http://h", client, setBase: jest.fn(), ready: true,
+    preferences: { quality: "auto", showHudOnConnect: true, haptics: false, hideRailWhilePlaying: false },
+  } as any);
+
+  const view = await render(<Stream route={{ params: { serial: "A" } }} navigation={{ navigate: jest.fn(), setParams: jest.fn() }} RTCImpl={FakeRTCPeerConnection} VideoView={FakeVideoView} />);
+  const hud = await view.findByTestId("diagnostic-hud");
+  const slotTop = () => StyleSheet.flatten(view.getByTestId("swap-control").props.style).top;
+
+  await fireEvent(hud, "layout", { nativeEvent: { layout: { x: 0, y: 0, width: 68, height: 204 } } });
+  expect(slotTop()).toBe(204);
+
+  await fireEvent.press(view.getByLabelText(/diagnostics|signal/i));
+  await waitFor(() => expect(view.queryByTestId("diagnostic-hud")).toBeNull());
+  expect(slotTop()).toBe(0);
 });
