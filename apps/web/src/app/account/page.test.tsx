@@ -12,23 +12,23 @@ jest.mock("next/navigation", () => ({
 jest.mock("@wc/core", () => ({ useServer: jest.fn() }));
 
 jest.mock("@wc/ui", () => ({
-  Account: ({ navigation }: any) => <button onClick={() => navigation.replace("Login")}>Sign out on this device</button>,
+  Account: ({ navigation }: any) => <button onClick={() => navigation.replace("Pair")}>Unpair this device</button>,
 }));
 
-describe("AccountPage authentication gating", () => {
+describe("AccountPage pairing gate", () => {
   beforeEach(() => jest.clearAllMocks());
 
-  test("when ready and unauthenticated, redirects to /login", () => {
-    (useServer as jest.Mock).mockReturnValue({ ready: true, authToken: null });
+  test("when not paired, redirects to /pair", () => {
+    (useServer as jest.Mock).mockReturnValue({ ready: true, paired: false });
     const { queryByText } = render(<AccountPage />);
-    expect(queryByText("Sign out on this device")).toBeNull();
-    expect(replaceMock).toHaveBeenCalledWith("/login");
+    expect(queryByText("Unpair this device")).toBeNull();
+    expect(replaceMock).toHaveBeenCalledWith("/pair");
   });
 
-  test("when authenticated, renders the shared screen and maps Login replacement to /login", () => {
-    (useServer as jest.Mock).mockReturnValue({ ready: true, authToken: "test-token" });
+  test("when paired, renders the shared screen and maps the Pair route to /pair", () => {
+    (useServer as jest.Mock).mockReturnValue({ ready: true, paired: true });
     const { getByText } = render(<AccountPage />);
-    fireEvent.click(getByText("Sign out on this device"));
-    expect(replaceMock).toHaveBeenCalledWith("/login");
+    fireEvent.click(getByText("Unpair this device"));
+    expect(replaceMock).toHaveBeenCalledWith("/pair");
   });
 });

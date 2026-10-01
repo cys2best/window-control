@@ -17,27 +17,30 @@ jest.mock("@wc/ui", () => ({
   InstanceList: () => <div data-testid="instance-list">InstanceList</div>,
 }));
 
-describe("InstancesPage authentication gating", () => {
+describe("InstancesPage pairing gate", () => {
   beforeEach(() => {
     jest.clearAllMocks();
   });
 
-  test("when not ready, does not render InstanceList and does not navigate", () => {
-    (useServer as jest.Mock).mockReturnValue({ ready: false, authToken: null });
+  test.each([
+    [{ ready: false, paired: null }],
+    [{ ready: true, paired: null }],
+  ])("while pairing is unknown (%j), renders nothing and does not navigate", (state) => {
+    (useServer as jest.Mock).mockReturnValue(state);
     const { queryByTestId } = render(<InstancesPage />);
     expect(queryByTestId("instance-list")).toBeNull();
     expect(replaceMock).not.toHaveBeenCalled();
   });
 
-  test("when ready and !authToken, redirects to /login", () => {
-    (useServer as jest.Mock).mockReturnValue({ ready: true, authToken: null });
+  test("when not paired, redirects to /pair", () => {
+    (useServer as jest.Mock).mockReturnValue({ ready: true, paired: false });
     const { queryByTestId } = render(<InstancesPage />);
     expect(queryByTestId("instance-list")).toBeNull();
-    expect(replaceMock).toHaveBeenCalledWith("/login");
+    expect(replaceMock).toHaveBeenCalledWith("/pair");
   });
 
-  test("when ready and authToken is present, renders InstanceList", () => {
-    (useServer as jest.Mock).mockReturnValue({ ready: true, authToken: "test-token" });
+  test("when paired, renders InstanceList even without a token", () => {
+    (useServer as jest.Mock).mockReturnValue({ ready: true, paired: true, authToken: null });
     const { getByTestId } = render(<InstancesPage />);
     expect(getByTestId("instance-list")).toBeTruthy();
     expect(replaceMock).not.toHaveBeenCalled();

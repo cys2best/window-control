@@ -19,19 +19,25 @@ describe("RootPage redirection", () => {
   });
 
   test("when not ready, does not navigate", () => {
-    (useServer as jest.Mock).mockReturnValue({ ready: false, authToken: null });
+    (useServer as jest.Mock).mockReturnValue({ ready: false, paired: null });
     render(<RootPage />);
     expect(replaceMock).not.toHaveBeenCalled();
   });
 
-  test("when ready and !authToken, router.replace(\"/login\") is called", () => {
-    (useServer as jest.Mock).mockReturnValue({ ready: true, authToken: null });
+  test("when ready but the host has not answered yet, does not navigate", () => {
+    (useServer as jest.Mock).mockReturnValue({ ready: true, paired: null });
     render(<RootPage />);
-    expect(replaceMock).toHaveBeenCalledWith("/login");
+    expect(replaceMock).not.toHaveBeenCalled();
   });
 
-  test("when ready and authToken is present, router.replace(\"/instances\") is called", () => {
-    (useServer as jest.Mock).mockReturnValue({ ready: true, authToken: "test-token" });
+  test("when ready and not paired, router.replace(\"/pair\") is called", () => {
+    (useServer as jest.Mock).mockReturnValue({ ready: true, paired: false });
+    render(<RootPage />);
+    expect(replaceMock).toHaveBeenCalledWith("/pair");
+  });
+
+  test("when ready and paired without a token, router.replace(\"/instances\") is called", () => {
+    (useServer as jest.Mock).mockReturnValue({ ready: true, paired: true, authToken: null });
     render(<RootPage />);
     expect(replaceMock).toHaveBeenCalledWith("/instances");
   });

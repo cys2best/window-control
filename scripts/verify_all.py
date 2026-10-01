@@ -141,11 +141,13 @@ def main() -> int:
     sys.stdout.flush()
     start = time.time()
     out_dir = REPO_ROOT / "apps" / "web" / "out"
-    required_pages = ["index.html", "login.html", "instances.html", "stream.html", "404.html"]
+    required_pages = ["index.html", "pair.html", "instances.html", "stream.html", "404.html"]
     missing = [p for p in required_pages if not (out_dir / p).exists()]
     unwanted = []
     if (out_dir / "setup.html").exists():
         unwanted.append("setup.html (retired route should not exist)")
+    if (out_dir / "login.html").exists():
+        unwanted.append("login.html (replaced by pair.html)")
     duration = time.time() - start
     if not missing and not unwanted:
         print(f"PASS ({duration:.2f}s)")
