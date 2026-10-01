@@ -10,6 +10,7 @@ export * from "./api/ServerContext";
 export * from "./webrtc/whep";
 export * from "./webrtc/session";
 export * from "./webrtc/telemetry";
+export * from "./webrtc/stallWatchdog";
 export * from "./input/inputChannel";
 export * from "./input/coords";
 export * from "./quality/tiers";

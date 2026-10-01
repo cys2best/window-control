@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useCallback } from "react";
 import { View, TextInput, PanResponder } from "react-native";
 import * as ScreenOrientation from "expo-screen-orientation";
 import type { VideoViewComponent } from "../video/VideoView";
-import { useServer, connectEngineSession, EngineSession, normalizeCoords, makeAdaptive, makeTelemetrySampler, DEFAULT_STREAM_PREFERENCES, type QualitySelection, type StreamTelemetry } from "@wc/core";
+import { useServer, connectEngineSession, EngineSession, normalizeCoords, makeAdaptive, makeStallWatchdog, makeTelemetrySampler, DEFAULT_STREAM_PREFERENCES, type QualitySelection, type StreamTelemetry } from "@wc/core";
 import { theme } from "../theme/tokens";
 import { StreamRail, STREAM_RAIL_WIDTH } from "../components/StreamRail";
 import { SwapControl } from "../components/SwapControl";
@@ -45,6 +45,7 @@ export function Stream({
   const adaptive = useRef<any>(null);
   const inputHealth = useRef<any>(null);
   const sampler = useRef<ReturnType<typeof makeTelemetrySampler> | null>(null);
+  const stallWatchdog = useRef<ReturnType<typeof makeStallWatchdog> | null>(null);
   const appliedTier = useRef<QualitySelection | null>(null);
   const currentQuality = useRef<QualitySelection>(preferences.quality);
   const scrollLast = useRef(0);
@@ -137,6 +138,15 @@ export function Stream({
       sampler.current?.stop();
       sampler.current = makeTelemetrySampler({ pc: s.pc, transport: s.kind, onSample: setTelemetry });
       sampler.current.start();
+      // One lost packet freezes the decoder until the next keyframe, which
+      // can be many seconds away; ask the host for one as soon as frames
+      // stop decoding, without touching the connected peer.
+      stallWatchdog.current?.stop();
+      stallWatchdog.current = makeStallWatchdog({
+        pc: s.pc,
+        onStall: () => { if (session.current === s) void client.keyframe(serial); },
+      });
+      stallWatchdog.current.start();
       if (nextStream) setStream(nextStream);
       if (previous) {
         releaseActiveDrag(previous.input);
@@ -205,6 +215,8 @@ export function Stream({
       inputHealth.current = null;
       sampler.current?.stop();
       sampler.current = null;
+      stallWatchdog.current?.stop();
+      stallWatchdog.current = null;
       session.current?.close();
       adaptive.current?.stop();
     };

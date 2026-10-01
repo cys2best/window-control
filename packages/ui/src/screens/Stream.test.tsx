@@ -14,6 +14,7 @@ jest.mock("@wc/core", () => {
     connectEngineSession: jest.fn(),
     makeAdaptive: jest.fn(),
     makeTelemetrySampler: jest.fn(),
+    makeStallWatchdog: jest.fn(),
   };
 });
 
@@ -83,6 +84,7 @@ afterEach(() => {
 beforeEach(() => {
   (Core.makeTelemetrySampler as jest.Mock).mockReturnValue(makeFakeSampler());
   (Adaptive.makeAdaptive as jest.Mock).mockReturnValue(makeFakeAdaptive());
+  (Core.makeStallWatchdog as jest.Mock).mockReturnValue({ start: jest.fn(), stop: jest.fn() });
 });
 
 function touch(x: number, y: number, count = 1) {
@@ -583,4 +585,31 @@ test("the swap control moves below the diagnostic HUD while it is shown", async 
   await fireEvent.press(view.getByLabelText(/diagnostics|signal/i));
   await waitFor(() => expect(view.queryByTestId("diagnostic-hud")).toBeNull());
   expect(slotTop()).toBe(0);
+});
+
+test("a decoder stall asks the host for a keyframe and leaves the peer connected", async () => {
+  const session = makeFakeSession();
+  const watchdog = { start: jest.fn(), stop: jest.fn() };
+  let watchdogOptions: any;
+  (Core.makeStallWatchdog as jest.Mock).mockImplementation((opts: any) => { watchdogOptions = opts; return watchdog; });
+  (Core.connectEngineSession as jest.Mock).mockResolvedValue(session as any);
+  const client = {
+    select: jest.fn().mockResolvedValue(selectResp()), instances: jest.fn().mockResolvedValue([]),
+    setQuality: jest.fn(), keyframe: jest.fn(),
+  };
+  (SC.useServer as jest.Mock).mockReturnValue({ base: "http://h", client, setBase: jest.fn(), ready: true } as any);
+
+  const view = await render(<Stream route={{ params: { serial: "A" } }} navigation={{ navigate: jest.fn(), setParams: jest.fn() }} RTCImpl={FakeRTCPeerConnection} VideoView={FakeVideoView} />);
+  await waitFor(() => expect(watchdog.start).toHaveBeenCalledTimes(1));
+  expect(watchdogOptions.pc).toBe(session.pc);
+  const keyframesBefore = client.keyframe.mock.calls.length;
+
+  watchdogOptions.onStall();
+
+  expect(client.keyframe.mock.calls.slice(keyframesBefore)).toEqual([["A"]]);
+  expect(client.select).toHaveBeenCalledTimes(1);
+  expect(session.close).not.toHaveBeenCalled();
+
+  await view.unmount();
+  expect(watchdog.stop).toHaveBeenCalled();
 });
