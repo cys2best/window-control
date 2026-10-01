@@ -107,3 +107,28 @@ def test_kept_verification_entry_points_remain():
 def test_websockets_is_no_longer_a_dependency():
     for name in ("pyproject.toml", "requirements.txt"):
         assert "websockets" not in (REPO / name).read_text(encoding="utf-8").lower(), name
+
+
+def test_signaling_relay_and_its_fixtures_are_gone():
+    import subprocess
+
+    tracked = subprocess.run(
+        ["git", "ls-files", "infra", "engine/test/tls"],
+        cwd=REPO, capture_output=True, text=True, check=True,
+    ).stdout.split()
+    assert tracked == [], tracked
+
+
+def test_root_package_has_no_signaling_workspace_or_script():
+    import json
+
+    package = json.loads((REPO / "package.json").read_text(encoding="utf-8"))
+    assert "infra/vps/signaling" not in package["workspaces"]
+    assert "test:signaling" not in package["scripts"]
+
+
+def test_verify_all_does_not_run_or_install_the_relay():
+    text = (REPO / "scripts" / "verify_all.py").read_text(encoding="utf-8")
+    for removed in ("test:signaling", "signaling", "Signaling", "jose", "infra"):
+        assert removed not in text, removed
+    assert "pair.html" in text

@@ -4,13 +4,11 @@
   "workspaces": [
     "packages/*",
     "apps/web",
-    "apps/mobile",
-    "infra/vps/signaling"
+    "apps/mobile"
   ],
   "scripts": {
     "test:core": "npm test -w packages/core",
     "test:ui": "npm test -w packages/ui",
-    "test:signaling": "npm test -w infra/vps/signaling",
     "generate:brand": "node scripts/generate-brand-assets.mjs"
   },
   "devDependencies": {
