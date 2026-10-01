@@ -68,9 +68,9 @@ WebSocket close before accept.
 A request passes if any of these hold:
 
 - the peer is loopback (the desktop webview on the PC itself),
-- the path is exempt: `POST /pair`, `GET /pair/status`, and the static web
-  assets needed to render the pairing screen (the existing
-  `_is_public_web_asset` rule, minus `/account`),
+- the path is exempt: `/pair` (the page and the `POST`), `GET /pair/status`,
+  and the static web assets needed to render the app shell (the existing
+  `_is_public_web_asset` rule, with `/login` replaced by `/pair`),
 - it carries a valid device token.
 
 Otherwise the response is 401. As today, only paths that resolve to a
@@ -99,8 +99,9 @@ that cannot set headers.
   Writes are atomic, using the temp-file-and-replace approach currently in
   `install_identity.py`.
 - Tokens do not expire. They end when the device is removed.
-- `GET /pair/status` returns whether the caller's token is valid, so a client
-  can decide between the pairing screen and the app.
+- `GET /pair/status` returns `{"paired": bool}`: true for loopback or a valid
+  token. Clients use it to choose between the pairing screen and the app, and
+  as the reachability probe that `/auth/config` served before.
 
 #### Launcher
 
@@ -159,15 +160,20 @@ Trimmed:
   remove the public path from `webrtc/session.ts`; remove relay
   classification from `api/hostProbe.ts`. `authToken` in `ServerContext` and
   `client.ts` stays and now holds the device token, stored per host.
-- `packages/ui`: delete `Account`; `Login` becomes the pairing screen;
-  remove relay states from `NetChip` and related components.
-- `apps/web`: delete the `account` page; the `login` page becomes `pair`.
-- `apps/mobile`: the first screen is the pairing screen. `Login` already
-  resolves the host and has a pairing-code field (sent today as Supabase
-  sign-up metadata); the email and password fields and both Supabase calls
-  go, and the code is posted to `/pair` instead.
+- `packages/ui`: `Login` is replaced by a `Pair` screen; relay states are
+  removed from `NetChip`. `Account` stays, because it is the only place the
+  stream defaults (quality, HUD, haptics) are edited: it loses the identity
+  section and the route row, and "Sign out" becomes "Unpair this device".
+  The component and route keep the name `Account`; renaming is separate
+  cleanup.
+- `apps/web`: the `login` page becomes `pair`; pages route on the `paired`
+  flag from `/pair/status` rather than on the presence of a token, so the
+  desktop webview (loopback, no token) is not sent to the pairing screen.
+- `apps/mobile`: the first screen is the pairing screen. Mobile takes its
+  host from `EXPO_PUBLIC_API_URL` today and has no way to enter one, so the
+  pairing screen adds a host address field on native.
 
-### Engine, CI, verifiers
+### Engine, CI, verifiers (Plan B)
 
 - `engine/`: remove `public_signaling`, `signaling_client`, and their tests.
   This cannot be compiled locally; the `build-engine` workflow is the only
@@ -180,25 +186,40 @@ Trimmed:
 
 1. `terraform destroy` in `infra/terraform` (one AWS instance and one
    security group), after explicit confirmation.
-2. Delete `infra/terraform`, `infra/vps`, `infra/supabase`.
+2. Delete `infra/terraform`, `infra/vps/coturn`, `infra/vps/tunnel`,
+   `infra/supabase` (Plan A). `infra/vps/signaling` goes in Plan B.
 
 Left to the owner: deleting the Supabase project in its dashboard, and
 clearing the removed environment variables on the Windows PC.
 
 ## Order of work
 
-1. Network gate and pairing gate, added alongside the existing auth.
-2. Launcher pairing UI; client pairing screen.
-3. Python removal.
-4. TypeScript removal.
-5. Verifiers and CI.
-6. Engine C++ removal.
-7. Infrastructure teardown and deletion.
-8. `VERSION` bump in `src/config.py`; `AGENTS.md` and `MEMORY.md` updated
-   where they describe the removed systems.
+Two plans.
 
-The gates go in before anything is removed so the app is never without a
-check between commits.
+**Plan A — pairing and public-path removal**
+
+1. `network_gate` and `pairing` modules.
+2. `app.py` swaps the Supabase gate for the access gate in one commit, and
+   drops the HTTP tunnel in the same commit.
+3. Launcher pairing UI.
+4. Remaining Python removal.
+5. TypeScript: pairing client, then public-path removal.
+6. `VERSION` bump and docs.
+7. `terraform destroy`, then deletion of `infra/terraform`,
+   `infra/vps/coturn`, `infra/vps/tunnel`, `infra/supabase`.
+
+**Plan B — engine and verifiers**
+
+8. Engine C++ signaling removal, validated by the `build-engine` workflow.
+9. Cutover verifier scripts and their tests; the CI relay step.
+10. Deletion of `infra/vps/signaling`, which the engine tests and verifiers
+    use as a local relay until steps 8 and 9 land.
+
+The gate swap in step 2 is a single commit rather than "new gate alongside
+old" for two reasons. A request carries one `Authorization: Bearer` value,
+so it cannot satisfy a Supabase check and a device-token check at once. And
+tunnelled requests reach the app from loopback, which the pairing gate
+exempts, so the tunnel has to stop in the same commit the gate starts.
 
 ## Testing
 
