@@ -8,6 +8,7 @@ from server.app import AccessGate, create_app
 from server.pairing import PairingStore
 
 LOOPBACK = ("127.0.0.1", 5000)
+LOCAL_BASE = "http://127.0.0.1:8080"
 LAN = ("192.168.1.50", 5000)
 TAILNET = ("100.101.102.103", 5000)
 PUBLIC = ("203.0.113.9", 5000)
@@ -105,9 +106,44 @@ def test_unknown_paths_stay_404_for_an_unpaired_peer():
 
 
 def test_loopback_needs_no_token():
-    client, _ = _make(LOOPBACK, instances=[{"id": "adb:a", "serial": "a"}])
+    client, _ = _make(LOOPBACK, instances=[{"id": "adb:a", "serial": "a"}], base_url=LOCAL_BASE)
     assert client.get("/instances").json() == [{"id": "adb:a", "serial": "a"}]
     assert client.get("/pair/status").json() == {"paired": True}
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1:8080", "localhost:8080", "LOCALHOST", "[::1]:8080", "127.0.0.1"])
+def test_loopback_with_a_local_host_name_needs_no_token(host):
+    client, _ = _make(LOOPBACK, instances=[{"id": "adb:a", "serial": "a"}])
+    assert client.get("/instances", headers={"host": host}).status_code == 200
+    assert client.get("/pair/status", headers={"host": host}).json() == {"paired": True}
+
+
+@pytest.mark.parametrize("host", ["rebind.attacker.example:8080", "evil.localhost.example", "192.168.1.5:8080", "testserver"])
+def test_loopback_with_a_foreign_host_is_not_trusted(host):
+    client, _ = _make(LOOPBACK, instances=[{"id": "adb:a", "serial": "a"}])
+    headers = {"host": host}
+    assert client.get("/instances", headers=headers).status_code == 401
+    assert client.get("/openapi.json", headers=headers).status_code in (401, 404)
+    assert client.post("/instances/adb:a/select", headers=headers).status_code == 401
+    assert client.get("/pair/status", headers=headers).json() == {"paired": False}
+
+
+def test_loopback_with_a_foreign_host_still_works_with_a_token():
+    client, pairing = _make(LOOPBACK, instances=[{"id": "adb:a", "serial": "a"}])
+    token = _pair(client, pairing)
+    response = client.get(
+        "/instances", headers={"host": "rebind.attacker.example", "Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 200
+
+
+def test_loopback_cross_site_post_needs_a_token():
+    client, _ = _make(LOOPBACK, base_url=LOCAL_BASE)
+    assert client.post("/instances/x/keyframe", headers={"Sec-Fetch-Site": "cross-site"}).status_code == 401
+    assert client.post("/instances/x/keyframe", headers={"Sec-Fetch-Site": "same-origin"}).status_code != 401
+    assert client.post("/instances/x/keyframe").status_code != 401
+    # reads are not state-changing, so the header does not matter
+    assert client.get("/instances", headers={"Sec-Fetch-Site": "cross-site"}).status_code == 200
 
 
 # -- pairing flow ----------------------------------------------------------
@@ -210,7 +246,7 @@ def test_account_json_api_requires_pairing_for_unpaired_lan_peer():
 
 
 def test_loopback_and_paired_peers_get_json_without_html_header():
-    client_loopback, _ = _make(LOOPBACK, instances=[{"id": "adb:a", "serial": "a"}])
+    client_loopback, _ = _make(LOOPBACK, instances=[{"id": "adb:a", "serial": "a"}], base_url=LOCAL_BASE)
     assert client_loopback.get("/instances").headers["content-type"].startswith("application/json")
     assert client_loopback.get("/instances", headers={"Accept": "*/*"}).headers["content-type"].startswith("application/json")
 
@@ -262,4 +298,14 @@ def test_websocket_with_a_valid_token_reaches_the_app():
 
 def test_non_network_scopes_pass_through():
     sent, reached = _run_gate({"type": "lifespan"}, PairingStore())
+    assert sent == [] and reached == [True]
+
+
+def test_loopback_websocket_needs_a_local_host_header():
+    scope = _ws_scope(LOOPBACK)
+    sent, reached = _run_gate(scope, PairingStore())
+    assert sent == [{"type": "websocket.close", "code": 1008}] and reached == []
+
+    scope = {**_ws_scope(LOOPBACK), "headers": [(b"host", b"127.0.0.1:8080")]}
+    sent, reached = _run_gate(scope, PairingStore())
     assert sent == [] and reached == [True]

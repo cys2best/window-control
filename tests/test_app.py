@@ -26,7 +26,7 @@ def _make_client(instances=None):
     im.refresh.return_value = None
     with patch("server.app.get_best_ip", return_value="127.0.0.1"):
         app = create_app(im)
-    return TestClient(app, client=("127.0.0.1", 12345)), im
+    return TestClient(app, client=("127.0.0.1", 12345), base_url="http://127.0.0.1:8080"), im
 
 
 def _raw_screencap_bytes(w, h, header_len=16, fmt=1, fill=0x80):

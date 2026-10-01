@@ -73,6 +73,37 @@ def _request_token(request: HTTPConnection) -> str | None:
     return bearer_token(request.headers.get("authorization")) or request.query_params.get("token")
 
 
+_LOCAL_HOST_NAMES = frozenset({"127.0.0.1", "localhost", "[::1]"})
+_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+
+def _host_name(host_header: str | None) -> str | None:
+    """Lower-cased hostname of a Host header value, without the port."""
+    if not host_header:
+        return None
+    value = host_header.strip().lower()
+    if value.startswith("["):
+        end = value.find("]")
+        return value[: end + 1] if end != -1 else None
+    return value.split(":", 1)[0]
+
+
+def is_trusted_loopback(peer: str | None, headers, method: str = "GET") -> bool:
+    """Whether a request comes from the owner's own machine, not a rebinding page.
+
+    A loopback peer alone is not enough: a page that DNS-rebinds its own name
+    to 127.0.0.1 also arrives from loopback, but carries its own Host. And a
+    cross-site browser POST to 127.0.0.1 carries `Sec-Fetch-Site: cross-site`.
+    """
+    if not is_loopback_peer(peer):
+        return False
+    if _host_name(headers.get("host")) not in _LOCAL_HOST_NAMES:
+        return False
+    if method.upper() not in _SAFE_METHODS and headers.get("sec-fetch-site", "").lower() == "cross-site":
+        return False
+    return True
+
+
 class AccessGate:
     """Network allowlist, then device pairing.
 
@@ -94,8 +125,10 @@ class AccessGate:
         if not is_allowed_peer(host):
             await self._reject(scope, receive, send, 403, "Forbidden")
             return
-        if not is_loopback_peer(host) and self._needs_token(scope):
-            if not self.pairing.is_valid_token(_request_token(HTTPConnection(scope))):
+        connection = HTTPConnection(scope)
+        method = scope.get("method", "GET")
+        if not is_trusted_loopback(host, connection.headers, method) and self._needs_token(scope):
+            if not self.pairing.is_valid_token(_request_token(connection)):
                 await self._reject(scope, receive, send, 401, "Not paired")
                 return
         await self.app(scope, receive, send)
@@ -335,7 +368,7 @@ def create_app(instance_manager: InstanceManager,
     async def pair_status(request: Request):
         host = request.client.host if request.client else None
         return {
-            "paired": is_loopback_peer(host)
+            "paired": is_trusted_loopback(host, request.headers, request.method)
             or pairing.is_valid_token(_request_token(request)),
         }
 
