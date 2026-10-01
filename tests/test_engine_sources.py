@@ -196,3 +196,34 @@ def test_memory_has_no_signaling_lesson_and_changelog_records_the_release():
     changelog = (REPO / "CHANGELOG.md").read_text(encoding="utf-8")
     assert "## [v3.2.0]" in changelog
     assert changelog.index("## [v3.2.0]") < changelog.index("## [v3.1.2]")
+
+
+CURRENT_DOCS = (
+    "README.md",
+    "CHECKLIST.md",
+    "docs/WINDOWS_MANUAL_VALIDATION.md",
+    "docs/TROUBLESHOOTING.md",
+)
+
+REMOVED_FEATURE_TERMS = (
+    "Supabase",
+    "supabase",
+    "Account A",
+    "Account B",
+    "login.html",
+    "/login",
+    "Log in with",
+    "TURN",
+)
+
+# CHECKLIST.md ends with a dated v3.1.0 sign-off record that legitimately names
+# the old Supabase check; everything before it must be current.
+HISTORICAL_RECORD_MARKER = "### 2026-09-07 01:00"
+
+
+@pytest.mark.parametrize("relative", CURRENT_DOCS)
+def test_current_docs_do_not_describe_removed_features(relative):
+    text = (REPO / relative).read_text(encoding="utf-8")
+    text = text.split(HISTORICAL_RECORD_MARKER)[0]
+    for term in REMOVED_FEATURE_TERMS:
+        assert term not in text, f"{relative} still mentions {term}"

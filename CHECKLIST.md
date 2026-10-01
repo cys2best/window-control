@@ -1,6 +1,6 @@
-# WindowControl v3.1.0 — End-to-End Validation Checklist
+# WindowControl v3.2.0 — End-to-End Validation Checklist
 
-> **Purpose**: Single authoritative, step-by-step checklist covering all automated and physical validation test cases for the **Zero-Config Discovery &amp; Host GUI Refactor (`v3.1.0`)**. Follow the sections in order.
+> **Purpose**: Single authoritative, step-by-step checklist covering all automated and physical validation test cases for the **Local-Only Access &amp; Device Pairing release (`v3.2.0`)**. Follow the sections in order.
 
 ---
 
@@ -39,13 +39,13 @@ Execute the full automated test suite:
 
 - [x] **2.1. Python Backend &amp; Desktop Suites**: 567 passed, 1 skipped (`uv run pytest tests/ apps/desktop/ -q`). *(Verified on Windows)*
 - [x] **2.2. Host Launcher Headless Tests**: All Option B layout and event tests pass (`tests/test_launcher_widget.py`). *(Verified on Windows)*
-- [x] **2.3. Core WebRTC Session &amp; Signaling**: 68 passed across 12 suites (`npm run test:core`). *(Verified on Windows)*
+- [x] **2.3. TypeScript Core Session &amp; Pairing**: all suites pass (`npm run test:core`). *(Verified on Windows)*
 - [x] **2.4. Shared UI Components**: 18 passed across 7 suites (`npm run test:ui`). *(Verified on Windows)*
 - [x] **2.5. Web Client Routing &amp; Redirection**: 7 passed across 4 suites (`npm test -w apps/web`). *(Verified on Windows)*
 - [x] **2.6. Next.js Static Export Build**: Succeeds into `apps/web/out` in 8.81s (`npm run build -w apps/web`). *(Verified on Windows)*
 - [x] **2.7. Web Export Artifact Integrity**: *(Verified on Windows)*
   - [x] `apps/web/out/index.html` exists
-  - [x] `apps/web/out/login.html` exists
+  - [ ] `apps/web/out/pair.html` exists
   - [x] `apps/web/out/instances.html` exists
   - [x] `apps/web/out/stream.html` exists
   - [x] `apps/web/out/404.html` exists
@@ -60,13 +60,13 @@ Check the dev server and web routes by hand:
 - [x] **3.1. Server Health**: Dev app boots cleanly on port 8080 (web server responds). *(Verified on Windows)*
 - [x] **3.2. Web Route Servicing**: *(Verified on Windows)*
   - [x] `GET http://127.0.0.1:8080/` -&gt; 200 text/html
-  - [x] `GET http://127.0.0.1:8080/login` -&gt; 200 text/html
+  - [ ] `GET http://127.0.0.1:8080/pair` -&gt; 200 text/html
   - [x] `GET http://127.0.0.1:8080/instances` -&gt; 200 text/html (when requesting HTML shell)
   - [x] `GET http://127.0.0.1:8080/stream` -&gt; 200 text/html
   - [x] `GET http://127.0.0.1:8080/setup` -&gt; 404 (retired route rejected)
 - [x] **3.3. Content Negotiation on `/instances`**: *(Verified on Windows)*
   - [x] `Accept: text/html` returns the HTML page shell.
-  - [x] `Accept: application/json` returns JSON instance list or 401.
+  - [ ] `Accept: application/json` returns the JSON instance list from the PC itself (127.0.0.1) and `401` from an unpaired LAN device.
   - [x] No Accept header defaults to JSON API response.
 
 ---
@@ -128,8 +128,8 @@ Start host: `uv run python src\main.py` (or launch installed `WindowControl.exe`
 - [x] **6.2. Minimal Host Monitor Widget (Option B)**: *(Verified on Windows)*
   - Right-click or double-click tray icon -> click **Show**.
   - [x] Window opens (~400px width, ~460px height).
-  - [x] Header displays: `WindowControl Host v3.1.0` with green running dot and `:8080`.
-  - [x] Account row displays logged-in email (or "Auth disabled (LAN mode)").
+  - [x] Header displays: `WindowControl Host v3.2.0` with green running dot and `:8080`.
+  - [ ] A **Paired Devices** group lists paired devices ("Remove selected", "Unpair all"); there is no account row.
   - [x] Network row displays detected Local LAN IP and Tailscale IP (if active).
   - [x] Active Streams row shows current viewer count ("Idle" when 0).
 - [x] **6.3. Minimize to Tray Button**: Click **Minimize to Tray** button -> window hides to tray. *(Verified on Windows)*
@@ -138,25 +138,21 @@ Start host: `uv run python src\main.py` (or launch installed `WindowControl.exe`
 
 ---
 
-## Section 7: Supabase Multi-User Security & Isolation Gate
+## Section 7: Device Pairing Gate
 
-- [x] **7.1. First Account Registration (Account A)**: *(Verified on Windows)*
-  - Navigate to `http://<PC-IP>:8080/login` in browser.
-  - Register Account A (or sign in).
-  - Verify Account A claims the host machine (trust-on-first-use).
-  - Verify connected emulator appears in instance list.
-- [x] **7.2. Second Account Isolation (Account B)**: *(Verified on Windows)*
-  - Open a separate **Incognito / Private browser window**.
-  - Navigate to `http://<PC-IP>:8080/login` and log in as Account B (a different registered user).
-  - **Critical Pass Condition**: Account B sees an **empty** device list.
-  - Attempting to query or stream Account A's device (e.g. `/instances/{serial}/select`) returns **HTTP 403 Forbidden**.
-- [x] **7.3. Persistent Claim**: Close and reopen browser; Account A continues to see the claimed instance. *(Verified on Windows)*
+*(Not yet verified.)*
+
+- [ ] **7.1. Pair a Phone and a Browser**: On the PC click **Pair device** in the EmuCtrl Host window (a 6-digit code shows for 5 minutes) and enter it on the phone and in the browser.
+- [ ] **7.2. Pairing Persists**: Reload the browser; confirm no code is asked.
+- [ ] **7.3. Remove a Device**: Remove the device under **Paired Devices** in the host window; confirm the client returns to the pairing screen (within about 30 seconds).
+- [ ] **7.4. LAN and Tailscale**: Stream from a paired device on the LAN without Tailscale and from a paired Tailscale device.
+- [ ] **7.5. Unpaired Device**: An unpaired LAN device gets `401` on API routes such as `GET /instances` (with `Accept: application/json`) and can load `/pair`.
 
 ---
 
 ## Section 8: Web Client Streaming & Dual-Transport Verification
 
-- [x] **8.1. Stream Launch**: From Account A's instance list, click an emulator card to open `/stream`. *(Verified on Windows)*
+- [x] **8.1. Stream Launch**: From the instance list, click an emulator card to open `/stream`. *(Verified on Windows)*
 - [x] **8.2. Dual-Transport Connection**: *(Verified on Windows)*
   - [x] Video stream displays immediately (no black frame).
   - [x] Toolbar network dot shows green (connected).
@@ -185,13 +181,13 @@ Run app via Expo dev build or Expo Go on physical phone:
 
 - [ ] **9.1. Zero-Config Launch**:
   - Launch app from fresh install or cleared cache.
-  - **Pass condition**: App opens directly to **Login** screen (never shows a manual server URL screen).
-- [ ] **9.2. Automatic Tunnel Routing**:
-  - Log in with Account A.
-  - Connects seamlessly via default tunnel endpoint (`EXPO_PUBLIC_API_URL`) and displays instance list.
+  - **Pass condition**: App opens on the pairing screen and asks for the PC address (e.g. `192.168.1.8:8080`) and the 6-digit code.
+- [ ] **9.2. Pair with the PC**:
+  - Click **Pair device** in the EmuCtrl Host window, enter the PC address and the code.
+  - Pairs and displays the instance list.
 - [ ] **9.3. Relaunch Session Persistence**:
   - Force quit mobile app and reopen.
-  - Navigates directly to `InstanceList` without re-prompting for credentials.
+  - Navigates directly to `InstanceList` without asking for a code again.
 - [ ] **9.4. Mobile Gesture Relays**:
   - [ ] Tap registers remote tap.
   - [ ] Rapid drag releases cleanly when finger lifts.
@@ -212,7 +208,7 @@ Run app via Expo dev build or Expo Go on physical phone:
 - [x] Engine compilation verified on Windows (Section 4).
 - [x] Installer built and verified (Section 5).
 - [x] Host Monitor Widget Option B visually confirmed (Section 6).
-- [x] Supabase two-account isolation verified (Section 7).
+- [ ] Device pairing verified (Section 7).
 - [x] Physical WebRTC streaming verified on web (Section 8; Section 9 mobile skipped due to host storage).
 - [x] Update `HANDOFF.md` with sign-off entry:
   ```markdown

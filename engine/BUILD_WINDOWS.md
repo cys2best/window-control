@@ -46,9 +46,8 @@ cmake -S engine -B engine\build `
   -DVCPKG_TARGET_TRIPLET=x64-windows
 ```
 
-`vcpkg.json` (manifest mode) pulls in `libdatachannel`, `gtest`,
-`nlohmann-json` automatically on first configure —
-expect this step to take a while (libdatachannel has a large dependency
+`vcpkg.json` (manifest mode) pulls in `libdatachannel`, `cpp-httplib`,
+`gtest`, `nlohmann-json` automatically on first configure — expect this step to take a while (libdatachannel has a large dependency
 tree: OpenSSL, usrsctp, etc.). No manual `vcpkg install` needed.
 
 ## Build

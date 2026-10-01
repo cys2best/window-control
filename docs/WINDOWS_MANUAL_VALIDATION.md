@@ -1,4 +1,4 @@
-# Windows Validation Runbook — v3.1.0 (Zero-Config & Host GUI Refactor)
+# Windows Validation Runbook — v3.2.0 (Local-Only Access & Device Pairing)
 
 **Purpose**: Comprehensive validation runbook for Windows host hardware and client streaming. 
 
@@ -62,7 +62,7 @@ cmake --build engine\build --config Release
 ```powershell
 npm run build -w apps/web
 ```
-- [ ] **Pass condition**: `apps/web/out/` contains `index.html`, `login.html`, `instances.html`, `stream.html`, `404.html`, `manifest.json`, and `.txt` RSC payloads. Notice: `setup.html` must **not** exist (retired).
+- [ ] **Pass condition**: `apps/web/out/` contains `index.html`, `pair.html`, `instances.html`, `stream.html`, `404.html`, `manifest.json`, and `.txt` RSC payloads. Notice: `setup.html` must **not** exist (retired).
 
 ---
 
@@ -99,7 +99,7 @@ npm run test:core; npm run test:ui; npm test -w apps/web
 1. Locate WindowControl icon in the Windows taskbar system tray.
 2. Click **Show**:
    - Minimal Host Monitor window opens (~400px width, ~460px height).
-   - Header shows `WindowControl Host v3.1.0` with green running dot and `:8080`.
+   - Header shows `WindowControl Host v3.2.0` with green running dot and `:8080`.
    - Network row displays Local LAN IP and Tailscale IP.
    - Streams row displays active viewer count.
 3. Click **Minimize to Tray** -> window hides.

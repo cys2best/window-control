@@ -51,7 +51,7 @@ Wiring:
 |-------|----------|------|
 | STUN server | `src/server/stun_server.py` | UDP Binding responder |
 | Start / rebind | `InstanceManager._ensure_stun` in `src/server/instance_manager.py` | binds STUN to the current Tailscale IP; rebinds if the IP changes |
-| Advertise to client | engine-select response includes `ice_servers` | `stun:<tailscale-ip>:3478` (and TURN, for public/remote sessions) |
+| Advertise to client | engine-select response includes `ice_servers` | `stun:<tailscale-ip>:3478` |
 | Use it | the shared WHEP/WebRTC session logic in `packages/core/src/webrtc/whep.ts` (consumed by `apps/web` and `apps/desktop`'s pywebview shell) | `RTCPeerConnection({ iceServers })` |
 | Firewall | `src/main.py` | opens UDP `3478` inbound |
 | Config | `STUN_PORT` in `src/config.py` | `3478` |
