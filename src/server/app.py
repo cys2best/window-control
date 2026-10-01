@@ -1,6 +1,7 @@
 import asyncio
 import io
 import logging
+import ipaddress
 import os
 import re
 import struct
@@ -285,6 +286,27 @@ def _format_host(host: str) -> str:
     return host if ":" not in host else f"[{host}]"
 
 
+def _advertised_host(request: Request) -> str:
+    """Address to hand a client for its stream.
+
+    A LAN phone without Tailscale cannot reach the Tailscale address, so use
+    the local address the request actually arrived on. Loopback peers (the
+    PC itself) and unusable server addresses keep the best-IP behaviour.
+    """
+    fallback = get_best_ip() or (request.client.host if request.client else "127.0.0.1")
+    peer = request.client.host if request.client else None
+    server = request.scope.get("server")
+    if is_loopback_peer(peer) or not server:
+        return fallback
+    try:
+        address = ipaddress.ip_address(str(server[0]).split("%", 1)[0])
+    except ValueError:
+        return fallback
+    if address.is_unspecified or address.is_loopback:
+        return fallback
+    return str(address)
+
+
 def _selection_ice_servers(host: str) -> list[dict]:
     return [{"urls": f"stun:{_format_host(host)}:{STUN_PORT}"}]
 
@@ -451,7 +473,7 @@ def create_app(instance_manager: InstanceManager,
         inst = instance_manager.get(instance_id)
         if inst is None:
             raise HTTPException(status_code=404, detail="Instance not found")
-        host = get_best_ip() or (request.client.host if request.client else "127.0.0.1")
+        host = _advertised_host(request)
         selection = await asyncio.to_thread(instance_manager.select, instance_id, host)
         if selection is None:
             raise HTTPException(status_code=503, detail="Engine runtime not ready")
@@ -531,7 +553,7 @@ def create_app(instance_manager: InstanceManager,
         if not req.id.startswith("adb:"):
             raise HTTPException(status_code=400, detail="Invalid id — must be adb:SERIAL")
         serial = req.id[4:]
-        host = get_best_ip() or (request.client.host if request.client else "127.0.0.1")
+        host = _advertised_host(request)
         # Selection and refresh do blocking network/subprocess work — offload.
         selection = await asyncio.to_thread(instance_manager.select, serial, host)
         if selection is None:

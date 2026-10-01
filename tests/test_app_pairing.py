@@ -309,3 +309,68 @@ def test_loopback_websocket_needs_a_local_host_header():
     scope = {**_ws_scope(LOOPBACK), "headers": [(b"host", b"127.0.0.1:8080")]}
     sent, reached = _run_gate(scope, PairingStore())
     assert sent == [] and reached == [True]
+
+
+# -- advertised address ------------------------------------------------------
+
+def _select_client(server_base, scope_server="keep"):
+    """LAN-peer client whose scope["server"] comes from `server_base`."""
+    from server.engine_runtime import EngineSelection
+    manager = MagicMock()
+    manager.list_instances.return_value = []
+    manager.active = None
+    inst = MagicMock()
+    inst.id, inst.serial, inst.name = "adb:a", "a", "A"
+    manager.get.return_value = inst
+    manager.active = inst
+    manager.select.return_value = EngineSelection(
+        whep_url="http://x/whep", whep_token="t", generation=1, width=1, height=1)
+    pairing = PairingStore()
+    with patch("server.app.get_best_ip", return_value="100.64.1.4"):
+        app = create_app(manager, pairing)
+    asgi = app
+    if scope_server != "keep":
+        async def asgi(scope, receive, send):
+            scope = dict(scope)
+            if scope_server is None:
+                scope.pop("server", None)
+            else:
+                scope["server"] = scope_server
+            await app(scope, receive, send)
+    client = TestClient(asgi, client=LAN, base_url=server_base)
+    token = _pair(client, pairing)
+    client.headers["Authorization"] = f"Bearer {token}"
+    return client, manager
+
+
+@pytest.mark.parametrize("server_base,expected", [
+    ("http://192.168.1.10:8080", "192.168.1.10"),
+    ("http://100.101.102.103:8080", "100.101.102.103"),
+    ("http://0.0.0.0:8080", "100.64.1.4"),
+    ("http://testserver", "100.64.1.4"),
+])
+def test_select_advertises_the_address_the_lan_client_reached(server_base, expected):
+    client, manager = _select_client(server_base)
+    with patch("server.app.get_best_ip", return_value="100.64.1.4"):
+        response = client.post("/instances/adb:a/select")
+    assert response.status_code == 200
+    assert response.json()["ice_servers"] == [{"urls": f"stun:{expected}:3478"}]
+    manager.select.assert_called_once_with("adb:a", expected)
+
+
+@pytest.mark.parametrize("scope_server", [None, ("::", 8080)])
+def test_select_falls_back_to_best_ip_without_a_usable_server_address(scope_server):
+    client, manager = _select_client("http://192.168.1.10:8080", scope_server)
+    with patch("server.app.get_best_ip", return_value="100.64.1.4"):
+        response = client.post("/instances/adb:a/select")
+    assert response.json()["ice_servers"] == [{"urls": "stun:100.64.1.4:3478"}]
+    manager.select.assert_called_once_with("adb:a", "100.64.1.4")
+
+
+def test_legacy_select_advertises_the_address_the_lan_client_reached():
+    client, manager = _select_client("http://192.168.1.10:8080")
+    with patch("server.app.get_best_ip", return_value="100.64.1.4"):
+        response = client.post("/select", json={"id": "adb:a"})
+    assert response.status_code == 200
+    assert response.json()["stun_url"] == "stun:192.168.1.10:3478"
+    manager.select.assert_called_once_with("a", "192.168.1.10")
