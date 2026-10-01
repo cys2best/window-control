@@ -251,3 +251,25 @@ def test_remove_legacy_services_invokes_sc_on_win32(monkeypatch):
     assert r"C:\ProgramData\WindowControl\unlock.dat" in removed_files
 
 
+
+
+def test_uvicorn_binds_all_interfaces_and_ignores_forwarded_headers():
+    # start_server() is a closure that only runs on a server thread, so pin
+    # the uvicorn.Config call by its source. Binding 0.0.0.0 is what lets LAN
+    # and Tailscale phones connect; proxy_headers=False keeps X-Forwarded-For
+    # from rewriting the peer address the access gate checks.
+    import ast
+
+    tree = ast.parse((Path(__file__).parent.parent / "src" / "main.py").read_text())
+    configs = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "Config"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "uvicorn"
+    ]
+    assert len(configs) == 1
+    kwargs = {kw.arg: kw.value for kw in configs[0].keywords}
+    assert isinstance(kwargs["host"], ast.Constant) and kwargs["host"].value == "0.0.0.0"
+    assert isinstance(kwargs["proxy_headers"], ast.Constant) and kwargs["proxy_headers"].value is False
