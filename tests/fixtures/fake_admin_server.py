@@ -56,6 +56,7 @@ class FakeAdminHandler(BaseHTTPRequestHandler):
         body = self.rfile.read(content_length) if content_length > 0 else b""
 
         self.server.request_paths.append(self.path)
+        self.server.request_bodies.append(body)
 
         if self.path == "/admin/reconnect":
             response = self.server.dequeue_response()
@@ -167,6 +168,7 @@ class FakeAdminServer:
         self.server.public_peer = self.public_peer
         self.server.dequeue_response = self._dequeue_response
         self.server.request_paths = []
+        self.server.request_bodies = []
         self.port = self.server.server_address[1]
 
         # Start server in background thread

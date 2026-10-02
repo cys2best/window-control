@@ -177,13 +177,16 @@ class EngineAdminClient:
             public_peer=public_peer,
         )
 
-    def reconnect(self, admin_port: int, scrcpy_port: int, generation: int) -> int:
+    def reconnect(self, admin_port: int, scrcpy_port: int, generation: int,
+                  video_bit_rate: int | None = None) -> int:
         """Trigger a scrcpy reconnect at the given generation.
 
         Args:
             admin_port: Port number of the engine's /admin listener.
             scrcpy_port: Port to reconnect to for scrcpy server.
             generation: Generation number being requested.
+            video_bit_rate: Encoder bitrate of the new source in bits per
+                second; the engine paces its sends against it.
 
         Returns:
             New generation number if reconnect was accepted.
@@ -199,6 +202,8 @@ class EngineAdminClient:
             "scrcpy_port": scrcpy_port,
             "generation": generation,
         }
+        if video_bit_rate is not None:
+            payload["video_bit_rate"] = video_bit_rate
 
         try:
             response = self._get_client().post(

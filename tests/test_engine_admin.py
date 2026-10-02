@@ -271,3 +271,19 @@ def test_reconnect_updates_server_generation():
         # Now check health reflects the server's internal state (which was updated by reconnect)
         health = client.health(server.port)
         assert health.generation == 5
+
+
+def test_reconnect_tells_the_engine_the_new_encoder_bitrate():
+    """The engine paces its sends against the tier's bitrate."""
+    import json
+
+    with FakeAdminServer(generation=5) as server:
+        client = EngineAdminClient()
+        server.queue_reconnect(200, {"accepted": True, "generation": 6})
+        client.reconnect(server.port, 27183, 6, video_bit_rate=800_000)
+        server.queue_reconnect(200, {"accepted": True, "generation": 7})
+        client.reconnect(server.port, 27183, 7)
+
+        first, second = (json.loads(body) for body in server.server.request_bodies)
+        assert first == {"scrcpy_port": 27183, "generation": 6, "video_bit_rate": 800_000}
+        assert second == {"scrcpy_port": 27183, "generation": 7}

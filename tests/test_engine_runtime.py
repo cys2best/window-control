@@ -158,6 +158,7 @@ class FakeAdmin:
         self.keyframe_ports: list[int] = []
         self.health_calls: list[int] = []
         self.reconnect_generations: list[int] = []
+        self.reconnect_bit_rates: list[int | None] = []
         self.keyframe_error: BaseException | None = None
 
     def health(self, admin_port: int) -> EngineHealth:
@@ -174,9 +175,11 @@ class FakeAdmin:
             public_peer=False,
         )
 
-    def reconnect(self, admin_port: int, scrcpy_port: int, generation: int) -> int:
+    def reconnect(self, admin_port: int, scrcpy_port: int, generation: int,
+                  video_bit_rate: int | None = None) -> int:
         self._events.append(("admin.reconnect", admin_port, scrcpy_port, generation))
         self.reconnect_generations.append(generation)
+        self.reconnect_bit_rates.append(video_bit_rate)
         if self.reconnect_results:
             result = self.reconnect_results.pop(0)
         elif self.admin_error is not None:
@@ -314,6 +317,7 @@ def test_start_launches_generation_zero_before_engine_and_mints_engine_jwt():
     ]
     assert set(fakes.engine_env) == {
         "ENGINE_WHEP_CAPABILITY_SECRET", "ENGINE_LOCAL_ICE_SERVERS",
+        "ENGINE_VIDEO_BIT_RATE",
     }
 
 
@@ -395,10 +399,23 @@ def test_start_passes_every_configured_env_overlay_to_the_engine():
     env = fakes.engine_env
     assert env["ENGINE_WHEP_CAPABILITY_SECRET"] == "whep-secret"
     assert env["ENGINE_LOCAL_ICE_SERVERS"] == "stun:100.64.1.4:3478"
+    # The encoder bitrate of the starting tier (720p): the engine paces its
+    # sends against it.
+    assert env["ENGINE_VIDEO_BIT_RATE"] == "4000000"
     assert set(env) == {
         "ENGINE_WHEP_CAPABILITY_SECRET",
         "ENGINE_LOCAL_ICE_SERVERS",
+        "ENGINE_VIDEO_BIT_RATE",
     }
+
+
+def test_tier_change_tells_the_engine_the_new_bitrate():
+    runtime, fakes = make_runtime()
+    runtime.start()
+
+    runtime.set_tier("360")
+
+    assert fakes.admin.reconnect_bit_rates == [800_000]
 
 
 def test_start_is_idempotent_and_does_not_respawn_a_running_engine():

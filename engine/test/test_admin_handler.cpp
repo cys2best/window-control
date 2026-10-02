@@ -4,6 +4,7 @@
 #include "peer_registry.h"
 #include "http_server.h"
 #include "fake_scrcpy_server.h"
+#include "send_pacer.h"
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 
@@ -101,6 +102,83 @@ TEST(AdminHandler, ReconnectAcceptsNewerGenerationAndRejectsStale) {
     server.Stop();
     fake1.Stop();
     fake2.Stop();
+}
+
+TEST(AdminHandler, AcceptedReconnectAdoptsTheNewEncoderBitrate) {
+    FakeScrcpyServer fake1;
+    fake1.Serve();
+    PeerRegistry registry;
+    ScrcpySource source(registry);
+    source.ConnectInitial(fake1.Port());
+    video_target::SetBitsPerSecond(4'000'000.0);
+
+    AdminHandler handler(source, registry);
+    EngineHttpServer server("127.0.0.1");
+    handler.RegisterRoutes(server.Server());
+    server.Start();
+
+    FakeScrcpyServer fake2;
+    fake2.Serve();
+    httplib::Client client("127.0.0.1", server.Port());
+
+    // A rejected (stale) reconnect must not change what sends are paced
+    // against: the old source is still the one streaming.
+    json staleBody = {{"scrcpy_port", fake2.Port()}, {"generation", 0}, {"video_bit_rate", 800000}};
+    auto staleRes = client.Post("/admin/reconnect", staleBody.dump(), "application/json");
+    ASSERT_TRUE(staleRes);
+    EXPECT_EQ(staleRes->status, 409);
+    EXPECT_DOUBLE_EQ(video_target::BitsPerSecond(), 4'000'000.0);
+
+    json freshBody = {{"scrcpy_port", fake2.Port()}, {"generation", 1}, {"video_bit_rate", 800000}};
+    auto freshRes = client.Post("/admin/reconnect", freshBody.dump(), "application/json");
+    ASSERT_TRUE(freshRes);
+    EXPECT_EQ(freshRes->status, 200);
+    EXPECT_DOUBLE_EQ(video_target::BitsPerSecond(), 800'000.0);
+
+    server.Stop();
+    fake1.Stop();
+    fake2.Stop();
+    video_target::SetBitsPerSecond(0.0);
+}
+
+TEST(AdminHandler, ReconnectWithoutAUsableBitrateLeavesPacingAsItWas) {
+    FakeScrcpyServer fake1;
+    fake1.Serve();
+    PeerRegistry registry;
+    ScrcpySource source(registry);
+    source.ConnectInitial(fake1.Port());
+    video_target::SetBitsPerSecond(4'000'000.0);
+
+    AdminHandler handler(source, registry);
+    EngineHttpServer server("127.0.0.1");
+    handler.RegisterRoutes(server.Server());
+    server.Start();
+    httplib::Client client("127.0.0.1", server.Port());
+
+    // An older host sends no bitrate at all.
+    FakeScrcpyServer fake2;
+    fake2.Serve();
+    json withoutBitrate = {{"scrcpy_port", fake2.Port()}, {"generation", 1}};
+    auto firstRes = client.Post("/admin/reconnect", withoutBitrate.dump(), "application/json");
+    ASSERT_TRUE(firstRes);
+    EXPECT_EQ(firstRes->status, 200);
+    EXPECT_DOUBLE_EQ(video_target::BitsPerSecond(), 4'000'000.0);
+
+    // A bitrate of the wrong type is ignored rather than rejected: the
+    // reconnect itself is still valid.
+    FakeScrcpyServer fake3;
+    fake3.Serve();
+    json wrongType = {{"scrcpy_port", fake3.Port()}, {"generation", 2}, {"video_bit_rate", "fast"}};
+    auto secondRes = client.Post("/admin/reconnect", wrongType.dump(), "application/json");
+    ASSERT_TRUE(secondRes);
+    EXPECT_EQ(secondRes->status, 200);
+    EXPECT_DOUBLE_EQ(video_target::BitsPerSecond(), 4'000'000.0);
+
+    server.Stop();
+    fake1.Stop();
+    fake2.Stop();
+    fake3.Stop();
+    video_target::SetBitsPerSecond(0.0);
 }
 
 TEST(AdminHandler, KeyframeReturns204) {

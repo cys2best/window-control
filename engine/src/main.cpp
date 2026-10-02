@@ -6,6 +6,7 @@
 #include "peer_registry.h"
 #include "ready_record.h"
 #include "scrcpy_source.h"
+#include "send_pacer.h"
 #include "whep_capability.h"
 #include "whep_handler.h"
 #include <atomic>
@@ -63,7 +64,7 @@ int main(int argc, char** argv) {
     if (argc < 3) {
         std::cerr << "Usage: engine.exe <instance_name> <scrcpy_port>\n"
                      "Environment: ENGINE_WHEP_CAPABILITY_SECRET, "
-                     "ENGINE_LOCAL_ICE_SERVERS\n";
+                     "ENGINE_LOCAL_ICE_SERVERS, ENGINE_VIDEO_BIT_RATE\n";
         return 1;
     }
 
@@ -72,6 +73,17 @@ int main(int argc, char** argv) {
     try {
         std::string instanceName = argv[1];
         int scrcpyPort = std::stoi(argv[2]);
+        // Encoder bitrate of the first source; each reconnect updates it.
+        // Unset or unreadable leaves pacing off.
+        const std::string videoBitRate = GetEnvOrEmpty("ENGINE_VIDEO_BIT_RATE");
+        if (!videoBitRate.empty()) {
+            try {
+                video_target::SetBitsPerSecond(std::stod(videoBitRate));
+            } catch (const std::exception&) {
+                std::cerr << "[engine] ignoring unreadable ENGINE_VIDEO_BIT_RATE" << std::endl;
+            }
+        }
+
         PeerRegistry registry;
         ScrcpySource source(registry);
         source.ConnectInitial(scrcpyPort);

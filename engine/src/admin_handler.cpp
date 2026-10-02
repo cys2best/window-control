@@ -1,6 +1,8 @@
 #include "admin_handler.h"
+#include "send_pacer.h"
 #include <iostream>
 #include <nlohmann/json.hpp>
+#include <optional>
 
 using json = nlohmann::json;
 
@@ -51,6 +53,13 @@ void AdminHandler::RegisterRoutes(httplib::Server& server) {
             return;
         }
 
+        // Optional: the encoder bitrate of the new source, which sends are
+        // paced against. A host that does not send it leaves pacing as it was.
+        std::optional<double> videoBitRate;
+        if (body.contains("video_bit_rate") && body["video_bit_rate"].is_number()) {
+            videoBitRate = body["video_bit_rate"].get<double>();
+        }
+
         bool accepted;
         try {
             accepted = source_.Reconnect(port, generation);
@@ -67,6 +76,7 @@ void AdminHandler::RegisterRoutes(httplib::Server& server) {
                 "application/json");
             return;
         }
+        if (accepted && videoBitRate) video_target::SetBitsPerSecond(*videoBitRate);
         res.status = accepted ? 200 : 409;
         json responseBody = accepted
             ? json{{"accepted", true}, {"generation", generation}}

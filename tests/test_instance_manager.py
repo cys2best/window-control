@@ -349,7 +349,7 @@ def test_watchdog_removal_waits_for_recovery_then_stops_engine_and_forward(monke
             assert release_recovery.wait(timeout=5)
             return EngineHealth("stalled", 0, 1280, 720, 0, False)
 
-        def reconnect(self, _admin_port, _scrcpy_port, generation):
+        def reconnect(self, _admin_port, _scrcpy_port, generation, video_bit_rate=None):
             return generation
 
         def keyframe(self, _admin_port):

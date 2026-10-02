@@ -1,8 +1,10 @@
 #include "peer_session.h"
+#include "send_pacer.h"
 #include <chrono>
 #include <condition_variable>
 #include <mutex>
 #include <stdexcept>
+#include <thread>
 #include <utility>
 
 namespace {
@@ -24,6 +26,35 @@ int SelectOfferedH264PayloadType(const rtc::Description::Media& media) {
     }
     return fallback;
 }
+
+// Last handler in the video chain: sends each frame's packets at the pacing
+// rate instead of handing the whole frame to the transport at once. It waits
+// on the calling thread (the source's delivery thread), which bounds the
+// wait to one frame's worth of pacing and needs no thread of its own.
+class PacedSendHandler final : public rtc::MediaHandler {
+public:
+    void outgoing(rtc::message_vector& messages, const rtc::message_callback& send) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        pacer_.SetTargetBitsPerSecond(video_target::BitsPerSecond());
+        if (pacer_.RateBitsPerSecond() <= 0.0) return;  // not configured: pass through
+
+        for (auto& message : messages) {
+            if (!message) continue;
+            const auto delay = pacer_.Reserve(message->size(), SendPacer::Clock::now());
+            if (delay >= kShortestSleep) std::this_thread::sleep_for(delay);
+            send(std::move(message));
+        }
+        messages.clear();
+    }
+
+private:
+    // Shorter waits are not worth a context switch; the pacer's schedule
+    // absorbs them on the next packet.
+    static constexpr std::chrono::milliseconds kShortestSleep{1};
+
+    std::mutex mutex_;
+    SendPacer pacer_;
+};
 
 }  // namespace
 
@@ -109,6 +140,9 @@ PeerSession::PeerSession(std::string id, const std::vector<std::string>& iceServ
             packetizer->addToChain(srReporter);
             auto nackResponder = std::make_shared<rtc::RtcpNackResponder>();
             packetizer->addToChain(nackResponder);
+            // After the NACK responder, so it has stored every packet
+            // before any of them is delayed.
+            packetizer->addToChain(std::make_shared<PacedSendHandler>());
             track->setMediaHandler(packetizer);
 
             {

@@ -325,6 +325,8 @@ class EngineRuntime:
         return {
             "ENGINE_WHEP_CAPABILITY_SECRET": self.config.whep_secret,
             "ENGINE_LOCAL_ICE_SERVERS": ",".join(self.config.local_ice_servers),
+            # The engine paces its sends against the encoder's bitrate.
+            "ENGINE_VIDEO_BIT_RATE": str(QUALITY_TIERS[self._tier]["bit_rate"]),
         }
 
     def _fresh_start_locked(self) -> None:
@@ -401,16 +403,19 @@ class EngineRuntime:
         launch = self._launcher.launch(tier, base_generation + 1)
         self._scrcpy_port = launch.port
 
+        bit_rate = QUALITY_TIERS[tier]["bit_rate"]
         try:
             accepted = self._admin.reconnect(
-                admin_port, launch.port, base_generation + 1
+                admin_port, launch.port, base_generation + 1,
+                video_bit_rate=bit_rate,
             )
         except ReconnectRejected as rejection:
             # The engine's counter moved on under us (a concurrent reconnect,
             # or our base was stale). Retry once from its own truth, reusing
             # the same launched source rather than churning scrcpy again.
             accepted = self._admin.reconnect(
-                admin_port, launch.port, rejection.current_generation + 1
+                admin_port, launch.port, rejection.current_generation + 1,
+                video_bit_rate=bit_rate,
             )
 
         self._endpoint.generation = accepted
