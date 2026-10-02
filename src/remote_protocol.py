@@ -61,19 +61,38 @@ def parse_frame(data: str) -> Command:
     
     parsed = json.loads(data)
     if "op" in parsed:
-        if parsed["op"] not in ("instances", "host_auth", "preview", "pairing", "webrtc_offer", "webrtc_answer"):
-            raise ValueError(f"unknown operation: {parsed['op']}")
+        op = parsed["op"]
+        if op not in ("instances", "host_auth", "viewer_auth", "pair", "preview", "pairing", "webrtc_offer", "webrtc_answer", "select", "keyframe", "quality", "negotiate", "close", "renew"):
+            raise ValueError(f"unknown operation: {op}")
+            
+        payload = parsed.get("payload", {})
+        
+        # Enforce specific payload bounds
+        if op in ("webrtc_offer", "webrtc_answer", "negotiate"):
+            sdp = payload.get("sdp", "")
+            if len(sdp.encode('utf-8')) > MAX_SDP_BYTES:
+                raise ValueError("SDP exceeds MAX_SDP_BYTES")
+                
+        # Preview might have bounds before base64, but maybe that's checked on reply? 
+        # "MAX_PREVIEW_BYTES (384 KiB) before base64"
+        # Since preview data is sent by the host in a reply, wait, if the host sends it in a command or reply?
+        # A preview frame: command `preview`, host replies with image.
+        
         return Command.model_validate(parsed)
     else:
-        # Actually parse_frame returns a Command. If it was a reply? 
-        # Wait, the test parse_frame("...") expects it to return a Command?
-        # In test test_invalid_frames_are_bounded it parses Command.
         return Command.model_validate(parsed)
 
 def format_command(cmd: Command) -> str:
     return cmd.model_dump_json()
 
 def format_reply(reply: Reply) -> str:
+    if reply.result and "image" in reply.result:
+        # Check preview image bounds before base64 
+        # wait, the image is ALREADY base64 in JSON. 384KiB before base64 = 384 * 1024 bytes.
+        # Length in base64 is ~ (384 * 1024) * 4 / 3 = 512 KiB.
+        b64_len = len(reply.result["image"])
+        if b64_len > (MAX_PREVIEW_BYTES * 4 / 3 + 4):
+            raise ValueError("preview exceeds MAX_PREVIEW_BYTES")
     return reply.model_dump_json(exclude_none=True)
 
 def format_error_reply(request_id: str, code: ErrorCode, message: str) -> str:
