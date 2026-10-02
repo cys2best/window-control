@@ -1,9 +1,14 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 2c34d7fb..1bedd212 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -50,6 +50,7 @@ if(MSVC)
- 	add_compile_options(/wd4251) # class 'type' needs to have dll-interface to be used by clients of class 'type2'
- 	add_compile_options(/wd4275) # non - DLL-interface class 'class_1' used as base for DLL-interface class 'class_2'
- 	add_compile_options(/wd4996) # 'function': was declared deprecated
-+	add_compile_options(/wd4005) # macro redefinition
+@@ -446,6 +446,9 @@ if(WARNINGS_AS_ERRORS)
+        endif()
  endif()
+ 
++target_compile_options(datachannel PRIVATE /wd4996)
++target_compile_options(datachannel-static PRIVATE /wd4996)
++
+ if(DATACHANNEL_STATIC_LINKAGE)
+ set_target_properties(datachannel PROPERTIES EXCLUDE_FROM_ALL 1)
+ set_target_properties(datachannel-static PROPERTIES EXCLUDE_FROM_ALL 0)

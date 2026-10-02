@@ -1,37 +1,68 @@
+# Based on vcpkg port tree f5218e93bae8971d509fd04910f9778004e58bce (0.21.1).
+set(PATCHES fix-for-vcpkg.patch)
+
+if(VCPKG_TARGET_IS_UWP)
+    list(APPEND PATCHES uwp-warnings.patch)
+endif()
+
 vcpkg_from_github(
     OUT_SOURCE_PATH SOURCE_PATH
     REPO paullouisageneau/libdatachannel
     REF "v${VERSION}"
-    SHA512 d08f4304899532847d06eec73db6ffc1cf55ae3b94b0d1da18cb3e77873bce556093d623298ecae0be7f5da82c1630138f7e911293375cb450ba5fc470b13cf7
+    SHA512 67119f6d1280593696f71dc550ceba1076066d0f55ebf10b527bf1c75e5e9571be18e5d9732e43a2aa4d5106a49a0676e70938d35d3eb4005cf17612f8836c52
     HEAD_REF master
     PATCHES
-        dependencies.diff
-        uwp-warnings.patch
+        ${PATCHES}
+        fix_dependency.patch
+        fix_srtp.patch
 )
+file(REMOVE "${SOURCE_PATH}/cmake/Modules/FindLibJuice.cmake")
+string(COMPARE EQUAL "${VCPKG_LIBRARY_LINKAGE}" "static" DATACHANNEL_STATIC_LINKAGE)
 
 vcpkg_check_features(OUT_FEATURE_OPTIONS FEATURE_OPTIONS
     FEATURES
-        srtp USE_SRTP
+        stdcall CAPI_STDCALL
+    INVERTED_FEATURES
+        ws NO_WEBSOCKET
+        srtp NO_MEDIA
 )
+
+# The upstream libnice/GLib find modules require pkg-config on Windows.
+vcpkg_find_acquire_program(PKGCONFIG)
 
 vcpkg_cmake_configure(
     SOURCE_PATH "${SOURCE_PATH}"
     OPTIONS
         ${FEATURE_OPTIONS}
-        -DUSE_SYSTEM_PLOG=ON
-        -DUSE_SYSTEM_SRTP=ON
-        -DUSE_JUICE=OFF
+        -DPREFER_SYSTEM_LIB=ON
         -DUSE_NICE=ON
-        -DNO_WEBSOCKET=OFF
-        -DNO_MEDIA=OFF
+        -DUSE_JUICE=OFF
+        "-DPKG_CONFIG_EXECUTABLE=${PKGCONFIG}"
         -DNO_EXAMPLES=ON
         -DNO_TESTS=ON
-        -DCMAKE_DISABLE_FIND_PACKAGE_Git=ON
+        -DDATACHANNEL_STATIC_LINKAGE=${DATACHANNEL_STATIC_LINKAGE}
 )
 
 vcpkg_cmake_install()
+
 vcpkg_cmake_config_fixup(PACKAGE_NAME LibDataChannel CONFIG_PATH lib/cmake/LibDataChannel)
 vcpkg_fixup_pkgconfig()
 
-file(REMOVE_RECURSE "${CURRENT_PACKAGES_DIR}/debug/include")
+if(srtp IN_LIST FEATURES)
+    set(FIND_DEP_SRTP "find_dependency(libSRTP CONFIG)")
+endif()
+
+file(READ "${CURRENT_PACKAGES_DIR}/share/LibDataChannel/LibDataChannelConfig.cmake" DATACHANNEL_CONFIG)
+file(WRITE "${CURRENT_PACKAGES_DIR}/share/LibDataChannel/LibDataChannelConfig.cmake" "
+include(CMakeFindDependencyMacro)
+find_dependency(Threads)
+find_dependency(OpenSSL)
+find_dependency(plog CONFIG)
+find_dependency(unofficial-usrsctp CONFIG)
+${FIND_DEP_SRTP}
+${DATACHANNEL_CONFIG}")
+
+
+file(REMOVE_RECURSE "${CURRENT_PACKAGES_DIR}/debug/include" "${CURRENT_PACKAGES_DIR}/debug/share")
+
 vcpkg_install_copyright(FILE_LIST "${SOURCE_PATH}/LICENSE")

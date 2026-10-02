@@ -8,6 +8,7 @@ wheels/
 
 # Virtual environments
 .venv
+.vcpkg/
 .superpowers/*
 docs/*
 !docs/TROUBLESHOOTING.md

@@ -9,31 +9,50 @@ on:
 jobs:
   build-engine:
     runs-on: windows-latest
+    env:
+      # Scripts observed in Windows run 37001202701; registry versions stay
+      # pinned separately in engine/vcpkg-configuration.json.
+      VCPKG_REVISION: 617ef1c0c422737d117eda00a471ea1be5bad088
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Check out pinned vcpkg scripts
+        uses: actions/checkout@v4
+        with:
+          repository: microsoft/vcpkg
+          ref: ${{ env.VCPKG_REVISION }}
+          path: .vcpkg
+          fetch-depth: 0
+
+      - name: Bootstrap pinned vcpkg
+        run: .\.vcpkg\bootstrap-vcpkg.bat -disableMetrics
+        shell: pwsh
 
       - name: Restore vcpkg cache
         uses: actions/cache@v4
         with:
           path: |
-            C:\vcpkg\installed
-            C:\vcpkg\buildtrees
-            C:\vcpkg\downloads
-          key: vcpkg-${{ runner.os }}-${{ hashFiles('engine/vcpkg.json', 'engine/ports/**') }}
-          restore-keys: |
-            vcpkg-${{ runner.os }}-
+            engine/build/vcpkg_installed
+            .vcpkg/downloads
+          key: vcpkg-${{ runner.os }}-${{ env.VCPKG_REVISION }}-${{ hashFiles('engine/vcpkg.json', 'engine/vcpkg-configuration.json', 'engine/ports/**') }}
 
       - name: Configure (CMake + vcpkg manifest install)
         run: |
           cmake -S engine -B engine\build `
-            -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake `
+            "-DCMAKE_TOOLCHAIN_FILE=$env:GITHUB_WORKSPACE/.vcpkg/scripts/buildsystems/vcpkg.cmake" `
             -DVCPKG_TARGET_TRIPLET=x64-windows `
             -DVCPKG_OVERLAY_PORTS=engine/ports
         shell: pwsh
 
       - name: Build
         run: cmake --build engine\build --config Release
+        shell: pwsh
+
+      - name: Copy manifest runtime DLLs beside executables
+        # libnice/GLib use UNKNOWN imported targets, so CMake's
+        # TARGET_RUNTIME_DLLS cannot discover their complete DLL closure.
+        run: Copy-Item engine\build\vcpkg_installed\x64-windows\bin\*.dll engine\build\Release\
         shell: pwsh
 
       - name: Run engine_tests

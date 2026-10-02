@@ -1,3 +1,5 @@
+import json
+import re
 from pathlib import Path
 
 BUILD_DIR = Path(__file__).parent.parent / "build"
@@ -118,4 +120,52 @@ def test_engine_overlay_selects_libnice():
     assert "engine/ports" in ci_workflow or "engine\\ports" in ci_workflow, "CI build must specify engine/ports overlay"
     assert "engine/ports" in ci_workflow and "hashFiles" in ci_workflow, "CI vcpkg cache key must invalidate on overlay changes"
 
+
+def test_engine_overlay_uses_verified_release_archive():
+    # Independently verified against the official v0.21.1 archive and the
+    # vcpkg 0.21.1 port tree f5218e93bae8971d509fd04910f9778004e58bce.
+    portfile = (REPO_ROOT / "engine/ports/libdatachannel/portfile.cmake").read_text()
+    manifest = json.loads((REPO_ROOT / "engine/ports/libdatachannel/vcpkg.json").read_text())
+    assert manifest.get("version-semver", manifest.get("version")) == "0.21.1"
+    assert re.search(r"SHA512\s+([a-f0-9]{128})", portfile).group(1) == (
+        "67119f6d1280593696f71dc550ceba1076066d0f55ebf10b527bf1c75e5e9571be18e5d9"
+        "732e43a2aa4d5106a49a0676e70938d35d3eb4005cf17612f8836c52"
+    )
+
+
+def test_engine_overlay_resolves_system_dependencies_from_vcpkg():
+    overlay = REPO_ROOT / "engine/ports/libdatachannel"
+    portfile = (overlay / "portfile.cmake").read_text()
+    manifest = json.loads((overlay / "vcpkg.json").read_text())
+    dependencies = {d if isinstance(d, str) else d["name"] for d in manifest["dependencies"]}
+    assert {"libnice", "openssl", "plog", "usrsctp"} <= dependencies
+    assert "libjuice" not in dependencies
+    assert "-DPREFER_SYSTEM_LIB=ON" in portfile
+    assert "srtp NO_MEDIA" in portfile
+    for patch in ("fix-for-vcpkg.patch", "fix_dependency.patch", "fix_srtp.patch"):
+        assert patch in portfile
+        assert (overlay / patch).is_file()
+    assert "find_package(libSRTP CONFIG REQUIRED)" in (overlay / "fix_srtp.patch").read_text()
+    assert "-DPKG_CONFIG_EXECUTABLE=${PKGCONFIG}" in portfile
+
+
+def test_ci_pins_vcpkg_scripts_and_caches_manifest_inputs():
+    workflow = (REPO_ROOT / ".github/workflows/build.yml").read_text()
+    assert re.search(r"VCPKG_REVISION: [a-f0-9]{40}", workflow)
+    assert "repository: microsoft/vcpkg" in workflow
+    assert "ref: ${{ env.VCPKG_REVISION }}" in workflow
+    assert "bootstrap-vcpkg.bat" in workflow
+    cache_key = next(line for line in workflow.splitlines() if line.strip().startswith("key: vcpkg-"))
+    for value in ("env.VCPKG_REVISION", "engine/vcpkg.json", "engine/vcpkg-configuration.json", "engine/ports/**"):
+        assert value in cache_key
+    assert "engine/build/vcpkg_installed" in workflow
+    assert "C:\\vcpkg" not in workflow
+    assert ".vcpkg/scripts/buildsystems/vcpkg.cmake" in workflow
+
+
+def test_ci_stages_manifest_runtime_dlls_before_native_tests():
+    workflow = (REPO_ROOT / ".github/workflows/build.yml").read_text()
+    copy = workflow.index("Copy-Item engine\\build\\vcpkg_installed\\x64-windows\\bin\\*.dll")
+    assert workflow.index("cmake --build engine") < copy < workflow.index("Run engine_tests")
+    assert "Copy-Item engine\\build\\Release\\*.dll engine\\dist\\" in workflow
 
