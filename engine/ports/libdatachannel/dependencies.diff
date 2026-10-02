@@ -1,0 +1,14 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -100,6 +100,10 @@ if(USE_SYSTEM_PLOG)
+ 	find_package(plog REQUIRED)
+ endif()
+ 
++if(USE_NICE)
++	find_package(LibNice REQUIRED)
++endif()
++
+ if(USE_SYSTEM_SRTP)
+ 	find_package(libSRTP REQUIRED)
+ endif()

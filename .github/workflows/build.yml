@@ -20,7 +20,7 @@ jobs:
             C:\vcpkg\installed
             C:\vcpkg\buildtrees
             C:\vcpkg\downloads
-          key: vcpkg-${{ runner.os }}-${{ hashFiles('engine/vcpkg.json') }}
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('engine/vcpkg.json', 'engine/ports/**') }}
           restore-keys: |
             vcpkg-${{ runner.os }}-
 
@@ -28,7 +28,8 @@ jobs:
         run: |
           cmake -S engine -B engine\build `
             -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake `
-            -DVCPKG_TARGET_TRIPLET=x64-windows
+            -DVCPKG_TARGET_TRIPLET=x64-windows `
+            -DVCPKG_OVERLAY_PORTS=engine/ports
         shell: pwsh
 
       - name: Build

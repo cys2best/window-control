@@ -1,0 +1,9 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -50,6 +50,7 @@ if(MSVC)
+ 	add_compile_options(/wd4251) # class 'type' needs to have dll-interface to be used by clients of class 'type2'
+ 	add_compile_options(/wd4275) # non - DLL-interface class 'class_1' used as base for DLL-interface class 'class_2'
+ 	add_compile_options(/wd4996) # 'function': was declared deprecated
++	add_compile_options(/wd4005) # macro redefinition
+ endif()

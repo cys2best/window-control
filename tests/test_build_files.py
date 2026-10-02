@@ -97,3 +97,25 @@ def test_ci_runs_engine_tests_between_build_and_staging():
     assert build < tests < stage
 
 
+def test_engine_overlay_selects_libnice():
+    overlay_dir = REPO_ROOT / "engine" / "ports" / "libdatachannel"
+    portfile = overlay_dir / "portfile.cmake"
+    port_vcpkg = overlay_dir / "vcpkg.json"
+    ci_workflow = (REPO_ROOT / ".github" / "workflows" / "build.yml").read_text()
+
+    assert overlay_dir.is_dir(), "libdatachannel overlay port directory must exist"
+    assert portfile.is_file(), "overlay portfile.cmake must exist"
+    assert port_vcpkg.is_file(), "overlay vcpkg.json must exist"
+
+    portfile_text = portfile.read_text()
+    assert "-DUSE_NICE=ON" in portfile_text, "portfile must configure libdatachannel with USE_NICE=ON"
+    assert "-DUSE_JUICE=OFF" in portfile_text, "portfile must disable USE_JUICE"
+
+    port_vcpkg_text = port_vcpkg.read_text()
+    assert "libnice" in port_vcpkg_text, "overlay vcpkg.json must depend on libnice"
+
+    assert "VCPKG_OVERLAY_PORTS" in ci_workflow, "CI build must pass VCPKG_OVERLAY_PORTS"
+    assert "engine/ports" in ci_workflow or "engine\\ports" in ci_workflow, "CI build must specify engine/ports overlay"
+    assert "engine/ports" in ci_workflow and "hashFiles" in ci_workflow, "CI vcpkg cache key must invalidate on overlay changes"
+
+
