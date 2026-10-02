@@ -155,7 +155,7 @@ def create_broker_app(settings: BrokerSettings) -> FastAPI:
                                 except WebSocketDisconnect:
                                     registry.remove_viewer(target_viewer.viewer_id)
                                 except Exception as e:
-                                        logging.warning(f"Failed to route reply to viewer: {e}")
+                                    logging.warning(f"Failed to route reply to viewer: {e}")
                             else:
                                 await websocket.send_text(format_error_reply(req_id, ErrorCode.INVALID_REQUEST, "cross installation reply rejected"))
                     except Exception as e:
