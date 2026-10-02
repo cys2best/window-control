@@ -2,11 +2,13 @@
 import sys
 import subprocess
 import time
+import html
+import threading
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QGroupBox, QFrame, QListWidget, QListWidgetItem
 )
-from PyQt5.QtCore import Qt, QTimer, pyqtSignal
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal, pyqtSlot
 from PyQt5.QtGui import QFont
 
 from config import PORT, VERSION
@@ -23,14 +25,20 @@ class LauncherWindow(QMainWindow):
     server_start_requested = pyqtSignal()
     server_stop_requested = pyqtSignal()
     window_selected = pyqtSignal(str)
+    remote_pairing_changed = pyqtSignal(object, str)
+    _remote_pairing_ready = pyqtSignal(int, object, str)
 
-    def __init__(self, parent=None, on_stop_server=None, pairing=None):
+    def __init__(self, parent=None, on_stop_server=None, pairing=None, remote_pairing=None):
         super().__init__(parent)
         self.setWindowTitle(f"EmuCtrl Host v{VERSION}")
         self.setFixedSize(400, 560)
         self._enable_windows_dark_title_bar()
         self._on_stop_server = on_stop_server
         self._pairing = pairing if pairing is not None else PairingStore()
+        self._remote_pairing = remote_pairing
+        self._remote_request_id = 0
+        self.remote_pairing_changed.connect(self.set_remote_pairing)
+        self._remote_pairing_ready.connect(self._on_remote_pairing_ready)
         self._device_ids: list[str] | None = None
         self._active_streams_count = 0
         self._pending_update_version = None
@@ -161,6 +169,18 @@ class LauncherWindow(QMainWindow):
         self._pair_code_label.setStyleSheet(f"color: {MINT};")
         pair_row.addWidget(self._pair_code_label, 1)
         devices_layout.addLayout(pair_row)
+
+        self._remote_link_label = QLabel("")
+        self._remote_link_label.setWordWrap(True)
+        self._remote_link_label.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        self._remote_link_label.setOpenExternalLinks(True)
+        self._remote_link_label.hide()
+        devices_layout.addWidget(self._remote_link_label)
+        self._remote_error_label = QLabel("")
+        self._remote_error_label.setWordWrap(True)
+        self._remote_error_label.setStyleSheet(f"color: {DESTRUCTIVE_HOVER};")
+        self._remote_error_label.hide()
+        devices_layout.addWidget(self._remote_error_label)
 
         self._device_list = QListWidget()
         self._device_list.setFixedHeight(64)
@@ -323,9 +343,51 @@ class LauncherWindow(QMainWindow):
         else:
             self._ip_label.setText(f"LAN: {lan}:{PORT}\nTailscale: Inactive")
 
+    @pyqtSlot(object, str)
+    def set_remote_pairing(self, remote_pairing, error=""):
+        """Attach on the Qt thread; workers emit remote_pairing_changed.
+
+        Host lifecycle owns shutdown() of the previous manager. Attachment
+        preserves the local pairing window and waits for the next owner click.
+        """
+        self._remote_request_id += 1
+        self._remote_pairing = remote_pairing
+        self._remote_error_label.setText(error)
+        self._remote_error_label.setVisible(bool(error))
+        self._refresh_pairing()
+        QTimer.singleShot(0, self._fit_height)
+
     def _start_pairing(self):
         self._pairing.start_pairing()
+        self._remote_request_id += 1
+        request_id = self._remote_request_id
+        self._remote_error_label.clear()
+        self._remote_error_label.hide()
         self._refresh_pairing()
+        if self._remote_pairing is not None:
+            remote = self._remote_pairing
+            window = self._pairing.pairing_window()
+
+            def open_remote():
+                from server.remote_pairing import RemotePairingError
+                try:
+                    invitation = remote.open(window_generation=window.generation)
+                except RemotePairingError as error:
+                    self._remote_pairing_ready.emit(request_id, None, str(error))
+                except Exception:
+                    self._remote_pairing_ready.emit(request_id, None, "Remote pairing is unavailable")
+                else:
+                    self._remote_pairing_ready.emit(request_id, invitation, "")
+
+            threading.Thread(target=open_remote, daemon=True, name="remote-pairing").start()
+
+    def _on_remote_pairing_ready(self, request_id, invitation, error):
+        if request_id != self._remote_request_id:
+            return
+        self._remote_error_label.setText(error)
+        self._remote_error_label.setVisible(bool(error))
+        self._refresh_pairing()
+        QTimer.singleShot(0, self._fit_height)
 
     def _refresh_pairing(self):
         active = self._pairing.active_code()
@@ -338,6 +400,15 @@ class LauncherWindow(QMainWindow):
                 f"{code[:3]} {code[3:]}  ·  {remaining // 60}:{remaining % 60:02d}"
             )
             self._pair_btn.setText("New code")
+
+        invitation = self._remote_pairing.active_invitation() if self._remote_pairing is not None else None
+        if invitation is None:
+            self._remote_link_label.clear()
+            self._remote_link_label.hide()
+        else:
+            url = html.escape(invitation.url, quote=True)
+            self._remote_link_label.setText(f'<a href="{url}">{url}</a>')
+            self._remote_link_label.show()
 
         devices = self._pairing.list_devices()
         ids = [device.id for device in devices]

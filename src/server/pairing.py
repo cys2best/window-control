@@ -31,6 +31,12 @@ class PairedDevice:
     created_at: float
 
 
+@dataclass(frozen=True)
+class PairingWindow:
+    generation: int
+    expires_at: float
+
+
 def bearer_token(authorization: str | None) -> str | None:
     """Return one exact Bearer credential, rejecting every other form."""
     if not authorization or not authorization.startswith("Bearer "):
@@ -62,6 +68,8 @@ class PairingStore:
         self._code: str | None = None
         self._code_expires_at = 0.0
         self._failed_attempts = 0
+        self._window_generation = 0
+        self._window_closed: list[Callable[[int], None]] = []
         self._last_save_ok = True
         self._devices: list[dict] = self._load()
 
@@ -74,54 +82,109 @@ class PairingStore:
 
     def start_pairing(self) -> str:
         with self._lock:
+            previous = self._window_generation if self._code is not None else None
+            self._window_generation += 1
             self._code = f"{secrets.randbelow(1_000_000):06d}"
             self._code_expires_at = self._clock() + CODE_TTL_SECONDS
             self._failed_attempts = 0
-            return self._code
+            code = self._code
+        self._notify_window_closed(previous)
+        return code
 
     def active_code(self) -> tuple[str, int] | None:
         with self._lock:
+            previous = self._window_generation if self._code is not None else None
             code = self._active_code_locked()
-            if code is None:
-                return None
-            return code, int(self._code_expires_at - self._clock())
+            result = None if code is None else (code, int(self._code_expires_at - self._clock()))
+        if result is None:
+            self._notify_window_closed(previous)
+        return result
 
-    def pair(self, code: str, device_name: str) -> str | None:
+    def pairing_window(self) -> PairingWindow | None:
+        """Snapshot for invitations; generation changes even if a code repeats."""
+        with self._lock:
+            previous = self._window_generation if self._code is not None else None
+            code = self._active_code_locked()
+            result = None if code is None else PairingWindow(self._window_generation, self._code_expires_at)
+        if result is None:
+            self._notify_window_closed(previous)
+        return result
+
+    def on_window_closed(self, callback: Callable[[int], None]) -> Callable[[], None]:
+        """Observe replacement, expiry, consumption and exhausted attempts.
+
+        Observers run outside the store lock and must only enqueue I/O.
+        """
+        with self._lock:
+            self._window_closed.append(callback)
+
+        def unsubscribe() -> None:
+            with self._lock:
+                if callback in self._window_closed:
+                    self._window_closed.remove(callback)
+
+        return unsubscribe
+
+    def _notify_window_closed(self, generation: int | None) -> None:
+        if generation is None:
+            return
+        with self._lock:
+            callbacks = list(self._window_closed)
+        for callback in callbacks:
+            try:
+                callback(generation)
+            except Exception:
+                log.warning("pairing: remote window observer failed")
+
+    def pair(self, code: str, device_name: str, *, window_generation: int | None = None) -> str | None:
         if not isinstance(code, str):
             return None
         candidate = "".join(code.split())
-        with self._lock:
-            active = self._active_code_locked()
-            if active is None:
-                return None
-            if not hmac.compare_digest(candidate.encode("utf-8"), active.encode("utf-8")):
-                self._failed_attempts += 1
-                if self._failed_attempts >= MAX_FAILED_ATTEMPTS:
-                    self._code = None
-                return None
-            self._code = None
-            token = secrets.token_urlsafe(32)
-            name = (device_name or "").strip()[:_MAX_NAME_LENGTH] or "Device"
-            self._devices.append({
-                "id": uuid.uuid4().hex[:8],
-                "name": name,
-                "created_at": self._clock(),
-                "token_sha256": _digest(token),
-            })
-            self._last_save_ok = self._save_locked()
-            return token
+        closed = None
+        try:
+            with self._lock:
+                generation = self._window_generation
+                was_active = self._code is not None
+                active = self._active_code_locked()
+                if was_active and active is None:
+                    closed = generation
+                if active is None or (window_generation is not None and window_generation != generation):
+                    return None
+                if not hmac.compare_digest(candidate.encode("utf-8"), active.encode("utf-8")):
+                    self._failed_attempts += 1
+                    if self._failed_attempts >= MAX_FAILED_ATTEMPTS:
+                        self._code = None
+                        closed = generation
+                    return None
+                self._code = None
+                closed = generation
+                token = secrets.token_urlsafe(32)
+                name = (device_name or "").strip()[:_MAX_NAME_LENGTH] or "Device"
+                self._devices.append({
+                    "id": uuid.uuid4().hex[:8],
+                    "name": name,
+                    "created_at": self._clock(),
+                    "token_sha256": _digest(token),
+                })
+                self._last_save_ok = self._save_locked()
+                return token
+        finally:
+            self._notify_window_closed(closed)
 
     # -- device tokens -----------------------------------------------------
 
     def is_valid_token(self, token: str | None) -> bool:
+        return self.device_for_token(token) is not None
+
+    def device_for_token(self, token: str | None) -> PairedDevice | None:
         if not isinstance(token, str) or not token or len(token) > _MAX_TOKEN_LENGTH:
-            return False
+            return None
         digest = _digest(token)
         with self._lock:
-            return any(
-                hmac.compare_digest(digest, device["token_sha256"])
-                for device in self._devices
-            )
+            for device in self._devices:
+                if hmac.compare_digest(digest, device["token_sha256"]):
+                    return PairedDevice(device["id"], device["name"], device["created_at"])
+        return None
 
     def list_devices(self) -> list[PairedDevice]:
         with self._lock:

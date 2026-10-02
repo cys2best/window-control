@@ -231,3 +231,38 @@ def test_failed_save_log_mentions_revocations(tmp_path, caplog):
     store = PairingStore(_unwritable_path(tmp_path))
     store.pair(store.start_pairing(), "Phone")
     assert "revocations" in caplog.text
+
+
+def test_device_for_token_returns_metadata_and_respects_revocation(tmp_path):
+    store = PairingStore(str(tmp_path / "devices.json"))
+    token = store.pair(store.start_pairing(), "Phone")
+    device = store.device_for_token(token)
+    assert device == store.list_devices()[0]
+    assert device.name == "Phone"
+    assert PairingStore(str(tmp_path / "devices.json")).device_for_token(token) == device
+    for bad in (None, "", "unknown", "x" * 300, 123):
+        assert store.device_for_token(bad) is None
+    store.remove_device(device.id)
+    assert store.device_for_token(token) is None
+
+
+def test_window_observer_can_read_store_from_another_thread():
+    import threading
+    store = PairingStore()
+    store.start_pairing()
+    observed = []
+    readers = []
+    def observer(generation):
+        done = threading.Event()
+        def read():
+            store.active_code()
+            done.set()
+        thread = threading.Thread(target=read)
+        readers.append(thread)
+        thread.start()
+        observed.append(done.wait(0.5))
+    store.on_window_closed(observer)
+    store.start_pairing()
+    for thread in readers:
+        thread.join(1)
+    assert observed == [True]

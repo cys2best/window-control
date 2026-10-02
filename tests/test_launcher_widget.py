@@ -226,3 +226,91 @@ def test_window_grows_when_the_update_banner_and_save_warning_appear(qapp, tmp_p
         assert window.height() > before
         assert window.height() >= _content_height(window)
         assert window.width() == 400
+
+
+def _wait_remote_result(qapp, window):
+    import time
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        qapp.processEvents()
+        if window._remote_link_label.text() or window._remote_error_label.text():
+            return
+        time.sleep(0.005)
+    pytest.fail("Remote invitation worker did not finish")
+
+
+def test_owner_click_opens_one_local_code_and_remote_link_off_qt_thread(qapp):
+    import threading
+    from broker.identity_store import InstallationIdentity
+    from server.pairing import PairingStore
+    from server.remote_pairing import RemotePairing
+    store = PairingStore()
+    threads = []
+    published = []
+    def publish(invitation):
+        threads.append(threading.current_thread())
+        published.append(invitation)
+    remote = RemotePairing(store, InstallationIdentity(installation_id="pc", credential="secret"),
+                           "https://remote.example", publish=publish)
+    remote.set_online(True)
+    with patch("gui.launcher.check_for_update"):
+        from gui.launcher import LauncherWindow
+        window = LauncherWindow(pairing=store, remote_pairing=remote)
+        window._pair_btn.click()
+        displayed_code = store.active_code()[0]
+        _wait_remote_result(qapp, window)
+        assert store.active_code()[0] == displayed_code
+        assert displayed_code[:3] + " " + displayed_code[3:] in window._pair_code_label.text()
+        assert remote.active_invitation().url in window._remote_link_label.text()
+        assert len(published) == 1
+        assert threads[0] != threading.current_thread()
+        store.pair(displayed_code, "Local phone")
+        window._refresh_pairing()
+        assert window._remote_link_label.text() == ""
+
+
+def test_remote_failure_leaves_local_launcher_pairing_usable(qapp):
+    from broker.identity_store import InstallationIdentity
+    from server.pairing import PairingStore
+    from server.remote_pairing import RemotePairing
+    store = PairingStore()
+    remote = RemotePairing(store, InstallationIdentity(installation_id="pc", credential="secret"),
+                           "https://remote.example")
+    with patch("gui.launcher.check_for_update"):
+        from gui.launcher import LauncherWindow
+        window = LauncherWindow(pairing=store, remote_pairing=remote)
+        window._pair_btn.click()
+        _wait_remote_result(qapp, window)
+        assert "offline" in window._remote_error_label.text().lower()
+        assert window._remote_link_label.text() == ""
+        assert store.pair(store.active_code()[0], "Local phone")
+
+
+def test_background_identity_result_can_attach_remote_without_resetting_local_code(qapp):
+    import threading
+    from broker.identity_store import InstallationIdentity
+    from server.pairing import PairingStore
+    from server.remote_pairing import RemotePairing
+    store = PairingStore()
+    remote = RemotePairing(store, InstallationIdentity(installation_id="pc", credential="secret"),
+                           "https://remote.example")
+    remote.set_online(True)
+    with patch("gui.launcher.check_for_update"):
+        from gui.launcher import LauncherWindow
+        window = LauncherWindow(pairing=store)
+        window._pair_btn.click()
+        code = store.active_code()[0]
+        worker = threading.Thread(target=lambda: window.remote_pairing_changed.emit(None, "Remote registration failed"))
+        worker.start()
+        worker.join(1)
+        assert window._remote_error_label.text() == ""
+        qapp.processEvents()
+        assert store.active_code()[0] == code
+        assert "registration failed" in window._remote_error_label.text()
+        window.set_remote_pairing(remote)
+        assert window._remote_error_label.text() == ""
+        assert store.active_code()[0] == code
+        assert remote.active_invitation() is None
+        window._pair_btn.click()
+        _wait_remote_result(qapp, window)
+        assert remote.active_invitation().url in window._remote_link_label.text()
