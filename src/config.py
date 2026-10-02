@@ -25,6 +25,9 @@ SYSTEM_WINDOW_TITLES = {
     "Task Manager", "Start", "",
 }
 
+# Publisher/operator setting. Empty builds retain LAN access.
+REMOTE_SERVICE_URL = os.environ.get("REMOTE_SERVICE_URL", "")
+
 # Engine / scrcpy
 STUN_PORT = 3478       # embedded STUN server, bound to Tailscale IP (see stun_server.py)
 ENGINE_LOCAL_ICE_SERVERS = tuple(filter(None, os.environ.get(

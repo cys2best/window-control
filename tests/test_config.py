@@ -161,3 +161,16 @@ def test_public_access_config_and_modules_are_absent():
                     "TUNNEL_SECRET", "TURN_HOST", "public_session", "import jwt"):
         assert removed not in source, removed
     assert "pyjwt" not in (repo / "pyproject.toml").read_text().lower()
+
+
+def test_remote_service_url_is_operator_setting_with_no_fictional_default(monkeypatch):
+    import importlib
+    import config
+    monkeypatch.delenv("REMOTE_SERVICE_URL", raising=False)
+    importlib.reload(config)
+    assert config.REMOTE_SERVICE_URL == ""
+    monkeypatch.setenv("REMOTE_SERVICE_URL", "https://operator.example")
+    importlib.reload(config)
+    assert config.REMOTE_SERVICE_URL == "https://operator.example"
+    monkeypatch.delenv("REMOTE_SERVICE_URL")
+    importlib.reload(config)

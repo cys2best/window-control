@@ -130,6 +130,26 @@ def build_engine_orchestrator() -> "EngineOrchestrator":
     return EngineOrchestrator(runtime_config)
 
 
+async def build_remote_client(service_url, actions, pairing, on_state, *, identity_store=None):
+    """Called on the server loop; registration/protection run in its executor."""
+    import asyncio
+    from server.remote_identity import RemoteIdentityStore, RemoteIdentityError
+    from server.remote_dispatch import RemoteDispatcher
+    from server.remote_client import RemoteHostClient
+    if not service_url:
+        on_state(None, "Remote service is not configured")
+        return None
+    try:
+        store = identity_store if identity_store is not None else RemoteIdentityStore()
+        identity = await asyncio.to_thread(store.load_or_register, service_url)
+        return RemoteHostClient(service_url, identity, RemoteDispatcher(actions, pairing), on_state=on_state)
+    except RemoteIdentityError as exc:
+        on_state(None, str(exc))
+    except Exception:
+        on_state(None, "Remote identity is unavailable")
+    return None
+
+
 def _remove_legacy_services():
     """Stop and delete legacy Windows services and purge stored unlock credentials."""
     if sys.platform == "win32":
@@ -191,7 +211,16 @@ def main():
     instance_manager = InstanceManager(engine_orchestrator)
 
     pairing = PairingStore(default_store_path())
-    fastapi_app = create_app(instance_manager, pairing=pairing)
+    launcher = None
+
+    def remote_state(remote_pairing, error):
+        if launcher is not None:
+            launcher.remote_pairing_changed.emit(remote_pairing, error)
+
+    async def remote_factory(actions):
+        return await build_remote_client(config.REMOTE_SERVICE_URL, actions, pairing, remote_state)
+
+    fastapi_app = create_app(instance_manager, pairing=pairing, remote_factory=remote_factory)
 
     server = None
     _server_thread = None

@@ -15,8 +15,8 @@ def broker_env(tmp_path):
         turn_shared_secret="test_turn_secret_32bytes_value_here",
     )
     app = create_broker_app(settings)
-    client = TestClient(app)
-    return client, settings, storage
+    with TestClient(app) as client:
+        yield client, settings, storage
 
 
 def test_registration_does_not_grant_turn(broker_env):
@@ -181,56 +181,169 @@ def test_origin_checking(broker_env):
 
 
 
+def wire(op, payload=None, request_id=None):
+    import uuid
+    return json.dumps({"v": 1, "id": request_id or str(uuid.uuid4()), "op": op, "payload": payload or {}})
+
+
+def authenticate_host(ws, identity):
+    ws.send_text(wire("host_auth", identity))
+    assert json.loads(ws.receive_text())["ok"]
+
+
+def approve_viewer(host_ws, viewer_ws, identity, request_id=None):
+    viewer_ws.send_text(wire("viewer_auth", {"installation_id": identity["installation_id"], "token": "pc-device-token"}, request_id))
+    routed = json.loads(host_ws.receive_text())
+    assert routed["context"]["installation_id"] == identity["installation_id"]
+    assert routed["context"]["token"] == "pc-device-token"
+    host_ws.send_text(json.dumps({"v": 1, "id": routed["id"], "ok": True, "result": {"authenticated": True, "device_id": "device1"}}))
+    reply = json.loads(viewer_ws.receive_text())
+    assert reply["ok"]
+    assert "device_id" not in reply["result"]
+
+
 def test_viewer_routing_and_limits(broker_env):
     client, settings, _ = broker_env
-    reg = client.post("/installations").json()
-    inst_id = reg["installation_id"]
-    cred = reg["credential"]
-
+    identity = client.post("/installations").json()
     with client.websocket_connect("/connect") as host_ws:
-        host_ws.send_text(json.dumps({
-            "v": 1, "id": "11111111-1111-1111-1111-111111111111", "op": "host_auth",
-            "payload": {"installation_id": inst_id, "credential": cred}
-        }))
-        assert json.loads(host_ws.receive_text())["ok"] is True
-
+        authenticate_host(host_ws, identity)
         with client.websocket_connect("/connect") as viewer_ws:
-            viewer_ws.send_text(json.dumps({
-                "v": 1, "id": "22222222-2222-2222-2222-222222222222", "op": "viewer_auth",
-                "payload": {"installation_id": inst_id}
-            }))
-            assert json.loads(viewer_ws.receive_text())["ok"] is True
-
-            # Preview rate limits
-            for i in range(3):
-                viewer_ws.send_text(json.dumps({
-                    "v": 1, "id": f"44444444-4444-4444-4444-4444444444{i:02d}", "op": "preview", "payload": {}
-                }))
-            
-            # Host receives first 2
-            assert json.loads(host_ws.receive_text())["id"] == "44444444-4444-4444-4444-444444444400"
-            assert json.loads(host_ws.receive_text())["id"] == "44444444-4444-4444-4444-444444444401"
-            
-            # Viewer gets error for 3rd
+            approve_viewer(host_ws, viewer_ws, identity)
+            routed = []
+            original_ids = [f"44444444-4444-4444-4444-4444444444{i:02d}" for i in range(3)]
+            for request_id in original_ids:
+                viewer_ws.send_text(wire("preview", {"serial": "emulator-5554"}, request_id))
+            for _ in range(2):
+                routed.append(json.loads(host_ws.receive_text()))
             err = json.loads(viewer_ws.receive_text())
-            assert err["ok"] is False and err["error"]["code"] == "quota_exceeded"
-            
-            # Clear pending requests by resolving them
-            host_ws.send_text(json.dumps({"v": 1, "id": "44444444-4444-4444-4444-444444444400", "ok": True, "result": {}}))
-            host_ws.send_text(json.dumps({"v": 1, "id": "44444444-4444-4444-4444-444444444401", "ok": True, "result": {}}))
-            assert json.loads(viewer_ws.receive_text())["id"] == "44444444-4444-4444-4444-444444444400"
-            assert json.loads(viewer_ws.receive_text())["id"] == "44444444-4444-4444-4444-444444444401"
-
-            # Pending limits (max 32)
+            assert err["error"]["code"] == "quota_exceeded"
+            for command in routed:
+                host_ws.send_text(json.dumps({"v": 1, "id": command["id"], "ok": True, "result": {}}))
+            assert {json.loads(viewer_ws.receive_text())["id"] for _ in range(2)} == set(original_ids[:2])
             for i in range(33):
-                viewer_ws.send_text(json.dumps({
-                    "v": 1, "id": f"55555555-5555-5555-5555-5555555555{i:02d}", "op": "instances", "payload": {}
-                }))
-                
-            for i in range(32):
-                assert json.loads(host_ws.receive_text())["id"] == f"55555555-5555-5555-5555-5555555555{i:02d}"
-                
-            # Viewer gets error for 33rd
+                viewer_ws.send_text(wire("instances", request_id=f"55555555-5555-5555-5555-5555555555{i:02d}"))
+            commands = [json.loads(host_ws.receive_text()) for _ in range(32)]
+            assert len({c["id"] for c in commands}) == 32
             err = json.loads(viewer_ws.receive_text())
-            assert err["ok"] is False and err["error"]["code"] == "invalid_request"
+            assert err["error"]["code"] == "invalid_request"
 
+
+def test_foreign_host_cannot_consume_pending_authorization(broker_env):
+    client, settings, _ = broker_env
+    a = client.post("/installations").json()
+    b = client.post("/installations").json()
+    with client.websocket_connect("/connect") as host_a, client.websocket_connect("/connect") as host_b:
+        authenticate_host(host_a, a)
+        authenticate_host(host_b, b)
+        with client.websocket_connect("/connect") as viewer:
+            viewer.send_text(wire("viewer_auth", {"installation_id": a["installation_id"], "token": "phone"}))
+            routed = json.loads(host_a.receive_text())
+            response = {"v": 1, "id": routed["id"], "ok": True, "result": {"authenticated": True, "device_id": "device1"}}
+            host_b.send_text(json.dumps(response))
+            assert json.loads(host_b.receive_text())["error"]["code"] == "invalid_request"
+            # Wrong owner did not remove the real pending request.
+            host_a.send_text(json.dumps(response))
+            assert json.loads(viewer.receive_text())["ok"]
+
+
+def test_request_id_collision_across_viewers_is_isolated(broker_env):
+    client, settings, _ = broker_env
+    identity = client.post("/installations").json()
+    same_id = "11111111-1111-1111-1111-111111111111"
+    with client.websocket_connect("/connect") as host:
+        authenticate_host(host, identity)
+        with client.websocket_connect("/connect") as a, client.websocket_connect("/connect") as b:
+            approve_viewer(host, a, identity)
+            approve_viewer(host, b, identity)
+            a.send_text(wire("instances", request_id=same_id))
+            b.send_text(wire("instances", request_id=same_id))
+            commands = [json.loads(host.receive_text()) for _ in range(2)]
+            assert commands[0]["id"] != commands[1]["id"]
+            assert commands[0]["context"]["viewer_id"] != commands[1]["context"]["viewer_id"]
+            for i, command in enumerate(commands):
+                host.send_text(json.dumps({"v": 1, "id": command["id"], "ok": True, "result": {"index": i}}))
+            assert json.loads(a.receive_text())["id"] == same_id
+            assert json.loads(b.receive_text())["id"] == same_id
+
+
+def test_duplicate_active_id_and_viewer_role_forgery_rejected(broker_env):
+    client, settings, _ = broker_env
+    identity = client.post("/installations").json()
+    with client.websocket_connect("/connect") as host:
+        authenticate_host(host, identity)
+        with client.websocket_connect("/connect") as viewer:
+            approve_viewer(host, viewer, identity)
+            request_id = "11111111-1111-1111-1111-111111111111"
+            viewer.send_text(wire("instances", request_id=request_id))
+            command = json.loads(host.receive_text())
+            viewer.send_text(wire("instances", request_id=request_id))
+            assert json.loads(viewer.receive_text())["error"]["code"] == "invalid_request"
+            for op, payload in [("host_auth", identity), ("device_invalidated", {"device_id": "device1"}), ("pairing_close", {"handle": "x" * 43}), ("instances", {"role": "host"})]:
+                viewer.send_text(wire(op, payload))
+                assert json.loads(viewer.receive_text())["error"]["code"] == "invalid_request"
+            forged = json.loads(wire("instances"))
+            forged["context"] = {"token": "owner"}
+            viewer.send_text(json.dumps(forged))
+            assert json.loads(viewer.receive_text())["error"]["code"] == "invalid_request"
+
+
+def test_pending_request_dies_with_host_epoch_and_requires_viewer_reauth(broker_env):
+    client, settings, _ = broker_env
+    identity = client.post("/installations").json()
+    with client.websocket_connect("/connect") as host:
+        authenticate_host(host, identity)
+        with client.websocket_connect("/connect") as viewer:
+            approve_viewer(host, viewer, identity)
+            viewer.send_text(wire("instances"))
+            routed = json.loads(host.receive_text())
+            with client.websocket_connect("/connect") as replacement:
+                authenticate_host(replacement, identity)
+                assert json.loads(viewer.receive_text())["error"]["code"] == "offline"
+                replacement.send_text(json.dumps({"v": 1, "id": routed["id"], "ok": True, "result": {}}))
+                assert json.loads(replacement.receive_text())["error"]["code"] == "invalid_request"
+                viewer.send_text(wire("instances"))
+                assert json.loads(viewer.receive_text())["error"]["code"] == "not_paired"
+
+
+def test_negotiate_budget_includes_broker_queue_time_and_late_reply_is_discarded(broker_env):
+    import time
+    client, settings, _ = broker_env
+    identity = client.post("/installations").json()
+    with client.websocket_connect("/connect") as host:
+        authenticate_host(host, identity)
+        with client.websocket_connect("/connect") as viewer:
+            approve_viewer(host, viewer, identity)
+            host_conn = client.app.state.registry.get_host(identity["installation_id"])
+            client.portal.call(host_conn.send_lock.acquire)
+            payload = {"session_id": "11111111-1111-1111-1111-111111111111", "generation": 1, "offer": "v=0", "timeout_ms": 200}
+            viewer.send_text(wire("negotiate", payload))
+            time.sleep(.03)
+            client.portal.call(host_conn.send_lock.release)
+            routed = json.loads(host.receive_text())
+            assert 0 < routed["payload"]["timeout_ms"] < 190
+            assert json.loads(viewer.receive_text())["error"]["code"] == "timeout"
+            host.send_text(json.dumps({"v": 1, "id": routed["id"], "ok": True, "result": {"answer": "late"}}))
+            assert json.loads(host.receive_text())["error"]["code"] == "invalid_request"
+
+
+def test_pairing_handle_bound_to_host_epoch_expiry_and_lifecycle_role(broker_env):
+    import time
+    client, settings, _ = broker_env
+    a = client.post("/installations").json()
+    b = client.post("/installations").json()
+    handle = "r" * 43
+    with client.websocket_connect("/connect") as host_a, client.websocket_connect("/connect") as host_b:
+        authenticate_host(host_a, a)
+        authenticate_host(host_b, b)
+        host_a.send_text(wire("pairing_open", {"handle": handle, "expires_at": time.time() + 100}))
+        assert json.loads(host_a.receive_text())["ok"]
+        host_b.send_text(wire("pairing_open", {"handle": handle, "expires_at": time.time() + 100}))
+        assert json.loads(host_b.receive_text())["error"]["code"] == "invalid_request"
+        host_b.send_text(wire("pairing_close", {"handle": handle}))
+        assert json.loads(host_b.receive_text())["ok"]
+        assert client.app.state.registry.installation_for_handle(handle) == a["installation_id"]
+        host_a.send_text(wire("pairing_open", {"handle": "s" * 43, "expires_at": time.time() - 1}))
+        assert json.loads(host_a.receive_text())["error"]["code"] == "invalid_request"
+        with client.websocket_connect("/connect") as replacement:
+            authenticate_host(replacement, a)
+            assert client.app.state.registry.installation_for_handle(handle) is None

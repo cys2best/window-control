@@ -136,9 +136,10 @@ def test_kept_verification_entry_points_remain():
     assert (REPO / "engine" / "test.ps1").exists()
 
 
-def test_websockets_is_no_longer_a_dependency():
-    for name in ("pyproject.toml", "requirements.txt"):
-        assert "websockets" not in (REPO / name).read_text(encoding="utf-8").lower(), name
+def test_websockets_is_explicit_host_dependency_only():
+    assert "websockets>=16.0" in (REPO / "pyproject.toml").read_text()
+    assert "from websockets.asyncio.client import connect" in (REPO / "src/server/remote_client.py").read_text()
+    assert "websockets" not in (REPO / "requirements.txt").read_text().lower()
 
 
 def test_signaling_relay_and_its_fixtures_are_gone():

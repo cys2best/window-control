@@ -7,6 +7,7 @@ import re
 import struct
 import subprocess
 from pathlib import Path
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
@@ -15,9 +16,10 @@ from pydantic import BaseModel
 from starlette.requests import HTTPConnection
 from starlette.routing import Match
 
-from config import WEB_BUILD_DIR, STUN_PORT, TIER_ORDER
+from config import WEB_BUILD_DIR, STUN_PORT
 from server import adb_manager
 from server.instance_manager import InstanceManager
+from server.remote_dispatch import InstanceActions
 from server.network_gate import is_allowed_peer, is_loopback_peer
 from server.pairing import PairingStore, bearer_token
 from server.tailscale import get_best_ip
@@ -317,22 +319,44 @@ class PairRequest(BaseModel):
 
 
 def create_app(instance_manager: InstanceManager,
-               pairing: PairingStore | None = None) -> FastAPI:
+               pairing: PairingStore | None = None, *, remote_factory=None) -> FastAPI:
     import asyncio
     if pairing is None:
         pairing = PairingStore()
-    # No generated docs/schema routes: nothing here needs them.
-    app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
-    app.add_middleware(AccessGate, pairing=pairing)
+    actions = InstanceActions(instance_manager)
 
-    @app.on_event("startup")
-    async def _startup():
-        loop = asyncio.get_event_loop()
-        loop.set_exception_handler(_make_exception_handler(loop.get_exception_handler()))
-
-        # Discover LDPlayer instances on startup
+    @asynccontextmanager
+    async def lifespan(app):
+        loop = asyncio.get_running_loop()
+        previous_handler = loop.get_exception_handler()
+        loop.set_exception_handler(_make_exception_handler(previous_handler))
         import threading
         threading.Thread(target=instance_manager.refresh, daemon=True).start()
+        stop = asyncio.Event()
+
+        async def remote_lifetime():
+            client = await remote_factory(actions)
+            if client is not None:
+                app.state.remote_client = client
+                await client.run(stop)
+
+        remote_task = asyncio.create_task(remote_lifetime()) if remote_factory is not None else None
+        try:
+            yield
+        finally:
+            stop.set()
+            if remote_task is not None:
+                # Cancel registration/connect/dispatch without blocking the Qt thread.
+                remote_task.cancel()
+                await asyncio.gather(remote_task, return_exceptions=True)
+            app.state.remote_client = None
+            loop.set_exception_handler(previous_handler)
+
+    # No generated docs/schema routes: nothing here needs them.
+    app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
+    app.add_middleware(AccessGate, pairing=pairing)
+    app.state.instance_actions = actions
+    app.state.remote_client = None
 
     # ── Static / index ───────────────────────────────────────────────────────
     # apps/web (Next.js, output: "export") replaces the old hand-rolled
@@ -467,31 +491,11 @@ def create_app(instance_manager: InstanceManager,
         """
         if _prefers_html(request):
             return _serve_web_page("instances.html")
-        return instance_manager.list_instances()
+        return await actions.instances()
 
     @app.post("/instances/{instance_id}/select")
     async def select_instance(instance_id: str, request: Request):
-        inst = instance_manager.get(instance_id)
-        if inst is None:
-            raise HTTPException(status_code=404, detail="Instance not found")
-        host = _advertised_host(request)
-        selection = await asyncio.to_thread(instance_manager.select, instance_id, host)
-        if selection is None:
-            raise HTTPException(status_code=503, detail="Engine runtime not ready")
-
-        return {
-            "ok": True,
-            "id": inst.id,
-            "serial": inst.serial,
-            "name": inst.name,
-            "w": selection.width,
-            "h": selection.height,
-            "whep_url": selection.whep_url,
-            "whep_token": selection.whep_token,
-            "ice_servers": _selection_ice_servers(host),
-            "generation": selection.generation,
-            "tier": selection.tier,
-        }
+        return await actions.select(instance_id, _advertised_host(request))
 
     @app.post("/instances/{instance_id}/keyframe")
     async def request_keyframe(instance_id: str, request: Request):
@@ -505,28 +509,19 @@ def create_app(instance_manager: InstanceManager,
         control socket is a silent no-op (the 2s heartbeat and select()'s own
         request_idr still cover it).
         """
-        await asyncio.to_thread(instance_manager.request_keyframe, instance_id)
-        return {"ok": True}
+        return await actions.keyframe(instance_id)
 
     @app.post("/instances/{instance_id}/quality")
     async def set_instance_quality(
         instance_id: str, req: QualityTierRequest, request: Request
     ):
         """Set stream quality tier for an instance."""
-        if req.tier not in TIER_ORDER:
-            raise HTTPException(status_code=400, detail="Invalid tier")
-        if instance_manager.get(instance_id) is None:
-            raise HTTPException(status_code=404, detail="Instance not found")
-        # set_tier does ~1.8s of blocking scrcpy restart — offload off the loop.
-        ok = await asyncio.to_thread(instance_manager.set_tier, instance_id, req.tier)
-        if not ok:
-            raise HTTPException(status_code=404, detail="Instance not found")
-        return {"ok": True, "tier": req.tier}
+        return await actions.quality(instance_id, req.tier)
 
     @app.get("/instances/{instance_id}/preview")
     @app.get("/preview/{instance_id}")
     async def instance_preview(instance_id: str, request: Request):
-        return await _capture_preview(instance_id)
+        return await actions.preview(instance_id)
 
     @app.get("/instances/preview")
     @app.get("/preview")
@@ -542,13 +537,13 @@ def create_app(instance_manager: InstanceManager,
                     serial = instances[0].get("serial", "")
         if not serial:
             raise HTTPException(status_code=404, detail="No instance found")
-        return await _capture_preview(serial)
+        return await actions.preview(serial)
 
     # ── Legacy /windows + /select (kept for backward compat) ────────────────
 
     @app.get("/windows")
     async def get_windows(request: Request):
-        return instance_manager.list_instances()
+        return await actions.instances()
 
     @app.post("/select")
     async def select_window(req: SelectRequest, request: Request):
@@ -578,7 +573,7 @@ def create_app(instance_manager: InstanceManager,
 
     @app.get("/window/{window_id}/preview")
     async def preview(window_id: str, request: Request):
-        return await _capture_preview(window_id)
+        return await actions.preview(window_id)
 
     # apps/web's content-hashed asset chunks (main-app-<hash>.js, etc.) --
     # every <script src> in its exported HTML is rooted at "/_next/...",

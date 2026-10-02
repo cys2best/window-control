@@ -172,7 +172,7 @@ def test_main_starts_server_without_android_mjpeg_pipeline(monkeypatch):
     assert exit_info.value.code == 0
     assert len(app_calls) == 1
     assert len(app_calls[0][0]) == 1
-    assert set(app_calls[0][1]) == {"pairing"}
+    assert set(app_calls[0][1]) == {"pairing", "remote_factory"}
     assert all(getattr(target, "__name__", "") != "capture_loop" for target in thread_targets)
 
 
@@ -290,3 +290,61 @@ def test_high_dpi_scaling_is_enabled_before_the_application_is_created():
     for attribute in ("AA_EnableHighDpiScaling", "AA_UseHighDpiPixmaps"):
         assert attribute in source, attribute
         assert source.index(attribute) < created, attribute
+
+
+@pytest.mark.asyncio
+async def test_remote_identity_load_runs_off_caller_thread_and_preserves_lan_on_error():
+    import asyncio
+    import threading
+    import main as module
+    from server.pairing import PairingStore
+    from server.remote_identity import RemoteIdentityError
+    caller = threading.get_ident()
+    worker_threads = []
+    states = []
+
+    class FailedStore:
+        def load_or_register(self, url):
+            worker_threads.append(threading.get_ident())
+            raise RemoteIdentityError("Could not decrypt stored remote identity")
+
+    client = await module.build_remote_client("https://service.example", object(), PairingStore(), lambda *args: states.append(args), identity_store=FailedStore())
+    assert client is None
+    assert worker_threads and worker_threads[0] != caller
+    assert states == [(None, "Could not decrypt stored remote identity")]
+
+
+@pytest.mark.asyncio
+async def test_missing_remote_service_needs_no_identity_store():
+    import main as module
+    states = []
+    assert await module.build_remote_client("", object(), object(), lambda *args: states.append(args)) is None
+    assert states == [(None, "Remote service is not configured")]
+
+
+@pytest.mark.asyncio
+async def test_server_lifecycle_cancels_remote_and_disposes_manager():
+    import asyncio
+    from types import SimpleNamespace
+    from server.app import create_app
+    from server.pairing import PairingStore
+    entered = asyncio.Event()
+    stopped = []
+
+    class Client:
+        async def run(self, stop):
+            entered.set()
+            try:
+                await stop.wait()
+            finally:
+                stopped.append(True)
+
+    async def factory(actions):
+        return Client()
+
+    app = create_app(SimpleNamespace(refresh=lambda: None), PairingStore(), remote_factory=factory)
+    for _ in range(2):
+        async with app.router.lifespan_context(app):
+            await asyncio.wait_for(entered.wait(), 1)
+            entered.clear()
+    assert stopped == [True, True]
