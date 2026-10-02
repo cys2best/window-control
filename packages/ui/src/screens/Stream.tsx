@@ -162,6 +162,7 @@ export function Stream({
       adaptive.current?.stop();
       adaptive.current = makeAdaptive({
         serial,
+        initialTier: sel.tier,
         onApply: (t) => client.setQuality(serial, t),
         // The engine does not answer RTCP PLI, so a decoder that lost a
         // frame stays frozen until the next keyframe. Ask for one on the

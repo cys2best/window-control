@@ -135,8 +135,9 @@ def test_instance_select_returns_exact_engine_contract():
     body = response.json()
     assert set(body) == {
         "ok", "id", "serial", "name", "w", "h", "whep_url",
-        "whep_token", "ice_servers", "generation",
+        "whep_token", "ice_servers", "generation", "tier",
     }
+    assert body["tier"] == "720"
     assert body["whep_token"] == "whep-token"
     assert body["ice_servers"] == [{"urls": "stun:100.64.1.4:3478"}]
     manager.select.assert_called_once_with("emulator-5554", "100.64.1.4")

@@ -26,7 +26,7 @@ import time
 from dataclasses import dataclass
 from typing import Callable, Literal, Optional
 
-from config import QUALITY_TIERS
+from config import DEFAULT_TIER, QUALITY_TIERS
 
 from server.engine_admin import (
     EngineAdminClient,
@@ -75,6 +75,8 @@ class EngineSelection:
     generation: int
     width: int
     height: int
+    # The tier scrcpy is encoding at; clients start adaptive quality from it.
+    tier: str = DEFAULT_TIER
 
 
 @dataclass
@@ -162,6 +164,7 @@ class EngineRuntime:
                 generation=endpoint.generation,
                 width=endpoint.width,
                 height=endpoint.height,
+                tier=self._tier,
             )
 
     def set_tier(self, tier: str) -> None:

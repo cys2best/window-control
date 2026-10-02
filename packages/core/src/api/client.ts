@@ -27,6 +27,8 @@ export type SelectResp = {
   whep_token: string;
   ice_servers: IceServer[];
   generation: number;
+  // Quality tier the host is encoding at; absent on hosts older than 3.2.
+  tier?: string;
 };
 
 export class ApiError extends Error {

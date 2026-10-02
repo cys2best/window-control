@@ -317,6 +317,16 @@ def test_start_launches_generation_zero_before_engine_and_mints_engine_jwt():
     }
 
 
+def test_select_reports_the_tier_the_engine_is_encoding():
+    # The client's adaptive quality starts from this; guessing it made a
+    # client "step down" to a tier above the one already in use.
+    runtime, _fakes = make_runtime()
+    runtime.start()
+    assert runtime.select("100.64.1.4").tier == "720"
+    runtime.set_tier("360")
+    assert runtime.select("100.64.1.4").tier == "360"
+
+
 def test_select_mints_fresh_whep_tokens():
     issuer = CountingTokenIssuer()
     runtime, fakes = make_runtime(token_issuer=issuer)

@@ -490,6 +490,7 @@ def create_app(instance_manager: InstanceManager,
             "whep_token": selection.whep_token,
             "ice_servers": _selection_ice_servers(host),
             "generation": selection.generation,
+            "tier": selection.tier,
         }
 
     @app.post("/instances/{instance_id}/keyframe")
