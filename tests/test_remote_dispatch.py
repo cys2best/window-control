@@ -19,7 +19,7 @@ class Actions:
         self.calls.append("instances")
         return [{"serial": "emulator-5554"}]
 
-    async def select(self, serial, advertised_host):
+    async def select(self, serial, advertised_host, *, mutation_guard=None):
         self.calls.append((serial, advertised_host))
         return {"serial": serial, "generation": 2, "whep_url": "http://private", "whep_token": "secret", "ice_servers": []}
 

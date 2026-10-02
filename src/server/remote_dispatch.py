@@ -4,6 +4,7 @@ import asyncio
 import base64
 from fastapi import HTTPException
 from config import TIER_ORDER
+from server.instance_manager import MutationGuard
 from remote_protocol import AUTHENTICATED_OPS, Command, Reply, ErrorPayload, ErrorCode, MAX_PREVIEW_BYTES
 
 
@@ -14,12 +15,13 @@ class InstanceActions:
     async def instances(self):
         return self.manager.list_instances()
 
-    async def select(self, serial, advertised_host):
+    async def select(self, serial, advertised_host, *, mutation_guard=None):
         from server.app import _selection_ice_servers
         inst = self.manager.get(serial)
         if inst is None:
             raise HTTPException(404, "Instance not found")
-        selection = await asyncio.to_thread(self.manager.select, serial, advertised_host)
+        kwargs = {"mutation_guard": mutation_guard} if mutation_guard is not None else {}
+        selection = await asyncio.to_thread(self.manager.select, serial, advertised_host, **kwargs)
         if selection is None:
             raise HTTPException(503, "Engine runtime not ready")
         return {"ok": True, "id": inst.id, "serial": inst.serial, "name": inst.name,
@@ -35,12 +37,13 @@ class InstanceActions:
         await asyncio.to_thread(self.manager.request_keyframe, serial)
         return {"ok": True}
 
-    async def quality(self, serial, tier):
+    async def quality(self, serial, tier, *, mutation_guard=None):
         if tier not in TIER_ORDER:
             raise HTTPException(400, "Invalid tier")
         if self.manager.get(serial) is None:
             raise HTTPException(404, "Instance not found")
-        if not await asyncio.to_thread(self.manager.set_tier, serial, tier):
+        kwargs = {"mutation_guard": mutation_guard} if mutation_guard is not None else {}
+        if not await asyncio.to_thread(self.manager.set_tier, serial, tier, **kwargs):
             raise HTTPException(404, "Instance not found")
         return {"ok": True, "tier": tier}
 
@@ -66,11 +69,12 @@ class RemoteDispatcher:
         if device is None:
             return error(ErrorCode.NOT_PAIRED, "Device is not paired")
         payload = command.payload
+        guard = MutationGuard() if command.op in {"select", "quality"} else None
         try:
             if command.op == "instances":
                 result = {"instances": await self.actions.instances()}
             elif command.op == "select":
-                selection = await self.actions.select(payload["serial"], "127.0.0.1")
+                selection = await self.actions.select(payload["serial"], "127.0.0.1", mutation_guard=guard)
                 result = {key: value for key, value in selection.items()
                           if key in {"ok", "id", "serial", "name", "w", "h", "generation", "tier"}}
             elif command.op == "preview":
@@ -81,7 +85,7 @@ class RemoteDispatcher:
             elif command.op == "keyframe":
                 result = await self.actions.keyframe(payload["serial"])
             elif command.op == "quality":
-                result = await self.actions.quality(payload["serial"], payload["tier"])
+                result = await self.actions.quality(payload["serial"], payload["tier"], mutation_guard=guard)
             elif self.sessions is None:
                 return error(ErrorCode.UNAVAILABLE, "Remote media is not available")
             else:
@@ -92,3 +96,6 @@ class RemoteDispatcher:
             return error(code, str(exc.detail))
         except Exception:
             return error(ErrorCode.UNAVAILABLE, "Remote action failed")
+        finally:
+            if guard is not None:
+                guard.cancel()

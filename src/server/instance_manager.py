@@ -51,6 +51,28 @@ class Instance:
         self.tier = DEFAULT_TIER
 
 
+class MutationGuard:
+    """Cancel a worker's metadata commit without waiting for its engine call."""
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._canceled = False
+
+    def cancel(self):
+        with self._lock:
+            self._canceled = True
+
+    def is_canceled(self):
+        with self._lock:
+            return self._canceled
+
+    def commit(self, mutation):
+        # Only a short metadata mutation runs here, never engine/network work.
+        with self._lock:
+            if self._canceled:
+                return False
+            return mutation()
+
+
 class InstanceManager:
     def __init__(self, engine_orchestrator: "EngineOrchestrator"):
         self._engine_orchestrator = engine_orchestrator
@@ -60,6 +82,8 @@ class InstanceManager:
         self._stun_ip: str | None = None
         self._lock = threading.Lock()
         self._engine_refresh_lock = threading.Lock()
+        # Shared by local and remote mutations; metadata reads stay independent.
+        self._mutation_lock = threading.Lock()
         self._watchdog_thread = threading.Thread(
             target=self._watchdog, daemon=True
         )
@@ -121,13 +145,31 @@ class InstanceManager:
         self._stun.start()
         self._stun_ip = ip
 
-    def select(self, serial: str, advertised_host: str) -> EngineSelection | None:
-        selection = self._engine_orchestrator.select(serial, advertised_host)
-        if selection is not None:
+    def select(self, serial: str, advertised_host: str, *,
+               mutation_guard: MutationGuard | None = None) -> EngineSelection | None:
+        with self._mutation_lock:
+            if mutation_guard is not None and mutation_guard.is_canceled():
+                return None
             with self._lock:
-                if serial in self._instances:
-                    self._active_serial = serial
-        return selection
+                instance = self._instances.get(serial)
+            selection = self._engine_orchestrator.select(serial, advertised_host)
+            if selection is None:
+                return None
+
+            def commit():
+                with self._lock:
+                    if mutation_guard is not None and self._instances.get(serial) is not instance:
+                        return False
+                    if serial in self._instances:
+                        self._active_serial = serial
+                    return True
+
+            if mutation_guard is not None:
+                if not mutation_guard.commit(commit):
+                    return None
+            else:
+                commit()
+            return selection
 
     def get(self, serial: str) -> Instance | None:
         with self._lock:
@@ -140,15 +182,30 @@ class InstanceManager:
                 return self._instances[self._active_serial]
             return None
 
-    def set_tier(self, serial: str, tier: str) -> bool:
-        with self._lock:
-            instance = self._instances.get(serial)
-        if instance is None:
-            return False
-        accepted = self._engine_orchestrator.set_tier(serial, tier)
-        if accepted:
-            instance.tier = tier
-        return accepted
+    def set_tier(self, serial: str, tier: str, *,
+                 mutation_guard: MutationGuard | None = None) -> bool:
+        with self._mutation_lock:
+            if mutation_guard is not None and mutation_guard.is_canceled():
+                return False
+            with self._lock:
+                instance = self._instances.get(serial)
+            if instance is None:
+                return False
+            accepted = self._engine_orchestrator.set_tier(serial, tier)
+            if not accepted:
+                return False
+
+            def commit():
+                with self._lock:
+                    if mutation_guard is not None and self._instances.get(serial) is not instance:
+                        return False
+                    instance.tier = tier
+                    return True
+
+            if mutation_guard is not None:
+                return mutation_guard.commit(commit)
+            commit()
+            return True
 
     def request_keyframe(self, serial: str) -> None:
         self._engine_orchestrator.request_keyframe(serial)

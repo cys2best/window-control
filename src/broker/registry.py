@@ -1,11 +1,16 @@
 """Ephemeral routing state scoped to installation, connection epoch and viewer."""
 
 import asyncio
+from collections import OrderedDict
 from dataclasses import dataclass
 import time
 import uuid
 
 from remote_protocol import MAX_PENDING_REQUESTS, Reply, ErrorPayload, ErrorCode
+
+
+MAX_SETTLED_REQUESTS = 2048
+SETTLED_REQUEST_TTL_SECONDS = 60
 
 
 class HostConnection:
@@ -46,6 +51,7 @@ class Registry:
         self.viewers = {}
         self.pending_requests = {}
         self.invitations = {}
+        self.settled_requests = OrderedDict()
 
     def register_host(self, installation_id, websocket):
         self.invalidate_installation(installation_id)
@@ -88,6 +94,27 @@ class Registry:
         if self.pending_requests.get(pending.routing_id) is pending:
             del self.pending_requests[pending.routing_id]
             pending.viewer.pending_requests.discard(pending.request_id)
+            self._prune_settled()
+            self.settled_requests[pending.routing_id] = (
+                pending.installation_id, pending.host_epoch,
+                time.monotonic() + SETTLED_REQUEST_TTL_SECONDS,
+            )
+            while len(self.settled_requests) > MAX_SETTLED_REQUESTS:
+                self.settled_requests.popitem(last=False)
+
+    def _prune_settled(self):
+        now = time.monotonic()
+        while self.settled_requests:
+            first = next(iter(self.settled_requests))
+            if self.settled_requests[first][2] > now:
+                break
+            self.settled_requests.popitem(last=False)
+
+    def is_settled_request(self, routing_id, installation_id, epoch):
+        self._prune_settled()
+        settled = self.settled_requests.get(routing_id)
+        return (self.is_valid_host(installation_id, epoch) and settled is not None
+                and settled[:2] == (installation_id, epoch))
 
     def resolve_pending_request(self, routing_id, installation_id, epoch):
         pending = self.pending_requests.get(routing_id)

@@ -242,6 +242,12 @@ class RemoteHostClient:
                     reply = parse_reply(raw)
                     with self._lock:
                         if reply.id not in self._lifecycle_ids:
+                            # Settled routing tombstones are bounded. A late
+                            # delivery rejection after eviction is nonfatal;
+                            # it never resolves a tracked owner operation.
+                            if not reply.ok and reply.error.code == ErrorCode.INVALID_REQUEST.value:
+                                uuid.UUID(reply.id)
+                                continue
                             raise ValueError("unexpected lifecycle reply")
                         self._lifecycle_ids.remove(reply.id)
                     if not reply.ok:

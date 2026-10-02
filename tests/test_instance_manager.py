@@ -478,3 +478,104 @@ def test_stop_all_cleans_runtime_registry_and_stun_binding():
 )
 def test_legacy_manager_interfaces_are_absent(removed_name):
     assert not hasattr(InstanceManager, removed_name)
+
+
+@pytest.mark.parametrize("operation", ["select", "quality"])
+def test_canceled_mutation_cannot_commit_and_local_replacement_waits_for_engine(monkeypatch, operation):
+    from server.instance_manager import MutationGuard
+    started = threading.Event()
+    release = threading.Event()
+    newer_started = threading.Event()
+    before = []
+    results = []
+    calls = []
+    manager = None
+    monkeypatch.setattr(InstanceManager, "_watchdog", lambda self: None)
+
+    class BlockedOrchestrator(FakeOrchestrator):
+        def mutate(self, kind):
+            calls.append(kind)
+            if len(calls) == 1:
+                started.set()
+                assert release.wait(2)
+            else:
+                before.append((manager.active.serial, manager.get("emulator-5554").tier))
+                newer_started.set()
+
+        def select(self, serial, host):
+            self.mutate("select")
+            return object()
+
+        def set_tier(self, serial, tier):
+            self.mutate("quality")
+            return True
+
+    manager = manager_with_instance(BlockedOrchestrator())
+    manager._instances["emulator-5556"] = make_instance("emulator-5556", 1)
+    manager._active_serial = "emulator-5556"
+    manager.get("emulator-5554").tier = "1080"
+    guard = MutationGuard()
+
+    def old_mutation():
+        if operation == "select":
+            results.append(manager.select("emulator-5554", "127.0.0.1", mutation_guard=guard))
+        else:
+            results.append(manager.set_tier("emulator-5554", "360", mutation_guard=guard))
+
+    # Use a conflicting LOCAL operation with unchanged positional signature.
+    def local_mutation():
+        if operation == "select":
+            manager.set_tier("emulator-5554", "720")
+        else:
+            manager.select("emulator-5556", "192.168.1.2")
+
+    old = threading.Thread(target=old_mutation)
+    newer = threading.Thread(target=local_mutation)
+    old.start()
+    try:
+        assert started.wait(1)
+        guard.cancel()
+        newer.start()
+        assert not newer_started.wait(.05)
+        assert manager.list_instances() and manager.get("emulator-5554")
+    finally:
+        release.set()
+        old.join(2)
+        if newer.ident is not None:
+            newer.join(2)
+    assert not old.is_alive() and not newer.is_alive()
+    assert results == ([None] if operation == "select" else [False])
+    assert before == [("emulator-5556", "1080")]
+    assert manager.active.serial == "emulator-5556"
+    assert manager.get("emulator-5554").tier == ("720" if operation == "select" else "1080")
+
+
+@pytest.mark.parametrize("operation", ["select", "quality"])
+def test_canceled_queued_mutation_never_starts_engine_work(monkeypatch, operation):
+    from server.instance_manager import MutationGuard
+    monkeypatch.setattr(InstanceManager, "_watchdog", lambda self: None)
+    orchestrator = FakeOrchestrator(set_tier_result=True, select_result=object())
+    manager = manager_with_instance(orchestrator)
+    guard = MutationGuard()
+    entered = threading.Event()
+    result = []
+    manager._mutation_lock.acquire()
+
+    def worker():
+        entered.set()
+        if operation == "select":
+            result.append(manager.select("emulator-5554", "127.0.0.1", mutation_guard=guard))
+        else:
+            result.append(manager.set_tier("emulator-5554", "360", mutation_guard=guard))
+
+    queued = threading.Thread(target=worker)
+    queued.start()
+    try:
+        assert entered.wait(1)
+        guard.cancel()
+    finally:
+        manager._mutation_lock.release()
+        queued.join(2)
+    assert not queued.is_alive()
+    assert result == ([None] if operation == "select" else [False])
+    assert orchestrator.select_calls == [] and orchestrator.tier_calls == []

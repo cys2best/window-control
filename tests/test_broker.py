@@ -323,7 +323,11 @@ def test_negotiate_budget_includes_broker_queue_time_and_late_reply_is_discarded
             assert 0 < routed["payload"]["timeout_ms"] < 190
             assert json.loads(viewer.receive_text())["error"]["code"] == "timeout"
             host.send_text(json.dumps({"v": 1, "id": routed["id"], "ok": True, "result": {"answer": "late"}}))
-            assert json.loads(host.receive_text())["error"]["code"] == "invalid_request"
+            # A lifecycle round-trip proves the late reply was consumed with
+            # no rejection preceding it on the healthy host channel.
+            request_id = "22222222-2222-2222-2222-222222222222"
+            host.send_text(wire("pairing_close", {"handle": "r" * 43}, request_id))
+            assert json.loads(host.receive_text())["id"] == request_id
 
 
 def test_pairing_handle_bound_to_host_epoch_expiry_and_lifecycle_role(broker_env):
@@ -347,3 +351,55 @@ def test_pairing_handle_bound_to_host_epoch_expiry_and_lifecycle_role(broker_env
         with client.websocket_connect("/connect") as replacement:
             authenticate_host(replacement, a)
             assert client.app.state.registry.installation_for_handle(handle) is None
+
+
+@pytest.mark.asyncio
+async def test_settled_routing_is_bounded_and_rejects_foreign_or_stale_owners(monkeypatch):
+    import time
+    from broker.registry import Registry
+    monkeypatch.setattr("broker.registry.MAX_SETTLED_REQUESTS", 4)
+    registry = Registry()
+    a = registry.register_host("a", object())
+    b = registry.register_host("b", object())
+    viewer = registry.register_viewer("viewer", "a", object(), a.epoch)
+    first = registry.add_pending_request(viewer, "first")
+    registry.drop_pending(first)
+    assert registry.is_settled_request(first.routing_id, "a", a.epoch)
+    assert not registry.is_settled_request(first.routing_id, "b", b.epoch)
+    assert registry.is_settled_request(first.routing_id, "a", a.epoch)
+    for index in range(8):
+        pending = registry.add_pending_request(viewer, str(index))
+        registry.drop_pending(pending)
+    assert len(registry.settled_requests) == 4
+    assert not registry.is_settled_request(first.routing_id, "a", a.epoch)
+    registry.settled_requests.clear()
+    registry.settled_requests[pending.routing_id] = ("a", a.epoch, time.monotonic() - 1)
+    assert not registry.is_settled_request(pending.routing_id, "a", a.epoch)
+    assert registry.settled_requests == {}
+    fresh = registry.add_pending_request(viewer, "last")
+    registry.drop_pending(fresh)
+    replacement = registry.register_host("a", object())
+    assert not registry.is_settled_request(fresh.routing_id, "a", a.epoch)
+    assert not registry.is_settled_request(fresh.routing_id, "a", replacement.epoch)
+
+
+def test_foreign_host_cannot_consume_settled_routing_id(broker_env):
+    client, settings, _ = broker_env
+    a = client.post("/installations").json()
+    b = client.post("/installations").json()
+    with client.websocket_connect("/connect") as host_a, client.websocket_connect("/connect") as host_b:
+        authenticate_host(host_a, a)
+        authenticate_host(host_b, b)
+        with client.websocket_connect("/connect") as viewer:
+            approve_viewer(host_a, viewer, a)
+            viewer.send_text(wire("instances"))
+            routed = json.loads(host_a.receive_text())
+            response = json.dumps({"v": 1, "id": routed["id"], "ok": True, "result": {}})
+            host_a.send_text(response)
+            assert json.loads(viewer.receive_text())["ok"]
+            host_b.send_text(response)
+            assert json.loads(host_b.receive_text())["error"]["code"] == "invalid_request"
+            host_a.send_text(response)
+            request_id = "22222222-2222-2222-2222-222222222222"
+            host_a.send_text(wire("pairing_close", {"handle": "r" * 43}, request_id))
+            assert json.loads(host_a.receive_text())["id"] == request_id

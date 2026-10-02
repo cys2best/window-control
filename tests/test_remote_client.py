@@ -30,12 +30,12 @@ class Actions:
         return []
 
 
-async def host(origin, identity):
+async def host(origin, identity, actions=None):
     module = importlib.import_module("server.remote_client")
     from server.remote_dispatch import RemoteDispatcher
     pairing = PairingStore()
     token = pairing.pair(pairing.start_pairing(), "Phone")
-    actions = Actions()
+    actions = actions if actions is not None else Actions()
     client = module.RemoteHostClient(origin, identity, RemoteDispatcher(actions, pairing), allow_insecure_localhost=True)
     stop = asyncio.Event()
     task = asyncio.create_task(client.run(stop))
@@ -324,3 +324,196 @@ async def test_internal_routing_forgery_and_queue_rejection_fail_closed():
         with pytest.raises(ValueError, match="ownership"):
             await client._connected()
     assert actions.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("abandon", ["disconnect", "timeout"])
+async def test_late_reply_from_one_viewer_preserves_other_viewer_and_invitation(tmp_path, monkeypatch, abandon):
+    class SlowFirstActions(Actions):
+        async def instances(self):
+            self.calls.append("instances")
+            if len(self.calls) == 1:
+                self.started.set()
+                await self.release.wait()
+            return []
+
+    if abandon == "timeout":
+        monkeypatch.setattr("broker.app.COMMAND_TIMEOUT_SECONDS", .08, raising=False)
+    async with local_broker(tmp_path) as (origin, http, app):
+        identity = InstallationIdentity(**(await http.post("/installations")).json())
+        actions = SlowFirstActions()
+        client, stop, task, actions, pairing, token = await host(origin, identity, actions)
+        a, approved = await viewer(origin, identity, token)
+        b, approved = await viewer(origin, identity, token)
+        epoch = client.host_epoch
+        try:
+            pairing.start_pairing()
+            invitation = await asyncio.to_thread(client.remote_pairing.open)
+            await a.send(wire("instances"))
+            await asyncio.wait_for(actions.started.wait(), 1)
+            if abandon == "disconnect":
+                await a.close()
+            else:
+                reply = json.loads(await asyncio.wait_for(a.recv(), .4))
+                assert reply["error"]["code"] == "timeout"
+            actions.release.set()
+            await asyncio.sleep(.05)
+            assert client.ready.is_set() and client.host_epoch == epoch
+            assert client.remote_pairing.active_invitation() == invitation
+            await b.send(wire("instances"))
+            assert json.loads(await asyncio.wait_for(b.recv(), .5))["ok"]
+        finally:
+            actions.release.set()
+            await a.close()
+            await b.close()
+            stop.set()
+            await asyncio.wait_for(task, 2)
+
+
+def blocking_instance_actions(monkeypatch, operation):
+    import threading
+    from server.instance_manager import InstanceManager, Instance
+    from server.remote_dispatch import InstanceActions
+    from server.engine_runtime import EngineSelection
+    started = threading.Event()
+    release = threading.Event()
+    replacement_started = threading.Event()
+    calls = []
+    before_replacement = []
+    manager = None
+
+    class BlockingOrchestrator:
+        def call(self, *description):
+            calls.append(description)
+            if len(calls) == 1:
+                started.set()
+                assert release.wait(5)
+            else:
+                before_replacement.append((manager.active.serial, manager.get("emulator-5554").tier))
+                replacement_started.set()
+
+        def select(self, serial, advertised_host):
+            self.call("select", serial)
+            return EngineSelection("http://private", "secret", 1, 100, 200)
+
+        def set_tier(self, serial, tier):
+            self.call("quality", serial, tier)
+            return True
+
+    monkeypatch.setattr(InstanceManager, "_watchdog", lambda self: None)
+    manager = InstanceManager(BlockingOrchestrator())
+    for i, serial in enumerate(("emulator-5554", "emulator-5556")):
+        manager._instances[serial] = Instance({"id": "adb:" + serial, "title": "LDPlayer", "ldplayer_index": i}, 100, 200)
+    manager._active_serial = "emulator-5556"
+    manager.get("emulator-5554").tier = "1080"
+    return InstanceActions(manager), started, release, replacement_started, calls, before_replacement
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["select", "quality"])
+async def test_reconnect_fences_blocked_synchronous_mutation_and_serializes_replacement(tmp_path, monkeypatch, operation):
+    actions, started, release, replacement_started, calls, before = blocking_instance_actions(monkeypatch, operation)
+    async with local_broker(tmp_path) as (origin, http, app):
+        identity = InstallationIdentity(**(await http.post("/installations")).json())
+        client, stop, task, actions, pairing, token = await host(origin, identity, actions)
+        a, approved = await viewer(origin, identity, token)
+        b = None
+        epoch = client.host_epoch
+        old = {"serial": "emulator-5554"}
+        new = {"serial": "emulator-5556"}
+        if operation == "quality":
+            old["tier"] = "360"
+            new = {"serial": "emulator-5554", "tier": "720"}
+        try:
+            await a.send(wire(operation, old))
+            assert await asyncio.to_thread(started.wait, 1)
+            await client.connection.close()
+            for _ in range(300):
+                if client.ready.is_set() and client.host_epoch > epoch:
+                    break
+                await asyncio.sleep(.01)
+            assert client.ready.is_set() and client.host_epoch > epoch
+            b, approved = await viewer(origin, identity, token)
+            await b.send(wire(operation, new))
+            await asyncio.sleep(.05)
+            assert not replacement_started.is_set(), "Replacement engine mutation raced a surviving old worker"
+            assert actions.manager.list_instances()  # Metadata stays available while engine work blocks.
+            release.set()
+            assert json.loads(await asyncio.wait_for(b.recv(), 1))["ok"]
+            assert before == [("emulator-5556", "1080")], "Old epoch committed metadata before replacement"
+            assert actions.manager.active.serial == "emulator-5556"
+            assert actions.manager.get("emulator-5554").tier == ("720" if operation == "quality" else "1080")
+            assert len(calls) == 2
+        finally:
+            release.set()
+            await a.close()
+            if b is not None:
+                await b.close()
+            stop.set()
+            await asyncio.wait_for(task, 2)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["select", "quality"])
+async def test_stop_invalidates_blocked_synchronous_mutation_without_waiting_for_worker(tmp_path, monkeypatch, operation):
+    actions, started, release, replacement_started, calls, before = blocking_instance_actions(monkeypatch, operation)
+    async with local_broker(tmp_path) as (origin, http, app):
+        identity = InstallationIdentity(**(await http.post("/installations")).json())
+        client, stop, task, actions, pairing, token = await host(origin, identity, actions)
+        ws, approved = await viewer(origin, identity, token)
+        payload = {"serial": "emulator-5554"}
+        if operation == "quality":
+            payload["tier"] = "360"
+        try:
+            await ws.send(wire(operation, payload))
+            assert await asyncio.to_thread(started.wait, 1)
+            stop.set()
+            await asyncio.wait_for(task, .5)
+            assert not release.is_set(), "Stop waited for the blocking engine worker"
+            release.set()
+            await asyncio.sleep(.05)
+            assert actions.manager.active.serial == "emulator-5556"
+            assert actions.manager.get("emulator-5554").tier == "1080"
+        finally:
+            release.set()
+            stop.set()
+            await asyncio.gather(task, return_exceptions=True)
+            await ws.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error_id,tracked,healthy", [("valid", False, True), ("valid", True, False), ("malformed", False, False)])
+async def test_delivery_rejection_is_nonfatal_only_for_untracked_valid_id(error_id, tracked, healthy):
+    from remote_protocol import Reply, ErrorPayload, format_reply
+    from server.remote_dispatch import RemoteDispatcher
+    module = importlib.import_module("server.remote_client")
+    client = module.RemoteHostClient("https://service.example", InstallationIdentity(installation_id="host", credential="secret"), RemoteDispatcher(Actions(), PairingStore()))
+    client._loop = asyncio.get_running_loop()
+    client._wake = asyncio.Event()
+    request_id = str(uuid.uuid4()) if error_id == "valid" else "malformed"
+    if tracked:
+        client._lifecycle_ids.add(request_id)
+    raw = format_reply(Reply(v=1, id=request_id, ok=False, error=ErrorPayload(code="invalid_request", message="Delivery rejected")))
+    entered = asyncio.Event()
+    held_open = asyncio.Event()
+
+    class Connection:
+        def __aiter__(self):
+            async def frames():
+                yield raw
+                entered.set()
+                await held_open.wait()
+            return frames()
+
+    client.connection = Connection()
+    running = asyncio.create_task(client._connected())
+    try:
+        if healthy:
+            await asyncio.wait_for(entered.wait(), .5)
+            assert not running.done()
+        else:
+            with pytest.raises(ValueError):
+                await asyncio.wait_for(running, .5)
+    finally:
+        running.cancel()
+        await asyncio.gather(running, return_exceptions=True)

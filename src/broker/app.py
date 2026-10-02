@@ -11,6 +11,9 @@ from remote_protocol import (parse_frame, decode_frame, parse_reply, format_repl
                              ErrorCode, Reply, RoutedCommand, RoutingContext, DeviceInvalidated,
                              AUTHENTICATED_OPS, MAX_PENDING_REQUESTS)
 
+COMMAND_TIMEOUT_SECONDS = 30.0
+
+
 class BrokerSettings(BaseModel):
     storage_path: str
     allowed_origins: List[str]
@@ -69,7 +72,7 @@ def create_broker_app(settings: BrokerSettings) -> FastAPI:
         pending = registry.add_pending_request(viewer, command.id)
         if pending is None:
             return Reply(v=1, id=command.id, ok=False, error={"code": "invalid_request", "message": "Too many pending requests or duplicate ID"})
-        timeout = 10.0 if authentication else 30.0
+        timeout = 10.0 if authentication else COMMAND_TIMEOUT_SECONDS
         deadline = received_at + (command.payload["timeout_ms"] / 1000 if command.op == "negotiate" else timeout)
         try:
             async with asyncio.timeout_at(deadline):
@@ -180,6 +183,8 @@ def create_broker_app(settings: BrokerSettings) -> FastAPI:
                             reply = parse_reply(raw)
                             pending = registry.resolve_pending_request(reply.id, host.installation_id, host.epoch)
                             if pending is None:
+                                if registry.is_settled_request(reply.id, host.installation_id, host.epoch):
+                                    continue
                                 raise ValueError("unknown request")
                             if not pending.future.done():
                                 pending.future.set_result(reply)
