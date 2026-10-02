@@ -14,12 +14,13 @@ class Clock:
         return self.now
 
 
-def manager(tmp_path, *, online=True, publish=None, close=None):
+def manager(tmp_path, *, online=True, publish=None, close=None, on_error=None):
     from server.remote_pairing import RemotePairing
     clock = Clock()
     pairing = PairingStore(str(tmp_path / "devices.json"), clock=clock)
     identity = InstallationIdentity(installation_id="pc-123", credential="owner-secret")
-    remote = RemotePairing(pairing, identity, "https://remote.example", publish=publish, close=close)
+    remote = RemotePairing(pairing, identity, "https://remote.example", publish=publish, close=close,
+                           on_error=on_error)
     remote.set_online(online)
     return pairing, remote, clock
 
@@ -172,3 +173,53 @@ def test_delayed_owner_click_cannot_publish_a_replacement_window(tmp_path):
     assert error.value.code == ErrorCode.EXPIRED_PAIRING
     assert published == []
     assert local.pair(local.active_code()[0], "Local phone")
+
+
+def test_rejected_closure_marks_remote_offline_and_notifies_host(tmp_path):
+    from server.remote_pairing import RemotePairingError
+    errors = []
+    def reject(handle):
+        raise OSError("close queue rejected")
+    local, remote, _ = manager(tmp_path, close=reject, on_error=errors.append)
+    local.start_pairing()
+    invitation = remote.open()
+    replacement = local.start_pairing()
+    assert remote.active_invitation() is None
+    assert len(errors) == 1
+    assert errors[0].code == ErrorCode.UNAVAILABLE
+    assert remote.last_error is errors[0]
+    assert_error(remote, invitation.handle, replacement, ErrorCode.OFFLINE)
+    with pytest.raises(RemotePairingError) as error:
+        remote.open()
+    assert error.value.code == ErrorCode.OFFLINE
+    assert local.pair(replacement, "Local phone")
+    remote.set_online(True)
+    assert remote.last_error is None
+    local.start_pairing()
+    assert remote.open().handle != invitation.handle
+
+
+@pytest.mark.parametrize("reject_notification", [False, True])
+def test_rejected_shutdown_closure_detaches_observer_and_retains_error(tmp_path, reject_notification):
+    import gc
+    import weakref
+    errors = []
+    def reject(handle):
+        raise OSError("close queue rejected")
+    def notify(error):
+        errors.append(error)
+        if reject_notification:
+            raise OSError("notification queue rejected")
+    local, remote, _ = manager(tmp_path, close=reject, on_error=notify)
+    code = local.start_pairing()
+    invitation = remote.open()
+    remote.shutdown()
+    assert remote.active_invitation() is None
+    assert remote.last_error.code == ErrorCode.UNAVAILABLE
+    assert errors == [remote.last_error]
+    assert_error(remote, invitation.handle, code, ErrorCode.OFFLINE)
+    reference = weakref.ref(remote)
+    del remote
+    gc.collect()
+    assert reference() is None
+    assert local.pair(code, "Local phone")
