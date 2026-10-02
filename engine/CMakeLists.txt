@@ -27,6 +27,8 @@ add_library(engine_core
   src/scrcpy_video.cpp
   src/scrcpy_control.cpp
   src/peer_session.cpp
+  src/ice_config.cpp
+  src/remote_peer_handler.cpp
   src/peer_registry.cpp
   src/h264_nalu.cpp
   src/http_server.cpp
@@ -56,6 +58,8 @@ add_executable(engine_tests
   test/test_h264_nalu.cpp
   test/test_http_server.cpp
   test/test_peer_session.cpp
+  test/test_ice_config.cpp
+  test/test_remote_peer_handler.cpp
   test/test_peer_registry.cpp
   test/test_whep_capability.cpp
   test/test_whep_handler.cpp

@@ -5,6 +5,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include "ice_config.h"
 
 class PeerSession {
 public:
@@ -12,6 +13,9 @@ public:
     using StateCallback = std::function<void(rtc::PeerConnection::State)>;
 
     PeerSession(std::string id, const std::vector<std::string>& iceServers);
+    // Add structured-ICE PeerSession constructor while retaining the existing string-list call sites.
+    PeerSession(std::string id, rtc::Configuration config);
+
     ~PeerSession();
 
     PeerSession(const PeerSession&) = delete;

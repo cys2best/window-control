@@ -78,11 +78,16 @@ struct PeerSession::Impl {
 };
 
 PeerSession::PeerSession(std::string id, const std::vector<std::string>& iceServers)
+    : PeerSession(std::move(id), [iceServers] {
+          rtc::Configuration config;
+          for (const auto& url : iceServers) config.iceServers.emplace_back(url);
+          return config;
+      }()) {}
+
+PeerSession::PeerSession(std::string id, rtc::Configuration config)
     : impl_(std::make_unique<Impl>()) {
     impl_->id = std::move(id);
 
-    rtc::Configuration config;
-    for (const auto& url : iceServers) config.iceServers.emplace_back(url);
     // PeerSession is always the answerer. Automatic negotiation would create
     // the answer inside setRemoteDescription(), before AnswerOffer can validate
     // and observe the configured track, then the later explicit call would
