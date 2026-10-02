@@ -8,6 +8,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 
@@ -38,6 +39,9 @@ public:
     void RequestIdr();
     SourceStatus Status() const;
     std::shared_ptr<ScrcpyControlClient> Control() const;
+    // Runs a short registry mutation only while the source generation is
+    // current and usable. The callback must not do I/O or close peers.
+    bool WithGeneration(std::uint64_t generation, const std::function<void()>& action);
 
 private:
     struct PendingConnection;

@@ -4,6 +4,8 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -25,8 +27,17 @@ public:
     // adoption would exceed capacity or the supplied session/id is invalid.
     bool Adopt(PeerKind kind, const std::string& id,
                std::shared_ptr<PeerSession> session);
+    // Remote adoption/removal defer teardown so the caller can release its
+    // source-generation and peer-state locks before closing former peers.
+    bool AdoptPublic(const std::shared_ptr<PeerSession>& session,
+                     std::uint64_t generation,
+                     std::vector<std::shared_ptr<PeerSession>>& retired);
+    std::optional<std::uint64_t> PublicGeneration(const std::string& id) const;
+    std::shared_ptr<PeerSession> RemovePublic(const std::string& id,
+                                             std::uint64_t generation);
 
     bool Remove(const std::string& id);
+    bool RemoveLocal(const std::string& id);
     // Records a send failure without closing the peer. The housekeeping
     // reaper performs the potentially blocking teardown off the media thread.
     // The expected session prevents a stale snapshot from marking a same-id
@@ -53,11 +64,13 @@ public:
     bool HasPublicPeer() const;
 
 private:
+    bool RemoveMatching(const std::string& id, std::optional<PeerKind> kind);
     struct Entry {
         std::shared_ptr<PeerSession> session;
         PeerKind kind;
         std::chrono::steady_clock::time_point createdAt;
         bool failed = false;
+        std::optional<std::uint64_t> generation;
     };
 
     bool CanInsertLocked(PeerKind kind, const std::string& id) const;

@@ -192,3 +192,14 @@ std::shared_ptr<ScrcpyControlClient> ScrcpySource::Control() const {
     std::lock_guard<std::mutex> stateLock(stateMutex_);
     return control_;
 }
+
+bool ScrcpySource::WithGeneration(
+    std::uint64_t generation, const std::function<void()>& action) {
+    std::lock_guard<std::mutex> stateLock(stateMutex_);
+    if (generation_ != generation || !connected_ || !video_ || !control_ ||
+        !control_->IsConnected() || video_->LastReadFailed() || control_->LastSendFailed()) {
+        return false;
+    }
+    action();
+    return true;
+}

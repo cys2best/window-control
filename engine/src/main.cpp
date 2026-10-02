@@ -5,6 +5,7 @@
 #include "input_router.h"
 #include "peer_registry.h"
 #include "ready_record.h"
+#include "remote_peer_handler.h"
 #include "scrcpy_source.h"
 #include "send_pacer.h"
 #include "whep_capability.h"
@@ -102,6 +103,8 @@ int main(int argc, char** argv) {
         EngineHttpServer adminServer("127.0.0.1");
         AdminHandler adminHandler(source, registry);
         adminHandler.RegisterRoutes(adminServer.Server());
+        RemotePeerHandler remotePeerHandler(registry, source, inputRouter, whepAuth);
+        remotePeerHandler.RegisterRoutes(adminServer.Server());
         adminServer.Start();
 
         auto status = source.Status();

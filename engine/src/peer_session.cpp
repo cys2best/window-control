@@ -1,5 +1,6 @@
 #include "peer_session.h"
 #include "send_pacer.h"
+#include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <mutex>
@@ -75,6 +76,7 @@ struct PeerSession::Impl {
     std::mutex gatherMutex;
     std::condition_variable gatherCv;
     bool gatheringComplete = false;
+    bool stopped = false;
 };
 
 PeerSession::PeerSession(std::string id, const std::vector<std::string>& iceServers)
@@ -83,6 +85,9 @@ PeerSession::PeerSession(std::string id, const std::vector<std::string>& iceServ
           for (const auto& url : iceServers) config.iceServers.emplace_back(url);
           return config;
       }()) {}
+
+PeerSession::PeerSession(std::string id, std::initializer_list<std::string> iceServers)
+    : PeerSession(std::move(id), std::vector<std::string>(iceServers)) {}
 
 PeerSession::PeerSession(std::string id, rtc::Configuration config)
     : impl_(std::make_unique<Impl>()) {
@@ -103,6 +108,13 @@ PeerSession::PeerSession(std::string id, rtc::Configuration config)
     });
 
     impl_->pc->onStateChange([this](rtc::PeerConnection::State state) {
+        if (state == rtc::PeerConnection::State::Failed ||
+            state == rtc::PeerConnection::State::Closed ||
+            state == rtc::PeerConnection::State::Disconnected) {
+            std::lock_guard<std::mutex> gatherLock(impl_->gatherMutex);
+            impl_->stopped = true;
+            impl_->gatherCv.notify_all();
+        }
         std::lock_guard<std::mutex> lock(impl_->callbackMutex);
         if (impl_->onStateChange) impl_->onStateChange(state);
     });
@@ -166,10 +178,15 @@ PeerSession::PeerSession(std::string id, rtc::Configuration config)
 PeerSession::~PeerSession() { Close(); }
 
 std::string PeerSession::AnswerOffer(
-    const std::string& remoteSdpOffer, std::chrono::milliseconds gatherTimeout) {
+    const std::string& remoteSdpOffer, std::chrono::milliseconds gatherTimeout,
+    std::function<bool()> canceled) {
+    const auto deadline = std::chrono::steady_clock::now() + gatherTimeout;
     impl_->streamStart = std::chrono::steady_clock::now();
 
     try {
+        if (gatherTimeout.count() <= 0 || (canceled && canceled())) {
+            throw std::runtime_error("negotiation canceled or deadline expired");
+        }
         // libdatachannel creates the reciprocal offered tracks while building
         // the local answer. Its synchronous onTrack callback above configures
         // the video track before that media section is serialized, preserving
@@ -188,19 +205,33 @@ std::string PeerSession::AnswerOffer(
         }
         if (!mediaError.empty()) throw std::runtime_error(mediaError);
     } catch (const std::exception& e) {
-        impl_->pc->close();
+        Close();
         throw std::runtime_error(std::string("PeerSession: failed to answer offer: ") + e.what());
     }
 
     std::unique_lock<std::mutex> lock(impl_->gatherMutex);
-    bool ok = impl_->gatherCv.wait_for(lock, gatherTimeout,
-        [this] { return impl_->gatheringComplete; });
-    if (!ok) {
-        impl_->pc->close();
-        throw std::runtime_error("PeerSession: ICE gathering timed out");
+    while (!impl_->gatheringComplete && !impl_->stopped &&
+           std::chrono::steady_clock::now() < deadline && !(canceled && canceled())) {
+        impl_->gatherCv.wait_until(lock, std::min(deadline,
+            std::chrono::steady_clock::now() + std::chrono::milliseconds(25)));
+    }
+    if (impl_->stopped || !impl_->gatheringComplete ||
+        std::chrono::steady_clock::now() >= deadline || (canceled && canceled())) {
+        lock.unlock();
+        Close();
+        throw std::runtime_error("PeerSession: ICE gathering failed, canceled, or timed out");
     }
 
     return std::string(*impl_->pc->localDescription());
+}
+
+bool PeerSession::WithActive(const std::function<bool()>& action) {
+    std::lock_guard<std::mutex> lock(impl_->gatherMutex);
+    const auto state = impl_->pc->state();
+    if (impl_->stopped || state == rtc::PeerConnection::State::Failed ||
+        state == rtc::PeerConnection::State::Closed ||
+        state == rtc::PeerConnection::State::Disconnected) return false;
+    return action();
 }
 
 void PeerSession::SendVideoNalu(const uint8_t* data, size_t size) {
@@ -244,7 +275,14 @@ void PeerSession::ClearCallbacks() {
 }
 
 void PeerSession::Close() {
-    if (impl_ && impl_->pc) impl_->pc->close();
+    if (impl_ && impl_->pc) {
+        {
+            std::lock_guard<std::mutex> lock(impl_->gatherMutex);
+            impl_->stopped = true;
+            impl_->gatherCv.notify_all();
+        }
+        impl_->pc->close();
+    }
 }
 
 const std::string& PeerSession::Id() const { return impl_->id; }

@@ -76,16 +76,55 @@ bool PeerRegistry::Adopt(
 }
 
 bool PeerRegistry::Remove(const std::string& id) {
+    return RemoveMatching(id, std::nullopt);
+}
+
+bool PeerRegistry::RemoveLocal(const std::string& id) {
+    return RemoveMatching(id, PeerKind::Local);
+}
+
+bool PeerRegistry::RemoveMatching(const std::string& id, std::optional<PeerKind> kind) {
     std::shared_ptr<PeerSession> victim;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         auto it = peers_.find(id);
-        if (it == peers_.end()) return false;
+        if (it == peers_.end() || (kind && it->second.kind != *kind)) return false;
         victim = it->second.session;
         peers_.erase(it);
     }
     victim->Close();
     return true;
+}
+
+bool PeerRegistry::AdoptPublic(
+    const std::shared_ptr<PeerSession>& session, std::uint64_t generation,
+    std::vector<std::shared_ptr<PeerSession>>& retired) {
+    if (!session || session->Id().empty()) return false;
+    std::lock_guard<std::mutex> lock(mutex_);
+    // An id collision must never evict a local peer.
+    if (peers_.contains(session->Id())) return false;
+    EvictConflictsLocked(PeerKind::Public, session->Id(), retired);
+    peers_.emplace(session->Id(), Entry{session, PeerKind::Public,
+                                      std::chrono::steady_clock::now(), false, generation});
+    return true;
+}
+
+std::optional<std::uint64_t> PeerRegistry::PublicGeneration(const std::string& id) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto it = peers_.find(id);
+    if (it == peers_.end() || it->second.kind != PeerKind::Public) return std::nullopt;
+    return it->second.generation;
+}
+
+std::shared_ptr<PeerSession> PeerRegistry::RemovePublic(
+    const std::string& id, std::uint64_t generation) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto it = peers_.find(id);
+    if (it == peers_.end() || it->second.kind != PeerKind::Public ||
+        it->second.generation != generation) return nullptr;
+    auto victim = it->second.session;
+    peers_.erase(it);
+    return victim;
 }
 
 bool PeerRegistry::MarkFailed(

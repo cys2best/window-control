@@ -229,3 +229,23 @@ TEST(WhepHandler, OptionsReturnsCorsPolicyForBearerSdpNegotiation) {
     server.Stop();
     fake.Stop();
 }
+
+TEST(WhepHandler, LocalDeleteCapabilityCannotRemovePublicPeer) {
+    PeerRegistry registry;
+    ScrcpySource source(registry);
+    InputRouter inputRouter(source);
+    WhepHandler handler(registry, {"", "instance0"}, {}, inputRouter);
+    const std::string id = "0123456789abcdef0123456789abcdef";
+    auto publicPeer = registry.Create(PeerKind::Public, id, {});
+    ASSERT_TRUE(publicPeer);
+    EngineHttpServer server("127.0.0.1");
+    handler.RegisterRoutes(server.Server());
+    server.Start();
+    httplib::Client client("127.0.0.1", server.Port());
+    auto response = client.Delete("/whep/" + id);
+    ASSERT_TRUE(response);
+    EXPECT_EQ(response->status, 404);
+    EXPECT_EQ(registry.Find(id), publicPeer);
+    EXPECT_TRUE(registry.HasPublicPeer());
+    server.Stop();
+}

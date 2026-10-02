@@ -124,3 +124,27 @@ TEST(PeerRegistry, OldSameIdSessionCannotMarkReplacementFailed) {
 
     EXPECT_EQ(registry.Find("same-id"), replacement);
 }
+
+TEST(PeerRegistry, RemoteAdoptionDefersCloseAndNeverEvictsLocalCollision) {
+    PeerRegistry registry;
+    auto local = registry.Create(PeerKind::Local, "local-id", {});
+    auto original = registry.Create(PeerKind::Public, "public-old", {});
+    auto collision = std::make_shared<PeerSession>("local-id", std::vector<std::string>{});
+    std::vector<std::shared_ptr<PeerSession>> retired;
+    EXPECT_FALSE(registry.AdoptPublic(collision, 3, retired));
+    EXPECT_TRUE(retired.empty());
+    EXPECT_EQ(registry.Find("local-id"), local);
+    EXPECT_EQ(registry.Find("public-old"), original);
+    auto replacement = std::make_shared<PeerSession>("public-new", std::vector<std::string>{});
+    ASSERT_TRUE(registry.AdoptPublic(replacement, 3, retired));
+    ASSERT_EQ(retired.size(), 1u);
+    EXPECT_EQ(retired.front(), original);
+    EXPECT_NE(original->State(), rtc::PeerConnection::State::Closed);
+    EXPECT_EQ(registry.PublicGeneration("public-new"), 3u);
+    EXPECT_EQ(registry.RemovePublic("public-new", 2), nullptr);
+    EXPECT_EQ(registry.RemovePublic("local-id", 3), nullptr);
+    EXPECT_EQ(registry.RemovePublic("public-new", 3), replacement);
+    for (const auto& peer : retired) peer->Close();
+    replacement->Close();
+    EXPECT_EQ(registry.Find("local-id"), local);
+}

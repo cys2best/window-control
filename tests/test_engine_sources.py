@@ -67,6 +67,34 @@ def test_main_keeps_the_local_whep_wiring():
     assert "WhepHandler" in main
 
 
+def test_remote_negotiation_is_registered_only_on_loopback_admin_server():
+    main = (ENGINE / "src/main.cpp").read_text(encoding="utf-8")
+    assert 'EngineHttpServer adminServer("127.0.0.1")' in main
+    assert "remotePeerHandler.RegisterRoutes(adminServer.Server())" in main
+    assert "remotePeerHandler.RegisterRoutes(whepServer.Server())" not in main
+    remote = (ENGINE / "src/remote_peer_handler.cpp").read_text(encoding="utf-8")
+    assert 'server.Post("/admin/remote-peers"' in remote
+    assert "server.Delete" in remote
+    assert "ValidateWhepCapability" in remote
+    assert "AnswerOffer" in remote
+    assert "AdoptPublic" in remote
+    assert "WithGeneration" in remote
+    assert "timeout > 30000" in remote
+    assert "offer.size() > 128 * 1024" in remote
+    whep = (ENGINE / "src/whep_handler.cpp").read_text(encoding="utf-8")
+    assert "registry_.RemoveLocal" in whep
+
+
+def test_structured_ice_uses_native_credentials_and_retains_brace_callers():
+    ice = (ENGINE / "src/ice_config.cpp").read_text(encoding="utf-8")
+    assert "for (const auto& url : spec.urls)" in ice
+    assert "spec.username, spec.credential" in ice
+    assert "spec.urls[0]" not in ice
+    header = (ENGINE / "src/peer_session.h").read_text(encoding="utf-8")
+    assert "std::initializer_list<std::string>" in header
+    assert "EngineConfig::AuthConfig" not in (ENGINE / "src/remote_peer_handler.h").read_text()
+
+
 def test_cmake_keeps_the_dependencies_local_whep_needs():
     cmake = (ENGINE / "CMakeLists.txt").read_text(encoding="utf-8")
     for token in ("LibDataChannel::LibDataChannel", "nlohmann_json::nlohmann_json",

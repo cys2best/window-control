@@ -79,7 +79,7 @@ void WhepHandler::RegisterRoutes(httplib::Server& server) {
             response.set_header("Location", "/whep/" + id);
             response.set_content(answer, "application/sdp");
         } catch (const std::exception&) {
-            if (!id.empty()) registry_.Remove(id);
+            if (!id.empty()) registry_.RemoveLocal(id);
             response.status = 500;
             response.set_content("failed to establish WHEP session", "text/plain");
         }
@@ -88,6 +88,6 @@ void WhepHandler::RegisterRoutes(httplib::Server& server) {
     server.Delete(R"(/whep/([a-f0-9]{32}))",
                   [this](const httplib::Request& request, httplib::Response& response) {
                       ApplyCorsHeaders(response);
-                      response.status = registry_.Remove(request.matches[1]) ? 204 : 404;
+                      response.status = registry_.RemoveLocal(request.matches[1]) ? 204 : 404;
                   });
 }

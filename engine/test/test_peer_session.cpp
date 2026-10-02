@@ -289,3 +289,25 @@ TEST(PeerSession, ClearCallbacksSuppressesLaterInputDispatch) {
     EXPECT_EQ(delivered.load(), 0);
     session.Close();
 }
+
+TEST(PeerSession, CancellationDuringGatherClosesPeerAndPreventsAdoption) {
+    rtc::PeerConnection viewer(ManualNegotiationConfig());
+    OfferChannels channels;
+    auto offer = CreateGatheredOffer(viewer, channels);
+    PeerSession session("canceled-gather", {});
+    int checks = 0;
+    EXPECT_THROW(session.AnswerOffer(offer, std::chrono::seconds(5),
+                                     [&] { return ++checks >= 2; }), std::runtime_error);
+    EXPECT_GE(checks, 2);
+    bool adopted = false;
+    EXPECT_FALSE(session.WithActive([&] { adopted = true; return true; }));
+    EXPECT_FALSE(adopted);
+}
+
+TEST(PeerSession, ExpiredGatherDeadlineDoesNotStartNegotiation) {
+    PeerSession session("expired-deadline", {});
+    EXPECT_THROW(session.AnswerOffer("invalid SDP", std::chrono::milliseconds(0)), std::runtime_error);
+    bool adopted = false;
+    EXPECT_FALSE(session.WithActive([&] { adopted = true; return true; }));
+    EXPECT_FALSE(adopted);
+}
