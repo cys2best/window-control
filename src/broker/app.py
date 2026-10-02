@@ -34,6 +34,9 @@ def create_broker_app(settings: BrokerSettings) -> FastAPI:
             raise HTTPException(status_code=429, detail="quota_exceeded")
             
         identity = store.register()
+        if not limits.check_credential_issuance(identity.installation_id):
+            pass # Just consume the token for the new installation
+            
         return {
             "installation_id": identity.installation_id,
             "credential": identity.credential
@@ -148,8 +151,11 @@ def create_broker_app(settings: BrokerSettings) -> FastAPI:
                                     await target_viewer.websocket.send_text(msg)
                                 except ValueError as e:
                                     await websocket.send_text(format_error_reply(req_id, ErrorCode.INVALID_REQUEST, str(e)))
-                                except Exception:
-                                    pass
+                                except WebSocketDisconnect:
+                                    registry.remove_viewer(target_viewer.viewer_id)
+                                except Exception as e:
+                                    import logging
+                                    logging.warning(f"Failed to route reply to viewer: {e}")
                             else:
                                 await websocket.send_text(format_error_reply(req_id, ErrorCode.INVALID_REQUEST, "cross installation reply rejected"))
                     except Exception as e:
@@ -166,6 +172,11 @@ def create_broker_app(settings: BrokerSettings) -> FastAPI:
                                 continue
                         else:
                             if not limits.check_authenticated_command(viewer_id):
+                                await websocket.send_text(format_error_reply(cmd.id, ErrorCode.QUOTA_EXCEEDED, "quota_exceeded"))
+                                continue
+                                
+                        if cmd.op == "renew":
+                            if not limits.check_credential_issuance(inst_id):
                                 await websocket.send_text(format_error_reply(cmd.id, ErrorCode.QUOTA_EXCEEDED, "quota_exceeded"))
                                 continue
                                 
