@@ -1,5 +1,7 @@
 # Local-Only Access With Device Pairing — Implementation Plan (Plan A)
 
+> **Networking direction superseded (2026-10-02):** See [Direct WebRTC With Shared TURN Fallback](../specs/2026-10-02-direct-webrtc-shared-turn-design.md). Preserve device pairing and subsequent fixes; replace the public-access removal decisions through a new implementation plan. This completed plan remains historical reference, not instructions to remove the new remote path.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** EmuCtrl answers only local-network and Tailscale peers, a device must be paired once with a code shown on the PC, and every public-access path (Supabase login, HTTP tunnel, TURN, public signaling) is gone from the Python server and the TypeScript clients.

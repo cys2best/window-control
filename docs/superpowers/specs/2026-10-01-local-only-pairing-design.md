@@ -1,5 +1,7 @@
 # Local-Only Access With Device Pairing — Design
 
+> **Networking direction superseded (2026-10-02):** See [Direct WebRTC With Shared TURN Fallback](2026-10-02-direct-webrtc-shared-turn-design.md). Device pairing and local-access protections remain; the requirement to remove all public signaling and TURN no longer describes the intended product.
+
 Date: 2026-10-01
 
 ## Goal

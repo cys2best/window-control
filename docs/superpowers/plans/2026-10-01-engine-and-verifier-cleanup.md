@@ -1,5 +1,7 @@
 # Engine Signaling, Verifier and Relay Removal — Implementation Plan (Plan B)
 
+> **Public-access removal direction superseded (2026-10-02):** See [Direct WebRTC With Shared TURN Fallback](../specs/2026-10-02-direct-webrtc-shared-turn-design.md). Keep this completed cleanup as history. The replacement uses the Python host for public signaling; it does not require restoring the removed engine WSS client or old verifiers unchanged.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Nothing left in the repo talks to, tests, installs or documents a public signaling relay: the C++ engine's WSS signaling client, the cutover verifier scripts and wrappers, the CI relay step, `infra/vps/signaling` and the docs that describe them are gone.
