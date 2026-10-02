@@ -1,3 +1,4 @@
+import logging
 import json
 import asyncio
 import uuid
@@ -154,8 +155,7 @@ def create_broker_app(settings: BrokerSettings) -> FastAPI:
                                 except WebSocketDisconnect:
                                     registry.remove_viewer(target_viewer.viewer_id)
                                 except Exception as e:
-                                    import logging
-                                    logging.warning(f"Failed to route reply to viewer: {e}")
+                                        logging.warning(f"Failed to route reply to viewer: {e}")
                             else:
                                 await websocket.send_text(format_error_reply(req_id, ErrorCode.INVALID_REQUEST, "cross installation reply rejected"))
                     except Exception as e:
@@ -198,7 +198,7 @@ def create_broker_app(settings: BrokerSettings) -> FastAPI:
                             # Try to extract id for error
                             parsed = json.loads(msg)
                             req_id = parsed.get("id", "")
-                        except Exception:
+                        except (json.JSONDecodeError, TypeError, KeyError, AttributeError):
                             req_id = ""
                         await websocket.send_text(format_error_reply(req_id, ErrorCode.INVALID_REQUEST, str(e)))
                     except Exception as e:
