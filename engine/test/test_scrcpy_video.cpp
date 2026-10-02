@@ -6,6 +6,10 @@
 #include <thread>
 #include <vector>
 #include <cstring>
+#include <atomic>
+#include <chrono>
+#include <mutex>
+#include <stdexcept>
 
 #pragma comment(lib, "ws2_32.lib")
 
@@ -75,6 +79,84 @@ std::vector<uint8_t> BuildHandshakeAndOneFrame() {
     return script;
 }
 
+class IdleVideoServer {
+public:
+    IdleVideoServer() {
+        WSADATA wsaData;
+        if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+            throw std::runtime_error("WSAStartup failed");
+        }
+        wsaInitialized_ = true;
+        listenSock_ = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (listenSock_ == INVALID_SOCKET) throw std::runtime_error("socket failed");
+
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        addr.sin_port = 0;
+        if (bind(listenSock_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0 ||
+            listen(listenSock_, 1) != 0) {
+            throw std::runtime_error("bind/listen failed");
+        }
+        int addrLen = sizeof(addr);
+        getsockname(listenSock_, reinterpret_cast<sockaddr*>(&addr), &addrLen);
+        port_ = ntohs(addr.sin_port);
+
+        thread_ = std::thread([this]() {
+            SOCKET accepted = accept(listenSock_, nullptr, nullptr);
+            {
+                std::lock_guard<std::mutex> lock(socketMutex_);
+                if (!running_.load() || accepted == INVALID_SOCKET) {
+                    if (accepted != INVALID_SOCKET) closesocket(accepted);
+                    return;
+                }
+                clientSock_ = accepted;
+                auto script = BuildHandshakeAndOneFrame();
+                size_t sent = 0;
+                while (sent < script.size()) {
+                    int result = send(clientSock_,
+                                      reinterpret_cast<const char*>(script.data() + sent),
+                                      static_cast<int>(script.size() - sent), 0);
+                    if (result <= 0) return;
+                    sent += static_cast<size_t>(result);
+                }
+            }
+            while (running_.load()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+        });
+    }
+
+    ~IdleVideoServer() {
+        running_.store(false);
+        {
+            std::lock_guard<std::mutex> lock(socketMutex_);
+            CloseSocket(clientSock_);
+            CloseSocket(listenSock_);
+        }
+        if (thread_.joinable()) thread_.join();
+        if (wsaInitialized_) WSACleanup();
+    }
+
+    int Port() const { return port_; }
+
+private:
+    static void CloseSocket(SOCKET& sock) {
+        if (sock == INVALID_SOCKET) return;
+        shutdown(sock, SD_BOTH);
+        closesocket(sock);
+        sock = INVALID_SOCKET;
+    }
+
+    SOCKET listenSock_ = INVALID_SOCKET;
+    SOCKET clientSock_ = INVALID_SOCKET;
+    int port_ = 0;
+    std::thread thread_;
+    std::atomic<bool> running_{true};
+    std::mutex socketMutex_;
+    bool wsaInitialized_ = false;
+};
+
 } // namespace
 
 TEST(ScrcpyVideoClient, ConnectAndHandshakeParsesDeviceNameAndDimensions) {
@@ -117,4 +199,32 @@ TEST(ScrcpyVideoClient, ConstructorDoesNotThrowOnValidPort) {
     // Port itself isn't validated at construction — only Connect() attempts
     // the TCP connect and can fail. This test documents that contract.
     EXPECT_NO_THROW(ScrcpyVideoClient(12345));
+}
+
+TEST(ScrcpyVideoClient, UnexpectedFrameEofSetsReadFailure) {
+    int port = StartFakeScrcpyServer(BuildHandshakeAndOneFrame());
+    ScrcpyVideoClient client(port);
+    client.Connect();
+    client.ReadHandshake();
+    EXPECT_FALSE(client.LastReadFailed());
+    client.StartReading([](const uint8_t*, size_t) {});
+
+    for (int i = 0; i < 100 && !client.LastReadFailed(); ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    EXPECT_TRUE(client.LastReadFailed());
+    client.Stop();
+}
+
+TEST(ScrcpyVideoClient, IntentionalStopDoesNotSetReadFailure) {
+    IdleVideoServer server;
+    ScrcpyVideoClient client(server.Port());
+    client.Connect();
+    client.ReadHandshake();
+    client.StartReading([](const uint8_t*, size_t) {});
+
+    client.Stop();
+
+    EXPECT_FALSE(client.LastReadFailed());
 }

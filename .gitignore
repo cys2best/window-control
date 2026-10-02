@@ -16,9 +16,15 @@ docs/*
 src/assets/mediamtx/
 src/assets/scrcpy/
 
+# Downloaded by build/build_installer.bat, bundled into the installer
+build/vc_redist.x64.exe
+
 # Runtime crash logs (written to ProgramData at runtime, never tracked)
 service_crash.log
 *service_crash.log
+
+# One-command Windows verification artifacts
+engine/test/verification-*/
 
 # Git worktrees (superpowers subagent-driven-development scratch)
 .worktrees/
@@ -31,3 +37,10 @@ service_crash.log
 *.tfstate
 *.tfstate.*
 .terraform.lock.hcl
+
+# npm workspaces root deps (root package-lock.json IS tracked)
+/node_modules/
+
+# Personal, unshared agent notes
+CLAUDE.local.md
+.agent-sync/todo/

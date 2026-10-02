@@ -1,0 +1,85 @@
+# apps/desktop/test_tray.py
+import sys
+import pytest
+from unittest.mock import MagicMock, patch
+
+
+def test_tray_module_importable():
+    import tray
+    assert hasattr(tray, 'TrayIcon')
+
+
+def test_tray_icon_construction():
+    """TrayIcon can be constructed with three callables."""
+    from tray import TrayIcon
+    show = MagicMock()
+    stop = MagicMock()
+    exit_ = MagicMock()
+    # Construction should not fail (no pystray calls yet)
+    tray = TrayIcon(on_show=show, on_stop_server=stop, on_exit=exit_)
+    assert tray._on_show is show
+    assert tray._on_stop_server is stop
+    assert tray._on_exit is exit_
+    assert tray._icon is None
+
+
+def test_load_tray_icon_missing_raises(tmp_path, monkeypatch):
+    """Raises FileNotFoundError when tray_icon.png is missing (no silent placeholder)."""
+    import tray as tray_mod
+    import importlib
+    importlib.reload(tray_mod)
+    # Patch ASSETS_DIR after reload so the monkeypatch isn't undone by the reload
+    monkeypatch.setattr(tray_mod, 'ASSETS_DIR', str(tmp_path))
+    with pytest.raises(FileNotFoundError):
+        tray_mod._load_tray_icon()
+
+
+def test_load_tray_icon_loads_generated_asset():
+    """Loads the real generated tray_icon.png asset when present."""
+    import tray as tray_mod
+    import importlib
+    importlib.reload(tray_mod)
+    img = tray_mod._load_tray_icon()
+    assert img.size == (64, 64)
+
+
+def test_handle_exit_calls_callback():
+    """_handle_exit calls on_exit and stops the icon."""
+    from tray import TrayIcon
+    exit_called = []
+    tray = TrayIcon(
+        on_show=MagicMock(),
+        on_stop_server=MagicMock(),
+        on_exit=lambda: exit_called.append(True)
+    )
+    icon_mock = MagicMock()
+    tray._handle_exit(icon_mock, None)
+    assert exit_called == [True]
+    icon_mock.stop.assert_called_once()
+
+
+def test_tray_icon_construction_with_reinstall():
+    """TrayIcon accepts on_reinstall callback."""
+    from tray import TrayIcon
+    reinstall = MagicMock()
+    tray = TrayIcon(
+        on_show=MagicMock(),
+        on_stop_server=MagicMock(),
+        on_exit=MagicMock(),
+        on_reinstall=reinstall,
+    )
+    assert tray._on_reinstall is reinstall
+
+
+def test_handle_reinstall_calls_callback():
+    """_handle_reinstall calls on_reinstall."""
+    from tray import TrayIcon
+    called = []
+    tray = TrayIcon(
+        on_show=MagicMock(),
+        on_stop_server=MagicMock(),
+        on_exit=MagicMock(),
+        on_reinstall=lambda: called.append(True),
+    )
+    tray._handle_reinstall(MagicMock(), None)
+    assert called == [True]

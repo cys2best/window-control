@@ -1,15 +1,39 @@
 # src/main.py
 import sys
 import os
+import secrets
+import logging
 
 # Load .env (repo root, gitignored) before anything reads os.environ —
 # config.py's os.environ.get() calls run at import time below.
 from dotenv import load_dotenv
 load_dotenv()
 
+# Without this, the root logger defaults to WARNING and every module's
+# log.info() (engine lifecycle, pairing, etc.) is silently
+# dropped even when stdout/stderr are captured to a file.
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+
+import config
+
+# apps/desktop/tray.py lives outside src/ (a sibling app directory,
+# like apps/web and apps/mobile), so unlike gui.launcher it is
+# not naturally importable via src/ being main.py's own directory. In a dev
+# checkout, add apps/desktop to sys.path so `import tray` resolves the same
+# way `import gui.launcher` already does for modules that stayed under src/.
+# In a PyInstaller-frozen build this is unnecessary and the directory won't
+# exist at this relative path -- those modules are instead pulled into the
+# frozen bundle via window_control.spec's `pathex`, which PyInstaller's own
+# import graph resolves without any runtime sys.path change.
+if not hasattr(sys, "_MEIPASS"):
+    import pathlib
+    _desktop_dir = str(pathlib.Path(__file__).resolve().parent.parent / "apps" / "desktop")
+    if _desktop_dir not in sys.path:
+        sys.path.insert(0, _desktop_dir)
+
 
 def _log_early(msg: str):
-    for _p in [r"C:\ProgramData\WindowControl", r"C:\Windows\Temp", r"C:\Temp"]:
+    for _p in [r"C:\ProgramData\EmuCtrl", r"C:\Windows\Temp", r"C:\Temp"]:
         try:
             os.makedirs(_p, exist_ok=True)
             with open(os.path.join(_p, "service_crash.log"), "a") as _f:
@@ -39,13 +63,12 @@ except Exception:
     raise
 
 try:
-    from config import PORT, QUALITY_MAP, DEFAULT_QUALITY
+    from config import PORT
     from server.app import create_app
-    from server.stream import CaptureState, FrameQueue, capture_loop
-    from server.mediamtx_manager import MediamtxManager
     from server.instance_manager import InstanceManager
     from gui.launcher import LauncherWindow
-    from gui.tray import TrayIcon
+    from server.pairing import PairingStore, default_store_path
+    from tray import TrayIcon
     _log_early("[gui-imports] app modules OK")
 except Exception:
     import traceback as _tb
@@ -55,7 +78,7 @@ except Exception:
 
 def _log(msg: str):
     import os
-    for _p in [r"C:\ProgramData\WindowControl", r"C:\Windows\Temp"]:
+    for _p in [r"C:\ProgramData\EmuCtrl", r"C:\Windows\Temp"]:
         try:
             os.makedirs(_p, exist_ok=True)
             with open(os.path.join(_p, "service_crash.log"), "a") as f:
@@ -66,7 +89,7 @@ def _log(msg: str):
 
 
 def _ensure_assets():
-    """Download missing binaries (mediamtx, scrcpy) before the app needs them.
+    """Download missing scrcpy binaries before the app needs them.
 
     In a frozen build assets must be pre-bundled by build.bat — skip download.
     In dev mode, run download_assets.py to fetch missing binaries.
@@ -91,12 +114,46 @@ def _ensure_assets():
         _log(f"[assets] download error: {_tb.format_exc()[:400]}")
 
 
+def build_engine_orchestrator() -> "EngineOrchestrator":
+    exe_path = config.engine_exe_path()
+    if not os.path.isfile(exe_path):
+        raise RuntimeError(f"engine.exe not found at {exe_path}")
+
+    from server.engine_orchestrator import EngineOrchestrator
+    from server.engine_runtime import EngineRuntimeConfig
+
+    runtime_config = EngineRuntimeConfig(
+        exe_path=exe_path,
+        whep_secret=secrets.token_hex(32),
+        local_ice_servers=config.ENGINE_LOCAL_ICE_SERVERS,
+    )
+    return EngineOrchestrator(runtime_config)
+
+
+def _remove_legacy_services():
+    """Stop and delete legacy Windows services and purge stored unlock credentials."""
+    if sys.platform == "win32":
+        import subprocess
+        for svc in ("EmuCtrlService", "WindowControlService"):
+            subprocess.run(["sc.exe", "stop", svc], capture_output=True, timeout=10)
+            subprocess.run(["sc.exe", "delete", svc], capture_output=True, timeout=10)
+        for dat in (r"C:\ProgramData\EmuCtrl\unlock.dat", r"C:\ProgramData\WindowControl\unlock.dat"):
+            try:
+                if os.path.exists(dat):
+                    os.remove(dat)
+            except Exception:
+                pass
+
+
 def main():
-    # Delegate service CLI args before starting GUI
+    # Handle legacy service CLI args gracefully without starting GUI
     _svc_args = {"--install", "--uninstall", "--start", "--stop", "--run-service"}
     if _svc_args & set(sys.argv):
-        from service_main import main as service_cli
-        service_cli()
+        if "--uninstall" in sys.argv or "--stop" in sys.argv:
+            _remove_legacy_services()
+            print("Legacy EmuCtrl/WindowControl services and stored unlock data removed.")
+            return
+        print("EmuCtrl lock screen service has been deprecated and removed.")
         return
 
     from config import VERSION
@@ -108,62 +165,43 @@ def main():
     if sys.platform == "win32":
         def _win32_setup():
             import subprocess
-            subprocess.run(["sc.exe", "stop", "WindowControlService"],
-                           capture_output=True, timeout=10)
-            subprocess.run(["sc.exe", "delete", "WindowControlService"],
-                           capture_output=True, timeout=10)
-            # Allow mediamtx WHEP port through Windows Firewall (idempotent)
-            from config import WHEP_PORT, WEBRTC_UDP_PORT, STUN_PORT
-            for proto, port in [
-                ("TCP", WHEP_PORT),
-                ("TCP", 8189),
-                ("UDP", 8189),
-                ("UDP", WEBRTC_UDP_PORT),
-                ("UDP", STUN_PORT),
-            ]:
-                subprocess.run([
-                    "netsh", "advfirewall", "firewall", "add", "rule",
-                    f"name=WindowControl-WebRTC-{proto}-{port}",
-                    "dir=in", "action=allow", f"protocol={proto}",
-                    f"localport={port}",
-                ], capture_output=True, timeout=10)
-            _log(f"[GUI] firewall rules ensured for WHEP {WHEP_PORT}, ICE TCP 8189, ICE UDP {WEBRTC_UDP_PORT}, STUN {STUN_PORT}")
+            _remove_legacy_services()
+            # Keep the embedded STUN binding reachable on the LAN/Tailscale
+            # interface. Engine program rules are installed with the package.
+            from config import STUN_PORT
+            subprocess.run([
+                "netsh", "advfirewall", "firewall", "add", "rule",
+                f"name=EmuCtrl-STUN-UDP-{STUN_PORT}",
+                "dir=in", "action=allow", "protocol=UDP",
+                f"localport={STUN_PORT}",
+            ], capture_output=True, timeout=10)
+            _log(f"[GUI] firewall rule ensured for STUN {STUN_PORT}")
         threading.Thread(target=_win32_setup, daemon=True).start()
 
+    # Must be set before the application exists. Without them Qt 5 on a
+    # scaled Windows display grows point-size text but not pixel sizes, and
+    # the fixed-size host window clips its own content.
+    from PyQt5.QtCore import Qt
+    QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
+    QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
 
-    state = CaptureState()
-    state.set_quality(QUALITY_MAP[DEFAULT_QUALITY])
-    frame_queue = FrameQueue()
+    engine_orchestrator = build_engine_orchestrator()
+    instance_manager = InstanceManager(engine_orchestrator)
 
-    mediamtx = MediamtxManager()
-    instance_manager = InstanceManager(mediamtx)
-
-    fastapi_app = create_app(state, frame_queue, instance_manager)
+    pairing = PairingStore(default_store_path())
+    fastapi_app = create_app(instance_manager, pairing=pairing)
 
     server = None
     _server_thread = None
-    _capture_thread = None
 
     def start_server():
-        nonlocal _server_thread, _capture_thread, server
-        state.running = True
-        _capture_thread = threading.Thread(
-            target=capture_loop, args=(state, frame_queue), daemon=True
-        )
-        _capture_thread.start()
+        nonlocal _server_thread, server
         # Fresh uvicorn Server each restart (uvicorn cannot be re-run after exit)
-        # proxy_headers=False is load-bearing, not a default restated:
-        # uvicorn defaults it to True and trusts 127.0.0.1 as a forwarding
-        # proxy, so its ProxyHeadersMiddleware would rewrite
-        # request.client.host from an attacker-supplied X-Forwarded-For on any
-        # request whose direct peer is loopback. The public HTTP tunnel relays
-        # requests through a local httpx client (loopback from this app's
-        # perspective) and does not strip x-forwarded-for -- which would make
-        # app.py's localhost-only guard on /internal/ spoofable. The tunnel
-        # already refuses to forward /internal/ at all; this keeps the
-        # app-level guard actually meaning what it documents.
+        # proxy_headers=False is load-bearing: uvicorn's default trusts
+        # X-Forwarded-For from loopback peers and rewrites the client
+        # address, which is the address the access gate checks.
         config = uvicorn.Config(fastapi_app, host="0.0.0.0", port=PORT,
                                 log_level="warning", log_config=None,
                                 proxy_headers=False)
@@ -193,7 +231,6 @@ def main():
         _log("[GUI] server started")
 
     def stop_server():
-        state.running = False
         if server:
             server.should_exit = True
 
@@ -210,7 +247,7 @@ def main():
                     _log(f"[GUI] watchdog restart failed: {_tb.format_exc()[:300]}")
     threading.Thread(target=_watchdog, daemon=True).start()
 
-    launcher = LauncherWindow(state)
+    launcher = LauncherWindow(on_stop_server=stop_server, pairing=pairing)
 
     def show_launcher():
         launcher.show()
@@ -221,14 +258,14 @@ def main():
         def _run():
             from updater import _fetch_latest_version, download_and_install
             _log("[Reinstall] Fetching latest version…")
-            tray.notify("Fetching latest release…", "WindowControl Update")
+            tray.notify("Fetching latest release…", "EmuCtrl Update")
             latest = _fetch_latest_version()
             if not latest:
                 _log("[Reinstall] Failed to fetch latest version from GitHub")
                 tray.notify("Could not fetch latest release. Check internet.", "Update Failed")
                 return
             _log(f"[Reinstall] Downloading v{latest}…")
-            tray.notify(f"Downloading v{latest}…", "WindowControl Update")
+            tray.notify(f"Downloading v{latest}…", "EmuCtrl Update")
 
             def _on_error(msg):
                 _log(f"[Reinstall] Download failed: {msg}")
@@ -244,8 +281,6 @@ def main():
         on_exit=lambda: (stop_server(), app.quit()),
         on_reinstall=_force_reinstall,
     )
-
-    launcher.quality_changed.connect(state.set_quality)
 
     launcher.show()
     tray.start()

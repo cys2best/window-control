@@ -1,0 +1,23 @@
+{
+  "name": "EmuCtrl",
+  "short_name": "EmuCtrl",
+  "display": "standalone",
+  "orientation": "any",
+  "start_url": "/",
+  "background_color": "#06070b",
+  "theme_color": "#06070b",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

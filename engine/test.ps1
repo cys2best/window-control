@@ -1,5 +1,5 @@
 # engine/test.ps1
-# Rebuild engine.exe and run it against the live scrcpy forward + VPS signaling.
+# Rebuild engine.exe and run it against the live scrcpy forward + WHEP.
 # Usage (from repo root, in a shell with cmake/cl on PATH):
 #   .\engine\test.ps1
 #   .\engine\test.ps1 -Serial emulator-5556 -Port 27184 -Scid 2
@@ -10,9 +10,7 @@ param(
     [int]$Port = 27183,
     [int]$Scid = 1,
     [string]$Tier = "720",
-    [string]$SignalingUrl = "ws://13.214.163.82:8443",
-    [string]$SessionId = "poc-session-1",
-    [string]$IceUrl = "turn:poc-user:poc-secret-change-me@13.214.163.82:3478",
+    [string]$InstanceName = "poc-instance",
     [switch]$SkipStartServer,
     [switch]$SkipBuild
 )
@@ -37,15 +35,15 @@ if (-not $SkipStartServer) {
     Push-Location $repoRoot
     $env:PYTHONPATH = "src"
     uv run python -c @"
-from server.scrcpy_session import _start_server
+from server.scrcpy_server import start_server
 from server.adb_manager import _find_adb
 adb = _find_adb()
-ok = _start_server(adb, '$Serial', $Port, scid=$Scid, tier='$Tier')
+ok = start_server(adb, '$Serial', $Port, scid=$Scid, tier='$Tier')
 print('start_server ok=' + str(ok))
 "@
     Pop-Location
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "[test.ps1] _start_server failed, aborting." -ForegroundColor Red
+        Write-Host "[test.ps1] start_server failed, aborting." -ForegroundColor Red
         exit 1
     }
     # engine.exe must connect while the server is fresh — see the freshness
@@ -59,6 +57,25 @@ if (-not (Test-Path $exe)) {
 }
 
 Write-Host "[test.ps1] launching engine.exe..." -ForegroundColor Cyan
-Write-Host "[test.ps1] test_page.html query: ?signaling=$SignalingUrl&session=$SessionId&ice=$IceUrl" -ForegroundColor Yellow
+Write-Host "[test.ps1] Once the ready record JSON prints to stdout, extract whep_port from it." -ForegroundColor Yellow
+Write-Host "[test.ps1] Serve the test page separately:" -ForegroundColor Yellow
+Write-Host "[test.ps1] uv run python -m http.server 8088 --directory engine\test" -ForegroundColor Yellow
+Write-Host "[test.ps1] Then open:" -ForegroundColor Yellow
+Write-Host "[test.ps1] http://localhost:8088/test_page.html?whep=http://localhost:<whep_port>/whep" -ForegroundColor Yellow
 
-& $exe $Port $SignalingUrl $SessionId $IceUrl
+# Windows PowerShell 5 wraps redirected native stderr as NativeCommandError.
+# Engine diagnostics intentionally use stderr, so they must not terminate this
+# launcher when a caller redirects or tees its streams.
+$engineExitCode = 1
+$savedErrorActionPreference = $ErrorActionPreference
+try {
+    $ErrorActionPreference = "Continue"
+    & $exe $InstanceName $Port
+    $engineExitCode = $LASTEXITCODE
+} finally {
+    $ErrorActionPreference = $savedErrorActionPreference
+}
+if ($engineExitCode -ne 0) {
+    Write-Host "[test.ps1] engine.exe exited with code $engineExitCode." -ForegroundColor Red
+    exit $engineExitCode
+}

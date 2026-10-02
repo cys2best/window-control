@@ -58,6 +58,8 @@ struct ScrcpyVideoClient::Impl {
     int width = 0;
     int height = 0;
     std::atomic<bool> running{false};
+    std::atomic<bool> stopRequested{false};
+    std::atomic<bool> lastReadFailed{false};
     std::thread readThread;
     NaluCallback onNalu;
     bool wsaInitialized = false;
@@ -80,6 +82,12 @@ ScrcpyVideoClient::~ScrcpyVideoClient() {
 }
 
 void ScrcpyVideoClient::Connect() {
+    if (impl_->sock != INVALID_SOCKET) {
+        shutdown(impl_->sock, SD_BOTH);
+        closesocket(impl_->sock);
+        impl_->sock = INVALID_SOCKET;
+    }
+
     std::cerr << "[debug] video: socket()..." << std::endl;
     impl_->sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (impl_->sock == INVALID_SOCKET) {
@@ -93,12 +101,16 @@ void ScrcpyVideoClient::Connect() {
 
     std::cerr << "[debug] video: connect() on port " << impl_->port << "..." << std::endl;
     if (connect(impl_->sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
+        closesocket(impl_->sock);
+        impl_->sock = INVALID_SOCKET;
         throw std::runtime_error("ScrcpyVideoClient: connect() failed on port " + std::to_string(impl_->port));
     }
     std::cerr << "[debug] video: connected, reading dummy byte..." << std::endl;
 
     uint8_t dummy;
     if (!RecvAll(impl_->sock, &dummy, 1)) {
+        closesocket(impl_->sock);
+        impl_->sock = INVALID_SOCKET;
         throw std::runtime_error("ScrcpyVideoClient: failed to read dummy byte after connect");
     }
     std::cerr << "[debug] video: dummy byte received" << std::endl;
@@ -124,22 +136,40 @@ void ScrcpyVideoClient::ReadHandshake() {
     // per the launch args `_start_server` passes — see scrcpy_session.py).
     impl_->width = static_cast<int>(ReadU32BE(meta + 4));
     impl_->height = static_cast<int>(ReadU32BE(meta + 8));
+    std::cerr << "[debug] video: handshake complete, dimensions="
+              << impl_->width << "x" << impl_->height << std::endl;
 }
 
 void ScrcpyVideoClient::StartReading(NaluCallback onNalu) {
     impl_->onNalu = std::move(onNalu);
+    impl_->stopRequested.store(false);
+    impl_->lastReadFailed.store(false);
     impl_->running = true;
     impl_->readThread = std::thread([this]() {
+        auto markUnexpectedFailure = [this]() {
+            if (!impl_->stopRequested.load()) {
+                impl_->lastReadFailed.store(true);
+            }
+        };
         uint8_t header[12];
         while (impl_->running.load()) {
-            if (!RecvAll(impl_->sock, header, 12)) break;
+            if (!RecvAll(impl_->sock, header, 12)) {
+                markUnexpectedFailure();
+                break;
+            }
             uint64_t ptsFlags = ReadU64BE(header); // unused for RTP repacketization in this PoC
             (void)ptsFlags;
             uint32_t size = ReadU32BE(header + 8);
-            if (size > kMaxFrameBytes) break; // stream desync — treat as fatal, same as any other read error
+            if (size > kMaxFrameBytes) {
+                markUnexpectedFailure();
+                break;
+            }
 
             std::vector<uint8_t> payload(size);
-            if (size > 0 && !RecvAll(impl_->sock, payload.data(), size)) break;
+            if (size > 0 && !RecvAll(impl_->sock, payload.data(), size)) {
+                markUnexpectedFailure();
+                break;
+            }
 
             static int frameCount = 0;
             if (frameCount < 5) {
@@ -161,20 +191,27 @@ void ScrcpyVideoClient::StartReading(NaluCallback onNalu) {
                 }
             }
         }
+        impl_->running.store(false);
     });
 }
 
 void ScrcpyVideoClient::Stop() {
-    if (!impl_->running.exchange(false)) {
-        if (impl_->readThread.joinable()) impl_->readThread.join();
-        return;
-    }
+    impl_->stopRequested.store(true);
+    impl_->running.store(false);
     if (impl_->sock != INVALID_SOCKET) {
-        shutdown(impl_->sock, SD_BOTH); // unblocks the read thread's recv()
+        // On Windows, shutdown() alone does not reliably cancel a recv()
+        // already blocked on another thread. Close the handle before joining
+        // so the pending read is forced to complete. Keep the member value
+        // unchanged until after join: the reader may still load it, and a
+        // concurrent plain write here would be a C++ data race.
+        shutdown(impl_->sock, SD_BOTH);
+        closesocket(impl_->sock);
     }
     if (impl_->readThread.joinable()) impl_->readThread.join();
+    impl_->sock = INVALID_SOCKET;
 }
 
 std::string ScrcpyVideoClient::DeviceName() const { return impl_->deviceName; }
 int ScrcpyVideoClient::Width() const { return impl_->width; }
 int ScrcpyVideoClient::Height() const { return impl_->height; }
+bool ScrcpyVideoClient::LastReadFailed() const { return impl_->lastReadFailed.load(); }

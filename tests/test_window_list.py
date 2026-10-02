@@ -1,3 +1,4 @@
+import os
 import sys
 import pytest
 from unittest.mock import patch, MagicMock
@@ -24,6 +25,21 @@ def test_list_vms_parses_emulator_serials():
     assert result[0]["ldplayer_index"] == 0
     assert result[1]["id"] == "adb:emulator-5556"
     assert result[1]["ldplayer_index"] == 1
+
+
+def test_find_ldconsole_reuses_discovery_search_order(monkeypatch):
+    """An installed LDPlayer console is found through the discovery resolver."""
+    from server import adb_manager
+
+    monkeypatch.setattr(adb_manager.sys, "platform", "win32")
+    monkeypatch.setattr(adb_manager, "_find_adb", lambda: "/opt/LDPlayer9/adb.exe")
+    monkeypatch.setattr(
+        adb_manager.os.path,
+        "exists",
+        lambda path: os.path.normpath(path) == os.path.normpath("/opt/LDPlayer9/ldconsole.exe"),
+    )
+
+    assert os.path.normpath(adb_manager._find_ldconsole()) == os.path.normpath("/opt/LDPlayer9/ldconsole.exe")
 
 
 def test_instance_manager_list():

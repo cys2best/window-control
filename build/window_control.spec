@@ -6,13 +6,20 @@ block_cipher = None
 
 _root = Path(SPECPATH).parent
 src_dir = str(_root / 'src')
+desktop_dir = str(_root / 'apps' / 'desktop')
 
 a = Analysis(
     [str(_root / 'src' / 'main.py')],
-    pathex=[src_dir],
+    pathex=[src_dir, desktop_dir],
     binaries=[],
     datas=[
-        (str(_root / 'src' / 'client'), 'client'),
+        # apps/web's Next.js static export (npm run build -w apps/web),
+        # staged as top-level "web" to match config.py's get_web_build_dir()
+        # frozen-mode branch (os.path.join(BASE_PATH, "web")). Replaces the
+        # old src/client -> "client" entry.
+        (str(_root / 'apps' / 'web' / 'out'), 'web'),
+        # 'assets' includes assets/engine (engine.exe + runtime DLLs staged by
+        # build.bat) and assets/scrcpy (downloaded by download_assets.py).
         (str(_root / 'src' / 'assets'), 'assets'),
     ],
     hiddenimports=[
@@ -29,21 +36,15 @@ a = Analysis(
         'fastapi',
         'starlette',
         'pystray',
+        'webview',
+        # main.py imports it lazily, only on the --webview-window
+        # re-invocation path (apps/desktop/window.py spawns that), so
+        # PyInstaller's graph must be told about it explicitly.
+        'webview_main',
         'PIL',
         'qrcode',
         'numpy',
-        'imageio_ffmpeg',
-        'aiortc',
-        'aiortc.sdp',
-        'aiortc.rtp',
-        'aiortc.rtcdtlstransport',
-        'aiortc.rtcicetransport',
-        'aiortc.rtcpeerconnection',
-        'aiohttp',
         'nest_asyncio',
-        'av',
-        'av.codec',
-        'av.video',
     ],
     hookspath=[],
     hooksconfig={},
@@ -62,7 +63,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='WindowControl',
+    name='EmuCtrl',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -84,5 +85,5 @@ coll = COLLECT(
     strip=False,
     upx=False,
     upx_exclude=[],
-    name='WindowControl',
+    name='EmuCtrl',
 )

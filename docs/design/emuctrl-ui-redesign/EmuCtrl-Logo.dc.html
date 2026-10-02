@@ -1,0 +1,671 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<![CDATA[<helmet data-dc-atomics>
+<meta name="design_doc_mode" content="canvas">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#06070b;font-family:'Space Grotesk',system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+a{color:#00E5FF;text-decoration:none}a:hover{color:#7df3ff}
+.dv-turn{padding:40px 44px 34px}
+.dv-thd{display:flex;align-items:baseline;gap:10px;margin:0 0 8px}
+.dv-tid{font:600 10px 'JetBrains Mono',monospace;padding:3px 7px;background:#00E5FF;color:#06070b;border-radius:4px;text-decoration:none}
+.dv-tname{font:600 15px/1.2 'Space Grotesk',sans-serif;color:#E6EAF2}
+.dv-opts{display:flex;flex-wrap:wrap;gap:22px;align-items:flex-start;margin-top:26px}
+.dv-opt{flex:none;width:320px;display:flex;flex-direction:column;gap:10px;scroll-margin-top:16px}
+.dv-oid{font:600 10.5px 'JetBrains Mono',monospace;padding:3px 7px;background:#13161f;color:#B7C0D0;border:1px solid #222738;border-radius:5px;text-decoration:none}
+.dv-olabel{display:flex;align-items:baseline;gap:9px;font:600 12.5px 'Space Grotesk',sans-serif;color:#E6EAF2}
+.dv-opt:target .dv-oid{background:#00E5FF;color:#06070b}
+.tile{background:#0d0f16;border:1px solid #222738;display:flex;align-items:center;justify-content:center;height:190px}
+.row{display:flex;gap:10px}
+.sub{flex:1;background:#0d0f16;border:1px solid #222738;padding:12px;display:flex;align-items:center;gap:10px;min-width:0}
+.cap{font:11.5px/1.6 'Space Grotesk',sans-serif;color:#7A8496;text-wrap:pretty}
+.lbl{font:8.5px 'JetBrains Mono',monospace;color:#5C6679;letter-spacing:.16em}
+.wm{font:700 15px 'Space Grotesk',sans-serif;letter-spacing:.16em;color:#E6EAF2}
+</style>
+</helmet>
+
+<section class="dv-turn" id="t5">
+  <div class="dv-thd"><a class="dv-tid" href="#t5">5</a><span class="dv-tname">FINAL · <a class="dv-oid" href="#4b">4b</a> locked</span></div>
+  <div class="cap" style="max-width:88ch">Final artwork for <a class="dv-oid" href="#4b">4b</a>, drawn on a 96-unit master. Two corrections from the exploration: the three horizontals drop from 8 to 7.5 units so they read the same weight as the 19-unit rail (a horizontal at equal measure always looks heavier), and the frame's 4-unit radius is redrawn as a squircle so it doesn't fight iOS's own mask. Everything below is generated from this one geometry — nothing is redrawn by eye.</div>
+
+  <div class="dv-opts">
+
+    <div class="dv-opt" id="5a" style="width:auto">
+      <div class="dv-olabel"><a class="dv-oid" href="#5a">5a</a>Master · 96u</div>
+      <div class="tile" style="width:320px">
+        <svg width="140" height="140" viewBox="0 0 96 96" fill="none">
+          <rect x="8" y="8" width="80" height="80" rx="6" stroke="#5C6679" stroke-width="3"/>
+          <rect x="66" y="11" width="19" height="74" fill="#00E5FF"/>
+          <rect x="20" y="18.25" width="32" height="7.5" fill="#E6EAF2"/>
+          <rect x="20" y="42.25" width="28" height="7.5" fill="#E6EAF2"/>
+          <rect x="20" y="70.25" width="32" height="7.5" fill="#E6EAF2"/>
+          <rect x="73" y="26" width="5" height="5" fill="#06070b"/>
+          <rect x="73" y="61" width="5" height="5" fill="#06070b"/>
+          <circle cx="75.5" cy="46" r="6" fill="#06070b"/>
+          <path d="M64 39a12 12 0 000 14M57 33a21 21 0 000 26" stroke="#00E5FF" stroke-width="2.5" opacity=".5" fill="none"/>
+        </svg>
+      </div>
+      <div class="cap" style="max-width:34ch">Frame 8→88, r6 squircle, 3u stroke. Rail x66 w19, inset 3u top and bottom. Arms x20, w32/28/32, h7.5, ink at y18.25 / 42.25 / 70.25. Keys 5×5 at y26 / y61; tap dot r6 at y46. Ripple r12 / r21, 2.5u, 50%.</div>
+    </div>
+
+    <div class="dv-opt" id="5b" style="width:auto">
+      <div class="dv-olabel"><a class="dv-oid" href="#5b">5b</a>Construction &amp; clearspace</div>
+      <div class="tile" style="width:320px">
+        <svg width="140" height="140" viewBox="-14 -14 124 124" fill="none">
+          <rect x="-14" y="-14" width="124" height="124" fill="none" stroke="#FF5722" stroke-width="1" stroke-dasharray="3 3" opacity=".5"/>
+          <path d="M0 18.25H96M0 25.75H96M0 42.25H96M0 49.75H96M0 70.25H96M0 77.75H96" stroke="#2f3550" stroke-width=".7"/>
+          <path d="M20 0V96M52 0V96M66 0V96M85 0V96" stroke="#2f3550" stroke-width=".7"/>
+          <path d="M0 46H96" stroke="#FF5722" stroke-width=".7" opacity=".7"/>
+          <rect x="8" y="8" width="80" height="80" rx="6" stroke="#5C6679" stroke-width="3"/>
+          <rect x="66" y="11" width="19" height="74" fill="#00E5FF"/>
+          <rect x="20" y="18.25" width="32" height="7.5" fill="#E6EAF2"/>
+          <rect x="20" y="42.25" width="28" height="7.5" fill="#E6EAF2"/>
+          <rect x="20" y="70.25" width="32" height="7.5" fill="#E6EAF2"/>
+          <circle cx="75.5" cy="46" r="6" fill="#06070b"/>
+        </svg>
+      </div>
+      <div class="cap" style="max-width:34ch">Clearspace is 14u on all sides — the rail's width less the key inset — measured from the frame, not the ripple. The tangerine line is the optical centre (y46, 2u above true centre): the middle arm, the tap dot and the ripple origin all sit on it. Never place type or a container edge inside the dashed box.</div>
+    </div>
+
+    <div class="dv-opt" id="5c" style="width:auto">
+      <div class="dv-olabel"><a class="dv-oid" href="#5c">5c</a>Lockups</div>
+      <div class="tile" style="width:320px;flex-direction:column;gap:22px">
+        <div style="display:flex;align-items:center;gap:13px">
+          <svg width="38" height="38" viewBox="0 0 96 96" fill="none"><rect x="8" y="8" width="80" height="80" rx="6" stroke="#5C6679" stroke-width="4"/><rect x="66" y="11" width="19" height="74" fill="#00E5FF"/><rect x="20" y="18.25" width="32" height="8" fill="#E6EAF2"/><rect x="20" y="42.25" width="28" height="8" fill="#E6EAF2"/><rect x="20" y="70.25" width="32" height="8" fill="#E6EAF2"/><circle cx="75.5" cy="46" r="6.5" fill="#06070b"/></svg>
+          <div>
+            <div style="font:700 21px 'Space Grotesk',sans-serif;letter-spacing:.15em;color:#E6EAF2;line-height:1">EMU<span style="color:#00E5FF">CTRL</span></div>
+            <div class="lbl" style="margin-top:5px">LOW-LATENCY REMOTE PLAY</div>
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;align-items:flex-start;gap:9px">
+          <svg width="44" height="44" viewBox="0 0 96 96" fill="none"><rect x="8" y="8" width="80" height="80" rx="6" stroke="#5C6679" stroke-width="4"/><rect x="66" y="11" width="19" height="74" fill="#00E5FF"/><rect x="20" y="18.25" width="32" height="8" fill="#E6EAF2"/><rect x="20" y="42.25" width="28" height="8" fill="#E6EAF2"/><rect x="20" y="70.25" width="32" height="8" fill="#E6EAF2"/><circle cx="75.5" cy="46" r="6.5" fill="#06070b"/></svg>
+          <div style="font:700 17px 'Space Grotesk',sans-serif;letter-spacing:.15em;color:#E6EAF2">EMU<span style="color:#00E5FF">CTRL</span></div>
+        </div>
+      </div>
+      <div class="cap" style="max-width:34ch">Horizontal is primary: mark at 38px, wordmark 21px/.15em, gap 13px (one third of the mark). Stacked is for square placements only, gap 9px, left-aligned to the frame edge — never centred. The descriptor line is optional and never larger than 10px mono.</div>
+    </div>
+
+    <div class="dv-opt" id="5d" style="width:auto">
+      <div class="dv-olabel"><a class="dv-oid" href="#5d">5d</a>Cutdowns &amp; ladder</div>
+      <div class="tile" style="width:320px;flex-direction:column;gap:16px">
+        <div style="display:flex;align-items:flex-end;gap:16px">
+          <div style="display:flex;flex-direction:column;align-items:center;gap:5px">
+            <svg width="48" height="48" viewBox="0 0 96 96" fill="none"><rect x="8" y="8" width="80" height="80" rx="6" stroke="#5C6679" stroke-width="3.5"/><rect x="66" y="11" width="19" height="74" fill="#00E5FF"/><rect x="20" y="18.25" width="32" height="7.5" fill="#E6EAF2"/><rect x="20" y="42.25" width="28" height="7.5" fill="#E6EAF2"/><rect x="20" y="70.25" width="32" height="7.5" fill="#E6EAF2"/><circle cx="75.5" cy="46" r="6" fill="#06070b"/><path d="M64 39a12 12 0 000 14" stroke="#00E5FF" stroke-width="3" opacity=".5" fill="none"/></svg>
+            <span class="lbl">48</span>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:center;gap:5px">
+            <svg width="32" height="32" viewBox="0 0 96 96" fill="none"><rect x="8" y="8" width="80" height="80" rx="5" stroke="#5C6679" stroke-width="5"/><rect x="64" y="12" width="21" height="72" fill="#00E5FF"/><rect x="20" y="18" width="32" height="9" fill="#E6EAF2"/><rect x="20" y="42" width="28" height="9" fill="#E6EAF2"/><rect x="20" y="69" width="32" height="9" fill="#E6EAF2"/><circle cx="74.5" cy="46" r="7" fill="#06070b"/></svg>
+            <span class="lbl">32</span>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:center;gap:5px">
+            <svg width="20" height="20" viewBox="0 0 96 96" fill="none"><rect x="6" y="6" width="84" height="84" rx="3" stroke="#5C6679" stroke-width="9"/><rect x="62" y="12" width="22" height="72" fill="#00E5FF"/><rect x="22" y="20" width="30" height="12" fill="#E6EAF2"/><rect x="22" y="42" width="26" height="12" fill="#E6EAF2"/><rect x="22" y="64" width="30" height="12" fill="#E6EAF2"/></svg>
+            <span class="lbl">20</span>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:center;gap:5px">
+            <svg width="16" height="16" viewBox="0 0 96 96" fill="none"><rect x="6" y="6" width="84" height="84" rx="3" stroke="#5C6679" stroke-width="9"/><rect x="60" y="12" width="24" height="72" fill="#00E5FF"/><rect x="22" y="20" width="30" height="13" fill="#E6EAF2"/><rect x="22" y="42" width="26" height="13" fill="#E6EAF2"/><rect x="22" y="63" width="30" height="13" fill="#E6EAF2"/></svg>
+            <span class="lbl">16</span>
+          </div>
+        </div>
+        <div style="display:flex;gap:12px;align-items:center">
+          <div style="width:56px;height:56px;border-radius:13px;background:#00E5FF;display:flex;align-items:center;justify-content:center">
+            <svg width="44" height="44" viewBox="0 0 96 96" fill="none"><rect x="12" y="14" width="18" height="68" fill="#06070b"/><rect x="16" y="28" width="10" height="8" fill="#00E5FF"/><rect x="16" y="44" width="10" height="8" fill="#00E5FF"/><rect x="16" y="60" width="10" height="8" fill="#00E5FF"/><rect x="40" y="16" width="42" height="10" fill="#06070b"/><rect x="40" y="43" width="36" height="10" fill="#06070b"/><rect x="40" y="70" width="42" height="10" fill="#06070b"/></svg>
+          </div>
+          <div style="width:56px;height:56px;background:#E6EAF2;display:flex;align-items:center;justify-content:center">
+            <svg width="44" height="44" viewBox="0 0 96 96" fill="none"><rect x="8" y="8" width="80" height="80" rx="6" stroke="#06070b" stroke-width="4"/><rect x="66" y="11" width="19" height="74" fill="#06070b"/><rect x="20" y="18.25" width="32" height="8" fill="#06070b"/><rect x="20" y="42.25" width="28" height="8" fill="#06070b"/><rect x="20" y="70.25" width="32" height="8" fill="#06070b"/><circle cx="75.5" cy="46" r="6.5" fill="#E6EAF2"/></svg>
+          </div>
+          <div style="width:56px;height:56px;background:#0d0f16;border:1px solid #222738;display:flex;align-items:center;justify-content:center">
+            <svg width="44" height="44" viewBox="0 0 96 96" fill="none"><rect x="8" y="8" width="80" height="80" rx="6" stroke="#E6EAF2" stroke-width="4"/><rect x="66" y="11" width="19" height="74" fill="#E6EAF2"/><rect x="20" y="18.25" width="32" height="8" fill="#E6EAF2"/><rect x="20" y="42.25" width="28" height="8" fill="#E6EAF2"/><rect x="20" y="70.25" width="32" height="8" fill="#E6EAF2"/><circle cx="75.5" cy="46" r="6.5" fill="#0d0f16"/></svg>
+          </div>
+        </div>
+      </div>
+      <div class="cap" style="max-width:34ch">Below 48px the outer ripple arc drops; below 32px both arcs and the two key notches drop and the rail widens 1u per step to hold its weight; at 16px the tap dot goes too and the frame stroke thickens to 9u. Launcher icon is frameless ink-on-cyan (<a href="#4c">4c</a>); single-colour positive and knockout are the same geometry with the dot punched out.</div>
+    </div>
+  </div>
+
+  <div style="margin-top:36px;display:flex;flex-wrap:wrap;gap:22px">
+    <div style="flex:1 1 340px;min-width:300px">
+      <div class="lbl" style="color:#00E5FF;margin-bottom:12px">PALETTE · MARK ONLY</div>
+      <div style="display:flex;flex-direction:column;gap:7px">
+        <div class="sub" style="padding:9px 12px"><span style="width:16px;height:16px;background:#00E5FF;flex:none"></span><span class="cap" style="color:#B7C0D0"><b style="color:#E6EAF2">#00E5FF</b> rail · action · link healthy</span></div>
+        <div class="sub" style="padding:9px 12px"><span style="width:16px;height:16px;background:#E6EAF2;flex:none"></span><span class="cap" style="color:#B7C0D0"><b style="color:#E6EAF2">#E6EAF2</b> arms · the E, never coloured</span></div>
+        <div class="sub" style="padding:9px 12px"><span style="width:16px;height:16px;background:#5C6679;flex:none"></span><span class="cap" style="color:#B7C0D0"><b style="color:#E6EAF2">#5C6679</b> frame stroke on dark</span></div>
+        <div class="sub" style="padding:9px 12px"><span style="width:16px;height:16px;background:#06070b;border:1px solid #222738;flex:none"></span><span class="cap" style="color:#B7C0D0"><b style="color:#E6EAF2">#06070B</b> ground · keys · tap dot</span></div>
+      </div>
+      <div class="cap" style="margin-top:10px">Status colours (#10B981 mint, #edbb00 amber, #FF5722 tangerine) enter the rail <i>only</i> in tray and widget renders — never in the brand mark.</div>
+    </div>
+    <div style="flex:1 1 300px;min-width:280px">
+      <div class="lbl" style="color:#00E5FF;margin-bottom:12px">DON'T</div>
+      <div class="cap">Don't recolour the arms, round the arm terminals, centre the stacked lockup, add a gradient or glow to the rail, rotate the mark, place it on a photograph without the ground plate, or set the wordmark in anything but Space Grotesk 700 at .15em. Don't use the frameless cutdown as the brand mark — it's the launcher tile only.</div>
+      <div class="lbl" style="color:#00E5FF;margin:20px 0 12px">DELIVERABLES</div>
+      <div class="cap">Mark SVG (full / 32 / 16), lockups (horizontal, stacked), launcher tile, four tray states, mono + knockout. Every one is on this page as inline SVG — copy straight out of source; no raster step is needed at any size.</div>
+    </div>
+  </div>
+
+  <p class="cap" style="margin-top:26px;color:#5C6679">Locked. Earlier turns are kept below as history. In the app, this mark now sits in the sidebar and the widget header.</p>
+</section>
+
+<section class="dv-turn" id="t4">
+  <div class="dv-thd"><a class="dv-tid" href="#t4">4</a><span class="dv-tname"><a class="dv-oid" href="#2c">2c</a>'s rail E inside <a class="dv-oid" href="#1e">1e</a>'s screen</span></div>
+  <div class="cap" style="max-width:88ch">The rail E kept whole — cyan stem, three 6px key notches punched out, arms detached and floating — set inside <a class="dv-oid" href="#1e">1e</a>'s screen frame with the touch ripple. Two readings are possible and they say different things, so both are drawn: the rail <i>inside</i> the screen (the letter is the subject, the frame is context), or the rail <i>as</i> the screen's right edge (the mark becomes the product's own silhouette and the E is what's playing on it). Same grid throughout: cap ink y18→78, 8px arms, middle arm 4px short at optical centre y46.</div>
+
+  <div class="dv-opts">
+
+    <div class="dv-opt" id="4a">
+      <div class="dv-olabel"><a class="dv-oid" href="#4a">4a</a>Rail inside · ripple right</div>
+      <div class="tile">
+        <svg width="96" height="96" viewBox="0 0 96 96" fill="none">
+          <rect x="8" y="8" width="80" height="80" rx="4" stroke="#5C6679" stroke-width="3"/>
+          <rect x="16" y="18" width="10" height="60" fill="#00E5FF"/>
+          <rect x="18" y="29" width="6" height="6" fill="#06070b"/>
+          <rect x="18" y="43" width="6" height="6" fill="#06070b"/>
+          <rect x="18" y="57" width="6" height="6" fill="#06070b"/>
+          <rect x="32" y="18" width="26" height="8" fill="#E6EAF2"/>
+          <rect x="32" y="42" width="22" height="8" fill="#E6EAF2"/>
+          <rect x="32" y="70" width="26" height="8" fill="#E6EAF2"/>
+          <circle cx="70" cy="46" r="7" fill="#00E5FF"/>
+          <circle cx="70" cy="46" r="14" stroke="#00E5FF" stroke-width="2.5" opacity=".5"/>
+        </svg>
+      </div>
+      <div class="row">
+        <div class="sub">
+          <svg width="26" height="26" viewBox="0 0 96 96" fill="none"><rect x="8" y="8" width="80" height="80" rx="4" stroke="#5C6679" stroke-width="6"/><rect x="16" y="18" width="12" height="60" fill="#00E5FF"/><rect x="34" y="18" width="26" height="10" fill="#E6EAF2"/><rect x="34" y="41" width="22" height="10" fill="#E6EAF2"/><rect x="34" y="68" width="26" height="10" fill="#E6EAF2"/><circle cx="72" cy="46" r="9" fill="#00E5FF"/></svg>
+          <span class="wm">EMU<span style="color:#00E5FF">CTRL</span></span>
+        </div>
+        <div class="sub" style="flex:none;flex-direction:column;align-items:center;gap:5px">
+          <svg width="16" height="16" viewBox="0 0 96 96" fill="none"><rect x="6" y="6" width="84" height="84" rx="3" stroke="#5C6679" stroke-width="9"/><rect x="18" y="20" width="14" height="56" fill="#00E5FF"/><rect x="40" y="20" width="24" height="12" fill="#E6EAF2"/><rect x="40" y="42" width="20" height="12" fill="#E6EAF2"/><rect x="40" y="64" width="24" height="12" fill="#E6EAF2"/><circle cx="76" cy="46" r="9" fill="#00E5FF"/></svg>
+          <span class="lbl">16PX</span>
+        </div>
+      </div>
+      <div class="cap">Everything from <a href="#2c">2c</a> shifted 6px left to open a channel for the ripple; rail, notches and arms are otherwise untouched. Reads left-to-right as control → content → touch. Loses <a href="#2c">2c</a>'s list-icon risk, because the frame now tells you it's a screen. Notches vanish under 24px and the rail goes solid, which is the right degradation.</div>
+    </div>
+
+    <div class="dv-opt" id="4b">
+      <div class="dv-olabel"><a class="dv-oid" href="#4b">4b</a>Rail as the screen edge</div>
+      <div class="tile">
+        <svg width="96" height="96" viewBox="0 0 96 96" fill="none">
+          <rect x="8" y="8" width="80" height="80" rx="4" stroke="#5C6679" stroke-width="3"/>
+          <rect x="66" y="11" width="19" height="74" fill="#00E5FF"/>
+          <rect x="20" y="18" width="32" height="8" fill="#E6EAF2"/>
+          <rect x="20" y="42" width="28" height="8" fill="#E6EAF2"/>
+          <rect x="20" y="70" width="32" height="8" fill="#E6EAF2"/>
+          <rect x="73" y="26" width="5" height="5" fill="#06070b"/>
+          <rect x="73" y="61" width="5" height="5" fill="#06070b"/>
+          <circle cx="75.5" cy="46" r="6" fill="#06070b"/>
+          <path d="M64 39a12 12 0 000 14M57 33a21 21 0 000 26" stroke="#00E5FF" stroke-width="2.5" opacity=".5" fill="none"/>
+        </svg>
+      </div>
+      <div class="row">
+        <div class="sub">
+          <svg width="26" height="26" viewBox="0 0 96 96" fill="none"><rect x="8" y="8" width="80" height="80" rx="4" stroke="#5C6679" stroke-width="6"/><rect x="66" y="11" width="19" height="74" fill="#00E5FF"/><rect x="20" y="18" width="32" height="10" fill="#E6EAF2"/><rect x="20" y="41" width="28" height="10" fill="#E6EAF2"/><rect x="20" y="68" width="32" height="10" fill="#E6EAF2"/><circle cx="75.5" cy="46" r="7" fill="#06070b"/><path d="M62 39a12 12 0 000 14" stroke="#00E5FF" stroke-width="5" opacity=".55" fill="none"/></svg>
+          <span class="wm">EMU<span style="color:#00E5FF">CTRL</span></span>
+        </div>
+        <div class="sub" style="flex:none;flex-direction:column;align-items:center;gap:5px">
+          <svg width="16" height="16" viewBox="0 0 96 96" fill="none"><rect x="6" y="6" width="84" height="84" rx="3" stroke="#5C6679" stroke-width="9"/><rect x="62" y="12" width="22" height="72" fill="#00E5FF"/><rect x="22" y="20" width="30" height="12" fill="#E6EAF2"/><rect x="22" y="42" width="26" height="12" fill="#E6EAF2"/><rect x="22" y="64" width="30" height="12" fill="#E6EAF2"/></svg>
+          <span class="lbl">16PX</span>
+        </div>
+      </div>
+      <div class="cap">The rail migrates to the frame's right edge, exactly where it lives in the app, so the mark is the interface in miniature — and the tap now happens <i>on the key</i>, with the cyan ripple firing leftward into the screen. That direction is the actual causal story: you press here, the emulator moves there. Strongest concept of the set; the arms alone must carry the E, so it's one step further from a letter than <a href="#4a">4a</a>.</div>
+    </div>
+
+    <div class="dv-opt" id="4c">
+      <div class="dv-olabel"><a class="dv-oid" href="#4c">4c</a>Frameless — app icon</div>
+      <div class="tile" style="background:#00E5FF;border-color:#00E5FF">
+        <svg width="96" height="96" viewBox="0 0 96 96" fill="none">
+          <rect x="12" y="14" width="12" height="68" fill="#06070b"/>
+          <rect x="14" y="28" width="8" height="8" fill="#00E5FF"/>
+          <rect x="14" y="44" width="8" height="8" fill="#00E5FF"/>
+          <rect x="14" y="60" width="8" height="8" fill="#00E5FF"/>
+          <rect x="34" y="16" width="44" height="10" fill="#06070b"/>
+          <rect x="34" y="43" width="38" height="10" fill="#06070b"/>
+          <rect x="34" y="70" width="44" height="10" fill="#06070b"/>
+        </svg>
+      </div>
+      <div class="row">
+        <div class="sub" style="background:#06070b">
+          <svg width="26" height="26" viewBox="0 0 96 96" fill="none"><rect x="12" y="14" width="12" height="68" fill="#00E5FF"/><rect x="34" y="16" width="44" height="10" fill="#E6EAF2"/><rect x="34" y="43" width="38" height="10" fill="#E6EAF2"/><rect x="34" y="70" width="44" height="10" fill="#E6EAF2"/></svg>
+          <span class="wm">EMU<span style="color:#00E5FF">CTRL</span></span>
+        </div>
+        <div class="sub" style="flex:none;flex-direction:column;align-items:center;gap:5px">
+          <svg width="16" height="16" viewBox="0 0 96 96" fill="none"><rect x="12" y="16" width="14" height="64" fill="#00E5FF"/><rect x="38" y="18" width="42" height="12" fill="#E6EAF2"/><rect x="38" y="42" width="36" height="12" fill="#E6EAF2"/><rect x="38" y="66" width="42" height="12" fill="#E6EAF2"/></svg>
+          <span class="lbl">16PX</span>
+        </div>
+      </div>
+      <div class="cap">The launcher tile is already a rounded rectangle, so the drawn frame is redundant — drop it, keep the rail and arms, and let the notches knock through to the cyan ground. Arms grow to fill the reclaimed width. Cutdown, not a rival mark.</div>
+    </div>
+  </div>
+
+  <div style="margin-top:36px">
+    <div class="lbl" style="color:#00E5FF;margin-bottom:12px">TRAY STATES · <a href="#4b">4b</a> AT 16PX · RAIL CARRIES LINK QUALITY</div>
+    <div class="row" style="flex-wrap:wrap">
+      <div class="sub" style="flex:none;flex-direction:column;align-items:center;gap:7px;width:104px">
+        <svg width="20" height="20" viewBox="0 0 96 96" fill="none"><rect x="6" y="6" width="84" height="84" rx="3" stroke="#5C6679" stroke-width="9"/><rect x="62" y="12" width="22" height="72" fill="#10B981"/><rect x="22" y="20" width="30" height="12" fill="#E6EAF2"/><rect x="22" y="42" width="26" height="12" fill="#E6EAF2"/><rect x="22" y="64" width="30" height="12" fill="#E6EAF2"/></svg>
+        <span class="lbl">RUNNING</span>
+      </div>
+      <div class="sub" style="flex:none;flex-direction:column;align-items:center;gap:7px;width:104px">
+        <svg width="20" height="20" viewBox="0 0 96 96" fill="none"><rect x="6" y="6" width="84" height="84" rx="3" stroke="#3a4152" stroke-width="9"/><rect x="62" y="12" width="22" height="72" fill="#5C6679"/><rect x="22" y="20" width="30" height="12" fill="#7A8496"/><rect x="22" y="42" width="26" height="12" fill="#7A8496"/><rect x="22" y="64" width="30" height="12" fill="#7A8496"/></svg>
+        <span class="lbl">IDLE</span>
+      </div>
+      <div class="sub" style="flex:none;flex-direction:column;align-items:center;gap:7px;width:104px">
+        <svg width="20" height="20" viewBox="0 0 96 96" fill="none"><rect x="6" y="6" width="84" height="84" rx="3" stroke="#5C6679" stroke-width="9"/><rect x="62" y="12" width="22" height="72" fill="#2f3550"/><rect x="62" y="40" width="22" height="44" fill="#edbb00"/><rect x="22" y="20" width="30" height="12" fill="#E6EAF2"/><rect x="22" y="42" width="26" height="12" fill="#E6EAF2"/><rect x="22" y="64" width="30" height="12" fill="#E6EAF2"/></svg>
+        <span class="lbl">DEGRADED</span>
+      </div>
+      <div class="sub" style="flex:none;flex-direction:column;align-items:center;gap:7px;width:104px">
+        <svg width="20" height="20" viewBox="0 0 96 96" fill="none"><rect x="6" y="6" width="84" height="84" rx="3" stroke="#3a4152" stroke-width="9"/><rect x="62" y="12" width="22" height="72" fill="#2f3550"/><rect x="62" y="66" width="22" height="18" fill="#FF5722"/><rect x="22" y="20" width="30" height="12" fill="#3a4152"/><rect x="22" y="42" width="26" height="12" fill="#3a4152"/><rect x="22" y="64" width="30" height="12" fill="#3a4152"/></svg>
+        <span class="lbl">OFFLINE</span>
+      </div>
+      <div class="sub" style="min-width:220px">
+        <span class="cap">Because the rail is a bar, not a dot, it can <i>fill</i> — quality reads as height, colour only confirms it. Mint full · grey idle · amber half · red stub. The E never changes.</span>
+      </div>
+    </div>
+  </div>
+
+  <div style="display:flex;flex-wrap:wrap;gap:30px;margin-top:34px">
+    <div style="flex:1 1 320px;min-width:280px">
+      <div class="lbl" style="color:#00E5FF;margin-bottom:10px">MY PICK</div>
+      <div class="cap"><a href="#4b">4b</a>, with <a href="#4c">4c</a> as the app icon. Putting the rail on the frame edge is the one move that makes the frame do work instead of just containing things, and a fillable rail is a better status glyph than a coloured dot — it carries quality even in monochrome. Take <a href="#4a">4a</a> if you want the mark to stay legibly an <b style="color:#E6EAF2">E</b> first.</div>
+    </div>
+    <div style="flex:1 1 320px;min-width:280px">
+      <div class="lbl" style="color:#00E5FF;margin-bottom:10px">WHAT'S LEFT</div>
+      <div class="cap">Optical weight pass on the horizontals (~0.5px light), the frame radius as a true superellipse for iOS, a stacked lockup, and mono/knockout cutdowns. Then it goes into the app screens and the Windows widget.</div>
+    </div>
+  </div>
+
+  <p class="cap" style="margin-top:26px;color:#5C6679">Try next: "finalise <a href="#4b">4b</a>" · "make <a href="#4b">4b</a>'s ripple stronger" · "try <a href="#4b">4b</a> in 16:9 instead of square" · "put <a href="#4b">4b</a> in the app screens"</p>
+</section>
+
+<section class="dv-turn" id="t3">
+  <div class="dv-thd"><a class="dv-tid" href="#t3">3</a><span class="dv-tname"><a class="dv-oid" href="#2b">2b</a>'s E inside <a class="dv-oid" href="#1e">1e</a>'s screen</span></div>
+  <div class="cap" style="max-width:88ch">The stem-less scanline E from <a class="dv-oid" href="#2b">2b</a>, unchanged in construction — three bars, cap ink y18→78, middle bar 4px shorter at y42→50 — dropped into <a class="dv-oid" href="#1e">1e</a>'s screen frame with the touch ripple beside it. The combination is stronger than either: the bars read as raster lines because there's now a screen for them to be raster lines <i>on</i>, and the E stops being a letter floating in a box. Three treatments of the ripple, then the tray states.</div>
+
+  <div class="dv-opts">
+
+    <div class="dv-opt" id="3a">
+      <div class="dv-olabel"><a class="dv-oid" href="#3a">3a</a>Concentric ripple</div>
+      <div class="tile">
+        <svg width="96" height="96" viewBox="0 0 96 96" fill="none">
+          <rect x="10" y="10" width="76" height="76" rx="4" stroke="#5C6679" stroke-width="3"/>
+          <rect x="24" y="18" width="36" height="8" fill="#E6EAF2"/>
+          <rect x="24" y="42" width="32" height="8" fill="#E6EAF2"/>
+          <rect x="24" y="70" width="36" height="8" fill="#E6EAF2"/>
+          <circle cx="70" cy="46" r="7" fill="#00E5FF"/>
+          <circle cx="70" cy="46" r="14" stroke="#00E5FF" stroke-width="2.5" opacity=".5"/>
+        </svg>
+      </div>
+      <div class="row">
+        <div class="sub">
+          <svg width="26" height="26" viewBox="0 0 96 96" fill="none"><rect x="10" y="10" width="76" height="76" rx="4" stroke="#5C6679" stroke-width="6"/><rect x="24" y="18" width="36" height="10" fill="#E6EAF2"/><rect x="24" y="41" width="32" height="10" fill="#E6EAF2"/><rect x="24" y="68" width="36" height="10" fill="#E6EAF2"/><circle cx="70" cy="46" r="9" fill="#00E5FF"/></svg>
+          <span class="wm">EMU<span style="color:#00E5FF">CTRL</span></span>
+        </div>
+        <div class="sub" style="flex:none;flex-direction:column;align-items:center;gap:5px">
+          <svg width="16" height="16" viewBox="0 0 96 96" fill="none"><rect x="6" y="6" width="84" height="84" rx="3" stroke="#5C6679" stroke-width="9"/><rect x="26" y="20" width="34" height="12" fill="#E6EAF2"/><rect x="26" y="42" width="30" height="12" fill="#E6EAF2"/><rect x="26" y="64" width="34" height="12" fill="#E6EAF2"/><circle cx="72" cy="46" r="10" fill="#00E5FF"/></svg>
+          <span class="lbl">16PX</span>
+        </div>
+      </div>
+      <div class="cap">The straight read: finger lands on the screen, one ring. Balanced because the ripple's centre sits on the middle bar's optical line (y46), not the box's geometric centre. Safest of the three and the one that survives smallest — at 16px the ring drops and the dot alone carries it.</div>
+    </div>
+
+    <div class="dv-opt" id="3b">
+      <div class="dv-olabel"><a class="dv-oid" href="#3b">3b</a>Directional ripple</div>
+      <div class="tile">
+        <svg width="96" height="96" viewBox="0 0 96 96" fill="none">
+          <rect x="10" y="10" width="76" height="76" rx="4" stroke="#5C6679" stroke-width="3"/>
+          <rect x="24" y="18" width="36" height="8" fill="#E6EAF2"/>
+          <rect x="24" y="42" width="26" height="8" fill="#E6EAF2"/>
+          <rect x="24" y="70" width="36" height="8" fill="#E6EAF2"/>
+          <circle cx="60" cy="46" r="7" fill="#00E5FF"/>
+          <path d="M70 37a12 12 0 010 18M77 31a21 21 0 010 30" stroke="#00E5FF" stroke-width="2.5" opacity=".55" fill="none"/>
+        </svg>
+      </div>
+      <div class="row">
+        <div class="sub">
+          <svg width="26" height="26" viewBox="0 0 96 96" fill="none"><rect x="10" y="10" width="76" height="76" rx="4" stroke="#5C6679" stroke-width="6"/><rect x="24" y="18" width="36" height="10" fill="#E6EAF2"/><rect x="24" y="41" width="26" height="10" fill="#E6EAF2"/><rect x="24" y="68" width="36" height="10" fill="#E6EAF2"/><circle cx="60" cy="46" r="9" fill="#00E5FF"/><path d="M72 37a12 12 0 010 18" stroke="#00E5FF" stroke-width="5" opacity=".6" fill="none"/></svg>
+          <span class="wm">EMU<span style="color:#00E5FF">CTRL</span></span>
+        </div>
+        <div class="sub" style="flex:none;flex-direction:column;align-items:center;gap:5px">
+          <svg width="16" height="16" viewBox="0 0 96 96" fill="none"><rect x="6" y="6" width="84" height="84" rx="3" stroke="#5C6679" stroke-width="9"/><rect x="26" y="20" width="34" height="12" fill="#E6EAF2"/><rect x="26" y="42" width="24" height="12" fill="#E6EAF2"/><rect x="26" y="64" width="34" height="12" fill="#E6EAF2"/><circle cx="66" cy="46" r="10" fill="#00E5FF"/></svg>
+          <span class="lbl">16PX</span>
+        </div>
+      </div>
+      <div class="cap">Middle bar shortened a further 6px so the tap-point completes the E, and the ripple becomes two arcs firing right — input travelling <i>to</i> the host, not spreading under a finger. Tells the remote-control story best; costs you a slightly less stable letterform, since the E now depends on the cyan to read complete.</div>
+    </div>
+
+    <div class="dv-opt" id="3c">
+      <div class="dv-olabel"><a class="dv-oid" href="#3c">3c</a>Frameless — app icon</div>
+      <div class="tile" style="background:#00E5FF;border-color:#00E5FF">
+        <svg width="96" height="96" viewBox="0 0 96 96" fill="none">
+          <rect x="16" y="18" width="52" height="8" fill="#06070b"/>
+          <rect x="16" y="42" width="46" height="8" fill="#06070b"/>
+          <rect x="16" y="70" width="52" height="8" fill="#06070b"/>
+          <circle cx="78" cy="46" r="7" fill="#06070b"/>
+        </svg>
+      </div>
+      <div class="row">
+        <div class="sub" style="background:#06070b">
+          <svg width="26" height="26" viewBox="0 0 96 96" fill="none"><rect x="16" y="18" width="52" height="10" fill="#00E5FF"/><rect x="16" y="41" width="46" height="10" fill="#00E5FF"/><rect x="16" y="68" width="52" height="10" fill="#00E5FF"/><circle cx="80" cy="46" r="8" fill="#00E5FF"/></svg>
+          <span class="wm">EMU<span style="color:#00E5FF">CTRL</span></span>
+        </div>
+        <div class="sub" style="flex:none;flex-direction:column;align-items:center;gap:5px">
+          <svg width="16" height="16" viewBox="0 0 96 96" fill="none"><rect x="14" y="20" width="52" height="13" fill="#E6EAF2"/><rect x="14" y="42" width="46" height="13" fill="#E6EAF2"/><rect x="14" y="64" width="52" height="13" fill="#E6EAF2"/><circle cx="80" cy="46" r="9" fill="#E6EAF2"/></svg>
+          <span class="lbl">16PX</span>
+        </div>
+      </div>
+      <div class="cap">Drop the frame and let the icon's own tile <i>be</i> the screen — the platform already draws a rounded rectangle around it, so a second one inside is a wasted 6px of margin. Ink-on-cyan for the launcher, cyan-on-black in-app. This is the cutdown, not a rival mark.</div>
+    </div>
+  </div>
+
+  <div style="margin-top:36px">
+    <div class="lbl" style="color:#00E5FF;margin-bottom:12px">TRAY STATES · <a href="#3a">3a</a> AT 16PX</div>
+    <div class="row" style="flex-wrap:wrap">
+      <div class="sub" style="flex:none;flex-direction:column;align-items:center;gap:7px;width:104px">
+        <svg width="20" height="20" viewBox="0 0 96 96" fill="none"><rect x="6" y="6" width="84" height="84" rx="3" stroke="#5C6679" stroke-width="9"/><rect x="26" y="20" width="34" height="12" fill="#E6EAF2"/><rect x="26" y="42" width="30" height="12" fill="#E6EAF2"/><rect x="26" y="64" width="34" height="12" fill="#E6EAF2"/><circle cx="72" cy="46" r="10" fill="#10B981"/></svg>
+        <span class="lbl">RUNNING</span>
+      </div>
+      <div class="sub" style="flex:none;flex-direction:column;align-items:center;gap:7px;width:104px">
+        <svg width="20" height="20" viewBox="0 0 96 96" fill="none"><rect x="6" y="6" width="84" height="84" rx="3" stroke="#3a4152" stroke-width="9"/><rect x="26" y="20" width="34" height="12" fill="#7A8496"/><rect x="26" y="42" width="30" height="12" fill="#7A8496"/><rect x="26" y="64" width="34" height="12" fill="#7A8496"/><circle cx="72" cy="46" r="10" fill="#5C6679"/></svg>
+        <span class="lbl">IDLE</span>
+      </div>
+      <div class="sub" style="flex:none;flex-direction:column;align-items:center;gap:7px;width:104px">
+        <svg width="20" height="20" viewBox="0 0 96 96" fill="none"><rect x="6" y="6" width="84" height="84" rx="3" stroke="#5C6679" stroke-width="9"/><rect x="26" y="20" width="34" height="12" fill="#E6EAF2"/><rect x="26" y="42" width="30" height="12" fill="#E6EAF2"/><rect x="26" y="64" width="34" height="12" fill="#E6EAF2"/><circle cx="72" cy="46" r="10" fill="#edbb00"/></svg>
+        <span class="lbl">DEGRADED</span>
+      </div>
+      <div class="sub" style="flex:none;flex-direction:column;align-items:center;gap:7px;width:104px">
+        <svg width="20" height="20" viewBox="0 0 96 96" fill="none"><rect x="6" y="6" width="84" height="84" rx="3" stroke="#3a4152" stroke-width="9"/><rect x="26" y="20" width="34" height="12" fill="#3a4152"/><rect x="26" y="42" width="30" height="12" fill="#3a4152"/><rect x="26" y="64" width="34" height="12" fill="#3a4152"/><circle cx="72" cy="46" r="10" fill="#FF5722"/></svg>
+        <span class="lbl">OFFLINE</span>
+      </div>
+      <div class="sub" style="min-width:220px">
+        <span class="cap">Only the ripple dot changes colour; the E never does. Offline also drops the bars to hairline grey so the icon reads dead at a glance in a crowded tray.</span>
+      </div>
+    </div>
+  </div>
+
+  <div style="display:flex;flex-wrap:wrap;gap:30px;margin-top:34px">
+    <div style="flex:1 1 320px;min-width:280px">
+      <div class="lbl" style="color:#00E5FF;margin-bottom:10px">MY PICK</div>
+      <div class="cap"><a href="#3a">3a</a> as the mark with <a href="#3c">3c</a> as the app icon and tray glyph. The dot doubling as the status light is what makes the pairing work — you get link quality in the tray without a second visual language, which is exactly what I was reaching for with the signal bars earlier, done more quietly. <a href="#3b">3b</a> if you'd rather the mark argue for remote control than for legibility.</div>
+    </div>
+    <div style="flex:1 1 320px;min-width:280px">
+      <div class="lbl" style="color:#00E5FF;margin-bottom:10px">WHAT'S LEFT</div>
+      <div class="cap">Optical weight pass (the horizontals want ~0.5px less than they have), the frame radius redrawn as a superellipse for iOS, a stacked lockup, and single-colour + knockout cutdowns. Then it can go into the app screens and the Windows widget.</div>
+    </div>
+  </div>
+
+  <p class="cap" style="margin-top:26px;color:#5C6679">Try next: "finalise <a href="#3a">3a</a>" · "make the ripple dot bigger" · "try <a href="#3a">3a</a> with square frame corners" · "put it in the app screens"</p>
+</section>
+
+<section class="dv-turn" id="t2">
+  <div class="dv-thd"><a class="dv-tid" href="#t2">2</a><span class="dv-tname">Refining the E from <a class="dv-oid" href="#1e">1e</a></span></div>
+  <div class="cap" style="max-width:88ch">The draft E was three equal arms on a stem — a default letterform with no argument behind it. All four are set on one grid and drawn as edge-aligned rectangles, never centred strokes: cap height 60 (ink y18→78), 8px arms, square terminals to match the rail. The middle arm is 4px shorter than the outer arms and its ink sits at y42→50 — centre 46, a 2px lift off true centre (48), which is the standard optical correction; an E with a true-centre middle arm reads bottom-heavy. Every mark is measured against that grid, so what differs between them is only <i>what the arms are</i>. Note this board sits off the bound design systems for the same reason the app does — the cyber-tactical dark direction comes from your brief.</div>
+
+  <div class="dv-opts">
+
+    <div class="dv-opt" id="2a">
+      <div class="dv-olabel"><a class="dv-oid" href="#2a">2a</a>Corrected letterform</div>
+      <div class="tile">
+        <svg width="96" height="96" viewBox="0 0 96 96" fill="none">
+          <rect x="8" y="8" width="80" height="80" rx="4" stroke="#3a4152" stroke-width="3"/>
+          <rect x="26" y="18" width="8" height="60" fill="#E6EAF2"/>
+          <rect x="26" y="18" width="34" height="8" fill="#E6EAF2"/>
+          <rect x="26" y="42" width="30" height="8" fill="#E6EAF2"/>
+          <rect x="26" y="70" width="34" height="8" fill="#E6EAF2"/>
+          <circle cx="70" cy="46" r="7" fill="#00E5FF"/>
+          <circle cx="70" cy="46" r="14" stroke="#00E5FF" stroke-width="2.5" opacity=".5"/>
+        </svg>
+      </div>
+      <div class="row">
+        <div class="sub">
+          <svg width="26" height="26" viewBox="0 0 96 96" fill="none"><rect x="8" y="8" width="80" height="80" rx="4" stroke="#3a4152" stroke-width="6"/><rect x="26" y="18" width="10" height="60" fill="#E6EAF2"/><rect x="26" y="18" width="34" height="10" fill="#E6EAF2"/><rect x="26" y="41" width="30" height="10" fill="#E6EAF2"/><rect x="26" y="68" width="34" height="10" fill="#E6EAF2"/><circle cx="72" cy="46" r="9" fill="#00E5FF"/></svg>
+          <span class="wm">EMU<span style="color:#00E5FF">CTRL</span></span>
+        </div>
+        <div class="sub" style="flex:none;flex-direction:column;align-items:center;gap:5px">
+          <svg width="16" height="16" viewBox="0 0 96 96" fill="none"><rect x="6" y="6" width="84" height="84" rx="3" stroke="#3a4152" stroke-width="9"/><rect x="28" y="18" width="12" height="60" fill="#E6EAF2"/><rect x="28" y="18" width="36" height="12" fill="#E6EAF2"/><rect x="28" y="40" width="32" height="12" fill="#E6EAF2"/><rect x="28" y="66" width="36" height="12" fill="#E6EAF2"/></svg>
+          <span class="lbl">16PX</span>
+        </div>
+      </div>
+      <div class="cap">Same idea as the draft, drawn properly: everything is edge-aligned rectangles rather than centred strokes, so the arms terminate exactly on the stem's outer edge — no 4px spur below the bottom arm, no inset at the top-left corner, which is what the first pass had. Ripple sits on the middle arm's optical centre.</div>
+    </div>
+
+    <div class="dv-opt" id="2b">
+      <div class="dv-olabel"><a class="dv-oid" href="#2b">2b</a>Scanline E — no stem</div>
+      <div class="tile">
+        <svg width="96" height="96" viewBox="0 0 96 96" fill="none">
+          <rect x="8" y="8" width="80" height="80" rx="4" stroke="#3a4152" stroke-width="3"/>
+          <rect x="24" y="18" width="44" height="8" fill="#E6EAF2"/>
+          <rect x="24" y="42" width="40" height="8" fill="#E6EAF2"/>
+          <rect x="24" y="70" width="44" height="8" fill="#E6EAF2"/>
+          <rect x="24" y="31" width="30" height="2" fill="#2f3550"/>
+          <rect x="24" y="58" width="22" height="2" fill="#2f3550"/>
+          <circle cx="76" cy="46" r="6" fill="#00E5FF"/>
+        </svg>
+      </div>
+      <div class="row">
+        <div class="sub">
+          <svg width="26" height="26" viewBox="0 0 96 96" fill="none"><rect x="8" y="8" width="80" height="80" rx="4" stroke="#3a4152" stroke-width="6"/><rect x="24" y="18" width="44" height="10" fill="#E6EAF2"/><rect x="24" y="41" width="40" height="10" fill="#E6EAF2"/><rect x="24" y="68" width="44" height="10" fill="#E6EAF2"/></svg>
+          <span class="wm">EMU<span style="color:#00E5FF">CTRL</span></span>
+        </div>
+        <div class="sub" style="flex:none;flex-direction:column;align-items:center;gap:5px">
+          <svg width="16" height="16" viewBox="0 0 96 96" fill="none"><rect x="6" y="6" width="84" height="84" rx="3" stroke="#3a4152" stroke-width="9"/><rect x="26" y="18" width="42" height="12" fill="#E6EAF2"/><rect x="26" y="40" width="38" height="12" fill="#E6EAF2"/><rect x="26" y="66" width="42" height="12" fill="#E6EAF2"/></svg>
+          <span class="lbl">16PX</span>
+        </div>
+      </div>
+      <div class="cap">Drop the stem and the E is carried by three bars alone — still unmistakably an E, and now it doubles as scanlines on a screen. The two hairlines between arms are the decoder's raster; they vanish under 32px, which is fine. Cleanest of the four at 16px because there's no join to muddy.</div>
+    </div>
+
+    <div class="dv-opt" id="2c">
+      <div class="dv-olabel"><a class="dv-oid" href="#2c">2c</a>Rail E — arms are keys</div>
+      <div class="tile">
+        <svg width="96" height="96" viewBox="0 0 96 96" fill="none">
+          <rect x="8" y="8" width="80" height="80" rx="4" stroke="#3a4152" stroke-width="3"/>
+          <rect x="22" y="18" width="10" height="60" fill="#00E5FF"/>
+          <rect x="38" y="18" width="30" height="8" fill="#E6EAF2"/>
+          <rect x="38" y="42" width="26" height="8" fill="#E6EAF2"/>
+          <rect x="38" y="70" width="30" height="8" fill="#E6EAF2"/>
+          <rect x="24" y="29" width="6" height="6" fill="#06070b"/>
+          <rect x="24" y="43" width="6" height="6" fill="#06070b"/>
+          <rect x="24" y="57" width="6" height="6" fill="#06070b"/>
+        </svg>
+      </div>
+      <div class="row">
+        <div class="sub">
+          <svg width="26" height="26" viewBox="0 0 96 96" fill="none"><rect x="8" y="8" width="80" height="80" rx="4" stroke="#3a4152" stroke-width="6"/><rect x="22" y="18" width="12" height="60" fill="#00E5FF"/><rect x="40" y="18" width="28" height="10" fill="#E6EAF2"/><rect x="40" y="41" width="24" height="10" fill="#E6EAF2"/><rect x="40" y="68" width="28" height="10" fill="#E6EAF2"/></svg>
+          <span class="wm">EMU<span style="color:#00E5FF">CTRL</span></span>
+        </div>
+        <div class="sub" style="flex:none;flex-direction:column;align-items:center;gap:5px">
+          <svg width="16" height="16" viewBox="0 0 96 96" fill="none"><rect x="6" y="6" width="84" height="84" rx="3" stroke="#3a4152" stroke-width="9"/><rect x="24" y="18" width="14" height="60" fill="#00E5FF"/><rect x="44" y="18" width="26" height="12" fill="#E6EAF2"/><rect x="44" y="40" width="22" height="12" fill="#E6EAF2"/><rect x="44" y="66" width="26" height="12" fill="#E6EAF2"/></svg>
+          <span class="lbl">16PX</span>
+        </div>
+      </div>
+      <div class="cap">The stem becomes the cyan rail with its three key notches punched out, and the arms detach into floating bars. The letter and the interface are the same object — this is the version that earns its geometry rather than borrowing it. Slight risk of reading as a list icon at small sizes.</div>
+    </div>
+
+    <div class="dv-opt" id="2d">
+      <div class="dv-olabel"><a class="dv-oid" href="#2d">2d</a>Tap-point E</div>
+      <div class="tile">
+        <svg width="96" height="96" viewBox="0 0 96 96" fill="none">
+          <rect x="8" y="8" width="80" height="80" rx="4" stroke="#3a4152" stroke-width="3"/>
+          <rect x="26" y="18" width="8" height="60" fill="#E6EAF2"/>
+          <rect x="26" y="18" width="32" height="8" fill="#E6EAF2"/>
+          <rect x="26" y="42" width="18" height="8" fill="#E6EAF2"/>
+          <rect x="26" y="70" width="32" height="8" fill="#E6EAF2"/>
+          <circle cx="56" cy="46" r="8" fill="#00E5FF"/>
+          <path d="M68 36a13 13 0 010 20M76 29a22 22 0 010 34" stroke="#00E5FF" stroke-width="2.5" opacity=".6" fill="none"/>
+        </svg>
+      </div>
+      <div class="row">
+        <div class="sub">
+          <svg width="26" height="26" viewBox="0 0 96 96" fill="none"><rect x="8" y="8" width="80" height="80" rx="4" stroke="#3a4152" stroke-width="6"/><rect x="26" y="18" width="10" height="60" fill="#E6EAF2"/><rect x="26" y="18" width="32" height="10" fill="#E6EAF2"/><rect x="26" y="41" width="16" height="10" fill="#E6EAF2"/><rect x="26" y="68" width="32" height="10" fill="#E6EAF2"/><circle cx="58" cy="46" r="10" fill="#00E5FF"/></svg>
+          <span class="wm">EMU<span style="color:#00E5FF">CTRL</span></span>
+        </div>
+        <div class="sub" style="flex:none;flex-direction:column;align-items:center;gap:5px">
+          <svg width="16" height="16" viewBox="0 0 96 96" fill="none"><rect x="6" y="6" width="84" height="84" rx="3" stroke="#3a4152" stroke-width="9"/><rect x="28" y="18" width="12" height="60" fill="#E6EAF2"/><rect x="28" y="18" width="34" height="12" fill="#E6EAF2"/><rect x="28" y="40" width="18" height="12" fill="#E6EAF2"/><rect x="28" y="66" width="34" height="12" fill="#E6EAF2"/><circle cx="66" cy="46" r="11" fill="#00E5FF"/></svg>
+          <span class="lbl">16PX</span>
+        </div>
+      </div>
+      <div class="cap">The middle arm is cut short and a cyan tap-point completes it, with the ripple as two arcs radiating right instead of concentric rings — the touch reads as directional, going <i>into</i> the screen. The negative space between arm and dot is the mark's whole idea; it must stay at 8px or it collapses.</div>
+    </div>
+  </div>
+
+  <div style="display:flex;flex-wrap:wrap;gap:30px;margin-top:36px">
+    <div style="flex:1 1 320px;min-width:280px">
+      <div class="lbl" style="color:#00E5FF;margin-bottom:10px">MY PICK</div>
+      <div class="cap"><a href="#2c">2c</a>. It's the only one where the letterform is derived from the product instead of decorated with it — the cyan stem is the 68px rail, the notches are the keys, the arms are the content. <a href="#2b">2b</a> is the safer, more scalable mark and the better app icon; <a href="#2d">2d</a> tells the clearest story but is the most fragile.</div>
+    </div>
+    <div style="flex:1 1 320px;min-width:280px">
+      <div class="lbl" style="color:#00E5FF;margin-bottom:10px">STILL DRAFT</div>
+      <div class="cap">Strokes are on-grid but not yet optically corrected — the horizontal arms want roughly 0.5px less weight than the stem to look equal, and the frame's 4px radius should be redrawn as a true superellipse if this becomes an iOS icon. Say which one and I'll do that pass plus the monochrome, single-colour and tray-state cutdowns.</div>
+    </div>
+  </div>
+
+  <p class="cap" style="margin-top:26px;color:#5C6679">Try next: "finalise <a href="#2c">2c</a> with tray states" · "try <a href="#2b">2b</a> without the frame" · "make the ripple in <a href="#2d">2d</a> stronger" · "show <a href="#2c">2c</a> as the app icon and splash"</p>
+</section>
+
+<section class="dv-turn" id="t1">
+  <div class="dv-thd"><a class="dv-tid" href="#t1">1</a><span class="dv-tname">EmuCtrl · five marks</span></div>
+  <div class="cap" style="max-width:88ch">All five are built from the geometry already in the product — the letterbox frame, the 68px rail, the signal bars, the 44px target. Each tile shows the mark at 96px, the horizontal lockup, and a 16px tray render, because this thing has to survive the Windows system tray at 16×16 or it isn't the logo.</div>
+
+  <div class="dv-opts">
+
+    <div class="dv-opt" id="1a">
+      <div class="dv-olabel"><a class="dv-oid" href="#1a">1a</a>Instance stack</div>
+      <div class="tile">
+        <svg width="96" height="96" viewBox="0 0 96 96" fill="none">
+          <rect x="8" y="8" width="60" height="38" rx="3" stroke="#2f3550" stroke-width="3"/>
+          <rect x="18" y="24" width="60" height="38" rx="3" stroke="#5C6679" stroke-width="3" fill="#0d0f16"/>
+          <rect x="28" y="42" width="60" height="38" rx="3" stroke="#00E5FF" stroke-width="3" fill="#0d0f16"/>
+          <rect x="52" y="57" width="12" height="9" fill="#00E5FF"/>
+        </svg>
+      </div>
+      <div class="row">
+        <div class="sub">
+          <svg width="26" height="26" viewBox="0 0 96 96" fill="none"><rect x="8" y="8" width="60" height="38" rx="3" stroke="#2f3550" stroke-width="5"/><rect x="18" y="24" width="60" height="38" rx="3" stroke="#5C6679" stroke-width="5" fill="#0d0f16"/><rect x="28" y="42" width="60" height="38" rx="3" stroke="#00E5FF" stroke-width="5" fill="#0d0f16"/></svg>
+          <span class="wm">EMU<span style="color:#00E5FF">CTRL</span></span>
+        </div>
+        <div class="sub" style="flex:none;flex-direction:column;align-items:center;gap:5px">
+          <svg width="16" height="16" viewBox="0 0 96 96" fill="none"><rect x="14" y="20" width="54" height="34" rx="2" stroke="#5C6679" stroke-width="9"/><rect x="30" y="44" width="54" height="34" rx="2" stroke="#00E5FF" stroke-width="9" fill="#0d0f16"/></svg>
+          <span class="lbl">16PX</span>
+        </div>
+      </div>
+      <div class="cap">Three offset 16:9 frames — the one thing no competitor has: <i>many</i> instances, not one screen. Only the front frame is lit, which is literally how the dashboard reads (one live, the rest idle). At 16px it degrades to two frames and still holds.</div>
+    </div>
+
+    <div class="dv-opt" id="1b">
+      <div class="dv-olabel"><a class="dv-oid" href="#1b">1b</a>Rail glyph</div>
+      <div class="tile">
+        <svg width="96" height="96" viewBox="0 0 96 96" fill="none">
+          <rect x="6" y="18" width="84" height="60" rx="3" stroke="#5C6679" stroke-width="3"/>
+          <rect x="70" y="21" width="17" height="54" fill="#00E5FF"/>
+          <rect x="76" y="31" width="5" height="5" fill="#06070b"/>
+          <rect x="76" y="46" width="5" height="5" fill="#06070b"/>
+          <rect x="76" y="61" width="5" height="5" fill="#06070b"/>
+          <path d="M20 40h34M20 48h24M20 56h30" stroke="#2f3550" stroke-width="3"/>
+        </svg>
+      </div>
+      <div class="row">
+        <div class="sub">
+          <svg width="30" height="24" viewBox="0 0 96 96" fill="none"><rect x="6" y="18" width="84" height="60" rx="3" stroke="#5C6679" stroke-width="6"/><rect x="70" y="21" width="17" height="54" fill="#00E5FF"/></svg>
+          <span class="wm">EMU<span style="color:#00E5FF">CTRL</span></span>
+        </div>
+        <div class="sub" style="flex:none;flex-direction:column;align-items:center;gap:5px">
+          <svg width="16" height="16" viewBox="0 0 96 96" fill="none"><rect x="8" y="22" width="80" height="52" rx="2" stroke="#5C6679" stroke-width="10"/><rect x="64" y="26" width="20" height="44" fill="#00E5FF"/></svg>
+          <span class="lbl">16PX</span>
+        </div>
+      </div>
+      <div class="cap">The product's own silhouette: a landscape screen with the cyan rail on its right edge. The most literal and the most ownable — once you've used the app the mark <i>is</i> the app. Weakest at tiny sizes, where it can read as a generic screen.</div>
+    </div>
+
+    <div class="dv-opt" id="1c">
+      <div class="dv-olabel"><a class="dv-oid" href="#1c">1c</a>Signal bars + play</div>
+      <div class="tile">
+        <svg width="96" height="96" viewBox="0 0 96 96" fill="none">
+          <rect x="10" y="62" width="12" height="20" fill="#00E5FF"/>
+          <rect x="28" y="50" width="12" height="32" fill="#00E5FF"/>
+          <rect x="46" y="34" width="12" height="48" fill="#00E5FF"/>
+          <path d="M68 14l24 14-24 14z" fill="#FF5722"/>
+          <rect x="64" y="62" width="12" height="20" fill="#2f3550"/>
+          <rect x="82" y="50" width="12" height="32" fill="#2f3550"/>
+        </svg>
+      </div>
+      <div class="row">
+        <div class="sub">
+          <svg width="28" height="24" viewBox="0 0 96 96" fill="none"><rect x="10" y="62" width="14" height="20" fill="#00E5FF"/><rect x="32" y="48" width="14" height="34" fill="#00E5FF"/><rect x="54" y="32" width="14" height="50" fill="#00E5FF"/><path d="M72 18l20 12-20 12z" fill="#FF5722"/></svg>
+          <span class="wm">EMU<span style="color:#00E5FF">CTRL</span></span>
+        </div>
+        <div class="sub" style="flex:none;flex-direction:column;align-items:center;gap:5px">
+          <svg width="16" height="16" viewBox="0 0 96 96" fill="none"><rect x="10" y="58" width="18" height="26" fill="#00E5FF"/><rect x="38" y="40" width="18" height="44" fill="#00E5FF"/><rect x="66" y="20" width="18" height="64" fill="#00E5FF"/></svg>
+          <span class="lbl">16PX</span>
+        </div>
+      </div>
+      <div class="cap">Latency as identity: rising bars with a play triangle where the fourth bar should be. Doubles as the app's own status system — the tray icon can literally fill and drain with connection quality, which none of the others can do.</div>
+    </div>
+
+    <div class="dv-opt" id="1d">
+      <div class="dv-olabel"><a class="dv-oid" href="#1d">1d</a>Bracket target</div>
+      <div class="tile">
+        <svg width="96" height="96" viewBox="0 0 96 96" fill="none">
+          <path d="M30 12H12v18M66 12h18v18M30 84H12V66M66 84h18V66" stroke="#00E5FF" stroke-width="4" stroke-linecap="square"/>
+          <rect x="36" y="36" width="24" height="24" fill="#FF5722"/>
+          <path d="M48 0v8M48 88v8M0 48h8M88 48h8" stroke="#2f3550" stroke-width="3"/>
+        </svg>
+      </div>
+      <div class="row">
+        <div class="sub">
+          <svg width="26" height="26" viewBox="0 0 96 96" fill="none"><path d="M30 12H12v18M66 12h18v18M30 84H12V66M66 84h18V66" stroke="#00E5FF" stroke-width="7" stroke-linecap="square"/><rect x="38" y="38" width="20" height="20" fill="#FF5722"/></svg>
+          <span class="wm">EMU<span style="color:#00E5FF">CTRL</span></span>
+        </div>
+        <div class="sub" style="flex:none;flex-direction:column;align-items:center;gap:5px">
+          <svg width="16" height="16" viewBox="0 0 96 96" fill="none"><path d="M32 10H10v22M64 10h22v22M32 86H10V64M64 86h22V64" stroke="#00E5FF" stroke-width="12" stroke-linecap="square"/><rect x="40" y="40" width="16" height="16" fill="#FF5722"/></svg>
+          <span class="lbl">16PX</span>
+        </div>
+      </div>
+      <div class="cap">Four corner brackets around a tangerine core — the same furniture <a href="#1c">1c</a>'s cousin uses in the Overdrive stream option. Most "cyber-tactical" of the set and by far the strongest at 16px. Risk: crop marks and reticles are common in gaming tools.</div>
+    </div>
+
+    <div class="dv-opt" id="1e">
+      <div class="dv-olabel"><a class="dv-oid" href="#1e">1e</a>Touch-through monogram</div>
+      <div class="tile">
+        <svg width="96" height="96" viewBox="0 0 96 96" fill="none">
+          <rect x="10" y="10" width="76" height="76" rx="4" stroke="#5C6679" stroke-width="3"/>
+          <path d="M32 30v36M32 30h20M32 48h16M32 66h20" stroke="#E6EAF2" stroke-width="4" stroke-linecap="square"/>
+          <circle cx="66" cy="48" r="9" fill="#00E5FF"/>
+          <circle cx="66" cy="48" r="17" stroke="#00E5FF" stroke-width="2.5" opacity=".55"/>
+          <circle cx="66" cy="48" r="25" stroke="#00E5FF" stroke-width="2" opacity=".22"/>
+        </svg>
+      </div>
+      <div class="row">
+        <div class="sub">
+          <svg width="26" height="26" viewBox="0 0 96 96" fill="none"><rect x="10" y="10" width="76" height="76" rx="4" stroke="#5C6679" stroke-width="6"/><path d="M32 30v36M32 30h20M32 48h16M32 66h20" stroke="#E6EAF2" stroke-width="7" stroke-linecap="square"/><circle cx="66" cy="48" r="10" fill="#00E5FF"/></svg>
+          <span class="wm">EMU<span style="color:#00E5FF">CTRL</span></span>
+        </div>
+        <div class="sub" style="flex:none;flex-direction:column;align-items:center;gap:5px">
+          <svg width="16" height="16" viewBox="0 0 96 96" fill="none"><rect x="6" y="6" width="84" height="84" rx="3" stroke="#5C6679" stroke-width="9"/><path d="M34 28v40M34 28h20M34 48h16M34 68h20" stroke="#E6EAF2" stroke-width="10" stroke-linecap="square"/><circle cx="68" cy="48" r="11" fill="#00E5FF"/></svg>
+          <span class="lbl">16PX</span>
+        </div>
+      </div>
+      <div class="cap">An <b style="color:#E6EAF2">E</b> inside a screen with a touch ripple landing beside it — the whole proposition in one glyph: your finger, their screen. Most explanatory, most detail-dependent; the outer ripple has to drop below 24px.</div>
+    </div>
+  </div>
+
+  <div style="display:flex;flex-wrap:wrap;gap:30px;margin-top:36px">
+    <div style="flex:1 1 320px;min-width:280px">
+      <div class="lbl" style="color:#00E5FF;margin-bottom:10px">MY PICK</div>
+      <div class="cap"><a href="#1a">1a</a> as the mark, <a href="#1c">1c</a> as the tray/status icon. The stack says multi-instance, which is the actual differentiator and the thing the dashboard is built around; the signal bars are a poor logo but a perfect live status glyph, and running them as a second, functional mark means the tray can report link quality without inventing a third visual language. <a href="#1d">1d</a> is the safe choice if you want maximum gaming-tool legibility — just accept it looks like six other tools.</div>
+    </div>
+    <div style="flex:1 1 320px;min-width:280px">
+      <div class="lbl" style="color:#00E5FF;margin-bottom:10px">IF WE GO FURTHER</div>
+      <div class="cap">These are geometric drafts, not final artwork — stroke weights are eyeballed, not optically corrected, and the wordmark is Space Grotesk out of the box rather than a drawn lockup. Next pass would be: pick one, then rebuild it on a real grid with corrected stroke joins, a stacked lockup, monochrome and single-colour cutdowns, an app-icon safe area, and the Windows tray states (running / idle / degraded / disconnected).</div>
+    </div>
+  </div>
+
+  <p class="cap" style="margin-top:26px;color:#5C6679">Try next: "refine <a href="#1a">1a</a> and give me the tray states" · "combine <a href="#1a">1a</a>'s stack with <a href="#1d">1d</a>'s brackets" · "try a wordmark-only direction" · "put the winner into the app screens"</p>
+</section>
+]]>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{}"></script>
+</body>
+</html>

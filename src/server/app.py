@@ -1,44 +1,162 @@
 import asyncio
 import io
 import logging
+import ipaddress
 import os
+import re
 import struct
 import subprocess
-import time
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from typing import Literal
+from starlette.requests import HTTPConnection
+from starlette.routing import Match
 
-from config import CLIENT_DIR, COOKIE_SECURE, QUALITY_MAP, WHEP_PORT, STUN_PORT, TIER_ORDER, VPS_SIGNALING_URL
-from server.stream import CaptureState, FrameQueue, mjpeg_generator
+from config import WEB_BUILD_DIR, STUN_PORT, TIER_ORDER
 from server import adb_manager
-from server import auth
-from server.ice_config import get_ice_servers
 from server.instance_manager import InstanceManager
-from server.http_tunnel import run_tunnel_with_reconnect
-from server.signaling_bridge import run_bridge_with_reconnect
+from server.network_gate import is_allowed_peer, is_loopback_peer
+from server.pairing import PairingStore, bearer_token
 from server.tailscale import get_best_ip
 
 log = logging.getLogger(__name__)
 
-_bridge_task: "asyncio.Task | None" = None
-_tunnel_task: "asyncio.Task | None" = None
+# Routes an unpaired device may load: the pairing API and the static app
+# shell that renders the pairing screen. Each is build output with no user
+# data; the protected data lives behind the JSON API routes, which stay
+# gated.
+_PAIRING_EXEMPT_PATHS = {
+    "/", "/pair", "/pair/status", "/stream",
+    "/index.txt", "/pair.txt", "/stream.txt", "/instances.txt", "/account.txt",
+    "/manifest.json", "/icon-192.png", "/icon-512.png", "/favicon.ico", "/404.html",
+}
 
-# Routes reachable without a session cookie even when AUTH_TOKEN is set —
-# just enough to load the login gate and let it authenticate.
-_AUTH_EXEMPT_PATHS = {"/", "/login"}
+# apps/web's static export emits one `<route>.txt` file per route. Only
+# flat, alphanumeric names exist; the route below refuses anything else so a
+# crafted name can never escape WEB_BUILD_DIR through os.path.join (on
+# Windows a backslash is a separator too, and `{page}`'s default converter
+# allows it).
+_RSC_PAYLOAD_NAME = re.compile(r"[A-Za-z0-9_-]+")
 
 
-def _is_localhost(host: str | None) -> bool:
-    return host in ("127.0.0.1", "::1")
+def _prefers_html(request: HTTPConnection) -> bool:
+    """True when the caller is a browser doing a top-level navigation.
+
+    Browsers send `Accept: text/html,...` for document navigations;
+    packages/core's API client and apps/mobile use plain `fetch()` with no
+    Accept header at all (default `*/*`), so this cleanly separates "load
+    the page" from "give me the JSON list" on the one path that must do
+    both. Used by BOTH the access gate and GET /instances, deliberately the
+    same single predicate on the same request — if the two ever disagreed,
+    an unpaired request could be waved past the gate and then answered with
+    real instance data.
+    """
+    return "text/html" in request.headers.get("accept", "")
+
+
+def _is_pairing_exempt(scope) -> bool:
+    path = scope["path"]
+    if path in _PAIRING_EXEMPT_PATHS or path.startswith("/_next/"):
+        return True
+    # Browser navigation shells have no user data, while API-shaped requests
+    # on the shared paths remain protected.
+    return (
+        scope["method"] == "GET"
+        and path in {"/instances", "/account"}
+        and _prefers_html(HTTPConnection(scope))
+    )
+
+
+def _request_token(request: HTTPConnection) -> str | None:
+    return bearer_token(request.headers.get("authorization")) or request.query_params.get("token")
+
+
+_LOCAL_HOST_NAMES = frozenset({"127.0.0.1", "localhost", "[::1]"})
+_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+
+def _host_name(host_header: str | None) -> str | None:
+    """Lower-cased hostname of a Host header value, without the port."""
+    if not host_header:
+        return None
+    value = host_header.strip().lower()
+    if value.startswith("["):
+        end = value.find("]")
+        return value[: end + 1] if end != -1 else None
+    return value.split(":", 1)[0]
+
+
+def is_trusted_loopback(peer: str | None, headers, method: str = "GET") -> bool:
+    """Whether a request comes from the owner's own machine, not a rebinding page.
+
+    A loopback peer alone is not enough: a page that DNS-rebinds its own name
+    to 127.0.0.1 also arrives from loopback, but carries its own Host. And a
+    cross-site browser POST to 127.0.0.1 carries `Sec-Fetch-Site: cross-site`.
+    """
+    if not is_loopback_peer(peer):
+        return False
+    if _host_name(headers.get("host")) not in _LOCAL_HOST_NAMES:
+        return False
+    if method.upper() not in _SAFE_METHODS and headers.get("sec-fetch-site", "").lower() == "cross-site":
+        return False
+    return True
+
+
+class AccessGate:
+    """Network allowlist, then device pairing.
+
+    Pure ASGI rather than `@app.middleware("http")` so WebSocket scopes are
+    covered too: an HTTP-only middleware would let a future WebSocket route
+    bypass both checks.
+    """
+
+    def __init__(self, app, pairing: PairingStore):
+        self.app = app
+        self.pairing = pairing
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] not in ("http", "websocket"):
+            await self.app(scope, receive, send)
+            return
+        client = scope.get("client")
+        host = client[0] if client else None
+        if not is_allowed_peer(host):
+            await self._reject(scope, receive, send, 403, "Forbidden")
+            return
+        connection = HTTPConnection(scope)
+        method = scope.get("method", "GET")
+        if not is_trusted_loopback(host, connection.headers, method) and self._needs_token(scope):
+            if not self.pairing.is_valid_token(_request_token(connection)):
+                await self._reject(scope, receive, send, 401, "Not paired")
+                return
+        await self.app(scope, receive, send)
+
+    def _needs_token(self, scope) -> bool:
+        if scope["type"] == "websocket":
+            return True
+        if _is_pairing_exempt(scope):
+            return False
+        # Only gate paths that resolve to a registered route, so an unknown
+        # path still falls through to the router's normal 404.
+        return any(
+            route.matches(scope)[0] != Match.NONE
+            for route in scope["app"].router.routes
+        )
+
+    async def _reject(self, scope, receive, send, status: int, detail: str):
+        if scope["type"] == "websocket":
+            await send({"type": "websocket.close", "code": 1008})
+            return
+        headers = {"WWW-Authenticate": "Bearer"} if status == 401 else None
+        response = JSONResponse({"detail": detail}, status_code=status, headers=headers)
+        await response(scope, receive, send)
 
 
 def _log(msg: str):
-    for _p in [r"C:\ProgramData\WindowControl", r"C:\Windows\Temp"]:
+    for _p in [r"C:\ProgramData\EmuCtrl", r"C:\Windows\Temp"]:
         try:
             os.makedirs(_p, exist_ok=True)
             with open(os.path.join(_p, "service_crash.log"), "a") as f:
@@ -52,16 +170,8 @@ class SelectRequest(BaseModel):
     id: str  # "adb:SERIAL"
 
 
-class QualityRequest(BaseModel):
-    quality: Literal["low", "medium", "high"]
-
-
 class QualityTierRequest(BaseModel):
     tier: str
-
-
-class LoginRequest(BaseModel):
-    token: str
 
 
 def _make_exception_handler(default_handler):
@@ -76,30 +186,6 @@ def _make_exception_handler(default_handler):
         else:
             loop.default_exception_handler(context)
     return handler
-
-
-_JS_KEY_TO_KEYCODE = {
-    "Return":    66,
-    "BackSpace": 67,
-    "Tab":       61,
-    "Escape":    111,
-    "Delete":    112,
-    "ArrowLeft": 21,
-    "ArrowUp":   19,
-    "ArrowRight": 22,
-    "ArrowDown": 20,
-    " ":         62,
-    "Space":     62,
-    "Back":      4,
-    "Home":      3,
-    "Menu":      82,
-}
-
-
-def _dispatch_key_control(ctrl, key: str):
-    kc = _JS_KEY_TO_KEYCODE.get(key)
-    if kc:
-        ctrl.send_keycode(kc)
 
 
 def _decode_raw_screencap(raw: bytes):
@@ -145,11 +231,17 @@ async def _capture_preview(serial: str) -> Response:
 
     Both the adb subprocess (up to ~5s) and the PIL encode run off the
     event loop so a preview fetch never freezes concurrent requests --
-    including the /input WebSocket, which would otherwise stall taps while
-    a thumbnail loads.
+    including concurrent selection and preview requests.
     """
     import asyncio as _asyncio
+    import urllib.parse
     from PIL import Image
+
+    serial = urllib.parse.unquote(serial)
+    if serial.startswith("adb:"):
+        serial = serial[4:]
+    if not serial:
+        raise HTTPException(status_code=400, detail="Serial required")
 
     adb = adb_manager._find_adb()
     if not adb:
@@ -186,195 +278,223 @@ async def _capture_preview(serial: str) -> Response:
     return Response(content=data, media_type="image/jpeg")
 
 
-def _restart_bridge_task(instance_name: str) -> None:
-    """(Re)start the public signaling bridge for the newly-selected instance.
 
-    Cancels any bridge task already running for a previously-selected
-    instance, then starts a fresh one for `instance_name` if a public
-    signaling VPS is configured. No-ops (leaving `_bridge_task` as None)
-    when VPS_SIGNALING_URL is unset.
+
+def _format_host(host: str) -> str:
+    if host.startswith("[") and host.endswith("]"):
+        return host
+    return host if ":" not in host else f"[{host}]"
+
+
+def _advertised_host(request: Request) -> str:
+    """Address to hand a client for its stream.
+
+    A LAN phone without Tailscale cannot reach the Tailscale address, so use
+    the local address the request actually arrived on. Loopback peers (the
+    PC itself) and unusable server addresses keep the best-IP behaviour.
     """
-    global _bridge_task
-    if _bridge_task is not None and not _bridge_task.done():
-        log.info("bridge: cancelling existing task for switch to %s", instance_name)
-        _bridge_task.cancel()
-    if VPS_SIGNALING_URL:
-        log.info("bridge: starting task for %s", instance_name)
-        _bridge_task = asyncio.create_task(
-            run_bridge_with_reconnect(instance_name, VPS_SIGNALING_URL, WHEP_PORT)
-        )
-    else:
-        _bridge_task = None
+    fallback = get_best_ip() or (request.client.host if request.client else "127.0.0.1")
+    peer = request.client.host if request.client else None
+    server = request.scope.get("server")
+    if is_loopback_peer(peer) or not server:
+        return fallback
+    try:
+        address = ipaddress.ip_address(str(server[0]).split("%", 1)[0])
+    except ValueError:
+        return fallback
+    if address.is_unspecified or address.is_loopback:
+        return fallback
+    return str(address)
 
 
-def create_app(state: CaptureState, frame_queue: FrameQueue,
-               instance_manager: InstanceManager) -> FastAPI:
+def _selection_ice_servers(host: str) -> list[dict]:
+    return [{"urls": f"stun:{_format_host(host)}:{STUN_PORT}"}]
+
+
+class PairRequest(BaseModel):
+    code: str
+    device_name: str = ""
+
+
+def create_app(instance_manager: InstanceManager,
+               pairing: PairingStore | None = None) -> FastAPI:
     import asyncio
-    from config import PUBLIC_UI_URL, TUNNEL_SECRET
-    if PUBLIC_UI_URL and not auth.auth_enabled():
-        raise RuntimeError("PUBLIC_UI_URL requires AUTH_TOKEN to be set")
-    if PUBLIC_UI_URL and not TUNNEL_SECRET:
-        raise RuntimeError("PUBLIC_UI_URL requires TUNNEL_SECRET to be set")
-    app = FastAPI()
-
-    @app.middleware("http")
-    async def _auth_gate(request: Request, call_next):
-        if request.url.path.startswith("/internal/"):
-            if not _is_localhost(request.client.host if request.client else None):
-                return JSONResponse({"detail": "Not found"}, status_code=404)
-            return await call_next(request)
-        if auth.auth_enabled() and request.url.path not in _AUTH_EXEMPT_PATHS \
-                and not request.url.path.startswith("/static/"):
-            if not auth.verify_session_cookie(request.cookies.get(auth.COOKIE_NAME)):
-                return JSONResponse({"detail": "Not authenticated"}, status_code=401)
-        return await call_next(request)
-
-    @app.post("/login")
-    async def login(req: LoginRequest, response: Response):
-        if not auth.check_token(req.token):
-            raise HTTPException(status_code=401, detail="Invalid token")
-        response.set_cookie(
-            auth.COOKIE_NAME, auth.make_session_cookie(),
-            max_age=auth.SESSION_MAX_AGE_SECONDS, httponly=True, samesite="lax",
-            secure=COOKIE_SECURE,
-        )
-        return {"ok": True}
+    if pairing is None:
+        pairing = PairingStore()
+    # No generated docs/schema routes: nothing here needs them.
+    app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+    app.add_middleware(AccessGate, pairing=pairing)
 
     @app.on_event("startup")
     async def _startup():
         loop = asyncio.get_event_loop()
         loop.set_exception_handler(_make_exception_handler(loop.get_exception_handler()))
+
         # Discover LDPlayer instances on startup
         import threading
         threading.Thread(target=instance_manager.refresh, daemon=True).start()
 
-        global _tunnel_task
-        if PUBLIC_UI_URL:
-            log.info("tunnel: starting task for %s", PUBLIC_UI_URL)
-            _tunnel_task = asyncio.create_task(
-                run_tunnel_with_reconnect(PUBLIC_UI_URL, TUNNEL_SECRET))
-
-    @app.on_event("shutdown")
-    async def _shutdown():
-        # The public signaling bridge task (if any) is otherwise left
-        # dangling on app shutdown -- only the switch case (cancel-then-
-        # restart in _restart_bridge_task) tore it down before.
-        global _bridge_task
-        if _bridge_task is not None and not _bridge_task.done():
-            log.info("bridge: cancelling task on shutdown")
-            _bridge_task.cancel()
-            try:
-                await _bridge_task
-            except asyncio.CancelledError:
-                pass
-
-        global _tunnel_task
-        if _tunnel_task is not None and not _tunnel_task.done():
-            log.info("tunnel: cancelling task on shutdown")
-            _tunnel_task.cancel()
-            try:
-                await _tunnel_task
-            except asyncio.CancelledError:
-                pass
-
     # ── Static / index ───────────────────────────────────────────────────────
+    # apps/web (Next.js, output: "export") replaces the old hand-rolled
+    # src/client single-page app. Its build emits one static HTML file per
+    # route (index/pair/instances/account/stream) plus content-hashed
+    # `_next/static/**` chunk filenames -- e.g. `main-app-<hash>.js` -- so
+    # the old ?v=<VERSION> query-string cache-busting rewrite (which existed
+    # solely because the previous client's app.js/style.css URLs never
+    # changed on their own) is redundant here and has been removed: a
+    # content change always changes the hash, which already forces a fresh
+    # fetch. Confirmed by inspecting a real `npm run build -w apps/web`
+    # output's index.html rather than assumed.
+    #
+    # `/instances` is served by BOTH the page shell and the JSON API, on
+    # the one path, split by content negotiation (see get_instances) --
+    # the JSON contract packages/core and apps/mobile call stays exactly
+    # as it was, while a browser navigating there gets the app shell
+    # instead of a page of raw JSON.
 
-    @app.get("/")
-    async def index():
-        html_path = os.path.join(CLIENT_DIR, "index.html")
+    def _serve_web_page(filename: str) -> HTMLResponse:
+        html_path = os.path.join(WEB_BUILD_DIR, filename)
         if os.path.exists(html_path):
             html = Path(html_path).read_text()
-            # Cache-bust the static asset URLs with the app version. The installed
-            # iOS PWA caches /static/*.js hard and has no service worker to purge,
-            # so after a client change it kept running the old app.js (which hit
-            # the removed /active/whep) → white screen. Appending ?v=<version>
-            # makes the URL change whenever we ship, forcing a fresh fetch.
-            from config import VERSION
-            html = html.replace('.js"', f'.js?v={VERSION}"')
-            html = html.replace('.css"', f'.css?v={VERSION}"')
             return HTMLResponse(
                 html,
                 headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
             )
         return HTMLResponse("<h1>Client not found</h1>", status_code=500)
 
+    def _serve_web_file(filename: str, media_type: str, headers=None) -> Response:
+        file_path = os.path.join(WEB_BUILD_DIR, filename)
+        if not os.path.isfile(file_path):
+            raise HTTPException(status_code=404, detail="Not found")
+        return Response(
+            content=Path(file_path).read_bytes(),
+            media_type=media_type,
+            headers=headers,
+        )
+
+    @app.get("/")
+    async def index():
+        return _serve_web_page("index.html")
+
+    @app.get("/pair")
+    async def pair_page():
+        return _serve_web_page("pair.html")
+
+    @app.post("/pair")
+    async def pair_device(req: PairRequest):
+        token = await asyncio.to_thread(pairing.pair, req.code, req.device_name)
+        if token is None:
+            raise HTTPException(status_code=403, detail="Invalid or expired pairing code")
+        return {"token": token}
+
+    @app.get("/pair/status")
+    async def pair_status(request: Request):
+        host = request.client.host if request.client else None
+        return {
+            "paired": is_trusted_loopback(host, request.headers, request.method)
+            or pairing.is_valid_token(_request_token(request)),
+        }
+
+    @app.get("/stream")
+    async def stream_page():
+        return _serve_web_page("stream.html")
+
+    @app.get("/account")
+    async def account_page():
+        return _serve_web_page("account.html")
+
+    @app.get("/404.html")
+    async def not_found_page():
+        return _serve_web_page("404.html")
+
+    @app.get("/manifest.json")
+    async def web_manifest():
+        # PWA installability + the standalone/status-bar behavior the old
+        # src/client/manifest.json provided; apps/web ships it from
+        # apps/web/public/, which Next copies verbatim into out/.
+        return _serve_web_file("manifest.json", "application/manifest+json")
+
+    @app.get("/icon-192.png")
+    async def web_icon():
+        return _serve_web_file("icon-192.png", "image/png")
+
+    @app.get("/icon-512.png")
+    async def web_icon_512():
+        return _serve_web_file("icon-512.png", "image/png")
+
+    @app.get("/favicon.ico")
+    async def web_favicon():
+        return _serve_web_file("favicon.ico", "image/x-icon")
+
+    @app.get("/{page}.txt")
+    async def web_rsc_payload(page: str):
+        """Serve the static export's prerendered RSC payloads.
+
+        Next 15's client-side router does not fetch the HTML on a soft
+        navigation -- for `router.replace("/instances")` (and every Link
+        click) it fetches `/instances.txt`, the build-time RSC payload, and
+        falls back to a full `window.location` page load whenever that
+        response is missing or not `ok`. Without this route every in-app
+        navigation degraded into a hard reload, which for the app's own
+        default post-login destination meant landing on the JSON API.
+
+        Content type must be `text/x-component` or `text/plain`: the
+        router accepts only those two (verified in the shipped router
+        chunk) and hard-navigates otherwise.
+        """
+        if not _RSC_PAYLOAD_NAME.fullmatch(page):
+            raise HTTPException(status_code=404, detail="Not found")
+        # Fixed filenames whose contents change every build (unlike the
+        # content-hashed /_next chunks), exactly like the HTML shells --
+        # so they get the same no-cache treatment.
+        return _serve_web_file(
+            f"{page}.txt", "text/x-component; charset=utf-8",
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+        )
+
     # ── Instance management ──────────────────────────────────────────────────
 
     @app.get("/instances")
-    async def get_instances():
+    async def get_instances(request: Request):
+        """JSON instance list, or apps/web's instance-list page shell.
+
+        One path, two consumers: packages/core's API client and
+        apps/mobile call this for the JSON list (plain fetch, no Accept
+        header), while apps/web's own `/instances` route is where the app
+        lands after login -- a browser reload or hard navigation there
+        must render the app, not a page of raw JSON. The JSON contract is
+        untouched; only an explicitly HTML-preferring request branches.
+        """
+        if _prefers_html(request):
+            return _serve_web_page("instances.html")
         return instance_manager.list_instances()
 
     @app.post("/instances/{instance_id}/select")
     async def select_instance(instance_id: str, request: Request):
-        """Switch active stream. instance_id is the ADB serial (no prefix)."""
-        # select() may start a dead scrcpy session (blocking) — offload so it
-        # never stalls the event loop / websocket input path.
-        ok = await asyncio.to_thread(instance_manager.select, instance_id)
-        if not ok:
-            raise HTTPException(status_code=404, detail="Instance not found")
-        inst = instance_manager.active
+        inst = instance_manager.get(instance_id)
         if inst is None:
-            raise HTTPException(status_code=404, detail="Instance disappeared")
+            raise HTTPException(status_code=404, detail="Instance not found")
+        host = _advertised_host(request)
+        selection = await asyncio.to_thread(instance_manager.select, instance_id, host)
+        if selection is None:
+            raise HTTPException(status_code=503, detail="Engine runtime not ready")
 
-        _restart_bridge_task(inst.name)
-
-        host = get_best_ip() or request.client.host
-        # WHEP straight to this instance's own always-live path (no 'active' mux).
-        whep_url = f"http://{host}:{WHEP_PORT}/{inst.name}/whep"
         return {
             "ok": True,
             "id": inst.id,
             "serial": inst.serial,
             "name": inst.name,
-            "w": inst.w,
-            "h": inst.h,
-            "whep_url": whep_url,
-            "stun_url": f"stun:{host}:{STUN_PORT}",
-            "signaling_url": VPS_SIGNALING_URL,
-            "ice_servers": get_ice_servers(),
+            "w": selection.width,
+            "h": selection.height,
+            "whep_url": selection.whep_url,
+            "whep_token": selection.whep_token,
+            "ice_servers": _selection_ice_servers(host),
+            "generation": selection.generation,
+            "tier": selection.tier,
         }
-
-    @app.get("/instances/{instance_id}/whep-url")
-    async def instance_whep_url(instance_id: str, request: Request):
-        """Read-only WHEP URL lookup -- unlike /select, never touches
-        instance_manager's active-instance state or the VPS signaling
-        bridge. Used by the grid's hover prewarm (windows_panel.js) to open
-        a throwaway WHEP RTCPeerConnection against a path the user hasn't
-        chosen yet, so mediamtx's runOnDemand fires (and ffmpeg boots)
-        while they're still hovering.
-        """
-        inst = instance_manager.get(instance_id)
-        if inst is None:
-            raise HTTPException(status_code=404, detail="Instance not found")
-        host = get_best_ip() or request.client.host
-        return {
-            "whep_url": f"http://{host}:{WHEP_PORT}/{inst.name}/whep",
-            "stun_url": f"stun:{host}:{STUN_PORT}",
-        }
-
-    @app.post("/internal/instances/{name}/publish/start")
-    async def internal_publish_start(name: str):
-        """mediamtx's runOnDemand hook (via publish_hook.py) calls this when
-        a WHEP client requests a path with no one publishing yet. Starts
-        just the on-demand video half -- the persistent half (control
-        socket, input) is already up from discovery, regardless of viewers.
-        """
-        ok = await asyncio.to_thread(instance_manager.start_video, name)
-        return {"ok": ok}
-
-    @app.post("/internal/instances/{name}/publish/stop")
-    async def internal_publish_stop(name: str):
-        """mediamtx's runOnUnDemand hook calls this runOnDemandCloseAfter
-        seconds after the last reader disconnects. Always returns ok:true
-        (mediamtx doesn't wait on or retry this the way it does the start
-        hook's timeout) -- an unknown/already-gone instance is a no-op in
-        InstanceManager.stop_video, not an error.
-        """
-        await asyncio.to_thread(instance_manager.stop_video, name)
-        return {"ok": True}
 
     @app.post("/instances/{instance_id}/keyframe")
-    async def request_keyframe(instance_id: str):
+    async def request_keyframe(instance_id: str, request: Request):
         """Ask an instance's encoder to emit an IDR now (switch prefetch).
 
         The list page fires this on touchstart/hover of a tile — before the user
@@ -385,19 +505,18 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
         control socket is a silent no-op (the 2s heartbeat and select()'s own
         request_idr still cover it).
         """
-        inst = instance_manager.get(instance_id)
-        if inst is not None:
-            try:
-                inst.session.control.request_idr()
-            except Exception:
-                pass
+        await asyncio.to_thread(instance_manager.request_keyframe, instance_id)
         return {"ok": True}
 
     @app.post("/instances/{instance_id}/quality")
-    async def set_instance_quality(instance_id: str, req: QualityTierRequest):
+    async def set_instance_quality(
+        instance_id: str, req: QualityTierRequest, request: Request
+    ):
         """Set stream quality tier for an instance."""
         if req.tier not in TIER_ORDER:
             raise HTTPException(status_code=400, detail="Invalid tier")
+        if instance_manager.get(instance_id) is None:
+            raise HTTPException(status_code=404, detail="Instance not found")
         # set_tier does ~1.8s of blocking scrcpy restart — offload off the loop.
         ok = await asyncio.to_thread(instance_manager.set_tier, instance_id, req.tier)
         if not ok:
@@ -405,13 +524,30 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
         return {"ok": True, "tier": req.tier}
 
     @app.get("/instances/{instance_id}/preview")
-    async def instance_preview(instance_id: str):
+    @app.get("/preview/{instance_id}")
+    async def instance_preview(instance_id: str, request: Request):
         return await _capture_preview(instance_id)
+
+    @app.get("/instances/preview")
+    @app.get("/preview")
+    async def query_preview(request: Request):
+        serial = request.query_params.get("serial") or request.query_params.get("id") or ""
+        if not serial:
+            active = instance_manager.active
+            if active:
+                serial = active.serial
+            else:
+                instances = instance_manager.list_instances()
+                if instances:
+                    serial = instances[0].get("serial", "")
+        if not serial:
+            raise HTTPException(status_code=404, detail="No instance found")
+        return await _capture_preview(serial)
 
     # ── Legacy /windows + /select (kept for backward compat) ────────────────
 
     @app.get("/windows")
-    async def get_windows():
+    async def get_windows(request: Request):
         return instance_manager.list_instances()
 
     @app.post("/select")
@@ -419,210 +555,40 @@ def create_app(state: CaptureState, frame_queue: FrameQueue,
         if not req.id.startswith("adb:"):
             raise HTTPException(status_code=400, detail="Invalid id — must be adb:SERIAL")
         serial = req.id[4:]
-        # select()/refresh() do blocking network + subprocess work — offload.
-        ok = await asyncio.to_thread(instance_manager.select, serial)
-        if not ok:
+        host = _advertised_host(request)
+        # Selection and refresh do blocking network/subprocess work — offload.
+        selection = await asyncio.to_thread(instance_manager.select, serial, host)
+        if selection is None:
             # Instance may not be discovered yet — try refresh
             await asyncio.to_thread(instance_manager.refresh)
-            ok = await asyncio.to_thread(instance_manager.select, serial)
-        if not ok:
+            selection = await asyncio.to_thread(instance_manager.select, serial, host)
+        if selection is None:
             raise HTTPException(status_code=404, detail="Instance not found")
         inst = instance_manager.active
         if inst is None:
             raise HTTPException(status_code=404, detail="Instance disappeared")
 
-        _restart_bridge_task(inst.name)
-
-        host = get_best_ip() or request.client.host
-        whep_url = f"http://{host}:{WHEP_PORT}/{inst.name}/whep"
-        return {"ok": True, "id": req.id, "name": inst.name, "w": inst.w, "h": inst.h,
-                "whep_url": whep_url,
+        return {"ok": True, "id": req.id, "name": inst.name,
+                "w": selection.width, "h": selection.height,
+                "whep_url": selection.whep_url,
                 "stun_url": f"stun:{host}:{STUN_PORT}",
-                "signaling_url": VPS_SIGNALING_URL,
-                "ice_servers": get_ice_servers()}
-
-    # ── MJPEG fallback stream ────────────────────────────────────────────────
-
-    @app.get("/stream")
-    async def stream():
-        return StreamingResponse(
-            mjpeg_generator(frame_queue, state),
-            media_type="multipart/x-mixed-replace; boundary=frame",
-        )
-
-    @app.get("/stats")
-    async def stats():
-        count = state.frames_served
-        state.frames_served = 0
-        session = state.adb_session
-        return {"frames": count, "active": session is not None}
-
-    @app.post("/reconnect")
-    async def reconnect():
-        session = state.adb_session
-        if session is None:
-            raise HTTPException(status_code=404, detail="No active session")
-        session.stop()
-        ok = session.start()
-        if not ok:
-            raise HTTPException(status_code=503, detail="Could not restart session")
-        return {"ok": True}
+                "ice_servers": _selection_ice_servers(host)}
 
     # ── Preview (legacy URL) ─────────────────────────────────────────────────
 
     @app.get("/window/{window_id}/preview")
-    async def preview(window_id: str):
+    async def preview(window_id: str, request: Request):
         return await _capture_preview(window_id)
 
-    # ── Quality ──────────────────────────────────────────────────────────────
-
-    @app.post("/quality")
-    async def set_quality(req: QualityRequest):
-        state.set_quality(QUALITY_MAP[req.quality])
-        return {"quality": req.quality}
-
-    # ── WebSocket input ──────────────────────────────────────────────────────
-
-    @app.websocket("/input")
-    async def ws_input(websocket: WebSocket):
-        if auth.auth_enabled() and not auth.verify_session_cookie(
-                websocket.cookies.get(auth.COOKIE_NAME)):
-            await websocket.close(code=1008)  # policy violation
-            return
-        await websocket.accept()
-        import asyncio as _asyncio
-        from server.scrcpy_session import ScrcpyControl
-
-        async def _ping():
-            while True:
-                await _asyncio.sleep(20)
-                try:
-                    await websocket.send_text('{"type":"ping"}')
-                except Exception:
-                    return
-        _asyncio.create_task(_ping())
-
-        drag_pos: tuple | None = None
-        drag_start_pos: tuple | None = None
-        finger_down = False  # track whether touch DOWN was sent (to pair with UP)
-        _last_idr_request = 0.0
-        try:
-            while True:
-                data = await websocket.receive_json()
-                # Latency probe: echo the client's timestamp straight back so the
-                # client can measure input-WS round-trip (client→server→client),
-                # isolating input transport latency from video-feedback latency.
-                if data.get("type") == "echo":
-                    try:
-                        await websocket.send_text(
-                            '{"type":"echo","t":' + str(data.get("t", 0)) + '}'
-                        )
-                    except Exception:
-                        pass
-                    continue
-                if data.get("type") == "idr":
-                    now = time.monotonic()
-                    if now - _last_idr_request >= 0.5:
-                        _last_idr_request = now
-                        active = instance_manager.active
-                        if active is not None:
-                            try:
-                                active.session.control.request_idr()
-                                _log(f"[input] idr requested serial={active.session.serial}")
-                            except Exception as exc:
-                                _log(f"[input] idr request failed: {exc!r}")
-                        else:
-                            _log("[input] idr requested but no active instance")
-                    continue
-                inst = instance_manager.active
-                if inst is None:
-                    finger_down = False
-                    drag_pos = None
-                    drag_start_pos = None
-                    continue
-                try:
-                    t = data.get("type")
-                    nx, ny = data.get("x", 0.5), data.get("y", 0.5)
-                    # Use session dimensions (from scrcpy handshake) — authoritative actual frame size.
-                    # Falls back to inst.w/h (from wm size) before session handshake completes.
-                    sess = inst.session
-                    w, h = sess.w, sess.h
-                    ctrl: ScrcpyControl = sess.control
-
-                    if ctrl.connected:
-                        # ── Scrcpy control socket path (low-latency) ──────────
-                        if t == "click":
-                            ctrl.send_touch(ScrcpyControl.ACTION_DOWN, nx, ny, w, h)
-                            ctrl.send_touch(ScrcpyControl.ACTION_UP, nx, ny, w, h)
-                            finger_down = False
-                        elif t == "drag_start":
-                            drag_start_pos = (nx, ny)
-                            drag_pos = (nx, ny)
-                            ctrl.send_touch(ScrcpyControl.ACTION_DOWN, nx, ny, w, h)
-                            finger_down = True
-                        elif t == "drag_move":
-                            if finger_down:
-                                ctrl.send_touch(ScrcpyControl.ACTION_MOVE, nx, ny, w, h)
-                            drag_pos = (nx, ny)
-                        elif t == "drag_end":
-                            if finger_down:
-                                ctrl.send_touch(ScrcpyControl.ACTION_UP, nx, ny, w, h)
-                                finger_down = False
-                            drag_pos = None
-                            drag_start_pos = None
-                        elif t == "scroll":
-                            # Two-finger scroll: cancel any active drag first, then swipe
-                            if finger_down:
-                                ctrl.send_touch(ScrcpyControl.ACTION_UP, nx, ny, w, h)
-                                finger_down = False
-                            dy = data.get("dy", 0)
-                            ny2 = max(0.0, min(1.0, ny + dy * 120 / h)) if h else ny
-                            ctrl.send_touch(ScrcpyControl.ACTION_DOWN, nx, ny, w, h)
-                            ctrl.send_touch(ScrcpyControl.ACTION_MOVE, nx, ny2, w, h)
-                            ctrl.send_touch(ScrcpyControl.ACTION_UP, nx, ny2, w, h)
-                        elif t == "key":
-                            _dispatch_key_control(ctrl, data["key"])
-                    else:
-                        # ── ADB shell fallback (control socket not connected) ──
-                        serial = inst.serial
-                        if t == "click":
-                            adb_manager.tap(serial, nx, ny, w, h)
-                        elif t == "drag_start":
-                            drag_start_pos = (nx, ny)
-                            drag_pos = (nx, ny)
-                        elif t == "drag_move":
-                            if data.get("scroll"):
-                                prev = drag_pos or (nx, ny)
-                                dx = abs(nx - prev[0]) * w
-                                dy = abs(ny - prev[1]) * h
-                                if dx + dy > 2:
-                                    adb_manager.swipe(serial, prev[0], prev[1], nx, ny,
-                                                      w, h, duration_ms=45)
-                            else:
-                                start = drag_start_pos or (nx, ny)
-                                adb_manager.swipe(serial, start[0], start[1], nx, ny,
-                                                  w, h, duration_ms=25)
-                            drag_pos = (nx, ny)
-                        elif t == "drag_end":
-                            if data.get("scroll"):
-                                prev = drag_pos or (nx, ny)
-                                dx = abs(nx - prev[0]) * w
-                                dy = abs(ny - prev[1]) * h
-                                if dx + dy > 2:
-                                    adb_manager.swipe(serial, prev[0], prev[1], nx, ny,
-                                                      w, h, duration_ms=45)
-                            drag_pos = None
-                            drag_start_pos = None
-                        elif t == "scroll":
-                            adb_manager.scroll(serial, nx, ny, data.get("dy", 0), w, h)
-                        elif t == "key":
-                            adb_manager.send_key(serial, data["key"])
-                except (KeyError, TypeError):
-                    pass
-        except WebSocketDisconnect:
-            pass
-
-    if os.path.isdir(CLIENT_DIR):
-        app.mount("/static", StaticFiles(directory=CLIENT_DIR), name="static")
+    # apps/web's content-hashed asset chunks (main-app-<hash>.js, etc.) --
+    # every <script src> in its exported HTML is rooted at "/_next/...",
+    # so this must be mounted at "/_next" to match, not "/static" (the old
+    # client's assets lived under a "/static" prefix by choice, not by any
+    # framework requirement). Mounted last, after every @app.get/@app.post
+    # route above and the four page routes just registered, so it can only
+    # ever catch paths none of those already claimed.
+    _next_dir = os.path.join(WEB_BUILD_DIR, "_next")
+    if os.path.isdir(_next_dir):
+        app.mount("/_next", StaticFiles(directory=_next_dir), name="web_static")
 
     return app

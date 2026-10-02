@@ -1,126 +1,128 @@
 // engine/src/main.cpp
-#include "scrcpy_video.h"
-#include "scrcpy_control.h"
-#include "signaling_client.h"
-#include "peer.h"
-#include <nlohmann/json.hpp>
-#include <iostream>
-#include <csignal>
+#include "admin_handler.h"
+#include "engine_config.h"
+#include "http_server.h"
+#include "input_router.h"
+#include "peer_registry.h"
+#include "ready_record.h"
+#include "scrcpy_source.h"
+#include "send_pacer.h"
+#include "whep_capability.h"
+#include "whep_handler.h"
 #include <atomic>
-#include <thread>
 #include <chrono>
+#include <csignal>
+#include <cstdlib>
+#include <iostream>
+#include <thread>
 
-using json = nlohmann::json;
+#if defined(_WIN32)
+#include <process.h>
+#define GetProcId() _getpid()
+#else
+#include <unistd.h>
+#define GetProcId() getpid()
+#endif
 
 std::atomic<bool> g_running{true};
-
 void OnSigint(int) { g_running = false; }
 
+namespace {
+std::string GetEnvOrEmpty(const char* name) {
+    const char* value = std::getenv(name);
+    return value ? std::string(value) : std::string();
+}
+
+class InputPeerShutdownGuard {
+public:
+    InputPeerShutdownGuard(PeerRegistry& registry, InputRouter& inputRouter)
+        : registry_(registry), inputRouter_(inputRouter) {}
+
+    ~InputPeerShutdownGuard() {
+        try {
+            Run();
+        } catch (...) {
+            // Destructor cleanup is best-effort; the explicit normal-path Run
+            // reports failures through main's exception handling.
+        }
+    }
+
+    void Run() {
+        if (complete_) return;
+        inputRouter_.ShutdownPeers(registry_);
+        complete_ = true;
+    }
+
+private:
+    PeerRegistry& registry_;
+    InputRouter& inputRouter_;
+    bool complete_ = false;
+};
+}
+
 int main(int argc, char** argv) {
-    if (argc < 5) {
-        std::cerr << "Usage: engine.exe <scrcpy_port> <signaling_ws_url> "
-                     "<session_id> <stun_turn_url>\n"
-                     "Example: engine.exe 27183 ws://VPS_IP:8443 poc-session-1 "
-                     "stun:VPS_IP:3478\n"
-                     "(scrcpy_port is the localhost port `adb forward` set up "
-                     "for a scrcpy-server started manually per this plan's "
-                     "Task 9 e2e steps — the Python control-plane wires this "
-                     "automatically starting in Phase 3.)\n";
+    if (argc < 3) {
+        std::cerr << "Usage: engine.exe <instance_name> <scrcpy_port>\n"
+                     "Environment: ENGINE_WHEP_CAPABILITY_SECRET, "
+                     "ENGINE_LOCAL_ICE_SERVERS, ENGINE_VIDEO_BIT_RATE\n";
         return 1;
     }
 
-    int scrcpyPort = std::stoi(argv[1]);
-    std::string signalingUrl = argv[2];
-    std::string sessionId = argv[3];
-    std::string stunTurnUrl = argv[4];
-
     std::signal(SIGINT, OnSigint);
 
-    // scrcpy connect-order: video first (reads dummy byte), then control
-    // (unblocks scrcpy-server's accept(), which then sends the video
-    // handshake), then read that handshake.
-    ScrcpyVideoClient video(scrcpyPort);
-    video.Connect();
-
-    ScrcpyControlClient control(scrcpyPort);
-    control.Connect();
-
-    video.ReadHandshake();
-    std::cout << "scrcpy handshake: device=" << video.DeviceName()
-              << " " << video.Width() << "x" << video.Height() << "\n" << std::flush;
-
     try {
-        std::cout << "[debug] constructing SignalingClient..." << std::endl;
-        SignalingClient signaling(signalingUrl, sessionId, "engine", /*token=*/"");
-
-        std::cout << "[debug] constructing WebRtcPeer..." << std::endl;
-        WebRtcPeer peer(signaling, {stunTurnUrl});
-
-        int screenWidth = video.Width();
-        int screenHeight = video.Height();
-        peer.SetInputCallback([&control, screenWidth, screenHeight](const std::string& jsonMsg) {
-            auto msg = json::parse(jsonMsg, nullptr, false);
-            if (msg.is_discarded()) return;
-
-            std::string type = msg.value("type", "");
-            if (type == "tap" || type == "swipe") {
-                std::string action = msg.value("action", "down");
-                uint8_t actionCode = ScrcpyControlClient::ACTION_DOWN;
-                if (action == "up") actionCode = ScrcpyControlClient::ACTION_UP;
-                else if (action == "move") actionCode = ScrcpyControlClient::ACTION_MOVE;
-
-                double nx = msg.value("nx", 0.0);
-                double ny = msg.value("ny", 0.0);
-                control.SendTouch(actionCode, nx, ny, screenWidth, screenHeight);
-            } else if (type == "key") {
-                int keycode = msg.value("keycode", 0);
-                if (keycode != 0) control.SendKeycode(keycode);
-            }
-        });
-
-        // Request a fresh IDR once the connection is actually up (not blindly at
-        // startup) so a viewer joining mid-stream doesn't wait for the next
-        // scheduled keyframe.
-        std::atomic<bool> peerConnected{false};
-        peer.SetOnConnected([&control, &peerConnected]() {
-            std::cout << "[debug] peer connected, requesting IDR" << std::endl;
-            control.RequestIdr();
-            peerConnected = true;
-        });
-
-        std::cout << "[debug] calling StartAsOfferer..." << std::endl;
-        peer.StartAsOfferer();
-        std::cout << "[debug] StartAsOfferer returned" << std::endl;
-
-        video.StartReading([&peer](const uint8_t* data, size_t size) {
-            peer.SendVideoNalu(data, size);
-        });
-
-        std::cout << "Streaming started. Press Ctrl+C to stop.\n" << std::flush;
-        // The device H264 encoder can take 20-30s to emit its first natural
-        // IDR (documented in scrcpy_session.py's build_ffmpeg_args docstring;
-        // matches Python's proven fix, ScrcpyControl.request_idr() on a ~2s
-        // heartbeat). A single on-connect request isn't enough — it's been
-        // observed ignored on some devices (same docstring, line ~125) — so
-        // keep asking until a keyframe actually arrives and frames flow.
-        auto lastIdrRequest = std::chrono::steady_clock::now();
-        while (g_running) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            if (peerConnected.load()) {
-                auto now = std::chrono::steady_clock::now();
-                if (now - lastIdrRequest >= std::chrono::seconds(2)) {
-                    control.RequestIdr();
-                    lastIdrRequest = now;
-                }
+        std::string instanceName = argv[1];
+        int scrcpyPort = std::stoi(argv[2]);
+        // Encoder bitrate of the first source; each reconnect updates it.
+        // Unset or unreadable leaves pacing off.
+        const std::string videoBitRate = GetEnvOrEmpty("ENGINE_VIDEO_BIT_RATE");
+        if (!videoBitRate.empty()) {
+            try {
+                video_target::SetBitsPerSecond(std::stod(videoBitRate));
+            } catch (const std::exception&) {
+                std::cerr << "[engine] ignoring unreadable ENGINE_VIDEO_BIT_RATE" << std::endl;
             }
         }
 
-        // Shutdown order is load-bearing: stop things in the reverse order they
-        // were started. video.Stop() must run before peer/signaling teardown so
-        // the read thread (which calls peer.SendVideoNalu) is joined first and
-        // can't race the peer's destruction; the peer/signaling then close out
-        // as WebRtcPeer's destructor runs at scope exit.
-        video.Stop();
+        PeerRegistry registry;
+        ScrcpySource source(registry);
+        source.ConnectInitial(scrcpyPort);
+
+        InputRouter inputRouter(source);
+        InputPeerShutdownGuard inputPeerShutdown(registry, inputRouter);
+
+        WhepCapabilityConfig whepAuth{GetEnvOrEmpty("ENGINE_WHEP_CAPABILITY_SECRET"), instanceName};
+        auto localIceServers = ParseCommaSeparatedList(GetEnvOrEmpty("ENGINE_LOCAL_ICE_SERVERS"));
+
+        EngineHttpServer whepServer("0.0.0.0");
+        WhepHandler whepHandler(registry, whepAuth, localIceServers, inputRouter);
+        whepHandler.RegisterRoutes(whepServer.Server());
+        whepServer.Start();
+
+        EngineHttpServer adminServer("127.0.0.1");
+        AdminHandler adminHandler(source, registry);
+        adminHandler.RegisterRoutes(adminServer.Server());
+        adminServer.Start();
+
+        auto status = source.Status();
+        std::string ready = BuildReadyRecord(
+            instanceName, GetProcId(), whepServer.Port(), adminServer.Port(),
+            status.generation, status.width, status.height);
+        std::cout << ready << std::endl;
+
+        auto lastHousekeeping = std::chrono::steady_clock::now();
+        while (g_running) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            auto now = std::chrono::steady_clock::now();
+            if (now - lastHousekeeping >= std::chrono::seconds(1)) {
+                registry.ReapDeadAndStalePeers();
+                lastHousekeeping = now;
+            }
+        }
+
+        whepServer.Stop();
+        adminServer.Stop();
+        inputPeerShutdown.Run();
         std::cout << "Stopped.\n";
         return 0;
     } catch (const std::exception& e) {

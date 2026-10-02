@@ -1,0 +1,18 @@
+{
+  "name": "emuctrl",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "apps/web",
+    "apps/mobile"
+  ],
+  "scripts": {
+    "test:core": "npm test -w packages/core",
+    "test:ui": "npm test -w packages/ui",
+    "generate:brand": "node scripts/generate-brand-assets.mjs"
+  },
+  "devDependencies": {
+    "png-to-ico": "^3.0.2",
+    "sharp": "^0.35.4"
+  }
+}

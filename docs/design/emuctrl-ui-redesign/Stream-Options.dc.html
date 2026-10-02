@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<![CDATA[<helmet data-dc-atomics>
+<meta name="design_doc_mode" content="canvas">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#06070b;font-family:'Space Grotesk',system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+a{color:#00E5FF;text-decoration:none}a:hover{color:#7df3ff}
+.dv-turn{padding:40px 44px 34px;border-bottom:1px solid #1b1f2b}
+.dv-thd{display:flex;align-items:baseline;gap:10px;margin:0 0 6px}
+.dv-tid{font:600 10px 'JetBrains Mono',monospace;padding:3px 7px;background:#00E5FF;color:#06070b;border-radius:4px;text-decoration:none}
+.dv-tname{font:600 15px/1.2 'Source Serif 4',serif;color:#E6EAF2;letter-spacing:-.015em}
+.dv-opts{display:flex;flex-wrap:wrap;gap:34px;align-items:flex-start;margin-top:26px}
+.dv-opt{flex:none;display:flex;flex-direction:column;gap:10px;scroll-margin-top:16px;width:780px;max-width:100%}
+.dv-oid{font:600 10.5px 'JetBrains Mono',monospace;padding:3px 7px;background:#13161f;color:#B7C0D0;border:1px solid #222738;border-radius:5px;text-decoration:none}
+.dv-olabel{display:flex;align-items:baseline;gap:10px;font:400 12px/1.4 'Space Grotesk',sans-serif;color:#7A8496}
+.dv-opt:target .dv-oid{background:#00E5FF;color:#06070b;border-color:#00E5FF}
+.dv-next{margin:26px 0 0;font:12.5px/1.6 'Space Grotesk',sans-serif;color:#5C6679}
+@keyframes so-pulse{0%,100%{opacity:1}50%{opacity:.32}}
+@keyframes so-scan{0%{transform:translateY(-100%)}100%{transform:translateY(1200%)}}
+@keyframes so-shimmer{0%{transform:translateX(-120%) skewX(-14deg)}100%{transform:translateX(320%) skewX(-14deg)}}
+@keyframes so-flick{0%,100%{opacity:.5}50%{opacity:.16}}
+</style>
+</helmet>
+
+<section class="dv-turn" id="t3">
+  <div class="dv-thd"><a class="dv-tid" href="#t3">3</a><span class="dv-tname">FINAL · Immersive stream screen</span></div>
+  <div style="font:12.5px/1.65 'Space Grotesk',sans-serif;color:#7A8496;max-width:92ch;text-wrap:pretty">The gutter is a fixed 68px, so <a class="dv-oid" href="#3a">3a</a> stops pretending to be a floating panel: the rail is now a squared, full-height edge — no radius, no shadow, one hairline. <b style="color:#E6EAF2;font-weight:600">Five keys, and I'd hold it there.</b> SWAP moved to its own button in the left safe zone, HUD folded into the signal head (it opens in the left gutter, above SWAP — still zero game pixels), and the head itself is now a four-bar signal meter so link quality reads at a glance without parsing a number. Opening the drawer slides the rail out of the way automatically.</div>
+
+  <div class="dv-opts">
+    <div class="dv-opt" id="3a">
+      <div class="dv-olabel"><a class="dv-oid" href="#3a">3a</a><span><b style="color:#E6EAF2;font-weight:600">Edge rail</b> — squared full-height right rail, 52px keys, left-gutter SWAP button, auto-hide on drawer.</span></div>
+      <div style="position:relative;aspect-ratio:780/360;border:10px solid #16181f;border-radius:40px;background:#000;box-shadow:0 24px 70px rgba(0,0,0,.7);overflow:hidden">
+        <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:#000">
+          <div style="position:relative;height:100%;aspect-ratio:16/9;overflow:hidden">
+            <img src="uploads/Screenshot%202026-09-06%20at%2023.35.00.png" alt="Streamed game frame" style="width:100%;height:100%;object-fit:cover;display:block">
+          </div>
+        </div>
+
+        <div onClick="{{ openDrawerF }}" style="{{ swapTriggerStyle }}" style-hover="background:rgba(0,229,255,.14);color:#00E5FF">
+          <span style="font-size:19px;line-height:1">⇅</span>
+          <span style="font:6.5px 'JetBrains Mono',monospace;letter-spacing:.1em">SWAP</span>
+          <span style="font:8px 'JetBrains Mono',monospace;color:#5C6679;margin-top:2px">05</span>
+        </div>
+
+        <sc-if value="{{ hudF }}" hint-placeholder-val="{{ false }}">
+          <div style="position:absolute;left:0;top:0;width:68px;box-sizing:border-box;padding:9px 6px;background:rgba(6,7,11,.7);border-bottom:1px solid rgba(255,255,255,.08);border-right:1px solid rgba(255,255,255,.08);backdrop-filter:blur(18px);font:8px/1.7 'JetBrains Mono',monospace;color:#5C6679;text-align:center">
+            <div style="letter-spacing:.1em">RTT</div>
+            <div style="font-size:14px;color:#10B981;line-height:1.2">{{ rtt }}</div>
+            <div style="height:1px;background:rgba(255,255,255,.08);margin:4px 0"></div>
+            <div style="color:#B7C0D0;font-size:9px">1080p<br>60 fps</div>
+            <div style="height:1px;background:rgba(255,255,255,.08);margin:4px 0"></div>
+            <div>DEC <span style="color:#10B981">4.2</span><br>JIT <span style="color:#E6EAF2">1.4</span><br>18.4M</div>
+            <div style="color:#00E5FF;letter-spacing:.08em;margin-top:3px">DIRECT</div>
+          </div>
+        </sc-if>
+
+        <div style="{{ railStyle }}">
+          <div onClick="{{ toggleHudF }}" style="width:100%;box-sizing:border-box;padding:11px 0 10px;display:flex;flex-direction:column;align-items:center;gap:4px;border-bottom:1px solid rgba(255,255,255,.1);cursor:pointer" style-hover="background:rgba(255,255,255,.05)">
+            <div style="display:flex;align-items:flex-end;gap:2px;height:19px">
+              <sc-for list="{{ signal }}" as="s" hint-placeholder-count="4">
+                <span style="{{ s.style }}"></span>
+              </sc-for>
+            </div>
+            <span style="font:7.5px 'JetBrains Mono',monospace;color:#5C6679;letter-spacing:.08em">{{ rtt }}ms</span>
+          </div>
+
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px">
+            <sc-for list="{{ rail }}" as="b" hint-placeholder-count="4">
+              <div style="{{ b.style }}" style-hover="background:rgba(0,229,255,.14);color:#00E5FF" title="{{ b.label }}">
+                <span style="font-size:17px;line-height:1">{{ b.glyph }}</span>
+                <span style="font:6.5px 'JetBrains Mono',monospace;letter-spacing:.08em;opacity:.8">{{ b.tag }}</span>
+              </div>
+            </sc-for>
+          </div>
+
+          <div style="width:100%;box-sizing:border-box;border-top:1px solid rgba(255,255,255,.1);display:flex;align-items:center;justify-content:center;height:46px;color:#7A8496;cursor:pointer" style-hover="background:rgba(255,87,34,.16);color:#FF5722" title="Back to dashboard">
+            <span style="font-size:14px">✕</span>
+          </div>
+        </div>
+
+        <sc-if value="{{ drawerF }}" hint-placeholder-val="{{ false }}">
+          <div onClick="{{ closeDrawerF }}" style="position:absolute;inset:0;z-index:20;background:rgba(6,7,11,.45);backdrop-filter:blur(2px)"></div>
+          <div style="position:absolute;left:0;right:0;bottom:0;z-index:21;padding:11px 16px 14px 68px;background:rgba(9,10,15,.78);border-top:1px solid rgba(255,255,255,.12);backdrop-filter:blur(26px)">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:9px">
+              <span style="font:9px 'JetBrains Mono',monospace;color:#5C6679;letter-spacing:.18em">HOT-SWAP · TRANSPORT STAYS UP</span>
+              <span onClick="{{ closeDrawerF }}" style="font:9px 'JetBrains Mono',monospace;color:#00E5FF;letter-spacing:.1em;cursor:pointer">CLOSE ✕</span>
+            </div>
+            <div style="display:flex;gap:9px;overflow:auto">
+              <sc-for list="{{ swaps }}" as="i" hint-placeholder-count="5">
+                <div onClick="{{ i.pick }}" style="{{ i.style }}" style-hover="border-color:#00E5FF">
+                  <div style="position:relative;aspect-ratio:16/9;background:#0b0d13;background-image:radial-gradient(#1b2030 1px,transparent 1px);background-size:5px 5px">
+                    <div style="{{ i.liveStyle }}">{{ i.liveLabel }}</div>
+                  </div>
+                  <div style="padding:6px 8px">
+                    <div style="font:600 11px 'Space Grotesk',sans-serif;color:#E6EAF2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ i.game }}</div>
+                    <div style="font:8px 'JetBrains Mono',monospace;color:#5C6679;margin-top:2px">{{ i.name }}</div>
+                  </div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </sc-if>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:7px;margin-top:2px">
+        <div onClick="{{ openDrawerF }}" style="{{ chip }}" style-hover="border-color:#00E5FF;color:#00E5FF">OPEN DRAWER (RAIL HIDES)</div>
+        <div onClick="{{ closeDrawerF }}" style="{{ chip }}" style-hover="border-color:#00E5FF;color:#00E5FF">CLOSE DRAWER</div>
+        <div onClick="{{ toggleHudF }}" style="{{ chip }}" style-hover="border-color:#00E5FF;color:#00E5FF">TAP SIGNAL = HUD</div>
+      </div>
+      <div style="font:11.5px/1.6 'Space Grotesk',sans-serif;color:#5C6679;max-width:74ch;text-wrap:pretty">Now streaming <b style="color:#E6EAF2;font-weight:600">{{ activeSwapGame }}</b>. Rail is 68px × full height, radius 0, one 1px hairline on its inner edge and no shadow — it reads as part of the device, not a card on top of the game. 52px keys with 8px gaps, centred in the thumb arc; EXIT is pinned to the bottom behind its own rule and turns tangerine on press, so it can't be hit while reaching for SET. Drawer opens → rail translates 100% out over 220ms and its hit area dies with it, so nothing sits over the carousel.</div>
+    </div>
+  </div>
+
+  <div style="display:flex;flex-wrap:wrap;gap:34px;margin-top:34px">
+    <div style="flex:1 1 300px;min-width:260px">
+      <div style="font:600 10px 'JetBrains Mono',monospace;color:#00E5FF;letter-spacing:.2em;margin-bottom:10px">WHY FIVE</div>
+      <div style="font:11.5px/1.7 'Space Grotesk',sans-serif;color:#7A8496;text-wrap:pretty">A 351px-tall rail holds five 52px keys with real 8px breathing room and still leaves the head and EXIT their own zones. Six fits only by dropping to 44px and killing the gaps — measurably worse under a moving thumb. So: KEYS · HOME · RECENT · SET in the arc, EXIT pinned bottom. SWAP left the rail because it's the most-used action and deserves the opposite thumb; HUD left because it's a glance, not a task — it hangs off the signal head. Anything new (screenshot, record, macros, clipboard) goes behind SET as a second tier, never as a sixth key.</div>
+    </div>
+    <div style="flex:1 1 300px;min-width:260px">
+      <div style="font:600 10px 'JetBrains Mono',monospace;color:#00E5FF;letter-spacing:.2em;margin-bottom:10px">SIGNAL HEAD</div>
+      <div style="font:11.5px/1.7 'Space Grotesk',sans-serif;color:#7A8496;text-wrap:pretty">Four bars, filled from RTT and loss: 4 bars mint under 25&nbsp;ms, 3 amber to 60&nbsp;ms, 2 tangerine beyond, 1 flashing on transport loss. The ms figure stays underneath for anyone who wants the number. Tapping the head opens the HUD panel, which docks flush to the rail's inner edge — squared, top-anchored, same hairline language.</div>
+    </div>
+    <div style="flex:1 1 300px;min-width:260px">
+      <div style="font:600 10px 'JetBrains Mono',monospace;color:#00E5FF;letter-spacing:.2em;margin-bottom:10px">SWAP IN THE LEFT SAFE ZONE</div>
+      <div style="font:11.5px/1.7 'Space Grotesk',sans-serif;color:#7A8496;text-wrap:pretty">68px wide, flush to the left bezel, squared to match the rail, with the instance count under the glyph. It sits entirely in the gutter — zero game pixels — and it's still reachable by the left thumb without leaving the movement stick. The vertical-swipe-to-cycle gesture stays bound to this edge, so the button is the discoverable path and the swipe is the fast one.</div>
+    </div>
+  </div>
+
+  <p class="dv-next">Locked — this is the build reference. Earlier explorations (turns 1–2) removed. Try next: "show me the second tier behind SET" · "make the rail auto-dim after a few seconds"</p>
+</section>
+
+]]>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{}">
+class Component extends DCLogic {
+  state = {
+    rtt: 16,
+    dock: { a: true, b: true, c: true, d: true, e: true },
+    hud: { a: false, b: true, c: true, d: true, e: false },
+    pf: { a: false, b: false, c: false, d: false, e: false },
+    safe: false,
+    f: { drawer: false, hud: false, inst: 3 },
+  };
+
+  RAIL = [
+    { glyph: '⌨', tag: 'KEYS', label: 'Virtual keyboard' },
+    { glyph: '⌂', tag: 'HOME', label: 'Android home' },
+    { glyph: '❐', tag: 'RECENT', label: 'Recent apps' },
+    { glyph: '⚙', tag: 'SET', label: 'Settings' },
+  ];
+
+  SWAPS = [
+    { name: 'LD-01', game: 'Genshin Impact', live: true },
+    { name: 'LD-02', game: 'Honkai: Star Rail', live: true },
+    { name: 'LD-03', game: 'Clash of Clans', live: false },
+    { name: 'LD-04', game: 'MU: Dark Swamp', live: true },
+    { name: 'LD-05', game: 'Farm Idle', live: false },
+  ];
+
+  componentDidMount() {
+    this.t = setInterval(() => this.setState({ rtt: 14 + Math.floor(Math.random() * 5) }), 1500);
+  }
+  componentWillUnmount() { clearInterval(this.t); }
+
+  flip = (group, k) => () => this.setState((s) => ({ [group]: { ...s[group], [k]: !s[group][k] } }));
+  set = (group, k, v) => this.setState((s) => ({ [group]: { ...s[group], [k]: v } }));
+  prefetch = (k) => () => {
+    this.set('pf', k, false);
+    setTimeout(() => this.set('pf', k, true), 40);
+    setTimeout(() => this.set('pf', k, false), 700);
+  };
+
+  shimmer(on) {
+    return on
+      ? 'position:absolute;top:-20%;bottom:-20%;width:24%;background:linear-gradient(90deg,transparent,rgba(255,255,255,.09),transparent);animation:so-shimmer .62s cubic-bezier(.4,0,.6,1) 1;pointer-events:none;'
+      : 'display:none;';
+  }
+
+  renderVals() {
+    const s = this.state;
+    const chip = 'font:9.5px \'JetBrains Mono\',monospace;letter-spacing:.1em;padding:7px 11px;border-radius:999px;border:1px solid #222738;background:#0d0f16;color:#7A8496;cursor:pointer;transition:border-color .15s ease,color .15s ease;';
+
+    const defs = [
+      ['⇅', 'SWAP', 'swap'], ['⌨', 'KEYS', 'keys'], ['⚙', 'SET', 'set'], ['◱', 'HUD', 'hud'], ['✕', 'EXIT', 'exit'],
+    ];
+
+    const styleA = (on) => 'width:46px;height:44px;display:flex;align-items:center;justify-content:center;font-size:14px;cursor:pointer;transition:background .15s ease;' + (on ? 'background:rgba(255,255,255,.08);color:#E6EAF2;' : 'color:rgba(230,234,242,.55);');
+    const styleB = (on) => 'width:44px;height:44px;border-radius:13px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;cursor:pointer;transition:background .15s ease,color .15s ease;' + (on ? 'background:rgba(0,229,255,.16);color:#00E5FF;' : 'color:#B7C0D0;');
+    const styleC = (on) => 'width:44px;height:44px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;cursor:pointer;border:1px solid transparent;transition:background .15s ease,color .15s ease,border-color .15s ease;clip-path:polygon(0 6px,6px 0,100% 0,100% calc(100% - 6px),calc(100% - 6px) 100%,0 100%);' + (on ? 'background:rgba(0,229,255,.18);color:#00E5FF;border-color:rgba(0,229,255,.5);' : 'color:#B7C0D0;');
+
+    const build = (key, styler) => defs.map(([glyph, tag, id]) => ({
+      glyph, tag,
+      style: styler(id === 'hud' ? s.hud[key] : false),
+      act: id === 'hud' ? this.flip('hud', key) : id === 'exit' ? this.flip('dock', key) : () => {},
+    }));
+
+    const bars = Array.from({ length: 18 }, (_, i) => {
+      const h = 5 + ((i * 7 + 11) % 17);
+      return { style: 'flex:1;height:' + h + 'px;background:' + (h > 17 ? '#edbb00' : '#10B981') + ';opacity:' + (0.45 + (i / 30)).toFixed(2) + ';' };
+    });
+
+    /* ── turn 2: 7-button dock, gutter-mounted ─────────────────────── */
+    const sysDefs = [
+      ['⇅', 'SWAP', 'swap'], ['⌨', 'KEYS', 'keys'], ['⌂', 'HOME', 'home'],
+      ['❐', 'RECENT', 'recent'], ['⚙', 'SET', 'set'], ['◱', 'HUD', 'hud'], ['✕', 'EXIT', 'exit'],
+    ];
+    const gridBtn = (on, w, h) => 'width:' + w + 'px;height:' + h + 'px;border-radius:12px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;cursor:pointer;transition:background .15s ease,color .15s ease;' + (on ? 'background:rgba(0,229,255,.18);color:#00E5FF;' : 'color:#B7C0D0;');
+    const buildSys = (key, w, h) => sysDefs.map(([glyph, tag, id]) => ({
+      glyph, tag, label: tag,
+      style: gridBtn(id === 'hud' ? s.hud[key] : false, w, h),
+      act: id === 'hud' ? this.flip('hud', key) : id === 'exit' ? this.flip('dock', key) : () => {},
+    }));
+
+    /* ── turn 3: full-height rail, five keys, signal head ──────────── */
+    const f = s.f;
+    const tier = s.rtt <= 25 ? { c: '#10B981', bars: 4, label: 'STRONG' } : s.rtt <= 60 ? { c: '#edbb00', bars: 3, label: 'FAIR' } : { c: '#FF5722', bars: 2, label: 'WEAK' };
+    const signal = [7, 11, 15, 19].map((h, i) => ({
+      style: 'width:3px;height:' + h + 'px;border-radius:1px;background:' + (i < tier.bars ? tier.c : 'rgba(230,234,242,.18)') + ';',
+    }));
+    const rail = this.RAIL.map((b, i) => ({
+      ...b,
+      style: 'width:52px;height:52px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;cursor:pointer;transition:background .15s ease,color .15s ease;color:#B7C0D0;',
+    }));
+    const swaps = this.SWAPS.map((d, i) => ({
+      ...d,
+      liveLabel: d.live ? 'LIVE' : 'IDLE',
+      liveStyle: 'position:absolute;left:5px;top:5px;font:700 7px \'JetBrains Mono\',monospace;letter-spacing:.1em;padding:2px 5px;' + (d.live ? 'background:#FF5722;color:#fff;' : 'background:rgba(6,7,11,.72);color:#7A8496;'),
+      style: 'flex:none;width:138px;overflow:hidden;background:rgba(19,22,31,.9);cursor:pointer;transition:border-color .15s ease;border:1px solid ' + (i === f.inst ? '#00E5FF' : 'rgba(255,255,255,.12)') + ';',
+      pick: () => this.setState({ f: { ...f, inst: i, drawer: false } }),
+    }));
+
+    return {
+      rtt: s.rtt, chip, bars,
+      signal, tierColor: tier.c, tierLabel: tier.label,
+      rail, swaps,
+      drawerF: f.drawer, railVisible: !f.drawer, hudF: f.hud && !f.drawer,
+      openDrawerF: () => this.setState({ f: { ...f, drawer: true } }),
+      closeDrawerF: () => this.setState({ f: { ...f, drawer: false } }),
+      toggleHudF: () => this.setState({ f: { ...f, hud: !f.hud } }),
+      railStyle: 'position:absolute;right:0;top:0;bottom:0;width:68px;box-sizing:border-box;display:flex;flex-direction:column;align-items:center;background:rgba(9,10,15,.72);border-left:1px solid rgba(255,255,255,.1);backdrop-filter:blur(20px);transition:all .22s ease;' + (f.drawer ? 'pointer-events:none;opacity:0;transform:translateX(100%);' : 'opacity:1;transform:translateX(0);'),
+      swapTriggerStyle: 'position:absolute;left:0;top:50%;transform:translateY(-50%);width:68px;box-sizing:border-box;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;padding:12px 0;background:rgba(9,10,15,.72);border:1px solid rgba(255,255,255,.1);border-left:0;cursor:pointer;transition:background .15s ease,color .15s ease;' + (f.drawer ? 'background:rgba(0,229,255,.18);color:#00E5FF;' : 'color:#B7C0D0;'),
+      activeSwapGame: this.SWAPS[f.inst].game,
+      dockD: buildSys('d', 44, 44), dockE: buildSys('e', 44, 38),
+      dockDOpen: s.dock.d, dockDClosed: !s.dock.d,
+      dockEOpen: s.dock.e, dockEClosed: !s.dock.e,
+      toggleDockD: this.flip('dock', 'd'), toggleDockE: this.flip('dock', 'e'),
+      openD: () => this.set('dock', 'd', true), openE: () => this.set('dock', 'e', true),
+      closeD: () => this.set('dock', 'd', false), closeE: () => this.set('dock', 'e', false),
+      hudD: s.hud.d, hudE: s.hud.e,
+      toggleHudD: this.flip('hud', 'd'), toggleHudE: this.flip('hud', 'e'),
+      shimmerD: this.shimmer(s.pf.d), shimmerE: this.shimmer(s.pf.e),
+      prefetchD: this.prefetch('d'), prefetchE: this.prefetch('e'),
+      safeOn: s.safe,
+      toggleSafe: () => this.setState({ safe: !s.safe }),
+      safeStyle: s.safe ? 'position:absolute;inset:0;pointer-events:none;' : 'display:none;',
+      dockA: build('a', styleA), dockB: build('b', styleB), dockC: build('c', styleC),
+      dockAOpen: s.dock.a, dockAClosed: !s.dock.a,
+      dockBOpen: s.dock.b, dockBClosed: !s.dock.b,
+      dockCOpen: s.dock.c, dockCClosed: !s.dock.c,
+      toggleDockA: this.flip('dock', 'a'), toggleDockB: this.flip('dock', 'b'), toggleDockC: this.flip('dock', 'c'),
+      openA: () => this.set('dock', 'a', true), closeB: () => this.set('dock', 'b', false),
+      openB: () => this.set('dock', 'b', true), closeC: () => this.set('dock', 'c', false),
+      openC: () => this.set('dock', 'c', true),
+      hudA: s.hud.a, hudB: s.hud.b, hudC: s.hud.c,
+      toggleHudA: this.flip('hud', 'a'), toggleHudB: this.flip('hud', 'b'), toggleHudC: this.flip('hud', 'c'),
+      shimmerA: this.shimmer(s.pf.a), shimmerB: this.shimmer(s.pf.b), shimmerC: this.shimmer(s.pf.c),
+      prefetchA: this.prefetch('a'), prefetchB: this.prefetch('b'), prefetchC: this.prefetch('c'),
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -35,9 +35,12 @@ jobs:
         run: cmake --build engine\build --config Release
         shell: pwsh
 
-      - name: Run engine_tests (excludes SignalingClient — no server available in CI)
+      - name: Run engine_tests
         run: |
-          engine\build\Release\engine_tests.exe --gtest_filter=-SignalingClient.*
+          engine\build\Release\engine_tests.exe
+          if ($LASTEXITCODE -ne 0) {
+            throw "engine_tests.exe failed with exit code $LASTEXITCODE"
+          }
         shell: pwsh
 
       - name: Stage engine.exe + runtime DLLs (flat)
@@ -86,6 +89,18 @@ jobs:
         with:
           name: engine-windows
           path: src\assets\engine
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build apps/web's static export
+        # npm is a .cmd shim: without `call`, cmd ends the script after the
+        # first one and the build line never runs.
+        run: |
+          call npm install || exit /b 1
+          call npm run build -w apps/web || exit /b 1
+        shell: cmd
 
       - name: Build EXE with PyInstaller
         run: uv run pyinstaller build/window_control.spec --distpath dist --workpath build/work --noconfirm

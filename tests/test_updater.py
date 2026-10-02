@@ -9,7 +9,7 @@ import threading
 def test_get_asset_url_returns_expected_url():
     from updater import _get_asset_url
     url = _get_asset_url("1.2.14")
-    assert url == "https://github.com/cys2best/window-control/releases/download/v1.2.14/WindowControlInstaller.exe"
+    assert url == "https://github.com/cys2best/window-control/releases/download/v1.2.14/EmuCtrlInstaller.exe"
 
 
 def _make_mock_response(content=b"fake_installer_data", content_length=None):
