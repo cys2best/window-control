@@ -7,6 +7,8 @@
 #include <atomic>
 #include <chrono>
 #include <regex>
+#include <iomanip>
+#include <sstream>
 #include <thread>
 
 using json = nlohmann::json;
@@ -190,22 +192,35 @@ TEST_F(RemotePeerHandlerTest, RemoteInputDataChannelUsesExistingRouter) {
     viewer.close();
 }
 
-TEST_F(RemotePeerHandlerTest, DeletionAndAdoptionRejectRetiredGeneration) {
+TEST_F(RemotePeerHandlerTest, DeleteDuringOutageAndAfterGenerationChange) {
     httplib::Client client("127.0.0.1", admin.Port());
+    auto local = registry.Create(PeerKind::Local, "local", {});
     auto posted = client.Post("/admin/remote-peers", kAuth, Body(GatheredOffer()).dump(), "application/json");
     ASSERT_TRUE(posted);
     ASSERT_EQ(posted->status, 201);
     auto peerId = json::parse(posted->body)["peer_id"].get<std::string>();
+    fake.Stop();
+    ASSERT_TRUE(PollUntil([&] { return source.Status().state == SourceHealthState::Disconnected; }));
+    auto outageDelete = client.Delete("/admin/remote-peers/" + peerId, kAuth);
+    ASSERT_TRUE(outageDelete);
+    EXPECT_EQ(outageDelete->status, 204);
+    EXPECT_EQ(registry.Find(peerId), nullptr);
+    auto stale = std::make_shared<PeerSession>("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", std::vector<std::string>{});
+    std::vector<std::shared_ptr<PeerSession>> retired;
+    ASSERT_TRUE(registry.AdoptPublic(stale, 0, retired));
+    peerId = stale->Id();
     FakeScrcpyServer replacement;
     replacement.Serve();
     ASSERT_TRUE(source.Reconnect(replacement.Port(), 1));
     auto deleted = client.Delete("/admin/remote-peers/" + peerId, kAuth);
     ASSERT_TRUE(deleted);
-    EXPECT_EQ(deleted->status, 409);
+    EXPECT_EQ(deleted->status, 204);
     bool ran = false;
     EXPECT_FALSE(source.WithGeneration(0, [&] { ran = true; }));
     EXPECT_FALSE(ran);
-    EXPECT_TRUE(registry.Find(peerId));
+    EXPECT_EQ(registry.Find(peerId), nullptr);
+    EXPECT_EQ(registry.Find("local"), local);
+    EXPECT_EQ(registry.LocalCount(), 1u);
     replacement.Stop();
 }
 
@@ -268,4 +283,53 @@ TEST_F(RemotePeerHandlerTest, RejectsInvalidRequestBoundsAndNonLoopbackCaller) {
     handler(external, response);
     EXPECT_EQ(response.status, 403);
     EXPECT_TRUE(registry.Snapshot().empty());
+}
+
+TEST_F(RemotePeerHandlerTest, CancelBeforeAdoptRejectsAttempt) {
+    const std::string id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    httplib::Client client("127.0.0.1", admin.Port());
+    auto deleted = client.Delete("/admin/remote-peers/" + id, kAuth);
+    ASSERT_TRUE(deleted);
+    EXPECT_EQ(deleted->status, 204);
+    auto pending = std::make_shared<PeerSession>(id, std::vector<std::string>{});
+    std::vector<std::shared_ptr<PeerSession>> retired;
+    EXPECT_FALSE(registry.AdoptPublic(pending, 0, retired));
+    EXPECT_EQ(registry.Find(id), nullptr);
+    pending->Close();
+    auto body = Body(GatheredOffer()); body["peer_id"] = id;
+    auto posted = client.Post("/admin/remote-peers", kAuth, body.dump(), "application/json");
+    ASSERT_TRUE(posted);
+    EXPECT_NE(posted->status, 201);
+    EXPECT_FALSE(registry.HasPublicPeer());
+}
+
+TEST_F(RemotePeerHandlerTest, OldDeletePreservesSuccessor) {
+    httplib::Client client("127.0.0.1", admin.Port());
+    auto a = Body(GatheredOffer()); a["peer_id"] = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    auto b = Body(GatheredOffer()); b["peer_id"] = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    auto first = client.Post("/admin/remote-peers", kAuth, a.dump(), "application/json");
+    ASSERT_TRUE(first); ASSERT_EQ(first->status, 201);
+    EXPECT_EQ(json::parse(first->body)["peer_id"], a["peer_id"]);
+    auto second = client.Post("/admin/remote-peers", kAuth, b.dump(), "application/json");
+    ASSERT_TRUE(second); ASSERT_EQ(second->status, 201);
+    EXPECT_EQ(json::parse(second->body)["peer_id"], b["peer_id"]);
+    auto deleted = client.Delete("/admin/remote-peers/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", kAuth);
+    ASSERT_TRUE(deleted); EXPECT_EQ(deleted->status, 204);
+    EXPECT_EQ(registry.Find("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), nullptr);
+    EXPECT_TRUE(registry.Find("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"));
+}
+
+TEST_F(RemotePeerHandlerTest, CancellationFenceSaturationFailsClosed) {
+    httplib::Client client("127.0.0.1", admin.Port());
+    for (int i = 0; i < 4096; ++i) {
+        std::ostringstream id; id << std::hex << std::setfill('0') << std::setw(32) << i;
+        auto result = client.Delete("/admin/remote-peers/" + id.str(), kAuth);
+        ASSERT_TRUE(result); ASSERT_EQ(result->status, 204) << i;
+    }
+    auto overflow = client.Delete("/admin/remote-peers/ffffffffffffffffffffffffffffffff", kAuth);
+    ASSERT_TRUE(overflow); EXPECT_EQ(overflow->status, 503);
+    auto pending = std::make_shared<PeerSession>(std::string(32, '0'), std::vector<std::string>{});
+    std::vector<std::shared_ptr<PeerSession>> retired;
+    EXPECT_FALSE(registry.AdoptPublic(pending, 0, retired));
+    pending->Close();
 }
