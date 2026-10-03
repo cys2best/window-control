@@ -148,3 +148,27 @@ TEST(PeerRegistry, RemoteAdoptionDefersCloseAndNeverEvictsLocalCollision) {
     replacement->Close();
     EXPECT_EQ(registry.Find("local-id"), local);
 }
+
+TEST(PeerRegistry, CancellationFenceExpiryFreesCapacityWithoutEviction) {
+    auto now = std::chrono::steady_clock::time_point{};
+    PeerRegistry registry(4, std::chrono::milliseconds(15000), [&] { return now; });
+    std::shared_ptr<PeerSession> retired;
+    for (int i = 0; i < 4096; ++i) {
+        ASSERT_TRUE(registry.CancelPublicAttempt(std::to_string(i), retired));
+        EXPECT_EQ(retired, nullptr);
+    }
+    EXPECT_FALSE(registry.CancelPublicAttempt("overflow", retired));
+    auto pending = std::make_shared<PeerSession>("0", std::vector<std::string>{});
+    std::vector<std::shared_ptr<PeerSession>> victims;
+    now += std::chrono::seconds(119);
+    EXPECT_FALSE(registry.AdoptPublic(pending, 0, victims));
+    EXPECT_FALSE(registry.CancelPublicAttempt("overflow", retired));
+    now += std::chrono::seconds(1);
+    EXPECT_TRUE(registry.CancelPublicAttempt("overflow", retired));
+    EXPECT_TRUE(registry.AdoptPublic(pending, 0, victims));
+    ASSERT_TRUE(registry.CancelPublicAttempt("0", retired));
+    EXPECT_EQ(retired, pending);
+    EXPECT_EQ(registry.Find("0"), nullptr);
+    EXPECT_NE(retired->State(), rtc::PeerConnection::State::Closed);
+    retired->Close();
+}

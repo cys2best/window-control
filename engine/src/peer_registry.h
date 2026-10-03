@@ -1,6 +1,7 @@
 #pragma once
 #include "peer_session.h"
 #include <chrono>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -15,7 +16,9 @@ class PeerRegistry {
 public:
     explicit PeerRegistry(int localCapacity = 4,
                            std::chrono::milliseconds handshakeTimeout =
-                               std::chrono::milliseconds(15000));
+                               std::chrono::milliseconds(15000),
+                           std::function<std::chrono::steady_clock::time_point()> clock =
+                               std::chrono::steady_clock::now);
 
     // Returns nullptr (caller returns 503) if kind==Local and the local
     // capacity is already full. A new Public peer always replaces and
@@ -32,6 +35,10 @@ public:
     bool AdoptPublic(const std::shared_ptr<PeerSession>& session,
                      std::uint64_t generation,
                      std::vector<std::shared_ptr<PeerSession>>& retired);
+    // Fence the exact public attempt and detach it atomically. False means
+    // cancellation could not be retained; no live fence is ever evicted.
+    bool CancelPublicAttempt(const std::string& id,
+                             std::shared_ptr<PeerSession>& retired);
     std::optional<std::uint64_t> PublicGeneration(const std::string& id) const;
     std::shared_ptr<PeerSession> RemovePublic(const std::string& id,
                                              std::uint64_t generation);
@@ -79,7 +86,11 @@ private:
         const std::string& id,
         std::vector<std::shared_ptr<PeerSession>>& victims);
 
+    void PruneCancellationFencesLocked(std::chrono::steady_clock::time_point now);
+
     mutable std::mutex mutex_;
+    std::map<std::string, std::chrono::steady_clock::time_point> canceledPublicAttempts_;
+    std::function<std::chrono::steady_clock::time_point()> clock_;
     std::map<std::string, Entry> peers_;
     int localCapacity_;
     std::chrono::milliseconds handshakeTimeout_;

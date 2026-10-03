@@ -55,15 +55,10 @@ void RemotePeerHandler::operator()(const httplib::Request& req, httplib::Respons
     if (req.method == "DELETE") {
         const auto id = req.path.substr(req.path.rfind('/') + 1);
         if (!std::regex_match(id, std::regex("[a-f0-9]{32}"))) { res.status = 404; return; }
-        const auto generation = registry_.PublicGeneration(id);
-        if (!generation) { res.status = 404; return; }
+        // Local peer ids remain outside the remote deletion surface.
+        if (registry_.Find(id) && !registry_.PublicGeneration(id)) { res.status = 404; return; }
         std::shared_ptr<PeerSession> retired;
-        bool current = source_.WithGeneration(*generation, [&] {
-            if (!ValidateWhepCapability(authConfig_, token)) { res.status = 401; return; }
-            retired = registry_.RemovePublic(id, *generation);
-            res.status = retired ? 204 : 404;
-        });
-        if (!current) res.status = 409;
+        res.status = registry_.CancelPublicAttempt(id, retired) ? 204 : 503;
         if (retired) retired->Close();
         return;
     }
@@ -72,6 +67,7 @@ void RemotePeerHandler::operator()(const httplib::Request& req, httplib::Respons
 
     std::uint64_t generation;
     std::string offer;
+    std::string id;
     int timeoutMs;
     rtc::Configuration config;
     try {
@@ -86,6 +82,13 @@ void RemotePeerHandler::operator()(const httplib::Request& req, httplib::Respons
         const auto sessionId = body["session_id"].get<std::string>();
         if (!std::regex_match(sessionId, std::regex("[A-Za-z0-9_-]{1,128}"))) {
             throw std::invalid_argument("invalid session id");
+        }
+        if (body.contains("peer_id")) {
+            if (!body["peer_id"].is_string()) throw std::invalid_argument("invalid peer id");
+            id = body["peer_id"].get<std::string>();
+            if (!std::regex_match(id, std::regex("[a-f0-9]{32}"))) {
+                throw std::invalid_argument("invalid peer id");
+            }
         }
         generation = body["generation"].get<std::uint64_t>();
         const auto timeout = body["timeout_ms"].get<std::uint64_t>();
@@ -115,7 +118,7 @@ void RemotePeerHandler::operator()(const httplib::Request& req, httplib::Respons
     std::vector<std::shared_ptr<PeerSession>> retired;
     bool adopted = false;
     try {
-        const auto id = PeerId();
+        if (id.empty()) id = PeerId();
         session = std::make_shared<PeerSession>(id, std::move(config));
         inputRouter_.AttachToPeer(*session);
         const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - Clock::now());

@@ -1,7 +1,9 @@
 #include "peer_registry.h"
+#include <utility>
 
-PeerRegistry::PeerRegistry(int localCapacity, std::chrono::milliseconds handshakeTimeout)
-    : localCapacity_(localCapacity), handshakeTimeout_(handshakeTimeout) {}
+PeerRegistry::PeerRegistry(int localCapacity, std::chrono::milliseconds handshakeTimeout,
+    std::function<std::chrono::steady_clock::time_point()> clock)
+    : clock_(std::move(clock)), localCapacity_(localCapacity), handshakeTimeout_(handshakeTimeout) {}
 
 bool PeerRegistry::CanInsertLocked(PeerKind kind, const std::string& id) const {
     if (kind != PeerKind::Local) return true;
@@ -101,6 +103,8 @@ bool PeerRegistry::AdoptPublic(
     std::vector<std::shared_ptr<PeerSession>>& retired) {
     if (!session || session->Id().empty()) return false;
     std::lock_guard<std::mutex> lock(mutex_);
+    PruneCancellationFencesLocked(clock_());
+    if (canceledPublicAttempts_.contains(session->Id())) return false;
     // An id collision must never evict a local peer.
     if (peers_.contains(session->Id())) return false;
     EvictConflictsLocked(PeerKind::Public, session->Id(), retired);
@@ -202,4 +206,27 @@ bool PeerRegistry::HasPublicPeer() const {
         if (entry.kind == PeerKind::Public) return true;
     }
     return false;
+}
+
+void PeerRegistry::PruneCancellationFencesLocked(std::chrono::steady_clock::time_point now) {
+    for (auto it = canceledPublicAttempts_.begin(); it != canceledPublicAttempts_.end();) {
+        if (it->second <= now) it = canceledPublicAttempts_.erase(it);
+        else ++it;
+    }
+}
+
+bool PeerRegistry::CancelPublicAttempt(
+    const std::string& id, std::shared_ptr<PeerSession>& retired) {
+    retired.reset();
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto now = clock_();
+    PruneCancellationFencesLocked(now);
+    if (!canceledPublicAttempts_.contains(id) && canceledPublicAttempts_.size() >= 4096) return false;
+    canceledPublicAttempts_[id] = now + std::chrono::seconds(120);
+    const auto it = peers_.find(id);
+    if (it != peers_.end() && it->second.kind == PeerKind::Public) {
+        retired = it->second.session;
+        peers_.erase(it);
+    }
+    return true;
 }

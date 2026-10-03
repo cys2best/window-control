@@ -229,3 +229,19 @@ def test_stop_all_closes_registry_and_stops_an_add_that_arrives_late():
 
     orchestrator.add_instance("emulator-5556", "instance1", 1, "720")
     assert factory.created_count == 1
+
+
+def test_remote_endpoint_follows_registered_runtime_lifecycle():
+    from tests.test_engine_runtime import make_runtime
+
+    runtime, _ = make_runtime()
+    orchestrator = EngineOrchestrator(make_config(), runtime_factory=lambda *args: runtime, log=lambda _: None)
+    assert orchestrator.remote_endpoint("emulator-5554") is None
+    orchestrator.add_instance("emulator-5554", "instance0", 0, "720")
+    first = orchestrator.remote_endpoint("emulator-5554")
+    second = orchestrator.remote_endpoint("emulator-5554")
+    assert first.owner is second.owner
+    assert first.capability != second.capability
+    orchestrator.remove_instance("emulator-5554")
+    assert orchestrator.remote_endpoint("emulator-5554") is None
+    assert not first.owner.is_running()

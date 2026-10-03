@@ -310,3 +310,12 @@ def test_quoted_includes_resolve_to_engine_files():
             assert (ENGINE / "src" / header).exists() or (ENGINE / "test" / header).exists(), (
                 f"{path.relative_to(ENGINE)} includes missing {header}"
             )
+
+
+def test_remote_delete_uses_atomic_cancellation_fence():
+    source = (ENGINE / "src/remote_peer_handler.cpp").read_text()
+    delete = source.split('if (req.method == "DELETE")', 1)[1].split('if (req.method != "POST")', 1)[0]
+    assert "CancelPublicAttempt" in delete
+    assert "WithGeneration" not in delete
+    registry = (ENGINE / "src/peer_registry.cpp").read_text()
+    assert "canceledPublicAttempts_" in registry

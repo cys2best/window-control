@@ -5,6 +5,7 @@ from typing import Callable
 
 from server.engine_admin import EngineAdminClient
 from server.engine_auth import EngineTokenIssuer
+from server.engine_remote import RemoteEngineEndpoint
 from server.engine_runtime import (
     EngineRuntime,
     EngineRuntimeConfig,
@@ -72,6 +73,11 @@ class EngineOrchestrator:
         if runtime is None:
             return None
         return runtime.select(advertised_host)
+
+    def remote_endpoint(self, serial: str) -> RemoteEngineEndpoint | None:
+        with self._lock:
+            runtime = self._runtimes.get(serial)
+        return runtime.remote_endpoint() if runtime is not None else None
 
     def set_tier(self, serial: str, tier: str) -> bool:
         with self._lock:

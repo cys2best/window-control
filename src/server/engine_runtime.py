@@ -36,6 +36,7 @@ from server.engine_admin import (
     ReconnectRejected,
 )
 from server.engine_auth import EngineTokenIssuer
+from server.engine_remote import RemoteEngineEndpoint
 from server.engine_process import EngineInstance, EngineReadyRecord
 from server.scrcpy_server import ScrcpyServerLauncher
 
@@ -166,6 +167,16 @@ class EngineRuntime:
                 height=endpoint.height,
                 tier=self._tier,
             )
+
+    def remote_endpoint(self) -> RemoteEngineEndpoint | None:
+        """Return a fresh capability for private negotiation or peer teardown."""
+        with self._lock:
+            if (self._stopped or self._endpoint is None or self._engine is None
+                    or not self._engine.is_running()):
+                return None
+            return RemoteEngineEndpoint(self._endpoint.admin_port,
+                                        self._token_issuer.whep(self.instance_name),
+                                        self._endpoint.generation, self._engine)
 
     def set_tier(self, tier: str) -> None:
         """Relaunch scrcpy at a new quality tier and hand the engine the new
