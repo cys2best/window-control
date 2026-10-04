@@ -1,0 +1,29 @@
+name: shared-remote
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'infra/shared-remote/**'
+      - 'src/broker/**'
+      - 'scripts/shared_remote_test_env.py'
+      - 'tests/test_remote_deployment.py'
+      - 'tests/integration/test_shared_remote.py'
+      - '.github/workflows/shared-remote.yml'
+jobs:
+  real-turn:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv python install 3.12
+      - name: Run real broker and coturn acceptance
+        shell: bash
+        run: |
+          set -o pipefail
+          uv run pytest tests/test_remote_deployment.py tests/integration/test_shared_remote.py -v -s --tb=short 2>&1 | tee shared-remote-results.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: shared-remote-results
+          path: shared-remote-results.log
