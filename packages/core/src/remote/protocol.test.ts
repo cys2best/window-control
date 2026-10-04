@@ -16,3 +16,13 @@ test("accepts a singly escaped key with its decoded meaning", () => {
   const raw = String.raw`{"v":1,"id":"${id}","\u006fk":true,"result":{"instances":[]}}`;
   expect(parseReply(raw).ok).toBe(true);
 });
+
+
+test("preview validates JPEG mime, base64 syntax and the 393216 decoded-byte boundary", () => {
+  const { validatePreview } = require("./protocol");
+  expect(validatePreview({ mime: "image/jpeg", data_base64: "AAAA" })).toBe("data:image/jpeg;base64,AAAA");
+  expect(() => validatePreview({ mime: "image/png", data_base64: "AAAA" })).toThrow();
+  expect(() => validatePreview({ mime: "image/jpeg", data_base64: "%%%=" })).toThrow();
+  expect(() => validatePreview({ mime: "image/jpeg", data_base64: "A".repeat(524288) + "AA==" })).toThrow();
+  expect(validatePreview({ mime: "image/jpeg", data_base64: "A".repeat(524288) })).toHaveLength(524311);
+});

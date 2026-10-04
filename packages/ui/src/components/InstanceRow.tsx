@@ -1,10 +1,12 @@
 import React, { useEffect, useRef } from "react";
 import { Animated, Pressable, View, Text, Image } from "react-native";
 import { theme } from "../theme/tokens";
-import type { Instance } from "@wc/core";
+import type { ApiClient, Instance } from "@wc/core";
+import { useInstancePreview } from "../hooks/useInstancePreview";
 
-export function InstanceRow({ instance, previewSource, onPress }:
-  { instance: Instance; previewSource: { uri: string; headers?: { Authorization: string } }; onPress: () => void }) {
+export function InstanceRow({ instance, client, onPress }:
+  { instance: Instance; client: ApiClient | null; onPress: () => void }) {
+  const preview = useInstancePreview(client, instance.serial);
   const scanline = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     if (!instance.active) return;
@@ -22,7 +24,7 @@ export function InstanceRow({ instance, previewSource, onPress }:
       style={{ flex: 1, minWidth: 260, margin: 8, overflow: "hidden", backgroundColor: theme.color.surfaceRaised,
         borderRadius: 14, borderWidth: 1, borderColor: instance.active ? theme.color.accent : theme.color.border }}>
       <View style={{ aspectRatio: 16 / 9, overflow: "hidden", backgroundColor: theme.color.surface }}>
-        <Image testID="instance-preview" source={previewSource} resizeMode="cover" style={{ width: "100%", height: "100%" }} />
+        {preview !== null && <Image testID="instance-preview" source={preview} resizeMode="cover" style={{ width: "100%", height: "100%" }} />}
         {instance.active ? <Animated.View testID="instance-scanline" pointerEvents="none"
           style={{ position: "absolute", left: 0, right: 0, height: 2, backgroundColor: theme.color.accent,
             opacity: 0.82, transform: [{ translateY }] }} /> : null}

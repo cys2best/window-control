@@ -446,7 +446,7 @@ export function Stream({
         style={{ position: "absolute", opacity: 0, height: 1, width: 1 }} />
 
       {overlay === "drawer" ? (
-        <SwitchDrawer instances={instances} activeSerial={serial} previewSource={(value) => client.previewSource(value)} onPick={switchTo} onClose={() => setOverlay(null)} />
+        <SwitchDrawer instances={instances} activeSerial={serial} client={client} onPick={switchTo} onClose={() => setOverlay(null)} />
       ) : null}
       {overlay === "settings" ? (
         <SettingsModal preferences={preferences} onPickQuality={(value) => { pickTier(value); void updatePreferences({ quality: value }); }}

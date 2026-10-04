@@ -18,7 +18,7 @@ beforeEach(() => {
   client = {
     instances: jest.fn().mockResolvedValue([first, second]),
     ping: jest.fn().mockResolvedValue(23),
-    previewSource: (serial: string) => ({ uri: `http://h/preview/${serial}`, headers: { Authorization: "Bearer token" } }),
+    preview: async (serial: string) => ({ uri: `http://h/preview/${serial}`, headers: { Authorization: "Bearer token" } }),
     keyframe: jest.fn().mockResolvedValue(undefined),
   };
   nav = { navigate: jest.fn(), replace: jest.fn() };
@@ -132,4 +132,32 @@ test("redirects to Pair on 401 response and clears auth", async () => {
   await render(<InstanceList navigation={nav} />);
   await waitFor(() => expect(clearAuth).toHaveBeenCalled());
   expect(nav.replace).toHaveBeenCalledWith("Pair");
+});
+
+
+test("old client unauthorized failure cannot clear the successor token or navigate", async () => {
+  let reject!: (reason: unknown) => void;
+  client.instances.mockReturnValue(new Promise((_, fail) => { reject = fail; }));
+  const screen = await render(<InstanceList navigation={nav} />);
+  const successor = { ...client, instances: jest.fn().mockResolvedValue([second]), ping: jest.fn().mockResolvedValue(12) };
+  (SC.useServer as jest.Mock).mockReturnValue({ client: successor, clearAuth });
+  await screen.rerender(<InstanceList navigation={nav} />);
+  await act(async () => { reject(Object.assign(new Error("old unauthorized"), { status: 401 })); });
+  expect(clearAuth).not.toHaveBeenCalled(); expect(nav.replace).not.toHaveBeenCalled();
+  expect(await screen.findByText("LDP-02")).toBeTruthy();
+});
+
+
+test("revoked provider state redirects to Pair after owned client teardown", async () => {
+  (SC.useServer as jest.Mock).mockReturnValue({ client: null, paired: false, authToken: null, clearAuth, target: { kind: "remote", serviceUrl: "https://remote.example", installationId: "a".repeat(32) } });
+  const screen = await render(<InstanceList navigation={nav} />);
+  expect(nav.replace).toHaveBeenCalledWith("Pair"); await screen.unmount();
+});
+
+test("switching clients clears prior rows while the successor list is loading", async () => {
+  const screen = await render(<InstanceList navigation={nav} />); await screen.findByText("LDP-01");
+  const successor = { ...client, instances: jest.fn(() => new Promise(() => {})), ping: jest.fn().mockResolvedValue(12) };
+  (SC.useServer as jest.Mock).mockReturnValue({ client: successor, clearAuth });
+  await screen.rerender(<InstanceList navigation={nav} />);
+  expect(screen.queryByText("LDP-01")).toBeNull(); await screen.unmount();
 });

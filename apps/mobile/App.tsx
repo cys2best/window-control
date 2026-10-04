@@ -1,7 +1,7 @@
 import "react-native-gesture-handler";
 import React, { useEffect } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
-import { NavigationContainer } from "@react-navigation/native";
+import { NavigationContainer, useNavigationContainerRef } from "@react-navigation/native";
 import { useFonts } from "expo-font";
 import {
   SpaceGrotesk_400Regular,
@@ -19,6 +19,7 @@ import * as ScreenOrientation from "expo-screen-orientation";
 import * as Crypto from "expo-crypto";
 import { ServerProvider, useServer } from "@wc/core";
 import { plainStorage, secureStorage } from "./src/platform/storage";
+import { useInvitationRouting } from "./src/navigation/invitations";
 import { RootNavigator } from "./src/navigation/Root";
 import { theme } from "@wc/ui";
 
@@ -27,8 +28,10 @@ const remoteOptions = remoteOrigin ? { trustedOrigin: remoteOrigin, requestId: (
 
 function Gate() {
   const { ready } = useServer();
+  const navigation = useNavigationContainerRef<{ Pair: { invitation: string } }>();
+  const onReady = useInvitationRouting(navigation, ready, remoteOrigin);
   if (!ready) return <View style={{ flex: 1, backgroundColor: theme.color.bg }} />;
-  return <NavigationContainer><RootNavigator /></NavigationContainer>;
+  return <NavigationContainer ref={navigation} onReady={onReady}><RootNavigator remoteOptions={remoteOptions} /></NavigationContainer>;
 }
 
 export default function App() {

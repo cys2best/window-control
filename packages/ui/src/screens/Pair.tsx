@@ -1,10 +1,10 @@
-import React, { useState } from "react";
-import { View, Text, TextInput, KeyboardAvoidingView, Platform, ScrollView } from "react-native";
+import React, { useEffect, useRef, useState } from "react";
+import { View, Text, TextInput, KeyboardAvoidingView, Platform, ScrollView, Pressable } from "react-native";
 import { theme } from "../theme/tokens";
 import { Button } from "../components/Button";
 import { BrandMark } from "../components/BrandMark";
 import { NetChip } from "../components/NetChip";
-import { normalizeBase, pairDevice, useServer } from "@wc/core";
+import { normalizeBase, pairDevice, pairRemote, parseRemoteInvite, useServer, type RemoteClientOptions } from "@wc/core";
 
 function deviceName(): string {
   if (Platform.OS === "ios") return "iPhone";
@@ -26,52 +26,82 @@ function withDefaultPort(url: string): string {
   return hasPort ? url : `${scheme}${authority}:${DEFAULT_HOST_PORT}${rest}`;
 }
 
-export function Pair({ navigation }: { navigation: any }) {
-  const { base, setServer, hostReachability, target } = useServer();
+export function Pair({ navigation, route, remoteOptions }: { navigation: any; route?: { params?: { invitation?: string } }; remoteOptions?: RemoteClientOptions }) {
+  const { base, setServer, setTarget, client, hostReachability, target } = useServer();
+  const invitation = route?.params?.invitation;
+  const [local, setLocal] = useState(false);
+  const remote = Boolean(invitation) && !local;
+  const current = useRef({ client, target, invitation, remote });
+  current.current = { client, target, invitation, remote };
+  const mounted = useRef(true);
+  const attempt = useRef(0);
+  const busyRef = useRef(false);
   // The web app is served by the host it talks to; a native app has to be
   // told where the host is.
-  const needsHost = Platform.OS !== "web";
+  const needsHost = !remote && (Platform.OS !== "web" || local);
   const [host, setHost] = useState(base ?? "");
   const [code, setCode] = useState("");
   const [focusedField, setFocusedField] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; attempt.current++; }; }, []);
+  useEffect(() => { setLocal(false); setCode(""); setError(""); }, [invitation]);
+  useEffect(() => { attempt.current++; busyRef.current = false; setBusy(false); }, [client, target, invitation, remote]);
+
   const submit = async () => {
-    if (busy) return;
+    if (busyRef.current) return;
     setError("");
+    let invite: ReturnType<typeof parseRemoteInvite> | null = null;
+    if (remote) {
+      try {
+        if (!remoteOptions || !invitation) throw new Error("unconfigured service");
+        invite = parseRemoteInvite(invitation, remoteOptions.trustedOrigin);
+      } catch {
+        setError("This invitation is invalid or belongs to another service."); return;
+      }
+    }
     const origin = typeof window !== "undefined" && window.location?.origin ? window.location.origin : "";
     const entered = needsHost ? host.trim() : (base || origin);
-    if (!entered) {
-      setError("Enter your host address");
-      return;
-    }
+    if (!remote && !entered) { setError("Enter your host address"); return; }
     const digits = code.replace(/\s+/g, "");
-    if (!digits) {
-      setError("Enter the pairing code shown on your PC");
-      return;
-    }
-    setBusy(true);
+    if (!digits) { setError("Enter the pairing code shown on your PC"); return; }
+    if (remote && !/^\d{6}$/.test(digits)) { setError("Enter the six-digit pairing code shown on your PC"); return; }
+    const captured = current.current;
+    const n = ++attempt.current;
+    const isCurrent = () => mounted.current && attempt.current === n && current.current.client === captured.client && current.current.target === captured.target && current.current.invitation === captured.invitation && current.current.remote === captured.remote;
+    busyRef.current = true; setBusy(true);
     try {
-      let target: string;
-      try {
-        target = normalizeBase(/^https?:\/\//.test(entered) ? entered : `http://${entered}`);
-        if (needsHost) target = withDefaultPort(target);
-      } catch {
-        setError("That host address isn't valid");
-        return;
+      if (invite) {
+        const result = await pairRemote(invite.serviceUrl, invite.handle, digits, deviceName(), remoteOptions!);
+        if (!isCurrent()) return;
+        const owned = await setTarget({ kind: "remote", serviceUrl: invite.serviceUrl, installationId: result.installationId }, result.token);
+        // setTarget publishes the successor itself. Target-change renders can
+        // invalidate isCurrent, so compare the actual returned client owner.
+        if (mounted.current && (isCurrent() || (current.current.client === owned && current.current.invitation === captured.invitation && current.current.remote === captured.remote))) navigation.replace("InstanceList");
+      } else {
+        let url: string;
+        try {
+          url = normalizeBase(/^https?:\/\//.test(entered) ? entered : `http://${entered}`);
+          if (needsHost) url = withDefaultPort(url);
+        } catch { if (isCurrent()) setError("That host address isn't valid"); return; }
+        const result = await pairDevice(url, digits, deviceName());
+        if (!isCurrent()) return;
+        if ("error" in result) { setError(result.error); return; }
+        const owned = await setServer(url, result.token);
+        if (mounted.current && (isCurrent() || (current.current.client === owned && current.current.invitation === captured.invitation && current.current.remote === captured.remote))) navigation.replace("InstanceList");
       }
-      const result = await pairDevice(target, digits, deviceName());
-      if ("error" in result) {
-        setError(result.error);
-        return;
-      }
-      await setServer(target, result.token);
-      navigation.replace("InstanceList");
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Pairing failed. Please try again.");
+      if (!isCurrent()) return;
+      if (remote) {
+        const reason = err instanceof Error ? err.message : "";
+        setError(reason === "offline" || reason === "pairing offline" ? "Your PC is offline. Open the host and try again."
+          : reason === "expired_pairing" ? "This invitation has expired. Create a new one on your PC."
+          : reason === "not_paired" ? "That pairing code is incorrect. Check the six digits on your PC."
+          : "Pairing is unavailable. Please try again.");
+      } else setError(err instanceof Error ? err.message : "Pairing failed. Please try again.");
     } finally {
-      setBusy(false);
+      if (isCurrent()) { busyRef.current = false; setBusy(false); }
     }
   };
 
@@ -97,7 +127,8 @@ export function Pair({ navigation }: { navigation: any }) {
         <Text style={{ fontFamily: theme.font.regular, fontSize: 13.5, lineHeight: 21, color: theme.color.textMuted, marginTop: 9, marginBottom: 22 }}>
           On your PC, open EmuCtrl Host and click Pair device. Enter the code it shows. You only do this once per device.
         </Text>
-        {needsHost ? null : (
+        {invitation ? <Pressable accessibilityRole="button" onPress={() => { setLocal(value => !value); setError(""); }} style={{ marginBottom: 16 }}><Text style={{ color: theme.color.accent }}>{local ? "Use invitation" : "Advanced: local host"}</Text></Pressable> : null}
+        {needsHost || remote ? null : (
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 22 }}>
             <NetChip kind={target?.kind} state={hostReachability.state} host={hostReachability.host} />
           </View>

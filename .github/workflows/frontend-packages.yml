@@ -1,7 +1,7 @@
 name: frontend-packages
 on:
   push:
-    branches: [main, "feature/**"]
+    branches: [main, "feature/**", "feat/**"]
   pull_request:
 jobs:
   test:
@@ -15,6 +15,7 @@ jobs:
       - run: npm run test:core
       - run: npm run test:ui
       - run: npm test -w apps/web
+      - run: npm test -w apps/mobile
       - name: Install uv
         uses: astral-sh/setup-uv@v3
         with:

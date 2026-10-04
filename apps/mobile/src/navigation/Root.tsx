@@ -4,7 +4,7 @@ import { RTCPeerConnection } from "react-native-webrtc";
 import * as Haptics from "expo-haptics";
 import { Account, Pair, InstanceList, Stream } from "@wc/ui";
 import { VideoView } from "../platform/VideoView";
-import { useServer } from "@wc/core";
+import { useServer, type RemoteClientOptions } from "@wc/core";
 
 const Stack = createNativeStackNavigator();
 
@@ -19,14 +19,14 @@ function StreamScreen(props: any) {
   );
 }
 
-export function RootNavigator() {
+export function RootNavigator({ remoteOptions }: { remoteOptions?: RemoteClientOptions }) {
   const { authToken } = useServer();
   // A saved token goes to the list even if the host is unreachable right
   // now; a revoked one is caught there by the 401 handler.
   const initialRoute = authToken ? "InstanceList" : "Pair";
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }} initialRouteName={initialRoute}>
-      <Stack.Screen name="Pair" component={Pair} />
+      <Stack.Screen name="Pair">{(props: any) => <Pair {...props} remoteOptions={remoteOptions} />}</Stack.Screen>
       <Stack.Screen name="InstanceList" component={InstanceList} />
       <Stack.Screen name="Account" component={Account} />
       <Stack.Screen name="Stream" component={StreamScreen} />

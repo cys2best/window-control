@@ -9,7 +9,11 @@ import { BrandMark } from "../components/BrandMark";
 import type { Instance } from "@wc/core";
 
 export function InstanceList({ navigation }: { navigation: any }) {
-  const { client, clearAuth, hostReachability, target } = useServer() as any;
+  const { client, clearAuth, hostReachability, target, paired, authToken } = useServer();
+  const current = useRef({ client, target });
+  current.current = { client, target };
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const { width } = useWindowDimensions();
   const listRef = useRef<FlatList<Instance>>(null);
   const [items, setItems] = useState<Instance[]>([]);
@@ -18,19 +22,30 @@ export function InstanceList({ navigation }: { navigation: any }) {
   const [rtt, setRtt] = useState<number | null>(null);
   const [instancesOffset, setInstancesOffset] = useState(0);
   const columns = Math.max(1, Math.floor((width - 48 + 16) / (260 + 16)));
+  useEffect(() => { setItems([]); setRtt(null); setReachable(true); }, [client, target]);
+  useEffect(() => {
+    if (client === null && paired === false && authToken === null) {
+      if (navigation?.replace) navigation.replace("Pair");
+      else navigation?.navigate?.("Pair");
+    }
+  }, [client, target, paired, authToken, navigation]);
   const activeInstance = items.find((item) => item.active) ?? items[0];
 
   const load = useCallback(async () => {
     if (!client) return;
+    const capturedTarget = target;
+    const isCurrent = () => mounted.current && current.current.client === client && current.current.target === capturedTarget;
     const [instancesResult, pingResult] = await Promise.allSettled([client.instances(), client.ping()]);
 
+    if (!isCurrent()) return;
     if (instancesResult.status === "fulfilled") {
       setItems(instancesResult.value);
       setReachable(true);
     } else {
       const err = instancesResult.reason as any;
-      if (err?.status === 401) {
+      if (err?.status === 401 || err?.code === "not_paired") {
         if (clearAuth) await clearAuth();
+        if (!isCurrent()) return;
         if (navigation?.replace) {
           navigation.replace("Pair");
         } else if (navigation?.navigate) {
@@ -42,7 +57,7 @@ export function InstanceList({ navigation }: { navigation: any }) {
     }
 
     setRtt(pingResult.status === "fulfilled" ? pingResult.value : null);
-  }, [client, navigation, clearAuth]);
+  }, [client, target, navigation, clearAuth]);
 
   useEffect(() => {
     load();
@@ -93,7 +108,7 @@ export function InstanceList({ navigation }: { navigation: any }) {
           <Text style={{ fontFamily: theme.font.semibold, fontSize: 17, color: theme.color.text, marginBottom: 8 }}>{reachable ? "No windows found" : "Can't reach the server"}</Text>
           <Text style={{ fontFamily: theme.font.regular, fontSize: 13, textAlign: "center", color: theme.color.textMuted }}>{reachable ? "The server answered, but nothing is running. Start an instance in LDPlayer, then pull to refresh." : "We couldn't reach the server on its last check. Confirm it's running and reachable, then pull to refresh."}</Text>
         </View>}
-        renderItem={({ item }) => <InstanceRow instance={item} previewSource={client!.previewSource(item.serial)} onPress={() => open(item)} />} />
+        renderItem={({ item }) => <InstanceRow instance={item} client={client} onPress={() => open(item)} />} />
       <BottomNav onInstances={() => listRef.current?.scrollToOffset({ offset: instancesOffset, animated: true })}
         onResume={() => open(activeInstance)} onHealth={() => listRef.current?.scrollToOffset({ offset: 0, animated: true })} />
     </View>
