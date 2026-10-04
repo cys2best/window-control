@@ -4,7 +4,14 @@ from types import SimpleNamespace
 import pytest
 
 import server.scrcpy_server as scrcpy_server
-from server.scrcpy_server import ScrcpyServerLauncher
+from server.scrcpy_server import ScrcpyServerLauncher, build_scrcpy_args
+
+
+def test_1080_arguments_allow_full_hd_without_lowering_bitrate_or_fps():
+    args = build_scrcpy_args("1080", 1234)
+    assert "max_size=1920" in args
+    assert "video_bit_rate=8000000" in args
+    assert "max_fps=60" in args
 
 
 def test_launch_starts_server_without_opening_media_sockets():

@@ -3,7 +3,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from config import PORT, DEV_MODE, get_base_path, WEB_BUILD_DIR, ASSETS_DIR
+from config import PORT, DEV_MODE, get_base_path, WEB_BUILD_DIR, ASSETS_DIR, QUALITY_TIERS
 
 def test_port_default():
     assert PORT == 8080
@@ -44,6 +44,16 @@ def test_quality_tiers_shape():
         # with Integer.parseInt and rejects suffixes such as "2M".
         assert isinstance(tier["bit_rate"], int) and tier["bit_rate"] >= 100_000
         assert tier["max_fps"] in (30, 60)
+
+
+def test_quality_tiers_limit_the_long_edge_and_keep_encoding_targets():
+    assert QUALITY_TIERS == {
+        "360": {"max_size": 640, "bit_rate": 800_000, "max_fps": 30},
+        "480": {"max_size": 854, "bit_rate": 2_000_000, "max_fps": 30},
+        "720": {"max_size": 1280, "bit_rate": 4_000_000, "max_fps": 30},
+        "1080": {"max_size": 1920, "bit_rate": 8_000_000, "max_fps": 60},
+        "1440": {"max_size": 2560, "bit_rate": 12_000_000, "max_fps": 60},
+    }
 
 
 def test_lowest_tier_fits_a_relayed_link():
