@@ -34,7 +34,7 @@ export function parseReply(raw: string): { v: 1; id: string; ok: boolean; result
   let inString = false, escape = false, key = "", readingKey = false;
   for (let i = 0; i < raw.length; i++) {
     const c = raw[i];
-    if (inString) { if (escape) escape = false; else if (c === "\\") escape = true; else if (c === '"') { inString = false; if (readingKey) { const decoded = JSON.parse('"' + key + '"') as string; const set = stack[stack.length - 1]; if (set.has(decoded)) duplicate = true; set.add(decoded); readingKey = false; } } else if (readingKey) key += c; continue; }
+    if (inString) { if (escape) { if (readingKey) key += c; escape = false; } else if (c === "\\") { if (readingKey) key += c; escape = true; } else if (c === '"') { inString = false; if (readingKey) { const decoded = JSON.parse('"' + key + '"') as string; const set = stack[stack.length - 1]; if (set.has(decoded)) duplicate = true; set.add(decoded); readingKey = false; } } else if (readingKey) key += c; continue; }
     if (c === '{') stack.push(new Set());
     else if (c === '}') stack.pop();
     else if (c === '"') { inString = true; let j = i - 1; while (j >= 0 && /\s/.test(raw[j])) j--; readingKey = (raw[j] === '{' || raw[j] === ',') && stack.length > 0 && raw.slice(i).match(/^"(?:\\.|[^"\\])*"\s*:/) !== null; key = ""; }

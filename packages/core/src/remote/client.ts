@@ -66,7 +66,7 @@ export function connectRemoteClient(target: Extract<ServerTarget, { kind: "remot
   }
   function cancel(p: Pending, code: string) {
     if (!pending.has(p)) return;
-    if (p.op === "select" && p.sent) retire(code);
+    if ((p.op === "select" || p.op === "renew") && p.sent) retire(code);
     else { if (p.session && p.sent) closeKnown(p.session); finish(p, err(code)); }
   }
   function dispatch(p: Pending) {

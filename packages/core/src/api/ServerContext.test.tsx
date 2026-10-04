@@ -504,3 +504,129 @@ test("failed replacement keeps the old remote client and its revocation handler"
   await waitFor(async () => expect(await secure.getItem(remoteDeviceTokenKey(a.serviceUrl, a.installationId))).toBeNull());
   expect(context!.paired).toBe(false);
 });
+
+test("overlapping failed replacements retain the active client's revocation authority", async () => {
+  FakeSocket.sockets = [];
+  const plain = makeMemoryStorage(), saved = new Map<string, string>();
+  const rejectors = new Map<string, (error: Error) => void>();
+  const secure: SecureStorageAdapter = {
+    getItem: async k => saved.get(k) ?? null,
+    setItem: (k, v) => k.endsWith("." + "a".repeat(32)) ? Promise.resolve(saved.set(k, v)).then(() => {})
+      : new Promise<void>((_, reject) => { rejectors.set(k, reject); }),
+    deleteItem: async k => { saved.delete(k); },
+  };
+  let context: ReturnType<typeof useServer> | undefined;
+  function Capture() { context = useServer(); return null; }
+  render(<ServerProvider plainStorage={plain} secureStorage={secure} remoteOptions={remoteOptions()}><Capture /></ServerProvider>);
+  await waitFor(() => expect(context?.ready).toBe(true));
+  const a: ServerTarget = { kind: "remote", serviceUrl: "https://relay.example", installationId };
+  const b: ServerTarget = { kind: "remote", serviceUrl: "https://relay.example", installationId: "b".repeat(32) };
+  const c: ServerTarget = { kind: "remote", serviceUrl: "https://relay.example", installationId: "c".repeat(32) };
+  await act(async () => { await context!.setTarget(a, "A"); });
+  const oldClient = context!.client, socket = FakeSocket.sockets[0];
+  let bResult!: Promise<unknown>, cResult!: Promise<unknown>;
+  act(() => { bResult = context!.setTarget(b, "B").catch(e => e); cResult = context!.setTarget(c, "C").catch(e => e); });
+  await waitFor(() => expect(rejectors.size).toBe(2));
+  await act(async () => { rejectors.get(remoteDeviceTokenKey(b.serviceUrl, b.installationId))!(new Error("B failed")); await bResult; });
+  await act(async () => { rejectors.get(remoteDeviceTokenKey(c.serviceUrl, c.installationId))!(new Error("C failed")); await cResult; });
+  expect(context!.target).toEqual(a); expect(context!.client).toBe(oldClient);
+  act(() => { socket.open(); socket.reply({ authenticated: true, viewer_id: "v" }); });
+  await waitFor(() => expect(socket.sent.length).toBe(2));
+  act(() => { socket.error("not_paired"); });
+  await waitFor(async () => expect(await secure.getItem(remoteDeviceTokenKey(a.serviceUrl, a.installationId))).toBeNull());
+  expect(context!.authToken).toBeNull(); expect(context!.paired).toBe(false);
+});
+
+test("an obsolete delayed switch cannot commit after a newer switch fails", async () => {
+  FakeSocket.sockets = [];
+  const plain = makeMemoryStorage(), saved = new Map<string, string>();
+  let releaseB!: () => void;
+  const secure: SecureStorageAdapter = {
+    getItem: async k => saved.get(k) ?? null,
+    setItem: async (k, v) => {
+      if (k.endsWith("." + "b".repeat(32))) await new Promise<void>(resolve => { releaseB = resolve; });
+      if (k.endsWith("." + "c".repeat(32))) throw new Error("C failed");
+      saved.set(k, v);
+    },
+    deleteItem: async k => { saved.delete(k); },
+  };
+  let context: ReturnType<typeof useServer> | undefined;
+  function Capture() { context = useServer(); return null; }
+  render(<ServerProvider plainStorage={plain} secureStorage={secure} remoteOptions={remoteOptions()}><Capture /></ServerProvider>);
+  await waitFor(() => expect(context?.ready).toBe(true));
+  const a: ServerTarget = { kind: "remote", serviceUrl: "https://relay.example", installationId };
+  const b: ServerTarget = { kind: "remote", serviceUrl: "https://relay.example", installationId: "b".repeat(32) };
+  const c: ServerTarget = { kind: "remote", serviceUrl: "https://relay.example", installationId: "c".repeat(32) };
+  await act(async () => { await context!.setTarget(a, "A"); });
+  const oldClient = context!.client;
+  let bResult!: Promise<unknown>;
+  act(() => { bResult = context!.setTarget(b, "B").catch(e => e); });
+  await waitFor(() => expect(releaseB).toBeDefined());
+  await act(async () => { await expect(context!.setTarget(c, "C")).rejects.toThrow("C failed"); });
+  await act(async () => { releaseB(); expect(await bResult).toMatchObject({ message: "target changed" }); });
+  expect(context!.target).toEqual(a); expect(context!.client).toBe(oldClient);
+  expect(await plain.getItem("wc_remote_target")).toBe(JSON.stringify(a));
+  expect(FakeSocket.sockets).toHaveLength(1);
+});
+
+test("old revocation during a same-installation replacement preserves the new token on disk", async () => {
+  FakeSocket.sockets = [];
+  const marker = new Map<string, string>(), saved = new Map<string, string>();
+  let hold = false, release!: () => void;
+  const plain: SecureStorageAdapter = {
+    getItem: async k => marker.get(k) ?? null,
+    setItem: async (k, v) => { if (k === "wc_remote_target" && hold) { hold = false; await new Promise<void>(resolve => { release = resolve; }); } marker.set(k, v); },
+    deleteItem: async k => { marker.delete(k); },
+  };
+  const secure: SecureStorageAdapter = {
+    getItem: async k => saved.get(k) ?? null,
+    setItem: async (k, v) => { saved.set(k, v); },
+    deleteItem: async k => { saved.delete(k); },
+  };
+  let context: ReturnType<typeof useServer> | undefined;
+  function Capture() { context = useServer(); return null; }
+  render(<ServerProvider plainStorage={plain} secureStorage={secure} remoteOptions={remoteOptions()}><Capture /></ServerProvider>);
+  await waitFor(() => expect(context?.ready).toBe(true));
+  const remote: ServerTarget = { kind: "remote", serviceUrl: "https://relay.example", installationId };
+  await act(async () => { await context!.setTarget(remote, "old"); });
+  const socket = FakeSocket.sockets[0];
+  act(() => { socket.open(); socket.reply({ authenticated: true, viewer_id: "v" }); });
+  await waitFor(() => expect(socket.sent.length).toBe(2));
+  hold = true;
+  let next!: Promise<unknown>;
+  act(() => { next = context!.setTarget(remote, "new"); });
+  await waitFor(() => expect(release).toBeDefined());
+  act(() => { socket.error("not_paired"); });
+  await act(async () => { release(); await next; });
+  expect(saved.get(remoteDeviceTokenKey(remote.serviceUrl, installationId))).toBe("new");
+  expect(context!.authToken).toBe("new");
+});
+
+test("failed switch during initial storage reads still completes saved-target loading", async () => {
+  FakeSocket.sockets = [];
+  let releaseBase!: (value: string) => void;
+  let holdBase = true;
+  const plain: SecureStorageAdapter = {
+    getItem: async k => {
+      if (k !== "wc_base") return null;
+      if (holdBase) { holdBase = false; return new Promise<string>(resolve => { releaseBase = resolve; }); }
+      return "http://saved:8000";
+    },
+    setItem: async () => {}, deleteItem: async () => {},
+  };
+  const secure: SecureStorageAdapter = {
+    getItem: async k => k === deviceTokenKey("http://saved:8000") ? "local-token" : null,
+    setItem: async () => { throw new Error("storage unavailable"); },
+    deleteItem: async () => {},
+  };
+  let context: ReturnType<typeof useServer> | undefined;
+  function Capture() { context = useServer(); return null; }
+  render(<ServerProvider plainStorage={plain} secureStorage={secure} remoteOptions={remoteOptions()}><Capture /></ServerProvider>);
+  await waitFor(() => expect(releaseBase).toBeDefined());
+  const remote: ServerTarget = { kind: "remote", serviceUrl: "https://relay.example", installationId };
+  await act(async () => { await expect(context!.setTarget(remote, "token")).rejects.toThrow("storage unavailable"); });
+  act(() => { releaseBase("http://saved:8000"); });
+  await waitFor(() => expect(context!.ready).toBe(true));
+  expect(context!.target).toEqual({ kind: "local", base: "http://saved:8000" });
+  expect(context!.authToken).toBe("local-token");
+});

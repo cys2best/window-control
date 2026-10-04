@@ -43,6 +43,32 @@ test("canceling negotiate closes only its exact known session", async () => {
   expect(last(s.sent)).toMatchObject({ op: "negotiate", payload: { session_id: selection.session_id, generation: 1, offer: "offer", timeout_ms: 200 } });
   abort.abort(); expect(await result).toBe("canceled"); expect(last(s.sent)).toMatchObject({ op: "close", payload: { session_id: selection.session_id, generation: 1 } }); expect(s.readyState).toBe(1);
 });
+test("aborting a sent renewal retires its viewer even if a replacement was admitted", async () => {
+  const c = make(); const s = await authenticate();
+  const remote = { ...selection, kind: "remote" as const };
+  const replacement = { ...selection, session_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", generation: 2 };
+  const abort = new AbortController();
+  const result = c.renew(remote, { signal: abort.signal }).catch(e => e.code);
+  await tick(); const renewFrame = last(s.sent);
+  abort.abort();
+  expect(await result).toBe("canceled");
+  expect(s.readyState).toBe(3);
+  expect(s.sent.map(f => f.op)).toEqual(["viewer_auth", "renew"]);
+  s.reply(replacement, renewFrame);
+  const fresh = c.instances(); const next = await authenticate(FakeSocket.sockets[1]);
+  expect(next.sent.map(f => f.op)).toEqual(["viewer_auth", "instances"]);
+  next.reply({ instances: [] }); await fresh;
+});
+test("timing out a sent renewal retires the viewer with an unknown replacement", async () => {
+  jest.useFakeTimers(); let now = 100;
+  const c = make({ now: () => now }); const s = await authenticate();
+  const result = c.renew({ ...selection, kind: "remote" }, { deadline: 200 }).catch(e => e.code);
+  await tick(); expect(last(s.sent).op).toBe("renew");
+  now = 200; jest.advanceTimersByTime(100);
+  expect(await result).toBe("timeout");
+  expect(s.readyState).toBe(3);
+  expect(s.sent.map(f => f.op)).toEqual(["viewer_auth", "renew"]);
+});
 test("the absolute deadline includes authentication and rejects late answers", async () => {
   jest.useFakeTimers(); let now = 100; const c = make({ now: () => now });
   const result = c.negotiate({ ...selection, kind: "remote" }, "offer", { deadline: 200 }).catch(e => e.code);

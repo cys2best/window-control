@@ -60,6 +60,7 @@ export function ServerProvider({
   const [paired, setPaired] = useState<boolean | null>(null);
   const [client, setClient] = useState<ApiClient | null>(null);
   const [baseLoaded, setBaseLoaded] = useState(false);
+  const [loadRetry, setLoadRetry] = useState(0);
   const [tokenLoaded, setTokenLoaded] = useState(false);
   const [preferencesLoaded, setPreferencesLoaded] = useState(false);
   const [preferences, setPreferences] = useState<StreamPreferences>(DEFAULT_STREAM_PREFERENCES);
@@ -67,7 +68,9 @@ export function ServerProvider({
   const preferencesEdited = useRef(false);
   const targetRef = useRef<ServerTarget | null>(target);
   const clientRef = useRef<ApiClient | null>(null);
+  // Attempts never reuse an ID; the active client keeps its own committed ID.
   const generation = useRef(0);
+  const activeGeneration = useRef(0);
   const queues = useRef(new Map<string, Promise<void>>());
   const tokenKey = (value: ServerTarget) => value.kind === "local" ? deviceTokenKey(value.base) : remoteDeviceTokenKey(value.serviceUrl, value.installationId);
   const ordered = useCallback((key: string, work: () => Promise<void>) => {
@@ -84,20 +87,23 @@ export function ServerProvider({
     paired: null,
   }));
 
-  const clearCaptured = useCallback(async (captured: ServerTarget, n: number) => {
-    if (generation.current !== n) return;
+  const clearCaptured = useCallback(async (captured: ServerTarget, n: number, capturedToken: string | null) => {
+    if (activeGeneration.current !== n) return;
     const key = tokenKey(captured);
-    await ordered(key, () => secureStorage.deleteItem(key));
-    if (generation.current === n) { setAuthTokenState(null); setPaired(false); }
+    await ordered(key, async () => {
+      if (await secureStorage.getItem(key) === capturedToken) await secureStorage.deleteItem(key);
+    });
+    if (activeGeneration.current === n) { setAuthTokenState(null); setPaired(false); }
   }, [secureStorage, ordered]);
   const publish = useCallback((selection: ServerTarget | null, token: string | null, n: number, pairedValue: boolean | null): ApiClient | null => {
     if (generation.current !== n) return null;
-    const unauthorized = () => { if (selection) void clearCaptured(selection, n); };
+    const unauthorized = () => { if (selection) void clearCaptured(selection, n, token); };
     const owned = selection?.kind === "remote"
       ? connectRemoteClient(selection, token || "", unauthorized, remoteOptions!)
       : selection?.kind === "local" ? makeClient(selection.base, token, unauthorized) : null;
     clientRef.current?.dispose();
     clientRef.current = owned;
+    activeGeneration.current = n;
     targetRef.current = selection;
     setTargetState(selection);
     setBaseState(selection?.kind === "local" ? selection.base : null);
@@ -144,9 +150,9 @@ export function ServerProvider({
       setBaseLoaded(true); setTokenLoaded(true);
     })();
     return () => { alive = false; };
-  }, [plainStorage, secureStorage, defaultBase, remoteOptions, publish]);
+  }, [plainStorage, secureStorage, defaultBase, remoteOptions, publish, loadRetry]);
 
-  useEffect(() => () => { generation.current++; clientRef.current?.dispose(); }, []);
+  useEffect(() => () => { generation.current++; activeGeneration.current = -1; clientRef.current?.dispose(); }, []);
 
   const setTarget = useCallback(async (selection: ServerTarget, token: string): Promise<ApiClient> => {
     let normalized: ServerTarget;
@@ -173,12 +179,12 @@ export function ServerProvider({
       setBaseLoaded(true); setTokenLoaded(true);
       return owned;
     } catch (error) {
-      if (generation.current === n) generation.current--;
+      if (generation.current === n && !baseLoaded) setLoadRetry(value => value + 1);
       throw error;
     }
-  }, [plainStorage, secureStorage, remoteOptions, publish, ordered]);
+  }, [plainStorage, secureStorage, remoteOptions, publish, ordered, baseLoaded]);
   const setServer = useCallback((url: string, token: string) => setTarget({ kind: "local", base: url }, token), [setTarget]);
-  const clearAuth = useCallback(async () => { if (targetRef.current) await clearCaptured(targetRef.current, generation.current); }, [clearCaptured]);
+  const clearAuth = useCallback(async () => { if (targetRef.current) await clearCaptured(targetRef.current, activeGeneration.current, authToken); }, [clearCaptured, authToken]);
 
   const updatePreferences = useCallback(async (patch: Partial<StreamPreferences>) => {
     const next = { ...preferencesRef.current, ...patch };
@@ -190,23 +196,23 @@ export function ServerProvider({
 
   useEffect(() => {
     if (!target || !client || !tokenLoaded) return;
-    const n = generation.current;
+    const n = activeGeneration.current;
     let alive = true;
     const host = new URL(target.kind === "local" ? target.base : target.serviceUrl).host;
     const check = async () => {
       if (target.kind === "local") {
         if (typeof fetch === "undefined") return;
         const result = await probeHost(target.base, authToken);
-        if (alive && generation.current === n) {
+        if (alive && activeGeneration.current === n) {
           setHostReachability(result);
           if (result.paired !== null) setPaired(result.paired);
         }
       } else {
         try {
           const rttMs = await client.ping();
-          if (alive && generation.current === n) { setHostReachability({ state: "reachable", host, rttMs, paired: true }); setPaired(true); }
+          if (alive && activeGeneration.current === n) { setHostReachability({ state: "reachable", host, rttMs, paired: true }); setPaired(true); }
         } catch (error) {
-          if (alive && generation.current === n) {
+          if (alive && activeGeneration.current === n) {
             const revoked = (error as { code?: string }).code === "not_paired";
             setHostReachability({ state: "unreachable", host, rttMs: null, paired: revoked ? false : null });
             if (revoked) setPaired(false);
