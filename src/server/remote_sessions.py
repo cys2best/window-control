@@ -28,6 +28,7 @@ class RemoteSelection:
     device_id: str
     serial: str
     context: RoutingContext = field(repr=False)
+    mutation_guard: MutationGuard | None = field(default=None, repr=False)
     request_ids: set[str] = field(default_factory=set)
     endpoint: RemoteEngineEndpoint | None = None
     peer_id: str | None = None
@@ -102,6 +103,8 @@ class RemoteSessionCoordinator:
         # Fence successors before any network await. The attempt and admission
         # remain retained even if DELETE or the broker release response is lost.
         session.canceled = True
+        if session.mutation_guard is not None:
+            session.mutation_guard.cancel()
         if self.current is session:
             self.current = None
         self._cleanup[session.session_id] = session
@@ -136,7 +139,7 @@ class RemoteSessionCoordinator:
         previous = self.current
         self._generation += 1
         session = RemoteSelection(str(uuid.uuid4()), self._generation, device.id, serial, context,
-                                  request_ids={request_id}, selected_at=self.clock())
+                                  mutation_guard=mutation_guard, request_ids={request_id}, selected_at=self.clock())
         self.current = session
         try:
             if previous is not None:

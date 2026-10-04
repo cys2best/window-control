@@ -362,3 +362,93 @@ async def test_replaced_selection_cannot_authorize_after_blocked_endpoint_return
         release.set()
         await asyncio.gather(old, return_exceptions=True)
         await sessions.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_same_epoch_replacement_fences_selection_blocked_inside_engine(monkeypatch):
+    from server.remote_dispatch import RemoteDispatcher
+    from tests.test_remote_client import blocking_instance_actions
+    actions, started, release, replacement_started, calls, before = blocking_instance_actions(monkeypatch, "select")
+    sessions, engine, _, pairing, context, _ = setup()
+    sessions.actions = actions
+    dispatcher = RemoteDispatcher(actions, pairing, sessions=sessions)
+    def command(serial):
+        return Command(v=1, id=str(uuid.uuid4()), op="select", payload={"serial": serial})
+    old = asyncio.create_task(dispatcher.dispatch(command("emulator-5554"), context.token, trusted_context=context))
+    successor = None
+    try:
+        assert await asyncio.to_thread(started.wait, 1)
+        successor = asyncio.create_task(dispatcher.dispatch(command("emulator-5556"), context.token,
+                                                             trusted_context=context))
+        async with asyncio.timeout(1):
+            while sessions.current.serial != "emulator-5556":
+                await asyncio.sleep(.01)
+        assert not replacement_started.is_set()
+        assert actions.manager.list_instances()  # Engine work holds no metadata lock.
+        release.set()
+        old_reply, new_reply = await asyncio.wait_for(asyncio.gather(old, successor), 1)
+        assert not old_reply.ok and new_reply.ok
+        assert before == [("emulator-5556", "1080")], "Retired selection committed metadata before replacement"
+        assert actions.manager.active.serial == sessions.current.serial == "emulator-5556"
+        assert calls == [("select", "emulator-5554"), ("select", "emulator-5556")]
+        assert not engine.live
+    finally:
+        release.set()
+        tasks = [old] + ([successor] if successor is not None else [])
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await sessions.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("retirement", ["replacement", "revocation", "grace_expiry"])
+async def test_retirement_fences_selection_delayed_before_shared_mutation_lock(monkeypatch, retirement):
+    import threading
+    from server.remote_dispatch import RemoteDispatcher
+    from tests.test_remote_client import blocking_instance_actions
+    actions, _, release_engine, _, calls, _ = blocking_instance_actions(monkeypatch, "select")
+    release_engine.set()  # This case blocks before the real manager's mutation lock.
+    entered, release_worker = threading.Event(), threading.Event()
+    real_select = actions.manager.select
+    def delayed_select(serial, advertised_host, *, mutation_guard=None):
+        if serial == "emulator-5554":
+            entered.set()
+            assert release_worker.wait(3)
+        return real_select(serial, advertised_host, mutation_guard=mutation_guard)
+    monkeypatch.setattr(actions.manager, "select", delayed_select)
+    sessions, engine, _, pairing, context, now = setup()
+    sessions.actions = actions
+    dispatcher = RemoteDispatcher(actions, pairing, sessions=sessions)
+    def command(serial):
+        return Command(v=1, id=str(uuid.uuid4()), op="select", payload={"serial": serial})
+    old = asyncio.create_task(dispatcher.dispatch(command("emulator-5554"), context.token, trusted_context=context))
+    try:
+        assert await asyncio.to_thread(entered.wait, 1)
+        if retirement == "replacement":
+            result = await asyncio.wait_for(dispatcher.dispatch(command("emulator-5556"), context.token,
+                                                                 trusted_context=context), 1)
+            assert result.ok and sessions.current.serial == "emulator-5556"
+        elif retirement == "revocation":
+            pairing.remove_all()
+            await sessions.sweep(now[0] + 1)
+            await sessions.drain()
+        else:
+            sessions.disconnected()
+            now[0] += 60
+            await sessions.sweep(now[0])
+            await sessions.drain()
+        assert actions.manager.active.serial == "emulator-5556"
+        assert actions.manager.list_instances()
+        release_worker.set()
+        assert not (await asyncio.wait_for(old, 1)).ok
+        assert calls == ([("select", "emulator-5556")] if retirement == "replacement" else []), \
+            "Retired worker reached engine after acquiring the shared mutation lock"
+        assert actions.manager.active.serial == "emulator-5556"
+        assert not engine.live
+        if retirement == "replacement":
+            assert sessions.current.serial == "emulator-5556"
+        else:
+            assert sessions.current is None
+    finally:
+        release_worker.set()
+        await asyncio.gather(old, return_exceptions=True)
+        await sessions.shutdown()
