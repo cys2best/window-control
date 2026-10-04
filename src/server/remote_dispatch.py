@@ -5,7 +5,8 @@ import base64
 from fastapi import HTTPException
 from config import TIER_ORDER
 from server.instance_manager import MutationGuard
-from remote_protocol import AUTHENTICATED_OPS, Command, Reply, ErrorPayload, ErrorCode, MAX_PREVIEW_BYTES
+from server.remote_pairing import RemotePairingError
+from remote_protocol import AUTHENTICATED_OPS, Command, Reply, RoutingContext, ErrorPayload, ErrorCode, MAX_PREVIEW_BYTES
 
 
 class InstanceActions:
@@ -50,12 +51,12 @@ class InstanceActions:
 
 class RemoteDispatcher:
     def __init__(self, actions, pairing, *, sessions=None):
-        """sessions.dispatch(command, PairedDevice) is Task 6's async media boundary."""
+        """The coordinator owns media; InstanceActions retains local mutations."""
         self.actions = actions
         self.pairing = pairing
         self.sessions = sessions
 
-    async def dispatch(self, command: Command, token: str) -> Reply:
+    async def dispatch(self, command: Command, token: str, *, trusted_context: RoutingContext | None = None) -> Reply:
         def error(code, message):
             return Reply(v=1, id=command.id, ok=False, error=ErrorPayload(code=code.value, message=message))
         try:
@@ -69,14 +70,16 @@ class RemoteDispatcher:
         if device is None:
             return error(ErrorCode.NOT_PAIRED, "Device is not paired")
         payload = command.payload
-        guard = MutationGuard() if command.op in {"select", "quality"} else None
+        guard = MutationGuard() if command.op in {"select", "quality", "renew"} else None
         try:
-            if command.op == "instances":
+            if command.op in {"select", "negotiate", "close", "renew"}:
+                if self.sessions is None:
+                    return error(ErrorCode.UNAVAILABLE, "Remote media is not available")
+                if trusted_context is None or trusted_context.token != token:
+                    return error(ErrorCode.INVALID_REQUEST, "Trusted routing context is required")
+                result = await self.sessions.dispatch(command, device, context=trusted_context, mutation_guard=guard)
+            elif command.op == "instances":
                 result = {"instances": await self.actions.instances()}
-            elif command.op == "select":
-                selection = await self.actions.select(payload["serial"], "127.0.0.1", mutation_guard=guard)
-                result = {key: value for key, value in selection.items()
-                          if key in {"ok", "id", "serial", "name", "w", "h", "generation", "tier"}}
             elif command.op == "preview":
                 preview = await self.actions.preview(payload["serial"])
                 if len(preview.body) > MAX_PREVIEW_BYTES:
@@ -86,11 +89,9 @@ class RemoteDispatcher:
                 result = await self.actions.keyframe(payload["serial"])
             elif command.op == "quality":
                 result = await self.actions.quality(payload["serial"], payload["tier"], mutation_guard=guard)
-            elif self.sessions is None:
-                return error(ErrorCode.UNAVAILABLE, "Remote media is not available")
-            else:
-                return await self.sessions.dispatch(command, device)
             return Reply(v=1, id=command.id, ok=True, result=result)
+        except RemotePairingError as exc:
+            return error(exc.code, str(exc))
         except HTTPException as exc:
             code = ErrorCode.INVALID_REQUEST if exc.status_code in (400, 404) else ErrorCode.UNAVAILABLE
             return error(code, str(exc.detail))

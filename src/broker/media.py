@@ -125,8 +125,10 @@ class MediaAdmission:
                 return False
             del self.admissions[host.installation_id]
             return True
-        latest = self.latest.get(host.installation_id)
-        return latest is not None and latest[:2] == (session_id, generation)
+        # A current authenticated host may confirm cleanup after a lost
+        # admission rejection or broker restart. An empty slot is already gone;
+        # a live successor still requires the exact match above.
+        return True
 
     def matching(self, pending):
         current = self.admissions.get(pending.installation_id)

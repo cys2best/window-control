@@ -702,3 +702,21 @@ async def test_endpoint_credentials_are_distinct_and_secret_stays_private(admiss
         assert bundle.expires_at == int(now[0]) + 3600
     assert bundles.host.ice_servers[1] != bundles.viewer.ice_servers[1]
     assert settings.turn_shared_secret not in bundles.model_dump_json()
+
+
+@pytest.mark.asyncio
+async def test_current_host_release_of_never_admitted_session_is_idempotent_and_successor_safe(admission):
+    media, registry, _, _ = admission
+    old, _ = owner(registry)
+    current, viewer = owner(registry)
+    unknown_session = str(uuid.uuid4())
+    assert not media.release(old, unknown_session, 1)
+    assert media.release(current, unknown_session, 1)
+    assert media.release(current, unknown_session, 1)
+    live = authorization(pending(registry, viewer).routing_id, 2)
+    media.authorize(current, live)
+    assert not media.release(current, unknown_session, 1)
+    assert not media.release(old, live.payload["session_id"], 2)
+    assert media.admissions["a"].session_id == live.payload["session_id"]
+    assert media.release(current, live.payload["session_id"], 2)
+    assert media.release(current, unknown_session, 1)

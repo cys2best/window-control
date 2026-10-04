@@ -30,13 +30,19 @@ class Actions:
         return []
 
 
-async def host(origin, identity, actions=None):
+async def host(origin, identity, actions=None, *, engine=None, clock=None):
     module = importlib.import_module("server.remote_client")
     from server.remote_dispatch import RemoteDispatcher
     pairing = PairingStore()
     token = pairing.pair(pairing.start_pairing(), "Phone")
     actions = actions if actions is not None else Actions()
     client = module.RemoteHostClient(origin, identity, RemoteDispatcher(actions, pairing), allow_insecure_localhost=True)
+    from tests.test_remote_sessions import Engine
+    from server.remote_sessions import RemoteSessionCoordinator
+    engine = engine if engine is not None else Engine()
+    options = {"clock": clock} if clock is not None else {}
+    client.dispatcher.sessions = RemoteSessionCoordinator(identity.installation_id, actions, pairing,
+                                                          engine.endpoint, engine, authority=client, **options)
     stop = asyncio.Event()
     task = asyncio.create_task(client.run(stop))
     await asyncio.wait_for(client.ready.wait(), 2)
@@ -245,8 +251,17 @@ async def test_unexpected_action_failure_does_not_leave_request_hanging(tmp_path
         identity = InstallationIdentity(**(await http.post("/installations")).json())
         client, stop, task, actions, pairing, token = await host(origin, identity)
         class Sessions:
-            async def dispatch(self, command, device):
-                return Reply(v=1, id=command.id, ok=True, result={"answer": "x" * (128 * 1024 + 1)})
+            clock = staticmethod(__import__("time").monotonic)
+            async def dispatch(self, command, device, **kwargs):
+                return {"answer": "x" * (128 * 1024 + 1)}
+            async def sweep(self, now):
+                pass
+            def disconnected(self):
+                pass
+            def connected(self):
+                pass
+            async def shutdown(self):
+                pass
         client.dispatcher.sessions = Sessions()
         try:
             ws, approved = await viewer(origin, identity, token)

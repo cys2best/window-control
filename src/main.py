@@ -136,13 +136,21 @@ async def build_remote_client(service_url, actions, pairing, on_state, *, identi
     from server.remote_identity import RemoteIdentityStore, RemoteIdentityError
     from server.remote_dispatch import RemoteDispatcher
     from server.remote_client import RemoteHostClient
+    from server.remote_sessions import RemoteSessionCoordinator
+    from server.engine_remote import EngineRemoteClient
     if not service_url:
         on_state(None, "Remote service is not configured")
         return None
     try:
         store = identity_store if identity_store is not None else RemoteIdentityStore()
         identity = await asyncio.to_thread(store.load_or_register, service_url)
-        return RemoteHostClient(service_url, identity, RemoteDispatcher(actions, pairing), on_state=on_state)
+        dispatcher = RemoteDispatcher(actions, pairing)
+        host = RemoteHostClient(service_url, identity, dispatcher=dispatcher, on_state=on_state)
+        sessions = RemoteSessionCoordinator(identity.installation_id, actions, pairing,
+                                            actions.manager._engine_orchestrator.remote_endpoint,
+                                            EngineRemoteClient(), authority=host)
+        dispatcher.sessions = sessions
+        return host
     except RemoteIdentityError as exc:
         on_state(None, str(exc))
     except Exception:

@@ -75,8 +75,34 @@ def test_viewer_cannot_generate_code_or_revoke_device(op):
 def test_remote_select_does_not_publish_engine_capabilities():
     dispatch, actions, pairing, token = setup_dispatch()
     reply = asyncio.run(dispatch.dispatch(Command(**cmd("select", {"serial": "emulator-5554"})), token))
-    assert reply.ok and reply.result == {"serial": "emulator-5554", "generation": 2}
-    assert actions.calls == [("emulator-5554", "127.0.0.1")]
+    assert reply.error.code == "unavailable"
+    assert actions.calls == []
+
+
+@pytest.mark.asyncio
+async def test_media_dispatch_wraps_dictionary_and_preserves_error_and_mutation_guard():
+    from remote_protocol import RoutingContext, ErrorCode
+    from server.remote_pairing import RemotePairingError
+    dispatch, actions, pairing, token = setup_dispatch()
+    context = RoutingContext(installation_id="pc", host_epoch=1, viewer_id="phone", token=token)
+    guards = []
+    class Sessions:
+        async def dispatch(self, command, device, *, context, mutation_guard):
+            assert device.id == pairing.device_for_token(token).id
+            assert context.token == token
+            assert not mutation_guard.is_canceled()
+            guards.append(mutation_guard)
+            if command.op == "renew":
+                raise RemotePairingError(ErrorCode.STALE_GENERATION, "Session is stale")
+            return {"session_id": "public", "generation": 1}
+    dispatch.sessions = Sessions()
+    reply = await dispatch.dispatch(Command(**cmd("select", {"serial": "a"})), token, trusted_context=context)
+    assert reply.ok and reply.result == {"session_id": "public", "generation": 1}
+    assert guards[-1].is_canceled()
+    reply = await dispatch.dispatch(Command(**cmd("renew", {"session_id": str(uuid.uuid4()), "generation": 1})), token, trusted_context=context)
+    assert reply.error.code == "stale_generation" and guards[-1].is_canceled()
+    reply = await dispatch.dispatch(Command(**cmd("select", {"serial": "a"})), token)
+    assert reply.error.code == "invalid_request"
 
 
 def test_remote_preview_respects_size_limit():

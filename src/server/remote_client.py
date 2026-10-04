@@ -1,6 +1,7 @@
 """Bounded outbound host connection; credentials live only in first-frame auth."""
 
 import asyncio
+from collections import deque
 import logging
 import queue
 import random
@@ -11,7 +12,8 @@ import uuid
 from websockets.asyncio.client import connect
 from remote_protocol import (Command, Reply, ErrorPayload, ErrorCode, MAX_FRAME_BYTES,
                              MAX_PENDING_REQUESTS, decode_frame, parse_reply, parse_routed_frame,
-                             format_reply, DeviceInvalidated)
+                             format_reply, DeviceInvalidated, MediaAuthorization, MediaRelease,
+                             MediaBundles, parse_media_cancellation)
 from server.remote_identity import service_origin
 from server.remote_pairing import RemotePairing, RemotePairingError
 
@@ -43,6 +45,9 @@ class RemoteHostClient:
         self._accepting = False
         self._known_devices = set()
         self._lifecycle_ids = set()
+        self._media_requests = {}
+        self._settled_media = deque(maxlen=256)
+        self._cancel_tasks = set()
         self.remote_pairing = RemotePairing(dispatcher.pairing, identity, service_url,
                                            publish=self.publish_pairing, close=self.close_pairing,
                                            on_error=self._pairing_error,
@@ -93,18 +98,87 @@ class RemoteHostClient:
             # This callback must enqueue media teardown, without blocking.
             self.on_device_invalidated(device_id)
 
+    async def _media_request(self, request):
+        if len(self._media_requests) >= MAX_PENDING_REQUESTS:
+            raise RemotePairingError(ErrorCode.BUSY, "Media authority queue is full")
+        future = asyncio.get_running_loop().create_future()
+        self._media_requests[request.id] = future
+        try:
+            self._enqueue(request.model_dump_json())
+            async with asyncio.timeout(5):
+                reply = await future
+            if not reply.ok:
+                raise RemotePairingError(ErrorCode(reply.error.code), reply.error.message)
+            return reply.result
+        except TimeoutError:
+            raise RemotePairingError(ErrorCode.TIMEOUT, "Media authority timed out") from None
+        finally:
+            self._media_requests.pop(request.id, None)
+            self._settled_media.append(request.id)
+
+    async def authorize(self, routing_id: str, session_id: str, generation: int) -> MediaBundles:
+        request = MediaAuthorization(v=1, id=str(uuid.uuid4()), op="media_authorize",
+                                     payload={"routing_id": routing_id, "session_id": session_id, "generation": generation})
+        return MediaBundles.model_validate(await self._media_request(request))
+
+    async def release(self, session_id: str, generation: int) -> None:
+        request = MediaRelease(v=1, id=str(uuid.uuid4()), op="media_release",
+                               payload={"session_id": session_id, "generation": generation})
+        if await self._media_request(request) != {"released": True}:
+            raise RemotePairingError(ErrorCode.UNAVAILABLE, "Media release was not confirmed")
+
+    def _cancel_session(self, payload):
+        sessions = self.dispatcher.sessions
+        if sessions is None:
+            return
+        task = asyncio.create_task(sessions.cancel(**payload))
+        self._cancel_tasks.add(task)
+        def settled(done):
+            self._cancel_tasks.discard(done)
+            if not done.cancelled():
+                done.exception()  # Failed DELETE remains in coordinator cleanup.
+        task.add_done_callback(settled)
+
+    async def _sweep(self):
+        # This task belongs to run(), not a socket. Revocation and exact-ID
+        # teardown continue while connecting, authenticating and backing off.
+        while True:
+            await asyncio.sleep(1)
+            sessions = self.dispatcher.sessions
+            if sessions is not None:
+                await sessions.sweep(sessions.clock())
+            current = {device.id for device in self.dispatcher.pairing.list_devices()}
+            if self.ready.is_set():
+                for device_id in self._known_devices - current:
+                    try:
+                        self.invalidate_device(device_id)
+                    except RemotePairingError:
+                        if self.connection is not None:
+                            await self.connection.close()
+                        break
+                    self._known_devices.discard(device_id)
+            self.remote_pairing.active_invitation()
+
     async def run(self, stop: asyncio.Event) -> None:
         """Server-loop lifetime; stop cancels connect, auth, backoff and dispatch."""
         worker = asyncio.create_task(self._reconnect(stop))
         stopped = asyncio.create_task(stop.wait())
+        sweeper = asyncio.create_task(self._sweep())
         try:
-            await asyncio.wait({worker, stopped}, return_when=asyncio.FIRST_COMPLETED)
+            await asyncio.wait({worker, stopped, sweeper}, return_when=asyncio.FIRST_COMPLETED)
             if worker.done():
                 await worker
+            if sweeper.done():
+                await sweeper
         finally:
             worker.cancel()
             stopped.cancel()
-            await asyncio.gather(worker, stopped, return_exceptions=True)
+            sweeper.cancel()
+            await asyncio.gather(worker, stopped, sweeper, return_exceptions=True)
+            if self.dispatcher.sessions is not None:
+                await self.dispatcher.sessions.shutdown()
+            if self._cancel_tasks:
+                await asyncio.gather(*self._cancel_tasks, return_exceptions=True)
             self.remote_pairing.shutdown()
             self._notify(self.last_error or "Remote host is offline")
 
@@ -133,6 +207,8 @@ class RemoteHostClient:
                         self._accepting = True
                     self.remote_pairing.set_online(True)
                     self.ready.set()
+                    if self.dispatcher.sessions is not None:
+                        self.dispatcher.sessions.connected()
                     authenticated = True
                     attempt = 0
                     self._notify()
@@ -145,6 +221,11 @@ class RemoteHostClient:
                     self._notify("Remote service is unavailable")
                 finally:
                     self.ready.clear()
+                    if authenticated and self.dispatcher.sessions is not None:
+                        self.dispatcher.sessions.disconnected()
+                    for future in tuple(self._media_requests.values()):
+                        if not future.done():
+                            future.set_exception(RemotePairingError(ErrorCode.OFFLINE, "Media authority is offline"))
                     # First clear invitations while close can still enqueue. All
                     # work is discarded below, never replayed after reconnect.
                     self.remote_pairing.set_online(False)
@@ -167,6 +248,7 @@ class RemoteHostClient:
 
     async def _connected(self):
         commands = {}
+        contexts = {}
         failed = asyncio.get_running_loop().create_future()
 
         def command_done(task):
@@ -186,16 +268,6 @@ class RemoteHostClient:
                     except queue.Empty:
                         break
                     await self.connection.send(raw)
-
-        async def revoked_devices():
-            while True:
-                await asyncio.sleep(1)
-                current = {device.id for device in self.dispatcher.pairing.list_devices()}
-                for device_id in self._known_devices - current:
-                    # Enqueue failure aborts connection rather than hiding revocation.
-                    self.invalidate_device(device_id)
-                self._known_devices.intersection_update(current)
-                self.remote_pairing.active_invitation()  # Close expired handles.
 
         async def execute(routed, received_at):
             command = routed.command()
@@ -221,10 +293,10 @@ class RemoteHostClient:
                             raise asyncio.TimeoutError
                         command.payload["timeout_ms"] = max(1, int(remaining * 1000))
                         async with asyncio.timeout(remaining):
-                            reply = await self.dispatcher.dispatch(command, token)
+                            reply = await self.dispatcher.dispatch(command, token, trusted_context=routed.context)
                     else:
                         async with asyncio.timeout(30):
-                            reply = await self.dispatcher.dispatch(command, token)
+                            reply = await self.dispatcher.dispatch(command, token, trusted_context=routed.context)
                 self._enqueue(format_reply(reply))
             except RemotePairingError as exc:
                 self._enqueue(format_reply(Reply(v=1, id=command.id, ok=False, error=ErrorPayload(code=exc.code.value, message=str(exc)))))
@@ -234,12 +306,20 @@ class RemoteHostClient:
                 self._enqueue(format_reply(Reply(v=1, id=command.id, ok=False, error=ErrorPayload(code="unavailable", message="Remote action failed"))))
             finally:
                 commands.pop(command.id, None)
+                contexts.pop(command.id, None)
 
         async def receiver():
             async for raw in self.connection:
                 parsed = decode_frame(raw)
                 if "ok" in parsed:
                     reply = parse_reply(raw)
+                    future = self._media_requests.get(reply.id)
+                    if future is not None:
+                        if not future.done():
+                            future.set_result(reply)
+                        continue
+                    if reply.id in self._settled_media:
+                        continue
                     with self._lock:
                         if reply.id not in self._lifecycle_ids:
                             # Settled routing tombstones are bounded. A late
@@ -253,6 +333,17 @@ class RemoteHostClient:
                     if not reply.ok:
                         raise ValueError("owner lifecycle command rejected")
                     continue
+                if parsed.get("op") == "media_cancel":
+                    message = parse_media_cancellation(raw)
+                    payload = message.payload
+                    if (payload["installation_id"], payload["host_epoch"]) != (self.identity.installation_id, self.host_epoch):
+                        raise ValueError("invalid media cancellation ownership")
+                    for request_id, context in tuple(contexts.items()):
+                        if context.viewer_id == payload["viewer_id"] and (
+                                payload.get("routing_id") is None or payload["routing_id"] == request_id):
+                            commands[request_id].cancel()
+                    self._cancel_session(payload)
+                    continue
                 routed = parse_routed_frame(raw)
                 if (routed.context.installation_id, routed.context.host_epoch) != (self.identity.installation_id, self.host_epoch):
                     raise ValueError("invalid routing ownership")
@@ -263,9 +354,10 @@ class RemoteHostClient:
                     continue
                 task = asyncio.create_task(execute(routed, asyncio.get_running_loop().time()))
                 commands[routed.id] = task
+                contexts[routed.id] = routed.context
                 task.add_done_callback(command_done)
 
-        tasks = [asyncio.create_task(sender()), asyncio.create_task(receiver()), asyncio.create_task(revoked_devices()), failed]
+        tasks = [asyncio.create_task(sender()), asyncio.create_task(receiver()), failed]
         try:
             done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
             for task in done:
