@@ -1,6 +1,10 @@
 import time
+import threading
 from collections import deque
 from typing import Dict, Tuple, Callable
+
+MAX_RATE_LIMIT_KEYS = 4096
+
 
 class TokenBucket:
     def __init__(self, capacity: int, fill_rate: float, clock: Callable[[], float]):
@@ -26,39 +30,48 @@ class BrokerLimits:
         self.clock = clock
         self.buckets: Dict[str, TokenBucket] = {}
         self.issuances = {}
+        # HTTP registrations can arrive on multiple threadpool workers.
+        self._lock = threading.RLock()
 
-    def _get_bucket(self, key: str, capacity: int, fill_rate: float) -> TokenBucket:
-        if key not in self.buckets:
-            self.buckets[key] = TokenBucket(capacity, fill_rate, self.clock)
-        return self.buckets[key]
+    def _consume(self, key: str, capacity: int, fill_rate: float) -> bool:
+        with self._lock:
+            now = self.clock()
+            for old_key, bucket in list(self.buckets.items()):
+                # Recreating this key now grants no more than natural refill.
+                if now - bucket.last_fill >= bucket.capacity / bucket.fill_rate:
+                    del self.buckets[old_key]
+            if key not in self.buckets:
+                if len(self.buckets) >= MAX_RATE_LIMIT_KEYS:
+                    return False
+                self.buckets[key] = TokenBucket(capacity, fill_rate, self.clock)
+            return self.buckets[key].consume()
 
     def check_registration(self, ip: str) -> bool:
-        # 5/IP/hour -> 5 capacity, rate = 5 / 3600 per second
-        bucket = self._get_bucket(f"reg_{ip}", 5, 5 / 3600.0)
-        return bucket.consume()
+        return self._consume(f"reg_{ip}", 5, 5 / 3600.0)
 
     def check_pairing(self, ip: str) -> bool:
-        # 10/IP/minute -> 10 capacity, rate = 10 / 60
-        bucket = self._get_bucket(f"pairing_{ip}", 10, 10 / 60.0)
-        return bucket.consume()
+        return self._consume(f"pairing_{ip}", 10, 10 / 60.0)
 
     def check_authenticated_command(self, viewer_id: str) -> bool:
-        # 120/viewer/minute -> 120 capacity, rate = 120 / 60 = 2/sec
-        bucket = self._get_bucket(f"cmd_{viewer_id}", 120, 120 / 60.0)
-        return bucket.consume()
+        return self._consume(f"cmd_{viewer_id}", 120, 2.0)
 
     def check_preview(self, viewer_id: str) -> bool:
-        # 2/viewer/second -> 2 capacity, rate = 2/sec
-        bucket = self._get_bucket(f"preview_{viewer_id}", 2, 2.0)
-        return bucket.consume()
+        return self._consume(f"preview_{viewer_id}", 2, 2.0)
 
     def check_credential_issuance(self, installation_id: str) -> bool:
-        # A rolling window prevents a burst plus refill exceeding 12/hour.
-        now = self.clock()
-        entries = self.issuances.setdefault(installation_id, deque())
-        while entries and entries[0] <= now - 3600:
-            entries.popleft()
-        if len(entries) >= 12:
-            return False
-        entries.append(now)
-        return True
+        with self._lock:
+            now = self.clock()
+            for key, entries in list(self.issuances.items()):
+                while entries and entries[0] <= now - 3600:
+                    entries.popleft()
+                if not entries:
+                    del self.issuances[key]
+            if installation_id not in self.issuances:
+                if len(self.issuances) >= MAX_RATE_LIMIT_KEYS:
+                    return False
+                self.issuances[installation_id] = deque()
+            entries = self.issuances[installation_id]
+            if len(entries) >= 12:
+                return False
+            entries.append(now)
+            return True

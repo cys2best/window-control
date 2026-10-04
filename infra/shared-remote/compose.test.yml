@@ -1,0 +1,55 @@
+services:
+  broker:
+    build:
+      context: ../..
+      dockerfile: infra/shared-remote/broker.Dockerfile
+    command: ["uvicorn", "broker.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--no-access-log"]
+    environment:
+      REMOTE_ALLOWED_ORIGINS: '["https://localhost:8443"]'
+      REMOTE_STORE_PATH: /data/installations.json
+      REMOTE_TURN_SECRET_FILE: /run/secrets/turn_secret
+      REMOTE_STUN_URLS: '["stun:localhost:3478"]'
+      REMOTE_TURN_URLS: '["turn:localhost:3478?transport=udp","turn:localhost:3478?transport=tcp","turns:localhost:5349?transport=tcp"]'
+      REMOTE_MAX_ACTIVE_STREAMS: "1"
+    volumes:
+      - broker-data:/data
+      - ${REMOTE_TEST_DIRECTORY:?required}/turn-secret:/run/secrets/turn_secret:ro
+  edge:
+    build:
+      context: ../..
+      dockerfile: infra/shared-remote/edge.Dockerfile
+      args:
+        REMOTE_ORIGIN: https://localhost:8443
+    environment:
+      REMOTE_DOMAIN: localhost
+    ports:
+      - '127.0.0.1:8443:443/tcp'
+    volumes:
+      - ${REMOTE_TEST_DIRECTORY:?required}:/run/certs:ro
+      - ${REMOTE_TEST_DIRECTORY:?required}/association:/run/association:ro
+    depends_on: [broker]
+  turn:
+    image: coturn/coturn@sha256:71c3c990283385567f11794ee692e3a47b66fd9b0bb39e42afbe776e331dd888
+    user: "0:0"
+    network_mode: host
+    entrypoint: [/bin/sh, -ec]
+    command:
+      - |
+        umask 077
+        cat /etc/turnserver.test.conf > /private/turnserver.conf
+        printf '\nstatic-auth-secret=' >> /private/turnserver.conf
+        cat /run/secrets/turn_secret >> /private/turnserver.conf
+        printf '\n' >> /private/turnserver.conf
+        exec turnserver -c /private/turnserver.conf
+    tmpfs: [/private]
+    volumes:
+      - ./turnserver.test.conf:/etc/turnserver.test.conf:ro
+      - ${REMOTE_TEST_DIRECTORY:?required}/turn-secret:/run/secrets/turn_secret:ro
+      - ${REMOTE_TEST_DIRECTORY:?required}:/assets:ro
+  echo:
+    image: coturn/coturn@sha256:71c3c990283385567f11794ee692e3a47b66fd9b0bb39e42afbe776e331dd888
+    network_mode: host
+    entrypoint: [turnutils_peer]
+    command: ["-L", "127.0.0.2", "-p", "3480"]
+volumes:
+  broker-data:

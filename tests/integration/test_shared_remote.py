@@ -143,8 +143,10 @@ class SharedRemoteStack:
 
     def compose(self, *args, timeout=240):
         result = subprocess.run([*self.command, *args], capture_output=True, text=True, timeout=timeout)
-        # Never attach command output: Docker/server errors may include credentials.
-        assert result.returncode == 0, 'Docker compose failed: ' + ' '.join(args[:2])
+        if result.returncode:
+            secret = (self.directory / 'turn-secret').read_text().strip()
+            diagnostic = (result.stdout + result.stderr).replace(secret, '[REDACTED]')
+            pytest.fail('Docker compose failed: ' + ' '.join(args[:2]) + '\n' + diagnostic[-6000:])
         return result.stdout
 
     def ready(self):
@@ -271,11 +273,13 @@ def shared_remote_stack():
         print('tested coturn image: ' + IMAGE)
         yield stack
     finally:
-        if stack is not None:
-            stack.sockets.close()
-            stack.http.close()
-            stack.compose('down', '--volumes', '--remove-orphans', timeout=60)
-        shutil.rmtree(directory)
+        try:
+            if stack is not None:
+                stack.sockets.close()
+                stack.http.close()
+                stack.compose('down', '--volumes', '--remove-orphans', timeout=60)
+        finally:
+            shutil.rmtree(directory)
 
 
 @pytest.mark.parametrize('transport', ['udp', 'tcp', 'tls'])

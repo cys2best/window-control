@@ -1,0 +1,91 @@
+x-operator: &operator
+  REMOTE_HTTPS_BIND_ADDRESS: ${REMOTE_HTTPS_BIND_ADDRESS:?required}
+  REMOTE_TURN_BIND_ADDRESS: ${REMOTE_TURN_BIND_ADDRESS:?required}
+  REMOTE_TURN_RELAY_BIND_ADDRESS: ${REMOTE_TURN_RELAY_BIND_ADDRESS:?required}
+  REMOTE_TURN_PUBLIC_ADDRESS: ${REMOTE_TURN_PUBLIC_ADDRESS:?required}
+  REMOTE_DOMAIN: ${REMOTE_DOMAIN:?required}
+  REMOTE_TURN_DOMAIN: ${REMOTE_TURN_DOMAIN:?required}
+  REMOTE_MAX_ACTIVE_STREAMS: ${REMOTE_MAX_ACTIVE_STREAMS:?required}
+  REMOTE_TURN_ALLOCATION_BPS: ${REMOTE_TURN_ALLOCATION_BPS:?required}
+  REMOTE_TURN_AGGREGATE_BPS: ${REMOTE_TURN_AGGREGATE_BPS:?required}
+  REMOTE_TURN_TOTAL_ALLOCATIONS: ${REMOTE_TURN_TOTAL_ALLOCATIONS:?required}
+  REMOTE_TURN_SECRET_FILE: /run/secrets/turn_secret
+  REMOTE_CERT_DIRECTORY: /run/certs
+  REMOTE_IOS_TEAM_ID: ${REMOTE_IOS_TEAM_ID:-}
+  REMOTE_IOS_APP_ID: ${REMOTE_IOS_APP_ID:-}
+  REMOTE_IOS_ASSOCIATED_DOMAIN: ${REMOTE_IOS_ASSOCIATED_DOMAIN:-}
+services:
+  preflight:
+    build:
+      context: ../..
+      dockerfile: infra/shared-remote/broker.Dockerfile
+    command: ["python", "/configuration/configure.py"]
+    environment: *operator
+    volumes:
+      - .:/configuration:ro
+      - ${REMOTE_TURN_SECRET_FILE:?required}:/run/secrets/turn_secret:ro
+      - ${REMOTE_CERT_DIRECTORY:?required}:/run/certs:ro
+      - turn-private:/private
+      - association:/association
+  broker:
+    container_name: shared-remote-broker
+    build:
+      context: ../..
+      dockerfile: infra/shared-remote/broker.Dockerfile
+    command: ["uvicorn", "broker.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--no-access-log", "--forwarded-allow-ips", "*"]
+    deploy:
+      replicas: 1
+    environment:
+      REMOTE_ALLOWED_ORIGINS: '["https://${REMOTE_DOMAIN:?required}"]'
+      REMOTE_MAX_ACTIVE_STREAMS: "${REMOTE_MAX_ACTIVE_STREAMS:?required}"
+      REMOTE_STORE_PATH: /data/installations.json
+      REMOTE_TURN_SECRET_FILE: /run/secrets/turn_secret
+      REMOTE_STUN_URLS: '["stun:${REMOTE_TURN_DOMAIN:?required}:3478"]'
+      REMOTE_TURN_URLS: '["turn:${REMOTE_TURN_DOMAIN:?required}:3478?transport=udp","turn:${REMOTE_TURN_DOMAIN:?required}:3478?transport=tcp","turns:${REMOTE_TURN_DOMAIN:?required}:443?transport=tcp"]'
+    volumes:
+      - broker-data:/data
+      - ${REMOTE_TURN_SECRET_FILE:?required}:/run/secrets/turn_secret:ro
+    depends_on:
+      preflight:
+        condition: service_completed_successfully
+    networks: [signaling]
+  edge:
+    build:
+      context: ../..
+      dockerfile: infra/shared-remote/edge.Dockerfile
+      args:
+        REMOTE_ORIGIN: https://${REMOTE_DOMAIN:?required}
+    environment:
+      REMOTE_DOMAIN: ${REMOTE_DOMAIN:?required}
+    ports:
+      - "${REMOTE_HTTPS_BIND_ADDRESS:?required}:443:443/tcp"
+    volumes:
+      - ${REMOTE_CERT_DIRECTORY:?required}:/run/certs:ro
+      - association:/run/association:ro
+    depends_on:
+      broker:
+        condition: service_started
+    networks: [signaling]
+  turn:
+    image: coturn/coturn@sha256:71c3c990283385567f11794ee692e3a47b66fd9b0bb39e42afbe776e331dd888
+    user: "0:0"
+    network_mode: host
+    entrypoint: [turnserver]
+    command: ["-c", "/private/turnserver.conf"]
+    volumes:
+      - turn-private:/private:ro
+      - ${REMOTE_CERT_DIRECTORY:?required}:/run/certs:ro
+    depends_on:
+      preflight:
+        condition: service_completed_successfully
+networks:
+  signaling:
+volumes:
+  broker-data:
+  association:
+  turn-private:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: mode=0700

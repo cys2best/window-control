@@ -53,12 +53,12 @@ def test_production_preflight_rejects_missing_equal_bind_addresses_and_private_d
     with pytest.raises(ValueError):
         config.validate_production({})
     env = config_test_environment(tmp_path)
-    monkeypatch.setattr(config.socket, 'getaddrinfo', lambda *a: [(2, 1, 6, '', ('93.184.216.34', 0))])
+    monkeypatch.setattr(config.socket, 'getaddrinfo', lambda *a, **kw: [(2, 1, 6, '', ('93.184.216.34', 0))])
     config.validate_production(env)
     for key, value in [('REMOTE_TURN_BIND_ADDRESS', env['REMOTE_HTTPS_BIND_ADDRESS']), ('REMOTE_TURN_ALLOCATION_BPS', '1999999'), ('REMOTE_MAX_ACTIVE_STREAMS', '0')]:
         with pytest.raises(ValueError):
             config.validate_production({**env, key: value})
-    monkeypatch.setattr(config.socket, 'getaddrinfo', lambda *a: [(2, 1, 6, '', ('169.254.169.254', 0))])
+    monkeypatch.setattr(config.socket, 'getaddrinfo', lambda *a, **kw: [(2, 1, 6, '', ('169.254.169.254', 0))])
     with pytest.raises(ValueError):
         config.validate_production(env)
 
@@ -98,11 +98,11 @@ def test_generated_assets_are_private_and_print_no_credentials(tmp_path):
     assert (directory / 'ca.pem').is_file()
 
 
-def test_rate_limit_keys_expire_and_full_maps_fail_closed():
+def test_rate_limit_keys_expire_and_full_maps_fail_closed(monkeypatch):
     from broker.limits import BrokerLimits
     now = [1000.0]
     limits = BrokerLimits(lambda: now[0])
-    limits.max_keys = 4
+    monkeypatch.setattr("broker.limits.MAX_RATE_LIMIT_KEYS", 4)
     for index in range(4):
         assert limits.check_registration(str(index))
         assert limits.check_credential_issuance(str(index))
