@@ -3,8 +3,10 @@ on:
   push:
     branches: [main, "feature/**", "feat/**"]
   pull_request:
+  workflow_dispatch:
 jobs:
   test:
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,3 +26,21 @@ jobs:
         run: uv python install 3.12
       - name: Run Python remote protocol and broker tests
         run: uv run pytest tests/test_remote_protocol.py tests/test_broker.py tests/test_broker_identity.py -v
+  real-turn:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv python install 3.12
+      - name: Run real broker and coturn acceptance
+        shell: bash
+        run: |
+          set -o pipefail
+          uv run pytest tests/test_remote_deployment.py tests/integration/test_shared_remote.py -v -s --tb=short 2>&1 | tee shared-remote-results.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: shared-remote-results
+          path: shared-remote-results.log
