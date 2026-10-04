@@ -90,14 +90,23 @@ export function ServerProvider({
   const clearCaptured = useCallback(async (captured: ServerTarget, n: number, capturedToken: string | null) => {
     if (activeGeneration.current !== n) return;
     const key = tokenKey(captured);
-    await ordered(key, async () => {
-      if (await secureStorage.getItem(key) === capturedToken) await secureStorage.deleteItem(key);
-    });
-    if (activeGeneration.current === n) { setAuthTokenState(null); setPaired(false); }
+    try {
+      await ordered(key, async () => {
+        if (await secureStorage.getItem(key) === capturedToken) await secureStorage.deleteItem(key);
+      });
+    } finally {
+      if (activeGeneration.current === n) {
+        clientRef.current?.dispose();
+        clientRef.current = null;
+        setClient(null);
+        setAuthTokenState(null);
+        setPaired(false);
+      }
+    }
   }, [secureStorage, ordered]);
   const publish = useCallback((selection: ServerTarget | null, token: string | null, n: number, pairedValue: boolean | null): ApiClient | null => {
     if (generation.current !== n) return null;
-    const unauthorized = () => { if (selection) void clearCaptured(selection, n, token); };
+    const unauthorized = () => { if (selection) void clearCaptured(selection, n, token).catch(() => {}); };
     const owned = selection?.kind === "remote"
       ? connectRemoteClient(selection, token || "", unauthorized, remoteOptions!)
       : selection?.kind === "local" ? makeClient(selection.base, token, unauthorized) : null;
