@@ -772,3 +772,59 @@ test("failed cleanup on a replaced client cannot block another installation", as
   expect(Core.connectEngineSession).toHaveBeenCalledTimes(2);
   await view.unmount();
 });
+
+test.each(["quality RPC", "selection", "adoption"])("a newer preference wins while remote %s is pending", async boundary => {
+  jest.useFakeTimers();
+  let view: Awaited<ReturnType<typeof render>> | undefined;
+  try {
+    const real = jest.requireActual("@wc/core"), controllers: any[] = [];
+    (Adaptive.makeAdaptive as jest.Mock).mockImplementation((opts: any) => {
+      const value = real.makeAdaptive(opts); controllers.push(value); return value;
+    });
+    const client = remoteClient();
+    let nativeTier = "1080", release!: () => void;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    const order: string[] = [];
+    const peers: ReturnType<typeof makeFakeSession>[] = [];
+    client.setQuality.mockImplementation(async (_serial: string, tier: string) => {
+      order.push(`quality:${tier}`);
+      if (boundary === "quality RPC" && tier === "360") await pending;
+      nativeTier = tier;
+    });
+    client.select.mockImplementation(async () => {
+      order.push(`select:${nativeTier}`);
+      if (boundary === "selection" && nativeTier === "360") await pending;
+      return remoteResp({ tier: nativeTier });
+    });
+    (Core.connectEngineSession as jest.Mock).mockImplementation(async (opts: any) => {
+      if (boundary === "adoption" && opts.selection.tier === "360") await pending;
+      const peer = makeFakeSession();
+      peer.close.mockImplementation(async () => { order.push(`close:${opts.selection.tier}`); });
+      peers.push(peer);
+      return { ...peer, kind: "remote" };
+    });
+    let preferences: Core.StreamPreferences = { ...Core.DEFAULT_STREAM_PREFERENCES, quality: "auto" };
+    (SC.useServer as jest.Mock).mockImplementation(() => ({ client, preferences }));
+    view = await render(remoteElement());
+    await act(async () => { controllers[0].pin("360"); });
+    expect(client.setQuality).toHaveBeenCalledWith("A", "360");
+    expect(controllers).toHaveLength(1); // retirement has removed the live controller
+
+    preferences = { ...preferences, quality: "720" };
+    await view.rerender(remoteElement());
+    await act(async () => { release(); });
+
+    expect(controllers[controllers.length - 1].current()).toBe("720");
+    expect(nativeTier).toBe("720");
+    expect(client.setQuality.mock.calls).toEqual([["A", "360"], ["A", "720"]]);
+    expect(order.indexOf("close:360")).toBeLessThan(order.indexOf("quality:720"));
+    expect(order.indexOf("quality:720")).toBeLessThan(order.indexOf("select:720"));
+    expect(peers[1].close).toHaveBeenCalledTimes(1);
+    expect(peers[peers.length - 1].close).not.toHaveBeenCalled();
+    await view.rerender(remoteElement());
+    expect(client.setQuality).toHaveBeenCalledTimes(2);
+  } finally {
+    await view?.unmount();
+    jest.useRealTimers();
+  }
+});

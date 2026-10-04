@@ -95,6 +95,7 @@ export function Stream({
   const start = useCallback(async (qualityTier?: string) => {
     if (!client) return;
     const gen = ++startGen.current;
+    const initiatingQuality = currentQuality.current;
     const controller = new AbortController();
     // Includes retirement, selection, gathering, answer and adoption.
     const deadline = performance.now() + 30_000;
@@ -221,7 +222,9 @@ export function Stream({
       qualityController.start(s.pc);
       const quality = currentQuality.current;
       if (quality === "auto") qualityController.setAuto();
-      else qualityController.pin(qualityTier ?? quality);
+      // Preserve a downgrade only while its initiating preference still
+      // applies. A newer manual preference must use the replacement path.
+      else qualityController.pin(quality === initiatingQuality ? qualityTier ?? quality : quality);
       appliedTier.current = quality;
       if (sel.kind === "remote" && current()) {
         // expires_at is Unix seconds; credentials were issued 3600s earlier.
