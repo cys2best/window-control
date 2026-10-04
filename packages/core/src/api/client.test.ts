@@ -70,7 +70,7 @@ test("parses the exact final selection shape", async () => {
   global.fetch = jest.fn(async () => okJson(body)) as any;
   const client = makeClient("https://host", "tok");
   const sel = await client.select("emulator-5554");
-  expect(sel).toEqual(body);
+  expect(sel).toEqual({ ...body, kind: "local" });
 });
 
 test("non-2xx responses throw ApiError with preserved status", async () => {
@@ -117,3 +117,12 @@ test("previewSource omits headers when token is null", () => {
   const src = client.previewSource("emulator-5554");
   expect(src.headers).toBeUndefined();
 });
+
+ test("async preview preserves synchronous compatibility and disposed clients reject", async () => {
+  const client = makeClient("https://host", "tok");
+  await expect(client.preview("A")).resolves.toMatchObject({ headers: { Authorization: "Bearer tok" } });
+  const abort = new AbortController(); abort.abort();
+  await expect(client.select("A", { signal: abort.signal })).rejects.toThrow();
+  await expect(client.select("A", { deadline: -1 })).rejects.toThrow();
+  client.dispose(); await expect(client.instances()).rejects.toThrow();
+ });

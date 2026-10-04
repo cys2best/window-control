@@ -16,10 +16,14 @@ import {
 } from "@expo-google-fonts/jetbrains-mono";
 import { View } from "react-native";
 import * as ScreenOrientation from "expo-screen-orientation";
+import * as Crypto from "expo-crypto";
 import { ServerProvider, useServer } from "@wc/core";
 import { plainStorage, secureStorage } from "./src/platform/storage";
 import { RootNavigator } from "./src/navigation/Root";
 import { theme } from "@wc/ui";
+
+const remoteOrigin = process.env.EXPO_PUBLIC_REMOTE_SERVICE_URL;
+const remoteOptions = remoteOrigin ? { trustedOrigin: remoteOrigin, requestId: () => Crypto.randomUUID() } : undefined;
 
 function Gate() {
   const { ready } = useServer();
@@ -41,7 +45,7 @@ export default function App() {
   if (!fontsLoaded) return <View style={{ flex: 1, backgroundColor: theme.color.bg }} />;
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <ServerProvider plainStorage={plainStorage} secureStorage={secureStorage}><Gate /></ServerProvider>
+      <ServerProvider plainStorage={plainStorage} secureStorage={secureStorage} remoteOptions={remoteOptions}><Gate /></ServerProvider>
     </GestureHandlerRootView>
   );
 }

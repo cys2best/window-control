@@ -1,4 +1,5 @@
 import { httpUrl } from "./urls";
+import type { RemoteSelection, RequestOptions } from "../remote/protocol";
 
 export type Instance = {
   id: string;
@@ -30,6 +31,9 @@ export type SelectResp = {
   // Quality tier the host is encoding at; absent on hosts older than 3.2.
   tier?: string;
 };
+export type LocalSelection = SelectResp & { kind: "local" };
+export type Selection = LocalSelection | RemoteSelection;
+export type PreviewSource = { uri: string; headers?: { Authorization: string } };
 
 export class ApiError extends Error {
   status: number;
@@ -49,11 +53,15 @@ export function makeClient(
   authToken: string | null,
   onUnauthorized?: () => void
 ) {
-  const request = async (path: string, init: RequestInit = {}) => {
+  let disposed = false;
+  const request = async (path: string, init: RequestInit = {}, opts?: RequestOptions) => {
+    if (disposed || opts?.signal?.aborted) throw new Error("client canceled");
+    if (opts?.deadline !== undefined && (!Number.isFinite(opts.deadline) || opts.deadline <= performance.now())) throw new Error("request timed out");
     const requestHeaders = new Headers(init.headers);
     if (authToken) requestHeaders.set("Authorization", `Bearer ${authToken}`);
     const response = await fetch(httpUrl(base, path), {
       ...init,
+      signal: opts?.signal,
       headers: requestHeaders,
     });
     if (!response.ok) {
@@ -84,9 +92,10 @@ export function makeClient(
       await request("/pair/status");
       return Math.max(0, Date.now() - started);
     },
-    async select(serial: string): Promise<SelectResp> {
-      const r = await request(`/instances/${serial}/select`, { method: "POST" });
-      return r.json();
+    kind: "local" as const,
+    async select(serial: string, opts?: RequestOptions): Promise<LocalSelection> {
+      const r = await request(`/instances/${serial}/select`, { method: "POST" }, opts);
+      return { ...await r.json(), kind: "local" };
     },
     async keyframe(serial: string): Promise<void> {
       try { await request(`/instances/${serial}/keyframe`, { method: "POST" }); } catch {}
@@ -99,11 +108,18 @@ export function makeClient(
         });
       } catch {}
     },
-    previewSource(serial: string): { uri: string; headers?: { Authorization: string } } {
+    previewSource(serial: string): PreviewSource {
       const cleanSerial = serial.startsWith("adb:") ? serial.slice(4) : serial;
       const tokenParam = authToken ? `&token=${encodeURIComponent(authToken)}` : "";
       const uri = httpUrl(base, `/instances/${cleanSerial}/preview?t=${Date.now()}${tokenParam}`);
       return authToken ? { uri, headers: { Authorization: `Bearer ${authToken}` } } : { uri };
     },
+    async preview(serial: string, opts?: RequestOptions): Promise<PreviewSource> {
+      if (disposed || opts?.signal?.aborted) throw new Error("client canceled");
+      if (opts?.deadline !== undefined && (!Number.isFinite(opts.deadline) || opts.deadline <= performance.now())) throw new Error("request timed out");
+      return this.previewSource(serial);
+    },
+    dispose(): void { disposed = true; },
   };
 }
+export type LocalApiClient = ReturnType<typeof makeClient>;
