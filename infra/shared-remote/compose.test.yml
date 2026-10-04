@@ -46,6 +46,15 @@ services:
       - ./turnserver.test.conf:/etc/turnserver.test.conf:ro
       - ${REMOTE_TEST_DIRECTORY:?required}/turn-secret:/run/secrets/turn_secret:ro
       - ${REMOTE_TEST_DIRECTORY:?required}:/assets:ro
+  turn-production:
+    image: coturn/coturn@sha256:71c3c990283385567f11794ee692e3a47b66fd9b0bb39e42afbe776e331dd888
+    user: "0:0"
+    network_mode: host
+    entrypoint: [turnserver]
+    command: ["-c", "/assets/production-validation.conf"]
+    volumes:
+      - ${REMOTE_TEST_DIRECTORY:?required}:/assets:ro
+      - ${REMOTE_TEST_DIRECTORY:?required}:/run/certs:ro
   echo:
     image: coturn/coturn@sha256:71c3c990283385567f11794ee692e3a47b66fd9b0bb39e42afbe776e331dd888
     network_mode: host

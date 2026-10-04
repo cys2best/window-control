@@ -66,14 +66,14 @@ def peer_address(address, port=3480):
 
 
 class WireProbe:
-    def __init__(self, credentials, transport, ca, hostname='localhost'):
+    def __init__(self, credentials, transport, ca, hostname='localhost', server='127.0.0.1', port=None):
         self.credentials = credentials
         self.transport = transport
         self.sock = socket.socket(type=socket.SOCK_DGRAM if transport == 'udp' else socket.SOCK_STREAM)
         self.sock.settimeout(5)
         if transport == 'tls':
             self.sock = ssl.create_default_context(cafile=str(ca)).wrap_socket(self.sock, server_hostname=hostname)
-        self.sock.connect(('127.0.0.1', 5349 if transport == 'tls' else 3478))
+        self.sock.connect((server, port or (5349 if transport == 'tls' else 3478)))
         self.auth = b''
         self.key = None
 
@@ -216,9 +216,14 @@ class SharedRemoteStack:
         if transport == 'tls':
             flags += ['-S', '-E', '/assets/ca.pem']
         cmd = [*self.command, 'exec', '-T', 'turn', 'turnutils_uclient', '-c', '-n', '2', '-m', '1', '-l', '32', '-e', '127.0.0.2', '-r', '3480', '-p', '5349' if transport == 'tls' else '3478', *flags, '-u', credentials['username'], '-w', credentials['credential'], '127.0.0.1']
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        assert result.returncode == 0, 'bundled allocation client failed'
-        assert re.search(r'tot_recv_msgs\s*=\s*2\b', result.stdout + result.stderr), 'bundled client did not receive two echoes'
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        except subprocess.TimeoutExpired:
+            pytest.fail('bundled allocation client exceeded its deadline', pytrace=False)
+        returncode = result.returncode
+        assert returncode == 0, 'bundled allocation client failed'
+        received_two = bool(re.search(r'tot_recv_msgs\s*=\s*2\b', result.stdout + result.stderr))
+        assert received_two, 'bundled client did not receive two echoes'
         print(f'bundled {transport}: allocation and 2 echoed messages verified')
 
     def transfer(self, credentials, transport, payload):
@@ -271,6 +276,9 @@ def shared_remote_stack():
         stack.compose('up', '-d', '--build', timeout=600)
         stack.ready()
         print('tested coturn image: ' + IMAGE)
+        version = stack.compose('exec', '-T', 'turn', 'turnserver', '--version', timeout=10).strip()
+        assert '4.6.3' in version
+        print('coturn version: ' + version)
         yield stack
     finally:
         try:
@@ -355,3 +363,15 @@ def test_turn_down_preserves_direct_stun_configuration(shared_remote_stack):
     assert any(any(url.startswith('stun:') for url in server['urls']) for server in reply['result']['ice_servers'])
     # Admission/configuration stays usable for direct ICE even if relay is down.
     assert reply['result']['session_id']
+
+
+def test_production_template_denies_destinations_without_test_exception(shared_remote_stack):
+    stack = shared_remote_stack
+    credentials = stack.approved_credentials()
+    probe = WireProbe(credentials, 'udp', stack.directory / 'ca.pem', server='127.0.0.4', port=3479)
+    try:
+        assert probe.allocate(), 'production template must permit authenticated allocation'
+        for address in ('127.0.0.2', '10.0.0.1', '169.254.169.254', '192.168.1.1', '100.100.100.200'):
+            assert probe.permission(address) == 403
+    finally:
+        probe.close()

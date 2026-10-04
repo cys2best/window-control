@@ -25,7 +25,7 @@ def test_production_compose_requires_explicit_capacity_and_single_store_owner():
     path = INFRA / 'compose.production.yml'
     assert path.is_file(), 'missing production stack'
     text = path.read_text()
-    for name in ('REMOTE_HTTPS_BIND_ADDRESS', 'REMOTE_TURN_BIND_ADDRESS', 'REMOTE_TURN_RELAY_BIND_ADDRESS', 'REMOTE_TURN_PUBLIC_ADDRESS', 'REMOTE_DOMAIN', 'REMOTE_TURN_DOMAIN', 'REMOTE_MAX_ACTIVE_STREAMS', 'REMOTE_TURN_ALLOCATION_BPS', 'REMOTE_TURN_AGGREGATE_BPS', 'REMOTE_TURN_TOTAL_ALLOCATIONS', 'REMOTE_TURN_SECRET_FILE', 'REMOTE_CERT_DIRECTORY'):
+    for name in ('REMOTE_HTTPS_BIND_ADDRESS', 'REMOTE_TURN_BIND_ADDRESS', 'REMOTE_TURN_RELAY_BIND_ADDRESS', 'REMOTE_TURN_PUBLIC_ADDRESS', 'REMOTE_DOMAIN', 'REMOTE_TURN_DOMAIN', 'REMOTE_STUN_URLS', 'REMOTE_MAX_ACTIVE_STREAMS', 'REMOTE_TURN_ALLOCATION_BPS', 'REMOTE_TURN_AGGREGATE_BPS', 'REMOTE_TURN_TOTAL_ALLOCATIONS', 'REMOTE_TURN_SECRET_FILE', 'REMOTE_CERT_DIRECTORY'):
         assert '${' + name + ':?required}' in text
     assert '"--workers", "1"' in text
     assert 'broker-data:/data' in text
@@ -130,3 +130,50 @@ def test_entrypoint_uses_explicit_settings_and_fails_closed(tmp_path):
     result = subprocess.run([sys.executable, '-c', 'from broker.main import app; assert app.state.media.settings.max_active_streams == 2'], env=env, capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, result.stderr
     assert secret.read_text() not in result.stdout + result.stderr
+    env['REMOTE_STORE_PATH'] = ''
+    result = subprocess.run([sys.executable, '-c', 'import broker.main'], env=env, capture_output=True, text=True, timeout=10)
+    assert result.returncode != 0, 'empty durable store path must prevent launch'
+
+
+@pytest.mark.parametrize('method,capacity,horizon', [('check_registration', 5, 3600), ('check_pairing', 10, 60), ('check_authenticated_command', 120, 60), ('check_preview', 2, 1), ('check_credential_issuance', 12, 3600)])
+def test_rate_limits_preserve_active_keys_and_natural_expiry(monkeypatch, method, capacity, horizon):
+    from broker.limits import BrokerLimits
+    monkeypatch.setattr('broker.limits.MAX_RATE_LIMIT_KEYS', 1)
+    now = [0.0]
+    limits = BrokerLimits(lambda: now[0])
+    consume = getattr(limits, method)
+    assert all(consume('owner') for _ in range(capacity))
+    assert not consume('owner')
+    assert not consume('other')
+    now[0] = horizon - 0.001
+    assert not consume('other')
+    now[0] = horizon
+    assert consume('other')
+
+
+def test_rate_limit_atomic_registration_across_http_workers():
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    from broker.limits import BrokerLimits
+    limits = BrokerLimits(lambda: 0.0)
+    barrier = Barrier(16)
+    def register(_):
+        barrier.wait(timeout=5)
+        return limits.check_registration('same-ip')
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        assert sum(pool.map(register, range(16))) == 5
+
+
+def test_association_requires_complete_operator_values_and_defaults_to_unconfigured(tmp_path, monkeypatch):
+    config = load_configure()
+    env = config_test_environment(tmp_path)
+    monkeypatch.setattr(config.socket, 'getaddrinfo', lambda *a, **kw: [(2, 1, 6, '', ('93.184.216.34', 0))])
+    output = tmp_path / 'association'
+    config.write_association(env, output)
+    assert not (output / 'apple-app-site-association').exists()
+    with pytest.raises(ValueError):
+        config.validate_production({**env, 'REMOTE_IOS_TEAM_ID': 'ABCDE12345'})
+    env.update(REMOTE_IOS_TEAM_ID='ABCDE12345', REMOTE_IOS_APP_ID='com.example.control', REMOTE_IOS_ASSOCIATED_DOMAIN='control.example.com')
+    config.validate_production(env)
+    config.write_association(env, output)
+    assert json.loads((output / 'apple-app-site-association').read_text())['applinks']['details'] == [{'appIDs': ['ABCDE12345.com.example.control'], 'components': [{'/': '/pair'}]}]

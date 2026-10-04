@@ -1,5 +1,6 @@
 """Generate disposable local TLS/secret assets without printing credentials."""
 import argparse
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -32,6 +33,14 @@ def generate(directory):
         openssl(directory, 'x509', '-req', '-in', 'server.csr', '-CA', 'ca.pem', '-CAkey', 'ca-key.pem', '-CAcreateserial', '-days', '2', '-extfile', 'server.ext', '-out', 'turn-fullchain.pem')
         (directory / 'edge-key.pem').write_bytes((directory / 'turn-key.pem').read_bytes())
         (directory / 'edge-fullchain.pem').write_bytes((directory / 'turn-fullchain.pem').read_bytes())
+        spec = importlib.util.spec_from_file_location('remote_configure', root / 'infra/shared-remote/configure.py')
+        configure = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(configure)
+        # Exercise the production template with isolated test listeners only.
+        env = dict(REMOTE_HTTPS_BIND_ADDRESS='127.0.0.5', REMOTE_TURN_BIND_ADDRESS='127.0.0.4', REMOTE_TURN_RELAY_BIND_ADDRESS='127.0.0.4', REMOTE_TURN_PUBLIC_ADDRESS='127.0.0.4', REMOTE_TURN_DOMAIN='localhost', REMOTE_TURN_ALLOCATION_BPS='2000000', REMOTE_TURN_AGGREGATE_BPS='8000000', REMOTE_TURN_TOTAL_ALLOCATIONS='32', REMOTE_TURN_SECRET_FILE=str(directory / 'turn-secret'))
+        configure.render_turn(env, root / 'infra/shared-remote/turnserver.production.conf.template', directory / 'production-validation.conf')
+        config = directory / 'production-validation.conf'
+        config.write_text(config.read_text().replace('listening-port=3478', 'listening-port=3479').replace('tls-listening-port=443', 'tls-listening-port=5350'))
         (directory / 'association').mkdir()
         (directory / 'test.env').write_text('REMOTE_TEST_DIRECTORY=' + str(directory) + '\n')
     finally:

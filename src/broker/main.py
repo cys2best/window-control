@@ -9,6 +9,9 @@ from broker.app import BrokerSettings, create_broker_app
 
 def settings_from_environment():
     try:
+        required = ('REMOTE_ALLOWED_ORIGINS', 'REMOTE_STORE_PATH', 'REMOTE_TURN_SECRET_FILE', 'REMOTE_MAX_ACTIVE_STREAMS', 'REMOTE_STUN_URLS', 'REMOTE_TURN_URLS')
+        if any(not os.environ.get(key) for key in required):
+            raise ValueError()
         origins = json.loads(os.environ['REMOTE_ALLOWED_ORIGINS'])
         if not isinstance(origins, list) or not origins:
             raise ValueError()

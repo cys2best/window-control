@@ -27,7 +27,7 @@ jobs:
       - name: Run Python remote protocol and broker tests
         run: uv run pytest tests/test_remote_protocol.py tests/test_broker.py tests/test_broker_identity.py -v
   real-turn:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -38,7 +38,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          uv run pytest tests/test_remote_deployment.py tests/integration/test_shared_remote.py -v -s --tb=short 2>&1 | tee shared-remote-results.log
+          uv run pytest tests/test_remote_deployment.py tests/integration/test_shared_remote.py -v -s -x --tb=short 2>&1 | tee shared-remote-results.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:

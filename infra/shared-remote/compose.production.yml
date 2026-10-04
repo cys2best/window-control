@@ -40,7 +40,7 @@ services:
       REMOTE_MAX_ACTIVE_STREAMS: "${REMOTE_MAX_ACTIVE_STREAMS:?required}"
       REMOTE_STORE_PATH: /data/installations.json
       REMOTE_TURN_SECRET_FILE: /run/secrets/turn_secret
-      REMOTE_STUN_URLS: '["stun:${REMOTE_TURN_DOMAIN:?required}:3478"]'
+      REMOTE_STUN_URLS: ${REMOTE_STUN_URLS:?required}
       REMOTE_TURN_URLS: '["turn:${REMOTE_TURN_DOMAIN:?required}:3478?transport=udp","turn:${REMOTE_TURN_DOMAIN:?required}:3478?transport=tcp","turns:${REMOTE_TURN_DOMAIN:?required}:443?transport=tcp"]'
     volumes:
       - broker-data:/data
