@@ -9,7 +9,7 @@ import { BrandMark } from "../components/BrandMark";
 import type { Instance } from "@wc/core";
 
 export function InstanceList({ navigation }: { navigation: any }) {
-  const { client, clearAuth, hostReachability } = useServer() as any;
+  const { client, clearAuth, hostReachability, target } = useServer() as any;
   const { width } = useWindowDimensions();
   const listRef = useRef<FlatList<Instance>>(null);
   const [items, setItems] = useState<Instance[]>([]);
@@ -63,7 +63,7 @@ export function InstanceList({ navigation }: { navigation: any }) {
         backgroundColor: theme.color.surfaceRaised, borderRadius: 14, borderWidth: 1, borderColor: theme.color.border }}>
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
           <Text numberOfLines={1} style={{ flex: 1, fontFamily: theme.font.semibold, fontSize: 14, color: theme.color.text }}>{hostReachability?.host ?? "Host unavailable"}</Text>
-          {hostReachability ? <NetChip state={hostReachability.state} host={hostReachability.host} /> : null}
+          {hostReachability ? <NetChip kind={target?.kind} state={hostReachability.state} host={hostReachability.host} /> : null}
         </View>
         <View style={{ flexDirection: "row", marginTop: 13, paddingTop: 12, borderTopWidth: 1, borderColor: "#1b1f2b" }}>
           <View style={{ flex: 1 }}><Text style={{ fontFamily: theme.font.mono, fontSize: 8.5, letterSpacing: 1.15, color: theme.color.textDim }}>PING</Text>{rtt !== null ? <Text style={{ fontFamily: theme.font.mono, fontSize: 18, color: theme.color.telemetry, marginTop: 3 }}>{rtt}<Text style={{ fontSize: 10, color: theme.color.textDim }}> ms</Text></Text> : <Text style={{ fontFamily: theme.font.mono, fontSize: 18, color: theme.color.textDim, marginTop: 3 }}>—</Text>}</View>

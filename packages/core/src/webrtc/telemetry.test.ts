@@ -88,3 +88,9 @@ test.each([
 ])("maps real transport health", (telemetry, connected, expected) => {
   expect(signalLevel(telemetry as any, connected)).toEqual(expected);
 });
+
+test("remote lifecycle transport does not invent a measured route", async () => {
+  const onSample = jest.fn();
+  const sampler = makeTelemetrySampler({ pc: { getStats: async () => new Map() }, transport: "remote", onSample } as any);
+  expect((await sampler.sample()).transport).toBeNull();
+});

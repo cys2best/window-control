@@ -98,7 +98,7 @@ test("applies iceServers from selection directly", async () => {
   await Promise.resolve();
   fireReady(pc);
   await promise;
-  expect(capturedConfig).toEqual({ iceServers });
+  expect(capturedConfig).toEqual({ iceServers, iceTransportPolicy: "all" });
 });
 
 test("does not POST a partial offer before ICE gathering is complete", async () => {
@@ -358,4 +358,28 @@ test("resource cleanup on superseded instance switch closes and DELETEs", async 
   expect(pc.close).toHaveBeenCalledTimes(1);
   const deleteCalls = fetchImpl.mock.calls.filter((c: any) => c[1] && c[1].method === "DELETE");
   expect(deleteCalls.length).toBe(1);
+});
+
+test.each([0, -1])("legacy timeoutMs=%s disables readiness expiry after already-complete gathering", async timeoutMs => {
+  jest.useFakeTimers();
+  try {
+    const pc = fakePc();
+    const promise = connectWhep({ whepUrl:"http://host/whep", whepToken:"tok", iceServers:[], RTCImpl:function(){return pc;},
+      onStream:()=>{}, onState:()=>{}, onInputRtt:()=>{}, timeoutMs, fetchImpl:jest.fn(async()=>whepResponse()) as any });
+    const settled = jest.fn(); void promise.then(settled, settled);
+    for (let i=0; i<20; i++) await Promise.resolve();
+    jest.advanceTimersByTime(60000); await Promise.resolve(); expect(settled).not.toHaveBeenCalled();
+    fireReady(pc); const session = await promise; await session.close();
+  } finally { jest.useRealTimers(); }
+});
+test("legacy disabled readiness timeout retains its immediate incomplete-gathering cap", async () => {
+  jest.useFakeTimers();
+  try {
+    const pc=fakePc(); pc.iceGatheringState="gathering";
+    const post=jest.fn(async()=>whepResponse()) as any;
+    const promise=connectWhep({whepUrl:"http://host/whep",whepToken:"tok",iceServers:[],RTCImpl:function(){return pc;},onStream:()=>{},onState:()=>{},onInputRtt:()=>{},timeoutMs:0,fetchImpl:post});
+    const rejected=expect(promise).rejects.toMatchObject({code:"ice-gathering-timeout"});
+    for(let i=0;i<20;i++) await Promise.resolve(); jest.advanceTimersByTime(0); await rejected;
+    expect(post).not.toHaveBeenCalled(); expect(pc.close).toHaveBeenCalledTimes(1);
+  } finally {jest.useRealTimers();}
 });

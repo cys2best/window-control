@@ -123,3 +123,44 @@ test("rejects invalid local inputs without sending them", async () => {
   await expect(c.select("bad/serial")).rejects.toThrow(); await expect(c.negotiate({ ...selection, kind: "remote" }, "x".repeat(128 * 1024 + 1), {})).rejects.toThrow();
   expect(s.sent).toHaveLength(1);
 });
+
+test("abort frees its pending slot and shares correlated exact cleanup with the adapter", async () => {
+  const c = make(), socket = await authenticate(), abort = new AbortController();
+  const remote = { ...selection, kind: "remote" as const };
+  const pending = Array.from({ length: 31 }, () => c.instances().catch(e => e.code));
+  const negotiating = c.negotiate(remote, "offer", { signal: abort.signal }).catch(e => e.code);
+  abort.abort(); expect(await negotiating).toBe("canceled");
+  const closing = c.closeSession({ ...remote });
+  const frame = socket.sent.filter(f => f.op === "close");
+  expect(frame).toHaveLength(1);
+  expect(frame[0].payload).toEqual({ session_id: selection.session_id, generation: 1 });
+  socket.reply({ closed: true }, frame[0]); await closing;
+  await c.closeSession(remote);
+  expect(socket.sent.filter(f => f.op === "close")).toHaveLength(1);
+  c.dispose(); await Promise.all(pending);
+});
+test("a failed exact cleanup is shared as failure rather than reported successful", async () => {
+  const c = make(), socket = await authenticate(), remote = { ...selection, kind: "remote" as const };
+  const first = c.closeSession(remote); const second = c.closeSession({ ...remote });
+  const rejected = Promise.all([expect(first).rejects.toMatchObject({ code: "offline" }), expect(second).rejects.toMatchObject({ code: "offline" })]);
+  socket.close(); await rejected;
+  await expect(c.closeSession(remote)).rejects.toMatchObject({ code: "offline" });
+  expect(socket.sent.filter(f => f.op === "close")).toHaveLength(1);
+});
+test("settled cleanup history stays bounded while pending cleanup keeps its exact promise", async () => {
+  const c = make(), socket = await authenticate();
+  const remote = { ...selection, kind: "remote" as const };
+  const live = c.closeSession(remote); const liveFrame = last(socket.sent);
+  for (let generation = 2; generation <= 258; generation++) {
+    const done = c.closeSession({ ...remote, generation });
+    socket.reply({ closed: true }); await done;
+  }
+  const same = c.closeSession({ ...remote });
+  expect(same).toBe(live);
+  expect(socket.sent.filter(f => f.op === "close" && f.payload.generation === 1)).toHaveLength(1);
+  socket.reply({ closed: true }, liveFrame); await live;
+  // The oldest settled identity was evicted; repeating it needs a real reply.
+  const old = c.closeSession({ ...remote, generation: 2 });
+  expect(last(socket.sent).payload.generation).toBe(2);
+  socket.reply({ closed: true }); await old;
+});

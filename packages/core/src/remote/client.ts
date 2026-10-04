@@ -36,6 +36,9 @@ export function connectRemoteClient(target: Extract<ServerTarget, { kind: "remot
   const pending = new Set<Pending>();
   const ids = new Map<string, Pending>();
   const used = new Set<string>();
+  // Share cancellation and explicit close, including a late adapter teardown.
+  // Retain live promises and at most 256 recent settled exact identities.
+  const closing = new Map<string, { promise: Promise<void>; settled: boolean }>();
 
   function freshId(): string {
     const id = options.requestId();
@@ -53,11 +56,25 @@ export function connectRemoteClient(target: Extract<ServerTarget, { kind: "remot
     p.cleanup?.();
     error ? p.reject(error) : p.resolve(value);
   }
-  function closeKnown(session: RemoteSelection, ws = socket) {
-    if (ws?.readyState === 1 && authenticated) {
-      try { send(ws, "close", { session_id: session.session_id, generation: session.generation }); } catch {}
+  function closeSession(session: RemoteSelection): Promise<void> {
+    const key = `${session.session_id}:${session.generation}`;
+    const existing = closing.get(key);
+    if (existing) return existing.promise;
+    if (closing.size >= 256) {
+      for (const [old, entry] of closing) {
+        if (entry.settled) { closing.delete(old); break; }
+      }
+      if (closing.size >= 256) return Promise.reject(err("busy"));
     }
+    const entry = { promise: Promise.resolve(), settled: false };
+    entry.promise = command("close", { session_id: session.session_id, generation: session.generation }, r => {
+      if (Object.keys(r).length !== 1 || r.closed !== true) throw new Error("invalid close");
+    });
+    closing.set(key, entry);
+    void entry.promise.then(() => { entry.settled = true; }, () => { entry.settled = true; });
+    return entry.promise;
   }
+  function closeKnown(session: RemoteSelection) { void closeSession(session).catch(() => {}); }
   function retire(code: string, ws = socket) {
     if (ws !== socket) return;
     epoch++; socket = null; authenticated = false; authId = null;
@@ -67,7 +84,7 @@ export function connectRemoteClient(target: Extract<ServerTarget, { kind: "remot
   function cancel(p: Pending, code: string) {
     if (!pending.has(p)) return;
     if ((p.op === "select" || p.op === "renew") && p.sent) retire(code);
-    else { if (p.session && p.sent) closeKnown(p.session); finish(p, err(code)); }
+    else { finish(p, err(code)); if (p.session && p.sent) closeKnown(p.session); }
   }
   function dispatch(p: Pending) {
     if (!authenticated || !socket || socket.readyState !== 1 || !pending.has(p)) return;
@@ -110,7 +127,7 @@ export function connectRemoteClient(target: Extract<ServerTarget, { kind: "remot
         const value = p.validate(reply.result!);
         if (p.options?.deadline !== undefined && now() >= p.options.deadline) {
           if (p.op === "select") retire("timeout", ws);
-          else { if (p.op === "renew") closeKnown(value as RemoteSelection, ws); else if (p.session) closeKnown(p.session, ws); finish(p, err("timeout")); }
+          else { finish(p, err("timeout")); if (p.op === "renew") closeKnown(value as RemoteSelection); else if (p.session) closeKnown(p.session); }
         }
         else finish(p, undefined, value);
       } catch { retire("invalid_request", ws); }
@@ -156,7 +173,7 @@ export function connectRemoteClient(target: Extract<ServerTarget, { kind: "remot
     keyframe(serial: string): Promise<void> { validateInput(serial, "serial"); return command("keyframe", { serial }, simple); },
     setQuality(serial: string, tier: string): Promise<void> { validateInput(serial, "serial"); validateInput(tier, "tier"); return command("quality", { serial, tier }, r => { if (r.ok !== true || (Object.keys(r).length !== 1 && !(Object.keys(r).length === 2 && r.tier === tier))) throw new Error("invalid quality"); }); },
     async negotiate(selection: RemoteSelection, offer: string, opts: RequestOptions): Promise<RemoteAnswer> { validateInput(offer, "offer"); return command("negotiate", { ...sessionPayload(selection), offer, timeout_ms: MAX_WAIT }, r => { const answer = validateAnswer(r); if (answer.session_id !== selection.session_id || answer.generation !== selection.generation) throw new Error("mismatched answer"); return answer; }, opts, selection); },
-    closeSession(selection: RemoteSelection): Promise<void> { return command("close", sessionPayload(selection), r => { if (Object.keys(r).length !== 1 || r.closed !== true) throw new Error("invalid close"); }); },
+    closeSession,
     renew(selection: RemoteSelection, opts?: RequestOptions): Promise<RemoteSelection> { return command("renew", sessionPayload(selection), selected, opts, selection); },
     dispose(): void { disposed = true; retire("canceled"); },
   };

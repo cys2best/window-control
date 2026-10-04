@@ -22,3 +22,10 @@ test("omits a chip when there is no host to report", async () => {
 test("there is no relay chip", () => {
   expect((NetChipModule as any).RelayIdleChip).toBeUndefined();
 });
+
+test("a remote target labels its route unknown rather than inventing LAN or relay", async () => {
+  const screen = await render(<NetChip {...({ state: "reachable", host: "relay.example", kind: "remote" } as any)} />);
+  expect(screen.getByText("Route unknown · relay.example")).toBeTruthy();
+  expect(screen.queryByText(/^LAN ·/)).toBeNull();
+  expect(screen.queryByText(/^Relay ·/)).toBeNull();
+});

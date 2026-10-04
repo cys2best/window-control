@@ -12,6 +12,7 @@ import { StatsOverlay } from "../components/StatsOverlay";
 import { ErrorOverlay } from "../components/ErrorOverlay";
 
 type Net = "connected" | "connecting" | "disconnected";
+const emptyTelemetry: StreamTelemetry = { rttMs: null, loss: null, decodeMs: null, networkMs: null, inputMs: null, jitterMs: null, bitrateMbps: null, droppedFrames: null, transport: null };
 
 export function Stream({
   route,
@@ -36,16 +37,13 @@ export function Stream({
   const [keyboardOn, setKeyboardOn] = useState(false);
   const [statsOn, setStatsOn] = useState(false);
   const [instances, setInstances] = useState<any[]>([]);
-  const [telemetry, setTelemetry] = useState<StreamTelemetry>({ rttMs: null, loss: null, decodeMs: null, networkMs: null, inputMs: null, jitterMs: null, bitrateMbps: null, droppedFrames: null, transport: "LAN" });
+  const [telemetry, setTelemetry] = useState<StreamTelemetry>({ ...emptyTelemetry, transport: client?.kind === "remote" ? null : "LAN" });
   const [railOpen, setRailOpen] = useState(true);
   const [hudHeight, setHudHeight] = useState(0);
   const rect = useRef({ width: 1, height: 1 });
   const content = useRef({ w: 1, h: 1 });
   const session = useRef<EngineSession | null>(null);
   const adaptive = useRef<any>(null);
-  const inputHealth = useRef<any>(null);
-  const sampler = useRef<ReturnType<typeof makeTelemetrySampler> | null>(null);
-  const stallWatchdog = useRef<ReturnType<typeof makeStallWatchdog> | null>(null);
   const appliedTier = useRef<QualitySelection | null>(null);
   const currentQuality = useRef<QualitySelection>(preferences.quality);
   const scrollLast = useRef(0);
@@ -88,140 +86,191 @@ export function Stream({
   }, []);
 
   const startGen = useRef(0);
-  const start = useCallback(async () => {
+  const startingTier = useRef<{ client: any; serial: string; initial: string; native: string } | null>(null);
+  const targetClient = useRef(client);
+  targetClient.current = client;
+  const owner = useRef<{ client: any; retire: () => Promise<void> } | null>(null);
+  const retiring = useRef<Promise<void>>(Promise.resolve());
+  const retiringClient = useRef(client);
+  const start = useCallback(async (qualityTier?: string) => {
     if (!client) return;
-    // Rapid instance switches (fast toolbar swipes) can fire start() again
-    // before the previous call's client.select() round-trip has returned.
-    // Without this guard, an earlier call can finish after a later one, close
-    // the NEWER session (wrong one) and overwrite session.current with its
-    // own stale session — orphaning the real current session with no
-    // reference left to close it. It then sits server-side with a full write
-    // queue until mediamtx eventually times it out on its own.
     const gen = ++startGen.current;
+    const controller = new AbortController();
+    // Includes retirement, selection, gathering, answer and adoption.
+    const deadline = performance.now() + 30_000;
+    const previous = owner.current;
+    if (retiringClient.current !== client) {
+      // Provider replacement disposes its old client. Its cleanup cannot
+      // affect, or prevent admission on, a different installation/client.
+      retiring.current = Promise.resolve();
+      retiringClient.current = client;
+    }
+    if (previous && previous.client === client) {
+      retiring.current = Promise.all([retiring.current, previous.retire()]).then(() => {});
+      void retiring.current.catch(() => {});
+    }
+    let selected: any = null, peer: EngineSession | null = null;
+    let retired = false;
+    let cleanup: Promise<void> | undefined, selectionCleanup: Promise<void> | undefined;
+    let qualityCommand: Promise<void> | undefined;
+    let health: ReturnType<typeof setInterval> | undefined;
+    let renewal: ReturnType<typeof setTimeout> | undefined;
+    let sample: ReturnType<typeof makeTelemetrySampler> | undefined;
+    let watchdog: ReturnType<typeof makeStallWatchdog> | undefined;
+    let qualityController: ReturnType<typeof makeAdaptive> | undefined;
+    const current = () => !retired && gen === startGen.current && targetClient.current === client;
+    const closeSelection = () => selectionCleanup ??= Promise.resolve().then(() => client.closeSession(selected));
+    const scope = {
+      client,
+      retire() {
+        if (cleanup) return cleanup;
+        retired = true;
+        clearInterval(health); clearTimeout(renewal);
+        sample?.stop(); watchdog?.stop(); qualityController?.stop();
+        if (adaptive.current === qualityController) adaptive.current = null;
+        if (peer) {
+          releaseActiveDrag(peer.input);
+          if (session.current === peer) session.current = null;
+        }
+        // A pending remote transport and its client share exact close dedup.
+        const closing = peer ? peer.close() : selected?.kind === "remote" ? closeSelection() : Promise.resolve();
+        // The quality API is not abortable. Fence its completion before a
+        // successor select so a retired mutation cannot reconfigure that peer.
+        cleanup = Promise.all([closing, qualityCommand?.catch(() => {})]).then(() => {});
+        controller.abort();
+        void cleanup.catch(() => {});
+        return cleanup;
+      },
+    };
+    owner.current = scope;
     setFailed(false); setNet("connecting");
+    setTelemetry({ ...emptyTelemetry, transport: client.kind === "remote" ? null : "LAN" });
+    // Race even platform calls that do not implement AbortSignal. Their late
+    // continuation still owns and releases any selected/negotiated resource.
+    const wait = <T,>(promise: Promise<T>): Promise<T> => new Promise((resolve, reject) => {
+      const abort = () => { reject(new Error("canceled")); };
+      controller.signal.addEventListener("abort", abort, { once: true });
+      promise.then(resolve, reject).finally(() => controller.signal.removeEventListener("abort", abort));
+      if (controller.signal.aborted) abort();
+    });
+    const timeout = setTimeout(() => controller.abort(), Math.max(0, deadline - performance.now()));
     try {
-      const sel = await client.select(serial);
-      if (gen !== startGen.current) return; // superseded before session even started
+      if (client.kind === "remote") await wait(retiring.current);
+      if (!current() || controller.signal.aborted) return;
+      const rememberedTier = startingTier.current;
+      const tiers = rememberedTier && rememberedTier.client === client && rememberedTier.serial === serial ? rememberedTier : null;
+      const requestedTier = qualityTier ?? (tiers ? (currentQuality.current === "auto" ? tiers.initial : currentQuality.current) : undefined);
+      if (client.kind === "remote" && requestedTier !== undefined && (qualityTier !== undefined || requestedTier !== tiers?.native)) {
+        qualityCommand = Promise.resolve(client.setQuality(serial, requestedTier));
+        await wait(qualityCommand);
+      }
+      if (!current() || controller.signal.aborted) return;
+      const selecting = client.kind === "remote" ? client.select(serial, { signal: controller.signal, deadline }) : client.select(serial);
+      const sel = await wait(Promise.resolve(selecting).then(async (value: any) => {
+        selected = value; // Own the exact selection before any further await.
+        if (!current() || controller.signal.aborted) {
+          if (value.kind === "remote") await closeSelection();
+          throw new Error("canceled");
+        }
+        return value;
+      }));
+      if (client.kind === "remote") {
+        startingTier.current = { client, serial, initial: tiers?.initial ?? sel.tier, native: sel.tier };
+      }
       content.current = { w: sel.w, h: sel.h };
       let nextStream: any = null;
-      const s = await connectEngineSession({
-        selection: sel,
-        RTCImpl,
-        onStream: (stream) => {
-          if (gen !== startGen.current) return;
-          nextStream = stream;
+      const connecting = connectEngineSession({
+        selection: sel, client: client.kind === "remote" ? client : undefined,
+        deadline, signal: controller.signal, RTCImpl,
+        onStream: value => { if (current()) { if (peer) setStream(value); else nextStream = value; } },
+        onInputRtt: ms => { if (current()) sample?.setInputRtt(ms); },
+        onState: state => {
+          if (!current()) return;
+          setNet(state);
+          // Only an adopted peer may initiate recovery. Setup failures are
+          // reported by the setup promise and must not recurse.
+          if (state === "disconnected" && peer) void start();
         },
-        onInputRtt: (ms) => { if (gen === startGen.current) sampler.current?.setInputRtt(ms); },
-        onState: (st) => {
-          if (gen !== startGen.current) return;
-          setNet(st);
-          if (st === "disconnected") {
-            // A closed input channel or failed ICE triggers a fresh
-            // select()/reconnect rather than surfacing the manual
-            // ErrorOverlay for something the app can recover from on its own.
-            if (gen === startGen.current) {
-              releaseActiveDrag();
-              start();
-            }
-          }
-        },
-      }).catch((error) => {
-        if (gen === startGen.current) { setFailed(true); setNet("disconnected"); }
-        throw error;
+      }).then(async value => {
+        if (!current() || controller.signal.aborted) { await value.close(); throw new Error("canceled"); }
+        return value;
       });
-      if (gen !== startGen.current) { s.close(); return; }
-      // Keep the current session visible until its replacement is ready,
-      // then close the stale one — avoids a visible gap while the new
-      // session negotiates.
-      const previous = session.current;
+      const s = await wait(connecting);
+      if (!current() || controller.signal.aborted) { void s.close().catch(() => {}); return; }
+      peer = s;
       session.current = s;
-      sampler.current?.stop();
-      sampler.current = makeTelemetrySampler({ pc: s.pc, transport: s.kind, onSample: setTelemetry });
-      sampler.current.start();
-      // One lost packet freezes the decoder until the next keyframe, which
-      // can be many seconds away; ask the host for one as soon as frames
-      // stop decoding, without touching the connected peer.
-      stallWatchdog.current?.stop();
-      stallWatchdog.current = makeStallWatchdog({
-        pc: s.pc,
-        onStall: () => { if (session.current === s) void client.keyframe(serial); },
-      });
-      stallWatchdog.current.start();
-      if (nextStream) setStream(nextStream);
-      if (previous) {
-        releaseActiveDrag(previous.input);
-        previous.close();
-      }
-      if (inputHealth.current) clearInterval(inputHealth.current);
+      sample = makeTelemetrySampler({ pc: s.pc, transport: s.kind, onSample: value => { if (current()) setTelemetry(value); } });
+      sample.start();
+      watchdog = makeStallWatchdog({ pc: s.pc, onStall: () => { if (current()) void client.keyframe(serial); } });
+      watchdog.start();
+      if (nextStream || s.stream) setStream(nextStream || s.stream);
       s.input.send({ type: "idr" });
-      inputHealth.current = setInterval(() => {
-        if (gen === startGen.current && session.current === s) {
-          s.input.send({ type: "echo", t: Date.now() });
-        }
-      }, 2000);
-      adaptive.current?.stop();
-      adaptive.current = makeAdaptive({
-        serial,
-        initialTier: sel.tier,
-        onApply: (t) => client.setQuality(serial, t),
-        // The engine does not answer RTCP PLI, so a decoder that lost a
-        // frame stays frozen until the next keyframe. Ask for one on the
-        // live peer rather than tearing the session down.
-        onStall: () => { if (session.current === s) s.input.send({ type: "idr" }); },
+      health = setInterval(() => { if (current()) s.input.send({ type: "echo", t: Date.now() }); }, 2000);
+      let nativeTier = sel.tier;
+      qualityController = makeAdaptive({
+        serial, initialTier: qualityTier ?? sel.tier,
+        onApply: tier => {
+          if (!current() || adaptive.current !== qualityController) return;
+          if (client.kind === "remote") {
+            if (tier !== nativeTier) { nativeTier = tier; void start(tier); }
+          } else void client.setQuality(serial, tier);
+        },
+        onStall: () => { if (current()) s.input.send({ type: "idr" }); },
       });
-      adaptive.current.start(s.pc);
+      adaptive.current = qualityController;
+      qualityController.start(s.pc);
       const quality = currentQuality.current;
-      if (quality === "auto") adaptive.current.setAuto();
-      else adaptive.current.pin(quality);
+      if (quality === "auto") qualityController.setAuto();
+      else qualityController.pin(qualityTier ?? quality);
       appliedTier.current = quality;
-    } catch (error: any) {
-      if (error?.status === 401) {
-        if (clearAuth) await clearAuth();
-        const nav = navigationRef.current;
-        if (nav?.replace) {
-          nav.replace("Pair");
-        } else if (nav?.navigate) {
-          nav.navigate("Pair");
-        }
-        return;
+      if (sel.kind === "remote" && current()) {
+        // expires_at is Unix seconds; credentials were issued 3600s earlier.
+        const due = (sel.expires_at - 3600 + sel.renew_after) * 1000;
+        renewal = setTimeout(() => { if (current()) void start(); }, Math.max(0, due - Date.now()));
       }
-      if (gen === startGen.current) { setFailed(true); setNet("disconnected"); }
+    } catch (error: any) {
+      const active = current();
+      void scope.retire().catch(() => {});
+      if (!active) return;
+      if (error?.status === 401 || error?.code === "not_paired") {
+        if (clearAuth) await clearAuth();
+        if (gen !== startGen.current || targetClient.current !== client) return;
+        const nav = navigationRef.current;
+        if (nav?.replace) nav.replace("Pair"); else nav?.navigate?.("Pair");
+      } else { setFailed(true); setNet("disconnected"); }
+    } finally {
+      clearTimeout(timeout);
+      if (controller.signal.aborted && !retired) void scope.retire().catch(() => {});
     }
-  }, [client, clearAuth, serial, releaseActiveDrag]);
+  }, [client, clearAuth, serial, RTCImpl, releaseActiveDrag]);
 
-  // Instance list is owned by the client identity, not by `start`.
   useEffect(() => {
     if (!client) return;
-    client.instances().then(setInstances).catch((err: any) => {
-      if (err?.status === 401) {
-        if (clearAuth) clearAuth();
+    let active = true;
+    client.instances().then((value: any[]) => { if (active && targetClient.current === client) setInstances(value); }).catch(async (err: any) => {
+      if (!active || targetClient.current !== client) return;
+      if (err?.status === 401 || err?.code === "not_paired") {
+        if (clearAuth) await clearAuth();
+        if (!active || targetClient.current !== client) return;
         const nav = navigationRef.current;
-        if (nav?.replace) {
-          nav.replace("Pair");
-        } else if (nav?.navigate) {
-          nav.navigate("Pair");
-        }
+        if (nav?.replace) nav.replace("Pair"); else nav?.navigate?.("Pair");
       }
     });
+    return () => { active = false; };
   }, [client, clearAuth]);
 
-  // WHEP session + input channel + adaptive quality follow `start`
-  // (serial/client changes).
   useEffect(() => {
-    start();
+    void start();
     return () => {
-      releaseActiveDrag();
       startGen.current += 1;
-      if (inputHealth.current) clearInterval(inputHealth.current);
-      inputHealth.current = null;
-      sampler.current?.stop();
-      sampler.current = null;
-      stallWatchdog.current?.stop();
-      stallWatchdog.current = null;
-      session.current?.close();
-      adaptive.current?.stop();
+      if (owner.current) {
+        retiringClient.current = owner.current.client;
+        retiring.current = Promise.all([retiring.current, owner.current.retire()]).then(() => {});
+        void retiring.current.catch(() => {});
+      }
+      owner.current = null;
     };
-  }, [start, releaseActiveDrag]);
+  }, [start]);
 
   // Open the stream in landscape by default, but still allow the user to
   // rotate freely (either landscape direction) while this screen is up.

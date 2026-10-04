@@ -126,3 +126,21 @@ describe("connectEngineSession", () => {
     expect((core as any).connectSignalingViewer).toBeUndefined();
   });
 });
+
+test("remote selections use the shared peer and return one adopted stream", async () => {
+  const { fakePc, fireReady, flush } = await import("./peer.testUtils");
+  const { selection } = await import("../remote/testUtils");
+  const pc = fakePc(), states: string[] = [], streams: any[] = [];
+  const client = { negotiate: async () => ({ answer: "ANSWER", session_id: selection.session_id, generation: 1 }), closeSession: jest.fn(async () => {}) } as any;
+  const promise = connectEngineSession({selection:{...selection,kind:"remote"}, client, deadline:performance.now()+30000, RTCImpl:function(){return pc;},onState:(s:string)=>states.push(s),onStream:(s:any)=>streams.push(s)} as any);
+  await flush(); fireReady(pc); const session = await promise;
+  expect(session.kind).toBe("remote"); expect(states).toEqual(["connecting","connected"]); expect(streams).toHaveLength(1);
+  await session.close(); await session.close(); expect(client.closeSession).toHaveBeenCalledTimes(1); expect(states).toEqual(["connecting","connected","disconnected"]);
+});
+test("abort between transport resolution and adoption closes without connected callbacks", async()=>{
+  const abort=new AbortController(), close=jest.fn(async()=>{}), onStream=jest.fn(), onState=jest.fn();
+  const promise=connectEngineSession({selection:localSelection,signal:abort.signal,onStream,onState,startLocalImpl:async()=>{
+    abort.abort(); return {kind:"local",stream:{},input:fakeInput(),close};
+  }} as any);
+  await expect(promise).rejects.toThrow("canceled"); expect(close).toHaveBeenCalledTimes(1); expect(onStream).not.toHaveBeenCalled(); expect(onState).not.toHaveBeenCalledWith("connected");
+});

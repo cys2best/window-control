@@ -7,14 +7,14 @@ export type StreamTelemetry = {
   jitterMs: number | null;
   bitrateMbps: number | null;
   droppedFrames: number | null;
-  transport: "LAN";
+  transport: "LAN" | null;
 };
 
 type StatsPeer = { getStats: () => Promise<any> };
 
 type TelemetrySamplerOptions = {
   pc: StatsPeer;
-  transport: "local";
+  transport: "local" | "remote";
   onSample: (sample: StreamTelemetry) => void;
   sampleMs?: number;
   now?: () => number;
@@ -42,7 +42,7 @@ export function signalLevel(
   return { bars: 2, tone: "tangerine" };
 }
 
-export function makeTelemetrySampler({ pc, onSample, sampleMs = 1_000, now = Date.now }: TelemetrySamplerOptions) {
+export function makeTelemetrySampler({ pc, transport, onSample, sampleMs = 1_000, now = Date.now }: TelemetrySamplerOptions) {
   let inputMs: number | null = null;
   let lastBytes: number | null = null;
   let lastTimestamp: number | null = null;
@@ -96,7 +96,7 @@ export function makeTelemetrySampler({ pc, onSample, sampleMs = 1_000, now = Dat
       jitterMs,
       bitrateMbps,
       droppedFrames: numberOrNull(inbound?.framesDropped),
-      transport: "LAN",
+      transport: transport === "local" ? "LAN" : null,
     };
     onSample(telemetry);
     return telemetry;

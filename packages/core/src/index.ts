@@ -12,6 +12,8 @@ export * from "./remote/protocol";
 export * from "./remote/client";
 export * from "./remote/pairing";
 export * from "./webrtc/whep";
+export { connectPeer, type PeerSession, type PeerNegotiator, type ConnectPeerOpts } from "./webrtc/peer";
+export * from "./webrtc/remote";
 export * from "./webrtc/session";
 export * from "./webrtc/telemetry";
 export * from "./webrtc/stallWatchdog";

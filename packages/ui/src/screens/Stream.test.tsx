@@ -510,7 +510,7 @@ test("reconnecting after a saved quality change pins the replacement controller 
   const firstAdaptive = makeFakeAdaptive();
   const replacementAdaptive = makeFakeAdaptive();
   let onState!: (state: "connecting" | "connected" | "disconnected") => void;
-  let preferences = { quality: "720", showHudOnConnect: false, haptics: true, hideRailWhilePlaying: true } as const;
+  let preferences: Core.StreamPreferences = { quality: "720", showHudOnConnect: false, haptics: true, hideRailWhilePlaying: true };
   (Core.connectEngineSession as jest.Mock).mockImplementationOnce((opts: any) => {
     onState = opts.onState;
     return Promise.resolve(firstSession as any);
@@ -612,4 +612,163 @@ test("a decoder stall asks the host for a keyframe and leaves the peer connected
 
   await view.unmount();
   expect(watchdog.stop).toHaveBeenCalled();
+});
+
+function remoteResp(overrides: any = {}) {
+  return { kind: "remote", ok: true, id: "A", serial: "A", name: "A", w: 1920, h: 1080, tier: "720", session_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", generation: 1,
+    ice_servers: [{urls:["turn:relay"],username:"old",credential:"old"}], expires_at: Math.floor(Date.now()/1000)+3600, renew_after:3300, relay_available:true, ...overrides };
+}
+function remoteClient() {
+  return { kind:"remote", select:jest.fn().mockResolvedValue(remoteResp()), instances:jest.fn().mockResolvedValue([]), closeSession:jest.fn(async()=>{}), setQuality:jest.fn(async(_serial: string, _tier: string)=>{}), keyframe:jest.fn(async()=>{}) };
+}
+const remoteElement = (serial = "A") => <Stream route={{params:{serial}}} navigation={{navigate:jest.fn(),replace:jest.fn(),setParams:jest.fn()}} RTCImpl={FakeRTCPeerConnection} VideoView={FakeVideoView}/>;
+
+test("remote select and negotiation share one abort signal and deadline from before select", async () => {
+  jest.useFakeTimers();
+  try {
+    const client=remoteClient(); let resolve!: (v:any)=>void;
+    client.select.mockImplementation(()=>new Promise(r=>{resolve=r;}));
+    (SC.useServer as jest.Mock).mockReturnValue({client});
+    (Core.connectEngineSession as jest.Mock).mockResolvedValue({...makeFakeSession(),kind:"remote"});
+    const before=performance.now(); const view=await render(remoteElement());
+    await act(async()=>{jest.advanceTimersByTime(12000);resolve(remoteResp());});
+    expect(client.select.mock.calls[0][1]).toEqual(expect.objectContaining({deadline:before+30000,signal:expect.anything()}));
+    expect((Core.connectEngineSession as jest.Mock).mock.calls[0][0]).toEqual(expect.objectContaining({client,deadline:before+30000,signal:client.select.mock.calls[0][1].signal}));
+    await view.unmount(); expect(client.select.mock.calls[0][1].signal.aborted).toBe(true);
+  } finally {jest.useRealTimers();}
+});
+test("a superseded late remote selection is closed exactly and never starts a peer", async()=>{
+  const client=remoteClient(); let resolve!: (v:any)=>void;
+  client.select.mockImplementationOnce(()=>new Promise(r=>{resolve=r;}));
+  (SC.useServer as jest.Mock).mockReturnValue({client});
+  const successor={...makeFakeSession(),kind:"remote"};
+  (Core.connectEngineSession as jest.Mock).mockResolvedValue(successor);
+  const view=await render(remoteElement()); await view.rerender(remoteElement("B"));
+  await act(async()=>{resolve(remoteResp());});
+  expect(client.closeSession).toHaveBeenCalledTimes(1);
+  expect(client.closeSession).toHaveBeenCalledWith(expect.objectContaining({session_id:"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}));
+  expect(Core.connectEngineSession).toHaveBeenCalledTimes(1); expect(successor.close).not.toHaveBeenCalled();
+});
+test("scheduled renewal retires old peer and sampler before fresh admission at original issuance plus 3300 seconds", async()=>{
+  jest.useFakeTimers();
+  try {
+    const client=remoteClient(), first={...makeFakeSession(),kind:"remote"}, second={...makeFakeSession(),kind:"remote"};
+    const oldSampler=makeFakeSampler(), nextSampler=makeFakeSampler();
+    (Core.makeTelemetrySampler as jest.Mock).mockReturnValueOnce(oldSampler).mockReturnValueOnce(nextSampler);
+    const selected=remoteResp({expires_at:Math.floor(Date.now()/1000)+3500}); // issued 100 seconds ago
+    const fresh=remoteResp({session_id:"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",generation:2,expires_at:Math.floor(Date.now()/1000)+6800,ice_servers:[{urls:["turn:relay"],username:"fresh",credential:"fresh"}]});
+    client.select.mockResolvedValueOnce(selected).mockResolvedValueOnce(fresh);
+    let finishClose!: ()=>void;
+    first.close.mockImplementation(()=>new Promise<void>(r=>{finishClose=r;}));
+    (Core.connectEngineSession as jest.Mock).mockResolvedValueOnce(first).mockResolvedValueOnce(second);
+    (SC.useServer as jest.Mock).mockReturnValue({client});
+    const view=await render(remoteElement());
+    await act(async()=>{jest.advanceTimersByTime(3199999);}); expect(client.select).toHaveBeenCalledTimes(1);
+    await act(async()=>{jest.advanceTimersByTime(1);});
+    expect(first.close).toHaveBeenCalledTimes(1); expect(oldSampler.stop).toHaveBeenCalledTimes(1);
+    expect(client.select).toHaveBeenCalledTimes(1);
+    await act(async()=>{finishClose();});
+    expect(client.select).toHaveBeenCalledTimes(2);
+    expect((Core.connectEngineSession as jest.Mock).mock.calls[1][0].selection).toEqual(fresh);
+    expect(nextSampler.start).toHaveBeenCalledTimes(1); await view.unmount();
+  } finally {jest.useRealTimers();}
+});
+test("remote quality replacement preserves a downgrade and fences retired adaptive callbacks", async()=>{
+  const real=jest.requireActual("@wc/core");
+  const controllers:any[]=[], callbacks:any[]=[];
+  (Adaptive.makeAdaptive as jest.Mock).mockImplementation((opts:any)=>{callbacks.push(opts); const c=real.makeAdaptive(opts);controllers.push(c);return c;});
+  const client=remoteClient(); client.select.mockResolvedValueOnce(remoteResp({tier:"1080"})).mockResolvedValue(remoteResp({tier:"360",generation:2}));
+  const first={...makeFakeSession(),kind:"remote"},second={...makeFakeSession(),kind:"remote"};
+  (Core.connectEngineSession as jest.Mock).mockResolvedValueOnce(first).mockResolvedValue(second);
+  (SC.useServer as jest.Mock).mockReturnValue({client,preferences:{...Core.DEFAULT_STREAM_PREFERENCES,quality:"auto"}});
+  const view=await render(remoteElement());
+  await act(async()=>{controllers[0].pin("360");});
+  expect(client.select).toHaveBeenCalledTimes(2); expect(first.close).toHaveBeenCalledTimes(1);
+  expect(controllers[1].current()).toBe("360");
+  await act(async()=>{callbacks[0].onApply("720");controllers[1].pin("360");});
+  expect(client.setQuality).toHaveBeenCalledTimes(1); expect(client.select).toHaveBeenCalledTimes(2);
+  await view.unmount();
+});
+test("late instance unauthorized from the old client cannot clear or navigate the new target", async()=>{
+  const old=remoteClient(), next=remoteClient(), clearAuth=jest.fn(), navigate=jest.fn(); let reject!: (e:any)=>void;
+  old.instances.mockImplementation(()=>new Promise((_,r)=>{reject=r;}));
+  let client=old;
+  (SC.useServer as jest.Mock).mockImplementation(()=>({client,clearAuth}));
+  (Core.connectEngineSession as jest.Mock).mockResolvedValue({...makeFakeSession(),kind:"remote"});
+  const element=()=> <Stream route={{params:{serial:"A"}}} navigation={{navigate}} RTCImpl={FakeRTCPeerConnection} VideoView={FakeVideoView}/>;
+  const view=await render(element()); client=next;await view.rerender(element());
+  await act(async()=>{reject({status:401});});
+  expect(clearAuth).not.toHaveBeenCalled(); expect(navigate).not.toHaveBeenCalled();
+});
+
+test("rapid remote switches keep the oldest pending retirement ahead of every new select", async () => {
+  const client = remoteClient();
+  const first = { ...makeFakeSession(), kind: "remote" };
+  const successor = { ...makeFakeSession(), kind: "remote" };
+  let finishClose!: () => void;
+  first.close.mockImplementation(() => new Promise<void>(r => { finishClose = r; }));
+  (SC.useServer as jest.Mock).mockReturnValue({ client });
+  (Core.connectEngineSession as jest.Mock).mockResolvedValueOnce(first).mockResolvedValue(successor);
+  const view = await render(remoteElement());
+  await view.rerender(remoteElement("B"));
+  await view.rerender(remoteElement("C"));
+  expect(first.close).toHaveBeenCalledTimes(1);
+  expect(client.select).toHaveBeenCalledTimes(1);
+  await act(async () => { finishClose(); });
+  expect(client.select.mock.calls.map(call => call[0])).toEqual(["A", "C"]);
+  expect(Core.connectEngineSession).toHaveBeenCalledTimes(2);
+});
+
+test("explicit remote recovery retries the auto starting tier after a within-session downgrade", async () => {
+  const real = jest.requireActual("@wc/core"), controllers: any[] = [];
+  (Adaptive.makeAdaptive as jest.Mock).mockImplementation((opts: any) => {
+    const value = real.makeAdaptive(opts); controllers.push(value); return value;
+  });
+  const client = remoteClient();
+  let tier = "1080";
+  client.select.mockImplementation(async () => remoteResp({ tier }));
+  client.setQuality.mockImplementation(async (_serial: string, value: string) => { tier = value; });
+  (SC.useServer as jest.Mock).mockReturnValue({ client, preferences: { ...Core.DEFAULT_STREAM_PREFERENCES, quality: "auto" } });
+  (Core.connectEngineSession as jest.Mock).mockImplementation(async () => ({ ...makeFakeSession(), kind: "remote" }));
+  const view = await render(remoteElement());
+  await act(async () => { controllers[0].pin("360"); });
+  expect(controllers[1].current()).toBe("360");
+  await act(async () => { (Core.connectEngineSession as jest.Mock).mock.calls[1][0].onState("disconnected"); });
+  expect(client.setQuality.mock.calls.map(call => call[1])).toEqual(["360", "1080"]);
+  expect(controllers[2].current()).toBe("1080");
+  await view.unmount();
+});
+
+test("a canceled quality transition settles its mutation before a successor is selected", async () => {
+  const real = jest.requireActual("@wc/core"), controllers: any[] = [];
+  (Adaptive.makeAdaptive as jest.Mock).mockImplementation((opts: any) => {
+    const value = real.makeAdaptive(opts); controllers.push(value); return value;
+  });
+  const client = remoteClient();
+  let finishQuality!: () => void;
+  client.setQuality.mockImplementation(() => new Promise<void>(r => { finishQuality = r; }));
+  (SC.useServer as jest.Mock).mockReturnValue({ client, preferences: { ...Core.DEFAULT_STREAM_PREFERENCES, quality: "auto" } });
+  (Core.connectEngineSession as jest.Mock).mockImplementation(async () => ({ ...makeFakeSession(), kind: "remote" }));
+  const view = await render(remoteElement());
+  await act(async () => { controllers[0].pin("360"); });
+  await view.rerender(remoteElement("B"));
+  expect(client.select).toHaveBeenCalledTimes(1);
+  await act(async () => { finishQuality(); });
+  expect(client.select.mock.calls.map(call => call[0])).toEqual(["A", "B"]);
+  expect(Core.connectEngineSession).toHaveBeenCalledTimes(2);
+  await view.unmount();
+});
+
+test("failed cleanup on a replaced client cannot block another installation", async () => {
+  const old = remoteClient(), next = remoteClient();
+  const first = { ...makeFakeSession(), kind: "remote" };
+  first.close.mockRejectedValue(new Error("offline"));
+  let client = old;
+  (SC.useServer as jest.Mock).mockImplementation(() => ({ client }));
+  (Core.connectEngineSession as jest.Mock).mockResolvedValueOnce(first).mockResolvedValue({ ...makeFakeSession(), kind: "remote" });
+  const view = await render(remoteElement());
+  client = next; await view.rerender(remoteElement());
+  expect(next.select).toHaveBeenCalledTimes(1);
+  expect(Core.connectEngineSession).toHaveBeenCalledTimes(2);
+  await view.unmount();
 });

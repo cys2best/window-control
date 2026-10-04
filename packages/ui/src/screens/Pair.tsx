@@ -27,7 +27,7 @@ function withDefaultPort(url: string): string {
 }
 
 export function Pair({ navigation }: { navigation: any }) {
-  const { base, setServer, hostReachability } = useServer();
+  const { base, setServer, hostReachability, target } = useServer();
   // The web app is served by the host it talks to; a native app has to be
   // told where the host is.
   const needsHost = Platform.OS !== "web";
@@ -99,7 +99,7 @@ export function Pair({ navigation }: { navigation: any }) {
         </Text>
         {needsHost ? null : (
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 22 }}>
-            <NetChip state={hostReachability.state} host={hostReachability.host} />
+            <NetChip kind={target?.kind} state={hostReachability.state} host={hostReachability.host} />
           </View>
         )}
         {needsHost ? (
