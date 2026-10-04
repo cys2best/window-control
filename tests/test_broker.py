@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 from broker.app import create_broker_app, BrokerSettings
 from broker.identity_store import InstallationStore
 from broker.limits import BrokerLimits
+from starlette.websockets import WebSocketDisconnect
 
 
 @pytest.fixture
@@ -54,6 +55,84 @@ def test_installation_lifecycle_http(broker_env):
     # Delete again -> 404
     del_again = client.request("DELETE", f"/installations/{inst_id}", json={"credential": cred})
     assert del_again.status_code == 404
+
+
+def test_corrupt_storage_returns_sanitized_503_without_issuing_an_identity(broker_env):
+    client, _, storage = broker_env
+    corrupt = b'{"truncated":'
+    storage.write_bytes(corrupt)
+    response = client.post("/installations")
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Installation storage unavailable"}
+    assert storage.read_bytes() == corrupt
+    response = client.request("DELETE", "/installations/" + "a" * 32,
+                              json={"credential": "secret"})
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Installation storage unavailable"}
+    assert storage.read_bytes() == corrupt
+
+
+@pytest.mark.parametrize("boundary", ["fsync", "replace"])
+def test_failed_registration_write_returns_503_and_keeps_previous_identity(
+    broker_env, monkeypatch, boundary
+):
+    client, _, storage = broker_env
+    existing = client.post("/installations").json()
+    before = storage.read_bytes()
+
+    def failed_write(*args):
+        raise OSError("private storage path and credential")
+
+    monkeypatch.setattr("broker.identity_store.os." + boundary, failed_write)
+    response = client.post("/installations")
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Installation storage unavailable"}
+    assert storage.read_bytes() == before
+    assert InstallationStore(storage).authenticate(**{
+        "id": existing["installation_id"], "credential": existing["credential"]
+    })
+
+
+def test_failed_revoke_write_keeps_identity_and_connected_host(broker_env, monkeypatch):
+    client, _, storage = broker_env
+    existing = client.post("/installations").json()
+    before = storage.read_bytes()
+    with client.websocket_connect("/connect") as host:
+        authenticate_host(host, existing)
+
+        def failed_replace(*args):
+            raise OSError("private storage path and credential")
+
+        monkeypatch.setattr("broker.identity_store.os.replace", failed_replace)
+        response = client.request("DELETE", "/installations/" + existing["installation_id"],
+                                  json={"credential": existing["credential"]})
+        assert response.status_code == 503
+        assert response.json() == {"detail": "Installation storage unavailable"}
+        assert storage.read_bytes() == before
+        assert client.app.state.registry.get_host(existing["installation_id"]) is not None
+        assert InstallationStore(storage).authenticate(existing["installation_id"], existing["credential"])
+
+
+@pytest.mark.parametrize("failure", ["corrupt", "unreadable"])
+def test_storage_failure_closes_host_authentication_without_registering_host(
+    broker_env, monkeypatch, failure
+):
+    from pathlib import Path
+    client, _, storage = broker_env
+    existing = client.post("/installations").json()
+    if failure == "corrupt":
+        storage.write_bytes(b'{"truncated":')
+    else:
+        def denied_read(*args, **kwargs):
+            raise PermissionError("private storage path and credential")
+        monkeypatch.setattr(Path, "read_text", denied_read)
+    with client.websocket_connect("/connect") as host:
+        host.send_text(wire("host_auth", existing))
+        with pytest.raises(WebSocketDisconnect) as closed:
+            host.receive_text()
+        assert closed.value.code == 1011
+        assert closed.value.reason == "Installation storage unavailable"
+    assert client.app.state.registry.get_host(existing["installation_id"]) is None
 
 
 def test_viewer_first_frame_auth(broker_env):

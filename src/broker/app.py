@@ -5,9 +5,10 @@ import time
 from contextlib import asynccontextmanager, suppress
 from typing import List
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from broker.identity_store import InstallationStore
+from broker.identity_store import InstallationStore, InstallationStoreError
 from broker.limits import BrokerLimits
 from broker.registry import Registry
 from broker.media import MediaAdmission, MediaError
@@ -72,6 +73,10 @@ def create_broker_app(settings: BrokerSettings) -> FastAPI:
                 await task
 
     app = FastAPI(lifespan=lifespan)
+
+    @app.exception_handler(InstallationStoreError)
+    async def installation_storage_unavailable(request: Request, exc: InstallationStoreError):
+        return JSONResponse(status_code=503, content={"detail": "Installation storage unavailable"})
     
     @app.post("/installations")
     def register_installation(request: Request):
@@ -384,6 +389,8 @@ def create_broker_app(settings: BrokerSettings) -> FastAPI:
                         pass
                     target = host if host is not None else viewer
                     await send(target, format_error_reply(request_id, ErrorCode.INVALID_REQUEST, "Invalid remote frame"))
+        except InstallationStoreError:
+            await websocket.close(code=1011, reason="Installation storage unavailable")
         except (WebSocketDisconnect, asyncio.TimeoutError, RuntimeError, OSError):
             pass
         finally:
