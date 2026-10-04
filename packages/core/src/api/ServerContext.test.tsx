@@ -689,3 +689,96 @@ test("failed old-token lookup after a target switch cannot retire the successor"
   expect(context!.paired).toBe(true);
   expect(await secure.getItem(remoteDeviceTokenKey(b.serviceUrl, b.installationId))).toBe("B");
 });
+
+
+test.each(["token", "marker", "local-base"])("canceled ownership during %s persistence restores predecessor without publication", async phase => {
+  FakeSocket.sockets = [];
+  const old: ServerTarget = { kind: "remote", serviceUrl: "https://relay.example", installationId };
+  const next: ServerTarget = phase === "local-base" ? { kind: "local", base: "http://next:8080" } : { ...old, installationId: "b".repeat(32) };
+  const marker = new Map([["wc_base", "http://old:8080"], ["wc_remote_target", JSON.stringify(old)]]);
+  const tokens = new Map([[remoteDeviceTokenKey(old.serviceUrl, old.installationId), "old"]]);
+  let release!: () => void, hold = true, owns = true;
+  const plain: SecureStorageAdapter = {
+    getItem: async k => marker.get(k) ?? null,
+    setItem: async (k, v) => {
+      marker.set(k, v);
+      if (hold && ((phase === "marker" && k === "wc_remote_target") || (phase === "local-base" && k === "wc_base"))) { hold = false; await new Promise<void>(r => { release = r; }); }
+    }, deleteItem: async k => { marker.delete(k); },
+  };
+  const secure: SecureStorageAdapter = {
+    getItem: async k => tokens.get(k) ?? null,
+    setItem: async (k, v) => { tokens.set(k, v); if (hold && phase === "token") { hold = false; await new Promise<void>(r => { release = r; }); } },
+    deleteItem: async k => { tokens.delete(k); },
+  };
+  let context!: ReturnType<typeof useServer>;
+  const publications: string[] = [];
+  function Capture() { context = useServer(); publications.push(context.authToken ?? ""); return null; }
+  const opts = remoteOptions();
+  const view = render(<ServerProvider plainStorage={plain} secureStorage={secure} remoteOptions={opts}><Capture /></ServerProvider>);
+  await waitFor(() => expect(context.ready).toBe(true));
+  const predecessor = context.client;
+  let pending!: Promise<unknown>;
+  act(() => { pending = context.setTarget(next, "obsolete", { isCurrent: () => owns }).catch(error => error); });
+  await waitFor(() => expect(release).toBeDefined());
+  owns = false;
+  await act(async () => { release(); expect(await pending).toEqual(new Error("target changed")); });
+  expect(context.target).toEqual(old); expect(context.client).toBe(predecessor); expect(context.authToken).toBe("old");
+  expect(publications).not.toContain("obsolete");
+  expect(marker.get("wc_remote_target")).toBe(JSON.stringify(old)); expect(marker.get("wc_base")).toBe("http://old:8080");
+  expect(tokens.get(next.kind === "remote" ? remoteDeviceTokenKey(next.serviceUrl, next.installationId) : deviceTokenKey(next.base))).toBeUndefined();
+  expect(FakeSocket.sockets).toHaveLength(1); expect(FakeSocket.sockets[0].readyState).not.toBe(3);
+  view.unmount();
+  render(<ServerProvider plainStorage={plain} secureStorage={secure} remoteOptions={opts}><Capture /></ServerProvider>);
+  await waitFor(() => expect(context.ready).toBe(true)); expect(context.target).toEqual(old); expect(context.authToken).toBe("old");
+});
+
+test.each([["same-installation", "marker"], ["different-installation", "marker"], ["different-installation", "token"]])("canceled pending %s %s write cannot overwrite a successor", async (same, phase) => {
+  FakeSocket.sockets = [];
+  const plain = makeMemoryStorage(), secure = makeMemoryStorage();
+  let release!: () => void, hold = false, owns = true;
+  const write = plain.setItem;
+  plain.setItem = async (k, v) => { await write(k, v); if (hold && phase === "marker" && k === "wc_remote_target") { hold = false; await new Promise<void>(r => { release = r; }); } };
+  const saveToken = secure.setItem;
+  secure.setItem = async (k, v) => { await saveToken(k, v); if (hold && phase === "token") { hold = false; await new Promise<void>(r => { release = r; }); } };
+  let context!: ReturnType<typeof useServer>; function Capture() { context = useServer(); return null; }
+  const opts = remoteOptions();
+  render(<ServerProvider plainStorage={plain} secureStorage={secure} remoteOptions={opts}><Capture /></ServerProvider>);
+  await waitFor(() => expect(context.ready).toBe(true));
+  const a: ServerTarget = { kind: "remote", serviceUrl: "https://relay.example", installationId };
+  const b: ServerTarget = same === "same-installation" ? a : { ...a, installationId: "b".repeat(32) };
+  await act(async () => { await context.setTarget(a, "old"); });
+  hold = true; let pending!: Promise<unknown>, successor!: Promise<unknown>;
+  act(() => { pending = context.setTarget(a, "obsolete", { isCurrent: () => owns }).catch(e => e); });
+  await waitFor(() => expect(release).toBeDefined()); owns = false;
+  act(() => { successor = context.setTarget(b, "successor"); });
+  if (phase === "token") { await act(async () => { await successor; }); expect(context.authToken).toBe("successor"); }
+  await act(async () => { release(); await pending; await successor; });
+  expect(context.target).toEqual(b); expect(context.authToken).toBe("successor");
+  expect(await secure.getItem(remoteDeviceTokenKey(b.serviceUrl, b.installationId))).toBe("successor");
+  expect(await plain.getItem("wc_remote_target")).toBe(JSON.stringify(b));
+});
+
+
+test("canceled same-installation replacement cannot restore a predecessor token over its revocation", async () => {
+  FakeSocket.sockets = [];
+  const plain = makeMemoryStorage(), secure = makeMemoryStorage();
+  let release!: () => void, hold = false, owns = true;
+  const write = plain.setItem;
+  plain.setItem = async (k, v) => { await write(k, v); if (hold && k === "wc_remote_target") { hold = false; await new Promise<void>(r => { release = r; }); } };
+  let context!: ReturnType<typeof useServer>; function Capture() { context = useServer(); return null; }
+  render(<ServerProvider plainStorage={plain} secureStorage={secure} remoteOptions={remoteOptions()}><Capture /></ServerProvider>);
+  await waitFor(() => expect(context.ready).toBe(true));
+  const remote: ServerTarget = { kind: "remote", serviceUrl: "https://relay.example", installationId };
+  await act(async () => { await context.setTarget(remote, "predecessor"); });
+  const socket = FakeSocket.sockets[0];
+  act(() => { socket.open(); socket.reply({ authenticated: true, viewer_id: "v" }); });
+  await waitFor(() => expect(socket.sent.length).toBe(2));
+  hold = true; let pending!: Promise<unknown>;
+  act(() => { pending = context.setTarget(remote, "obsolete", { isCurrent: () => owns }).catch(e => e); });
+  await waitFor(() => expect(release).toBeDefined()); owns = false;
+  act(() => { socket.error("not_paired"); });
+  await act(async () => { release(); await pending; });
+  await waitFor(() => expect(context.authToken).toBeNull());
+  expect(context.client).toBeNull(); expect(context.paired).toBe(false);
+  expect(await secure.getItem(remoteDeviceTokenKey(remote.serviceUrl, remote.installationId))).toBeNull();
+});

@@ -14,6 +14,7 @@ import {
 } from "./preferences";
 
 export type ApiClient = LocalApiClient | RemoteApiClient;
+export type TargetUpdateOptions = { isCurrent?: () => boolean };
 
 type Ctx = {
   base: string | null;
@@ -24,8 +25,8 @@ type Ctx = {
   // loopback, false once the host has said no, null until it has answered.
   paired: boolean | null;
   client: ApiClient | null;
-  setServer: (base: string, token: string) => Promise<ApiClient>;
-  setTarget: (target: ServerTarget, token: string) => Promise<ApiClient>;
+  setServer: (base: string, token: string, options?: TargetUpdateOptions) => Promise<ApiClient>;
+  setTarget: (target: ServerTarget, token: string, options?: TargetUpdateOptions) => Promise<ApiClient>;
   clearAuth: () => Promise<void>;
   preferences: StreamPreferences;
   updatePreferences: (patch: Partial<StreamPreferences>) => Promise<void>;
@@ -163,7 +164,7 @@ export function ServerProvider({
 
   useEffect(() => () => { generation.current++; activeGeneration.current = -1; clientRef.current?.dispose(); }, []);
 
-  const setTarget = useCallback(async (selection: ServerTarget, token: string): Promise<ApiClient> => {
+  const setTarget = useCallback(async (selection: ServerTarget, token: string, options?: TargetUpdateOptions): Promise<ApiClient> => {
     let normalized: ServerTarget;
     if (selection.kind === "remote") {
       if (!remoteOptions) throw new Error("remote service is not configured");
@@ -173,26 +174,67 @@ export function ServerProvider({
       normalized = { kind: "remote", serviceUrl, installationId: selection.installationId };
     } else normalized = { kind: "local", base: normalizeBase(selection.base) };
     const n = ++generation.current;
+    const assertCurrent = () => {
+      if (generation.current !== n || options?.isCurrent?.() === false) throw new Error("target changed");
+    };
+    // Keep each snapshot and its rollback inside the queue that owns the key.
+    // A canceled write may already have reached storage before it resolves.
+    const persist = async (storage: SecureStorageAdapter, key: string, value: string | null, undo: Array<() => Promise<void>>, tokenStage = false) => {
+      const beforeWrite = () => {
+        // Legacy calls may already have issued independent token writes.
+        // Owned pairing calls also fence generation before that boundary.
+        if (!tokenStage || options?.isCurrent) assertCurrent();
+      };
+      beforeWrite();
+      const previous = await storage.getItem(key);
+      beforeWrite();
+      undo.push(() => previous === null ? storage.deleteItem(key) : storage.setItem(key, previous));
+      await (value === null ? storage.deleteItem(key) : storage.setItem(key, value));
+      assertCurrent();
+    };
+    const rollback = async (undo: Array<() => Promise<void>>) => {
+      // Attempt every restoration even if one storage adapter rejects a write.
+      const restored = await Promise.allSettled(undo.reverse().map(restore => restore()));
+      const failed = restored.find(result => result.status === "rejected");
+      if (failed?.status === "rejected") throw failed.reason;
+    };
     try {
-      const key = tokenKey(normalized);
-      await ordered(key, () => token ? secureStorage.setItem(key, token) : secureStorage.deleteItem(key));
-      if (generation.current !== n) throw new Error("target changed");
-      const writes: Promise<void>[] = [];
-      if (normalized.kind === "local") {
-        writes.push(ordered(BASE_KEY, () => plainStorage.setItem(BASE_KEY, normalized.base)));
-        writes.push(ordered(REMOTE_KEY, () => plainStorage.deleteItem(REMOTE_KEY)));
-      } else writes.push(ordered(REMOTE_KEY, () => plainStorage.setItem(REMOTE_KEY, JSON.stringify(normalized))));
-      await Promise.all(writes);
-      if (generation.current !== n) throw new Error("target changed");
-      const owned = publish(normalized, token || null, n, token ? true : null)!;
-      setBaseLoaded(true); setTokenLoaded(true);
+      let owned!: ApiClient;
+      await ordered(tokenKey(normalized), async () => {
+        const tokenUndo: Array<() => Promise<void>> = [];
+        try {
+          await persist(secureStorage, tokenKey(normalized), token || null, tokenUndo, true);
+          // All local/remote markers share this queue through publication or
+          // rollback. Different-token writes remain independent until here.
+          await ordered(REMOTE_KEY, async () => {
+            const markerUndo: Array<() => Promise<void>> = [];
+            try {
+              if (normalized.kind === "local") {
+                const baseUndo: Array<() => Promise<void>> = [];
+                markerUndo.push(() => ordered(BASE_KEY, () => rollback(baseUndo)));
+                await ordered(BASE_KEY, () => persist(plainStorage, BASE_KEY, normalized.base, baseUndo));
+              }
+              await persist(plainStorage, REMOTE_KEY, normalized.kind === "remote" ? JSON.stringify(normalized) : null, markerUndo);
+              assertCurrent();
+              owned = publish(normalized, token || null, n, token ? true : null)!;
+              setBaseLoaded(true); setTokenLoaded(true);
+            } catch (error) {
+              await rollback(markerUndo);
+              throw error;
+            }
+          });
+        } catch (error) {
+          await rollback(tokenUndo);
+          throw error;
+        }
+      });
       return owned;
     } catch (error) {
       if (generation.current === n && !baseLoaded) setLoadRetry(value => value + 1);
       throw error;
     }
   }, [plainStorage, secureStorage, remoteOptions, publish, ordered, baseLoaded]);
-  const setServer = useCallback((url: string, token: string) => setTarget({ kind: "local", base: url }, token), [setTarget]);
+  const setServer = useCallback((url: string, token: string, options?: TargetUpdateOptions) => setTarget({ kind: "local", base: url }, token, options), [setTarget]);
   const clearAuth = useCallback(async () => { if (targetRef.current) await clearCaptured(targetRef.current, activeGeneration.current, authToken); }, [clearCaptured, authToken]);
 
   const updatePreferences = useCallback(async (patch: Partial<StreamPreferences>) => {

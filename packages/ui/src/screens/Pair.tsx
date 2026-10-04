@@ -75,7 +75,7 @@ export function Pair({ navigation, route, remoteOptions }: { navigation: any; ro
       if (invite) {
         const result = await pairRemote(invite.serviceUrl, invite.handle, digits, deviceName(), remoteOptions!);
         if (!isCurrent()) return;
-        const owned = await setTarget({ kind: "remote", serviceUrl: invite.serviceUrl, installationId: result.installationId }, result.token);
+        const owned = await setTarget({ kind: "remote", serviceUrl: invite.serviceUrl, installationId: result.installationId }, result.token, { isCurrent });
         // setTarget publishes the successor itself. Target-change renders can
         // invalidate isCurrent, so compare the actual returned client owner.
         if (mounted.current && (isCurrent() || (current.current.client === owned && current.current.invitation === captured.invitation && current.current.remote === captured.remote))) navigation.replace("InstanceList");
@@ -88,7 +88,7 @@ export function Pair({ navigation, route, remoteOptions }: { navigation: any; ro
         const result = await pairDevice(url, digits, deviceName());
         if (!isCurrent()) return;
         if ("error" in result) { setError(result.error); return; }
-        const owned = await setServer(url, result.token);
+        const owned = await setServer(url, result.token, { isCurrent });
         if (mounted.current && (isCurrent() || (current.current.client === owned && current.current.invitation === captured.invitation && current.current.remote === captured.remote))) navigation.replace("InstanceList");
       }
     } catch (err: unknown) {

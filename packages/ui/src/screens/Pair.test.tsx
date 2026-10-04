@@ -44,7 +44,7 @@ test("pairs with the entered host and code, stores the token, and opens the inst
 
   await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith("InstanceList"));
   expect(pairDevice).toHaveBeenCalledWith("http://100.101.102.103:8080", "123456", "iPhone");
-  expect(setServer).toHaveBeenCalledWith("http://100.101.102.103:8080", "dev-tok");
+  expect(setServer).toHaveBeenCalledWith("http://100.101.102.103:8080", "dev-tok", { isCurrent: expect.any(Function) });
 });
 
 test("a bare host gets http:// and a spaced code is sent as digits", async () => {
@@ -164,7 +164,7 @@ test("an invitation pairs with a separate six-digit code and no private address"
   expect(Core.pairRemote).not.toHaveBeenCalled();
   await fireEvent.changeText(screen.getByPlaceholderText("Pairing code"), "123456");
   await fireEvent.press(screen.getByText("Pair"));
-  await waitFor(() => expect(setTarget).toHaveBeenCalledWith({ kind: "remote", serviceUrl: trustedOrigin, installationId: "a".repeat(32) }, "secret"));
+  await waitFor(() => expect(setTarget).toHaveBeenCalledWith({ kind: "remote", serviceUrl: trustedOrigin, installationId: "a".repeat(32) }, "secret", { isCurrent: expect.any(Function) }));
   expect(Core.pairRemote).toHaveBeenCalledWith(trustedOrigin, "abcdefghijklmnopqrstuv", "123456", "iPhone", remoteOptions);
   expect(navigation.replace).toHaveBeenCalledWith("InstanceList");
 });
@@ -228,4 +228,75 @@ test("advanced local host remains available from an invitation", async () => {
   await fireEvent.changeText(screen.getByPlaceholderText("Pairing code"), "123456"); await fireEvent.press(screen.getByText("Pair"));
   await waitFor(() => expect(pairDevice).toHaveBeenCalledWith("http://[fd7a:115c:a1e0::1]:8080", "123456", "iPhone"));
   expect(Core.pairRemote).not.toHaveBeenCalled();
+});
+
+
+// These exercise Pair's persistence boundary with the real provider. Only the
+// transport success and storage latency are controlled.
+test.each([
+  ["remote", "token", "invitation"], ["remote", "token", "mode"], ["remote", "token", "unmount"],
+  ["remote", "marker", "invitation"], ["remote", "marker", "mode"], ["remote", "marker", "unmount"],
+  ["local", "token", "unmount"], ["local", "marker", "mode"],
+])("real provider ignores canceled %s pairing during %s storage after %s change", async (kind, phase, cancel) => {
+  const actual = jest.requireActual("@wc/core") as typeof Core;
+  (Core.useServer as jest.Mock).mockImplementation(actual.useServer);
+  const { FakeSocket, options } = require("../../../core/src/remote/testUtils");
+  FakeSocket.sockets = [];
+  const opts = options({ trustedOrigin });
+  const saved = new Map<string, string>([["wc_base", "http://old:8080"]]);
+  const tokens = new Map<string, string>([[actual.deviceTokenKey("http://old:8080"), "predecessor"]]);
+  let release!: () => void, hold = true;
+  const plain: Core.SecureStorageAdapter = {
+    getItem: async key => saved.get(key) ?? null,
+    setItem: async (key, value) => { saved.set(key, value); if (hold && phase === "marker" && key === (kind === "remote" ? "wc_remote_target" : "wc_base")) { hold = false; await new Promise<void>(resolve => { release = resolve; }); } },
+    deleteItem: async key => { saved.delete(key); },
+  };
+  const secure: Core.SecureStorageAdapter = {
+    getItem: async key => tokens.get(key) ?? null,
+    setItem: async (key, value) => { tokens.set(key, value); if (hold && phase === "token") { hold = false; await new Promise<void>(resolve => { release = resolve; }); } },
+    deleteItem: async key => { tokens.delete(key); },
+  };
+  let context!: ReturnType<typeof Core.useServer>;
+  const publications: string[] = [];
+  function Capture() { context = Core.useServer(); publications.push(context.authToken ?? ""); return null; }
+  function Screen({ url, show = true }: { url: string; show?: boolean }) {
+    return <Core.ServerProvider plainStorage={plain} secureStorage={secure} remoteOptions={opts}><Capture />{show ? <Pair navigation={navigation} route={{ params: { invitation: url } }} remoteOptions={opts} /> : null}</Core.ServerProvider>;
+  }
+  (Core.pairRemote as jest.Mock).mockResolvedValue({ installationId: "a".repeat(32), token: "obsolete" });
+  pairDevice.mockResolvedValue({ token: "obsolete" });
+  const view = await render(<Screen url={invitation} />);
+  await waitFor(() => expect(context.ready).toBe(true)); const predecessor = context.client;
+  if (kind === "local") {
+    await fireEvent.press(view.getByText("Advanced: local host"));
+    await fireEvent.changeText(view.getByPlaceholderText("Host address"), "next:8080");
+  }
+  await fireEvent.changeText(view.getByPlaceholderText("Pairing code"), "123456"); await fireEvent.press(view.getByText("Pair"));
+  await waitFor(() => expect(release).toBeDefined());
+  if (cancel === "invitation") await view.rerender(<Screen url={invitation.replace("abcdefghijklmnopqrstuv", "zyxwvutsrqponmlkjihgfe")} />);
+  else if (cancel === "unmount") await view.rerender(<Screen url={invitation} show={false} />);
+  else await fireEvent.press(view.getByText(kind === "remote" ? "Advanced: local host" : "Use invitation"));
+  await act(async () => { release(); for (let i = 0; i < 20; i++) await Promise.resolve(); });
+  expect(context.client).toBe(predecessor); expect(context.target).toEqual({ kind: "local", base: "http://old:8080" });
+  expect(context.authToken).toBe("predecessor"); expect(publications).not.toContain("obsolete");
+  expect(saved.get("wc_base")).toBe("http://old:8080"); expect(saved.get("wc_remote_target")).toBeUndefined();
+  expect(navigation.replace).not.toHaveBeenCalled(); expect(FakeSocket.sockets).toHaveLength(0);
+  await view.unmount();
+});
+
+test("real provider completes owned remote pairing and navigates after its publication", async () => {
+  const actual = jest.requireActual("@wc/core") as typeof Core;
+  (Core.useServer as jest.Mock).mockImplementation(actual.useServer);
+  const { FakeSocket, options } = require("../../../core/src/remote/testUtils"); FakeSocket.sockets = [];
+  const opts = options({ trustedOrigin });
+  const store = new Map<string, string>();
+  const storage: Core.SecureStorageAdapter = { getItem: async key => store.get(key) ?? null, setItem: async (key, value) => { store.set(key, value); }, deleteItem: async key => { store.delete(key); } };
+  let context!: ReturnType<typeof Core.useServer>;
+  function Capture() { context = Core.useServer(); return null; }
+  (Core.pairRemote as jest.Mock).mockResolvedValue({ installationId: "a".repeat(32), token: "owned" });
+  const view = await render(<Core.ServerProvider plainStorage={storage} secureStorage={storage} remoteOptions={opts}><Capture /><Pair navigation={navigation} route={{ params: { invitation } }} remoteOptions={opts} /></Core.ServerProvider>);
+  await waitFor(() => expect(context.ready).toBe(true));
+  await fireEvent.changeText(view.getByPlaceholderText("Pairing code"), "123456"); await fireEvent.press(view.getByText("Pair"));
+  await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith("InstanceList"));
+  expect(context.target).toEqual({ kind: "remote", serviceUrl: trustedOrigin, installationId: "a".repeat(32) });
+  expect(context.authToken).toBe("owned"); expect(context.client?.kind).toBe("remote"); await view.unmount();
 });
