@@ -2,7 +2,7 @@
 
 import asyncio
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import time
 import uuid
 
@@ -19,6 +19,7 @@ class HostConnection:
         self.installation_id = installation_id
         self.epoch = epoch
         self.send_lock = asyncio.Lock()
+        self.queued_sends = 0
 
 
 class ViewerConnection:
@@ -30,8 +31,10 @@ class ViewerConnection:
         self.token = ""
         self.device_id = None
         self.authenticated = False
+        self.media_requested = False
         self.pending_requests = set()
         self.send_lock = asyncio.Lock()
+        self.queued_sends = 0
 
 
 @dataclass
@@ -42,6 +45,11 @@ class PendingRequest:
     installation_id: str
     host_epoch: int
     future: asyncio.Future
+    op: str = ""
+    payload: dict = field(default_factory=dict, repr=False)
+    received_at: float = 0.0
+    media_authorized: bool = False
+    media_owned: bool = False
 
 
 class Registry:
@@ -78,22 +86,24 @@ class Registry:
                     pending.future.cancel()
             viewer.token = ""
 
-    def add_pending_request(self, viewer, request_id):
+    def add_pending_request(self, viewer, request_id, *, op="", payload=None, received_at=None):
         if request_id in viewer.pending_requests or len(viewer.pending_requests) >= MAX_PENDING_REQUESTS:
             return None
         # Bound aggregate work retained by a host, even with many viewers.
-        if sum(p.installation_id == viewer.installation_id for p in self.pending_requests.values()) >= 256:
+        if sum(len(v.pending_requests) for v in self.viewers.values() if v.installation_id == viewer.installation_id) >= 256:
             return None
         routing_id = str(uuid.uuid4())
-        pending = PendingRequest(routing_id, request_id, viewer, viewer.installation_id, viewer.epoch, asyncio.get_running_loop().create_future())
+        pending = PendingRequest(routing_id, request_id, viewer, viewer.installation_id, viewer.epoch, asyncio.get_running_loop().create_future(),
+                                 op, dict(payload or {}), time.time() if received_at is None else received_at)
         viewer.pending_requests.add(request_id)
         self.pending_requests[routing_id] = pending
         return pending
 
-    def drop_pending(self, pending):
+    def drop_pending(self, pending, *, retain_reservation=False):
+        if not retain_reservation:
+            pending.viewer.pending_requests.discard(pending.request_id)
         if self.pending_requests.get(pending.routing_id) is pending:
             del self.pending_requests[pending.routing_id]
-            pending.viewer.pending_requests.discard(pending.request_id)
             self._prune_settled()
             self.settled_requests[pending.routing_id] = (
                 pending.installation_id, pending.host_epoch,
@@ -121,7 +131,7 @@ class Registry:
         # Ownership MUST be checked before removing another installation's work.
         if pending is None or (pending.installation_id, pending.host_epoch) != (installation_id, epoch) or not self.is_valid_host(installation_id, epoch):
             return None
-        self.drop_pending(pending)
+        self.drop_pending(pending, retain_reservation=True)
         return pending
 
     def get_host(self, installation_id):

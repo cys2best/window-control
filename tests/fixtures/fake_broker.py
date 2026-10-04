@@ -11,7 +11,7 @@ from broker.app import BrokerSettings, create_broker_app
 
 @asynccontextmanager
 async def local_broker(tmp_path):
-    app = create_broker_app(BrokerSettings(storage_path=str(tmp_path / "broker.json"), allowed_origins=["https://phone.example"], turn_shared_secret="test-only"))
+    app = create_broker_app(BrokerSettings(storage_path=str(tmp_path / "broker.json"), allowed_origins=["https://phone.example"], turn_shared_secret="test-only", max_active_streams=2))
     sock = socket.socket()
     sock.bind(("127.0.0.1", 0))
     port = sock.getsockname()[1]

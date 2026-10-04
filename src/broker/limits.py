@@ -1,4 +1,5 @@
 import time
+from collections import deque
 from typing import Dict, Tuple, Callable
 
 class TokenBucket:
@@ -24,6 +25,7 @@ class BrokerLimits:
     def __init__(self, clock: Callable[[], float] = time.time):
         self.clock = clock
         self.buckets: Dict[str, TokenBucket] = {}
+        self.issuances = {}
 
     def _get_bucket(self, key: str, capacity: int, fill_rate: float) -> TokenBucket:
         if key not in self.buckets:
@@ -51,6 +53,12 @@ class BrokerLimits:
         return bucket.consume()
 
     def check_credential_issuance(self, installation_id: str) -> bool:
-        # 12/installation/hour -> 12 capacity, rate = 12 / 3600
-        bucket = self._get_bucket(f"cred_{installation_id}", 12, 12 / 3600.0)
-        return bucket.consume()
+        # A rolling window prevents a burst plus refill exceeding 12/hour.
+        now = self.clock()
+        entries = self.issuances.setdefault(installation_id, deque())
+        while entries and entries[0] <= now - 3600:
+            entries.popleft()
+        if len(entries) >= 12:
+            return False
+        entries.append(now)
+        return True

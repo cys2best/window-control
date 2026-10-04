@@ -78,8 +78,8 @@ class Command(BaseModel):
     v: int
     id: str
     op: str
-    payload: Dict[str, Any]
-    model_config = ConfigDict(extra="forbid", strict=True)
+    payload: Dict[str, Any] = Field(repr=False)
+    model_config = ConfigDict(extra="forbid", strict=True, hide_input_in_errors=True)
 
     @field_validator("v")
     def validate_v(cls, value):
@@ -104,7 +104,7 @@ class RoutingContext(BaseModel):
     host_epoch: int = Field(ge=1)
     viewer_id: str = Field(min_length=1, max_length=128)
     token: str = Field(max_length=256, repr=False)
-    model_config = ConfigDict(extra="forbid", strict=True)
+    model_config = ConfigDict(extra="forbid", strict=True, hide_input_in_errors=True)
 
 
 class RoutedCommand(Command):
@@ -120,7 +120,7 @@ class DeviceInvalidated(BaseModel):
     id: str
     op: Literal["device_invalidated"]
     payload: Dict[str, str]
-    model_config = ConfigDict(extra="forbid", strict=True)
+    model_config = ConfigDict(extra="forbid", strict=True, hide_input_in_errors=True)
 
     @field_validator("v")
     def version(cls, value):
@@ -145,7 +145,7 @@ class DeviceInvalidated(BaseModel):
 class ErrorPayload(BaseModel):
     code: str
     message: str
-    model_config = ConfigDict(extra="forbid", strict=True)
+    model_config = ConfigDict(extra="forbid", strict=True, hide_input_in_errors=True)
 
     @field_validator("code")
     def error_code(cls, value):
@@ -156,9 +156,9 @@ class Reply(BaseModel):
     v: int
     id: str
     ok: bool
-    result: Optional[Dict[str, Any]] = None
+    result: Optional[Dict[str, Any]] = Field(default=None, repr=False)
     error: Optional[ErrorPayload] = None
-    model_config = ConfigDict(extra="forbid", strict=True)
+    model_config = ConfigDict(extra="forbid", strict=True, hide_input_in_errors=True)
 
 def decode_frame(data: str) -> dict:
     if not isinstance(data, str) or len(data.encode("utf-8")) > MAX_FRAME_BYTES:
@@ -228,3 +228,123 @@ def parse_reply(data: str) -> Reply:
 
 def format_error_reply(request_id: str, code: ErrorCode, message: str) -> str:
     return format_reply(Reply(v=1, id=request_id, ok=False, error=ErrorPayload(code=code.value, message=message)))
+
+
+class SessionIceBundle(BaseModel):
+    """ICE adapter contract: URL lists, optional paired TURN user/password only."""
+    ice_servers: list[dict] = Field(repr=False)
+    expires_at: int = Field(gt=0)
+    renew_after: Literal[3300]
+    relay_available: bool
+    model_config = ConfigDict(extra="forbid", strict=True, hide_input_in_errors=True)
+
+    @field_validator("renew_after", mode="before")
+    def renewal(cls, value):
+        if type(value) is not int:
+            raise ValueError("invalid renewal interval")
+        return value
+
+    @field_validator("ice_servers")
+    def servers(cls, value):
+        for server in value:
+            urls = server.get("urls")
+            if (set(server) - {"urls", "username", "credential"}
+                    or type(urls) is not list or not urls or len(urls) > 16):
+                raise ValueError("invalid ICE server")
+            for url in urls:
+                validate_ice_url(url)
+            turn = any(url.startswith(("turn:", "turns:")) for url in urls)
+            if turn:
+                if set(server) != {"urls", "username", "credential"} or any(
+                    not isinstance(server[key], str) or not 0 < len(server[key]) <= 4096
+                    for key in ("username", "credential")
+                ):
+                    raise ValueError("invalid TURN authentication")
+            elif set(server) != {"urls"}:
+                raise ValueError("STUN authentication is unsupported")
+        if len(value) > 16:
+            raise ValueError("too many ICE servers")
+        return value
+
+
+def validate_ice_url(value):
+    import re
+    if not isinstance(value, str) or len(value) > 2048 or not re.fullmatch(
+        r"(?:stun|stuns|turn|turns):(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])(?::[0-9]{1,5})?(?:\?transport=(?:udp|tcp))?", value
+    ):
+        raise ValueError("invalid ICE URL")
+    return value
+
+
+class MediaBundles(BaseModel):
+    host: SessionIceBundle
+    viewer: SessionIceBundle
+    model_config = ConfigDict(extra="forbid", strict=True, hide_input_in_errors=True)
+
+
+class _MediaMessage(BaseModel):
+    v: int
+    id: str
+    op: str
+    payload: Dict[str, Any] = Field(repr=False)
+    model_config = ConfigDict(extra="forbid", strict=True, hide_input_in_errors=True)
+
+    @field_validator("v")
+    def version(cls, value):
+        if value != 1:
+            raise ValueError("invalid version")
+        return value
+
+    @field_validator("id")
+    def request_id(cls, value):
+        import uuid
+        uuid.UUID(value)
+        return value
+
+    @field_validator("payload")
+    def fields(cls, value, info):
+        import re
+        import uuid
+        op = info.data.get("op")
+        required, optional = {
+            "media_authorize": ({"routing_id", "session_id", "generation"}, set()),
+            "media_release": ({"session_id", "generation"}, set()),
+            "media_cancel": ({"installation_id", "host_epoch", "viewer_id"}, {"routing_id"}),
+        }.get(op, (set(), set()))
+        if not required or not required <= value.keys() or value.keys() - required - optional:
+            raise ValueError("invalid media fields")
+        for key, item in value.items():
+            if key in {"generation", "host_epoch"}:
+                if type(item) is not int or item < 1:
+                    raise ValueError("invalid media revision")
+            elif not isinstance(item, str) or not 0 < len(item) <= 128:
+                raise ValueError("invalid media identifier")
+            elif key in {"routing_id", "session_id"}:
+                uuid.UUID(item)
+            elif not re.fullmatch(r"[A-Za-z0-9_.:-]+", item):
+                raise ValueError("invalid media owner")
+        return value
+
+
+class MediaAuthorization(_MediaMessage):
+    op: Literal["media_authorize"]
+
+
+class MediaRelease(_MediaMessage):
+    op: Literal["media_release"]
+
+
+class MediaCancellation(_MediaMessage):
+    op: Literal["media_cancel"]
+
+
+def parse_media_authorization(raw: str) -> MediaAuthorization:
+    return MediaAuthorization.model_validate(decode_frame(raw))
+
+
+def parse_media_release(raw: str) -> MediaRelease:
+    return MediaRelease.model_validate(decode_frame(raw))
+
+
+def parse_media_cancellation(raw: str) -> MediaCancellation:
+    return MediaCancellation.model_validate(decode_frame(raw))

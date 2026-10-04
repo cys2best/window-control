@@ -13,6 +13,9 @@ def broker_env(tmp_path):
         storage_path=str(storage),
         allowed_origins=["https://control.example.com"],
         turn_shared_secret="test_turn_secret_32bytes_value_here",
+        max_active_streams=2,
+        stun_urls=["stun:stun.example:3478"],
+        turn_urls=["turn:turn.example:3478?transport=udp"],
     )
     app = create_broker_app(settings)
     with TestClient(app) as client:
@@ -323,6 +326,9 @@ def test_negotiate_budget_includes_broker_queue_time_and_late_reply_is_discarded
             assert 0 < routed["payload"]["timeout_ms"] < 190
             assert json.loads(viewer.receive_text())["error"]["code"] == "timeout"
             host.send_text(json.dumps({"v": 1, "id": routed["id"], "ok": True, "result": {"answer": "late"}}))
+            cancellation = json.loads(host.receive_text())
+            assert cancellation["op"] == "media_cancel"
+            assert cancellation["payload"]["routing_id"] == routed["id"]
             # A lifecycle round-trip proves the late reply was consumed with
             # no rejection preceding it on the healthy host channel.
             request_id = "22222222-2222-2222-2222-222222222222"

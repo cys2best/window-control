@@ -131,3 +131,46 @@ def test_json_nesting_and_non_json_constants_rejected():
     for raw in ('{"nested":' + '[' * 20000 + '0' + ']' * 20000 + '}', '{"number": NaN}'):
         with pytest.raises(ValueError):
             decode_frame(raw)
+
+
+@pytest.mark.parametrize("op,parser,payload", [
+    ("media_authorize", "parse_media_authorization", {"routing_id": "11111111-1111-1111-1111-111111111111", "session_id": "22222222-2222-2222-2222-222222222222", "generation": 1}),
+    ("media_release", "parse_media_release", {"session_id": "22222222-2222-2222-2222-222222222222", "generation": 1}),
+    ("media_cancel", "parse_media_cancellation", {"installation_id": "pc", "host_epoch": 1, "viewer_id": "phone"}),
+])
+def test_private_media_roles_are_strict(op, parser, payload):
+    import remote_protocol
+    decode = getattr(remote_protocol, parser)
+    envelope = {"v": 1, "id": "33333333-3333-3333-3333-333333333333", "op": op, "payload": payload}
+    assert decode(json.dumps(envelope)).payload == payload
+    with pytest.raises(ValueError):
+        parse_frame(json.dumps(envelope))
+    for bad in ({**payload, "token": "secret"}, {**payload, "generation": True}, {}):
+        with pytest.raises(ValueError):
+            decode(json.dumps({**envelope, "payload": bad}))
+    with pytest.raises(ValueError):
+        decode(json.dumps({**envelope, "op": "instances"}))
+    with pytest.raises(ValueError):
+        decode(json.dumps(envelope).replace('"v": 1', '"v": 1, "v": 1'))
+
+
+def test_session_ice_bundle_strict_shape_and_redacted_repr():
+    from remote_protocol import SessionIceBundle, MediaBundles
+    values = dict(ice_servers=[{"urls": ["stun:stun.example:3478"]}, {"urls": ["turn:turn.example:3478?transport=udp"], "username": "temporary", "credential": "private-password"}], expires_at=4600, renew_after=3300, relay_available=True)
+    bundle = SessionIceBundle(**values)
+    assert "private-password" not in repr(bundle)
+    assert "private-password" not in repr(MediaBundles(host=bundle, viewer=bundle))
+    for changes in ({"expires_at": True}, {"renew_after": 3600}, {"relay_available": 1}, {"ice_servers": [{"urls": "stun:example"}]}, {"ice_servers": [{"urls": ["turn:example"], "credential": "missing-user"}]}, {"ice_servers": [{"urls": ["https://internal"]}]}, {"ice_servers": [{"urls": ["stun:example"], "secret": "bad"}]}):
+        with pytest.raises(ValueError):
+            SessionIceBundle(**{**values, **changes})
+
+
+def test_protocol_repr_and_validation_errors_exclude_credentials():
+    from remote_protocol import RoutingContext, RoutedCommand
+    command = Command(v=1, id="11111111-1111-1111-1111-111111111111", op="viewer_auth", payload={"installation_id": "pc", "token": "private-device-token"})
+    assert "private-device-token" not in repr(command)
+    reply = Reply(v=1, id=command.id, ok=True, result={"credential": "private-turn-password"})
+    assert "private-turn-password" not in repr(reply)
+    with pytest.raises(ValueError) as error:
+        Command(v=1, id=command.id, op="viewer_auth", payload={"installation_id": "pc", "token": "private-device-token", "unexpected": True})
+    assert "private-device-token" not in str(error.value)
