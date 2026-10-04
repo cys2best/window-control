@@ -108,7 +108,7 @@ test("on web there is no host field and the page's own host is used", async () =
   });
   const screen = await render(<Pair navigation={navigation} />);
   expect(screen.queryByPlaceholderText("Host address")).toBeNull();
-  expect(screen.getByText("LAN · 192.168.1.8:8080")).toBeTruthy();
+  expect(screen.getByText("Route unknown · 192.168.1.8:8080")).toBeTruthy();
 
   await fireEvent.changeText(screen.getByPlaceholderText("Pairing code"), "123456");
   await fireEvent.press(screen.getByText("Pair"));

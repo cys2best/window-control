@@ -5,7 +5,7 @@ import { StreamRail, type StreamRailProps } from "./StreamRail";
 function makeRailProps(): StreamRailProps {
   return {
     visible: true,
-    telemetry: { rttMs: 18, loss: 0, decodeMs: null, networkMs: 18, inputMs: null, jitterMs: null, bitrateMbps: null, droppedFrames: null, transport: "LAN" },
+    telemetry: { rttMs: 18, loss: 0, decodeMs: null, networkMs: 18, inputMs: null, jitterMs: null, bitrateMbps: null, droppedFrames: null, transport: "unknown", route: "unknown" as const, addressFamily: "unknown" as const, relayProtocol: "unknown" as const, sourceWidth: null, sourceHeight: null, decodedWidth: null, decodedHeight: null, decodedFps: null, framesDecoded: null, freezeCount: null, totalFreezeSeconds: null, maxFreezeSeconds: null },
     connected: true, keyboardOn: false, settingsOn: false,
     onDiagnostics: jest.fn(), onKeyboard: jest.fn(), onSystemKey: jest.fn(), onSettings: jest.fn(),
     onExit: jest.fn(), onWake: jest.fn(), tick: jest.fn(),

@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import { Stream } from "@wc/ui";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useServer } from "@wc/core";
+import { exportMeasurement } from "../../platform/measurement";
 import { VideoView } from "../../platform/VideoView";
 
 // Screens navigate by PascalCase route name (e.g. "Pair", "InstanceList")
@@ -45,6 +46,7 @@ export default function StreamPageClient() {
       }}
       RTCImpl={typeof window !== "undefined" ? window.RTCPeerConnection : undefined}
       VideoView={VideoView}
+      onExportMeasurement={exportMeasurement}
       performHaptic={() => {
         if (typeof navigator !== "undefined") navigator.vibrate?.(10);
       }}

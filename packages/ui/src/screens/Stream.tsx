@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useCallback } from "react";
 import { View, TextInput, PanResponder } from "react-native";
 import * as ScreenOrientation from "expo-screen-orientation";
 import type { VideoViewComponent } from "../video/VideoView";
-import { useServer, connectEngineSession, EngineSession, normalizeCoords, makeAdaptive, makeStallWatchdog, makeTelemetrySampler, DEFAULT_STREAM_PREFERENCES, type QualitySelection, type StreamTelemetry } from "@wc/core";
+import { useServer, connectEngineSession, EngineSession, normalizeCoords, makeAdaptive, makeStallWatchdog, makeTelemetrySampler, makeMeasurementRecorder, TIER_ORDER, DEFAULT_STREAM_PREFERENCES, type QualitySelection, type StreamTelemetry, type RemoteRunEvidence } from "@wc/core";
 import { theme } from "../theme/tokens";
 import { StreamRail, STREAM_RAIL_WIDTH } from "../components/StreamRail";
 import { SwapControl } from "../components/SwapControl";
@@ -12,20 +12,24 @@ import { StatsOverlay } from "../components/StatsOverlay";
 import { ErrorOverlay } from "../components/ErrorOverlay";
 
 type Net = "connected" | "connecting" | "disconnected";
-const emptyTelemetry: StreamTelemetry = { rttMs: null, loss: null, decodeMs: null, networkMs: null, inputMs: null, jitterMs: null, bitrateMbps: null, droppedFrames: null, transport: null };
+const emptyTelemetry: StreamTelemetry = { rttMs: null, loss: null, decodeMs: null, networkMs: null, inputMs: null, jitterMs: null, bitrateMbps: null, droppedFrames: null, transport: "unknown", route: "unknown", addressFamily: "unknown", relayProtocol: "unknown", sourceWidth: null, sourceHeight: null, decodedWidth: null, decodedHeight: null, decodedFps: null, framesDecoded: null, freezeCount: null, totalFreezeSeconds: null, maxFreezeSeconds: null };
 
+// Encoding targets configured by src/config.py; receive bitrate and source dimensions remain measurements.
+const targetBitrates: Record<string, number> = { "360": .8, "480": 2, "720": 4, "1080": 8, "1440": 12 };
 export function Stream({
   route,
   navigation,
   RTCImpl,
   VideoView,
   performHaptic,
+  onExportMeasurement,
 }: {
   route: any;
   navigation: any;
   RTCImpl: any;
   VideoView: VideoViewComponent;
   performHaptic?: () => void;
+  onExportMeasurement?: (run: RemoteRunEvidence) => void | Promise<void>;
 }) {
   const { client, clearAuth, preferences = DEFAULT_STREAM_PREFERENCES, updatePreferences = () => {} } = useServer() as any;
   const { serial } = route.params;
@@ -37,13 +41,27 @@ export function Stream({
   const [keyboardOn, setKeyboardOn] = useState(false);
   const [statsOn, setStatsOn] = useState(false);
   const [instances, setInstances] = useState<any[]>([]);
-  const [telemetry, setTelemetry] = useState<StreamTelemetry>({ ...emptyTelemetry, transport: client?.kind === "remote" ? null : "LAN" });
+  const [telemetry, setTelemetry] = useState<StreamTelemetry>(emptyTelemetry);
+  const [capacityText, setCapacityText] = useState("");
+  const [expectedRoute, setExpectedRoute] = useState("unknown");
+  const [exportState, setExportState] = useState<"idle" | "sharing" | "failed">("idle");
+  const capacity = capacityText.trim() === "" ? null : Number(capacityText);
+  const measurementMeta = useRef({ capacityMbps: Number.isFinite(capacity) && capacity !== null && capacity > 0 ? capacity : null, expectedRoute });
+  measurementMeta.current = { capacityMbps: Number.isFinite(capacity) && capacity !== null && capacity > 0 ? capacity : null, expectedRoute };
+  const measurement = useRef<{ recorder: ReturnType<typeof makeMeasurementRecorder>; meta: string; target: number } | null>(null);
+  const downgrades = useRef({ client, serial, count: 0 });
+  if (downgrades.current.client !== client || downgrades.current.serial !== serial) downgrades.current = { client, serial, count: 0 };
   const [railOpen, setRailOpen] = useState(true);
   const [hudHeight, setHudHeight] = useState(0);
   const rect = useRef({ width: 1, height: 1 });
   const content = useRef({ w: 1, h: 1 });
   const session = useRef<EngineSession | null>(null);
   const adaptive = useRef<any>(null);
+  const manualQualityChange = useRef(false);
+  const pinQuality = (tier: string) => {
+    manualQualityChange.current = true;
+    try { adaptive.current?.pin(tier); } finally { manualQualityChange.current = false; }
+  };
   const appliedTier = useRef<QualitySelection | null>(null);
   const currentQuality = useRef<QualitySelection>(preferences.quality);
   const scrollLast = useRef(0);
@@ -70,7 +88,7 @@ export function Stream({
     setStatsOn(preferences.showHudOnConnect);
     if (adaptive.current && appliedTier.current !== preferences.quality) {
       if (preferences.quality === "auto") adaptive.current.setAuto();
-      else adaptive.current.pin(preferences.quality);
+      else pinQuality(preferences.quality);
       appliedTier.current = preferences.quality;
     }
   }, [preferences.quality, preferences.showHudOnConnect]);
@@ -112,6 +130,7 @@ export function Stream({
     }
     let selected: any = null, peer: EngineSession | null = null;
     let retired = false;
+    let source: { width: number; height: number } | null = null;
     let cleanup: Promise<void> | undefined, selectionCleanup: Promise<void> | undefined;
     let qualityCommand: Promise<void> | undefined;
     let health: ReturnType<typeof setInterval> | undefined;
@@ -126,6 +145,7 @@ export function Stream({
       retire() {
         if (cleanup) return cleanup;
         retired = true;
+        source = null;
         clearInterval(health); clearTimeout(renewal);
         sample?.stop(); watchdog?.stop(); qualityController?.stop();
         if (adaptive.current === qualityController) adaptive.current = null;
@@ -145,7 +165,8 @@ export function Stream({
     };
     owner.current = scope;
     setFailed(false); setNet("connecting");
-    setTelemetry({ ...emptyTelemetry, transport: client.kind === "remote" ? null : "LAN" });
+    setTelemetry(emptyTelemetry);
+    measurement.current = null;
     // Race even platform calls that do not implement AbortSignal. Their late
     // continuation still owns and releases any selected/negotiated resource.
     const wait = <T,>(promise: Promise<T>): Promise<T> => new Promise((resolve, reject) => {
@@ -179,6 +200,7 @@ export function Stream({
         startingTier.current = { client, serial, initial: tiers?.initial ?? sel.tier, native: sel.tier };
       }
       content.current = { w: sel.w, h: sel.h };
+      source = { width: sel.w, height: sel.h };
       let nextStream: any = null;
       const connecting = connectEngineSession({
         selection: sel, client: client.kind === "remote" ? client : undefined,
@@ -200,7 +222,21 @@ export function Stream({
       if (!current() || controller.signal.aborted) { void s.close().catch(() => {}); return; }
       peer = s;
       session.current = s;
-      sample = makeTelemetrySampler({ pc: s.pc, transport: s.kind, onSample: value => { if (current()) setTelemetry(value); } });
+      let target = targetBitrates[sel.tier] ?? NaN;
+      const resetMeasurement = () => {
+        const meta = measurementMeta.current;
+        measurement.current = { recorder: makeMeasurementRecorder({ ...meta, targetBitrateMbps: target }), meta: JSON.stringify(meta), target };
+      };
+      resetMeasurement();
+      sample = makeTelemetrySampler({ pc: s.pc, transport: s.kind,
+        sourceDimensions: () => current() ? source : null,
+        onSample: value => {
+          if (!current()) return;
+          setTelemetry(value);
+          if (measurement.current?.meta !== JSON.stringify(measurementMeta.current)) resetMeasurement();
+          measurement.current?.recorder.add(value, downgrades.current.count);
+        },
+      });
       sample.start();
       watchdog = makeStallWatchdog({ pc: s.pc, onStall: () => { if (current()) void client.keyframe(serial); } });
       watchdog.start();
@@ -212,9 +248,20 @@ export function Stream({
         serial, initialTier: qualityTier ?? sel.tier,
         onApply: tier => {
           if (!current() || adaptive.current !== qualityController) return;
+          const priorTier = nativeTier;
+          if (tier !== priorTier && currentQuality.current === "auto" && !manualQualityChange.current && priorTier !== undefined
+            && TIER_ORDER.indexOf(tier as any) >= 0 && TIER_ORDER.indexOf(tier as any) < TIER_ORDER.indexOf(priorTier as any)) downgrades.current.count += 1;
           if (client.kind === "remote") {
             if (tier !== nativeTier) { nativeTier = tier; void start(tier); }
-          } else void client.setQuality(serial, tier);
+          } else {
+            if (tier !== nativeTier) {
+              nativeTier = tier;
+              source = null;
+              target = targetBitrates[tier] ?? NaN;
+              resetMeasurement();
+            }
+            void client.setQuality(serial, tier);
+          }
         },
         onStall: () => { if (current()) s.input.send({ type: "idr" }); },
       });
@@ -224,7 +271,7 @@ export function Stream({
       if (quality === "auto") qualityController.setAuto();
       // Preserve a downgrade only while its initiating preference still
       // applies. A newer manual preference must use the replacement path.
-      else qualityController.pin(quality === initiatingQuality ? qualityTier ?? quality : quality);
+      else pinQuality(quality === initiatingQuality ? qualityTier ?? quality : quality);
       appliedTier.current = quality;
       if (sel.kind === "remote" && current()) {
         // expires_at is Unix seconds; credentials were issued 3600s earlier.
@@ -392,7 +439,7 @@ export function Stream({
 
   const pickTier = (t: QualitySelection) => {
     if (t === "auto") adaptive.current?.setAuto();
-    else adaptive.current?.pin(t);
+    else pinQuality(t);
     appliedTier.current = t;
   };
   const reconnect = async () => {
@@ -407,6 +454,18 @@ export function Stream({
   const KEYMAP: Record<string, string> = { Enter: "Return", Backspace: "BackSpace" };
   const sendKey = (k: string) => session.current?.input.send({ type: "key", key: KEYMAP[k] ?? k });
 
+  const exportMeasurement = async () => {
+    if (!onExportMeasurement || exportState === "sharing") return;
+    setExportState("sharing");
+    try {
+      const capture = measurement.current;
+      const meta = measurementMeta.current;
+      const run = capture && capture.meta === JSON.stringify(meta) ? capture.recorder.exportRun()
+        : makeMeasurementRecorder({ ...meta, targetBitrateMbps: capture?.target ?? NaN }).exportRun();
+      await onExportMeasurement(run);
+      setExportState("idle");
+    } catch { setExportState("failed"); }
+  };
   const hudShown = statsOn && !failed;
 
   return (
@@ -416,7 +475,9 @@ export function Stream({
         {stream ? <VideoView stream={stream} /> : null}
       </View>
 
-      {hudShown ? <StatsOverlay telemetry={telemetry} onHeight={setHudHeight} /> : null}
+      {hudShown ? <StatsOverlay telemetry={telemetry} onHeight={setHudHeight}
+        onExport={onExportMeasurement ? exportMeasurement : undefined} exportState={exportState}
+        capacityText={capacityText} onCapacityText={setCapacityText} expectedRoute={expectedRoute} onExpectedRoute={setExpectedRoute} /> : null}
 
       <StreamRail visible={railOpen && overlay === null} telemetry={telemetry}
         connected={net === "connected"} keyboardOn={keyboardOn} settingsOn={overlay === "settings"}

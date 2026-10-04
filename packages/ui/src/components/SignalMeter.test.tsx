@@ -4,7 +4,7 @@ import { SignalMeter } from "./SignalMeter";
 
 const telemetry = {
   rttMs: 18, loss: 0, decodeMs: null, networkMs: 18, inputMs: null,
-  jitterMs: null, bitrateMbps: null, droppedFrames: null, transport: "LAN" as const,
+  jitterMs: null, bitrateMbps: null, droppedFrames: null, transport: "unknown" as const, route: "unknown" as const, addressFamily: "unknown" as const, relayProtocol: "unknown" as const, sourceWidth: null, sourceHeight: null, decodedWidth: null, decodedHeight: null, decodedFps: null, framesDecoded: null, freezeCount: null, totalFreezeSeconds: null, maxFreezeSeconds: null,
 };
 
 test("renders real RTT and four signal bars in its accessible rail head", async () => {

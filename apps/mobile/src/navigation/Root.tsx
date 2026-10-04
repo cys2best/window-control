@@ -3,6 +3,7 @@ import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { RTCPeerConnection } from "react-native-webrtc";
 import * as Haptics from "expo-haptics";
 import { Account, Pair, InstanceList, Stream } from "@wc/ui";
+import { exportMeasurement } from "../platform/measurement";
 import { VideoView } from "../platform/VideoView";
 import { useServer, type RemoteClientOptions } from "@wc/core";
 
@@ -14,6 +15,7 @@ function StreamScreen(props: any) {
       {...props}
       RTCImpl={RTCPeerConnection}
       VideoView={VideoView}
+      onExportMeasurement={exportMeasurement}
       performHaptic={() => { void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); }}
     />
   );

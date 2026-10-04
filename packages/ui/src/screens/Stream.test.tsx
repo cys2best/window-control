@@ -828,3 +828,75 @@ test.each(["quality RPC", "selection", "adoption"])("a newer preference wins whi
     jest.useRealTimers();
   }
 });
+
+const measuredTelemetry = (extra: any = {}) => ({ rttMs: 20, loss: 0, decodeMs: 4, networkMs: 20, inputMs: null, jitterMs: null, bitrateMbps: 8, droppedFrames: 0, transport: "direct", route: "direct", addressFamily: "IPv4", relayProtocol: "unknown", sourceWidth: 1600, sourceHeight: 900, decodedWidth: 1280, decodedHeight: 720, decodedFps: 30, framesDecoded: 30, freezeCount: null, totalFreezeSeconds: null, maxFreezeSeconds: null, ...extra });
+test("captures owned selection dimensions and clears a retired accessor", async () => {
+  const client = remoteClient();
+  client.select.mockImplementation(async (serial: string) => remoteResp({ serial, w: serial === "A" ? 1600 : 800, h: serial === "A" ? 900 : 600 }));
+  (SC.useServer as jest.Mock).mockReturnValue({ client });
+  (Core.connectEngineSession as jest.Mock).mockImplementation(async () => ({ ...makeFakeSession(), kind: "remote" }));
+  const view = await render(remoteElement());
+  const old = (Core.makeTelemetrySampler as jest.Mock).mock.calls[0][0];
+  expect(old.sourceDimensions?.()).toEqual({ width: 1600, height: 900 });
+  await view.rerender(remoteElement("B"));
+  const next = (Core.makeTelemetrySampler as jest.Mock).mock.calls[1][0];
+  expect(old.sourceDimensions?.()).toBeNull();
+  expect(next.sourceDimensions?.()).toEqual({ width: 800, height: 600 });
+});
+test("exports sanitized measured intervals and starts a new window on peer replacement", async () => {
+  const client = remoteClient(), exported: any[] = [];
+  client.select.mockImplementation(async (serial: string) => remoteResp({ serial, tier: serial === "A" ? "1080" : "720" }));
+  (SC.useServer as jest.Mock).mockReturnValue({ client, preferences: { ...Core.DEFAULT_STREAM_PREFERENCES, showHudOnConnect: true } });
+  (Core.connectEngineSession as jest.Mock).mockImplementation(async () => ({ ...makeFakeSession(), kind: "remote" }));
+  const element = (serial: string) => <Stream {...({ route: { params: { serial } }, navigation: {}, RTCImpl: FakeRTCPeerConnection, VideoView: FakeVideoView, onExportMeasurement: (run: any) => { exported.push(run); } } as any)} />;
+  const view = await render(element("A"));
+  const first = (Core.makeTelemetrySampler as jest.Mock).mock.calls[0][0];
+  await act(async () => { first.onSample(measuredTelemetry({ bitrateMbps: null, decodedFps: null })); });
+  await fireEvent.press(view.getByLabelText("Export measurement JSON"));
+  expect(exported[0].samples).toEqual([]);
+  await fireEvent.changeText(view.getByLabelText("Independent capacity Mbps"), "15");
+  await fireEvent.press(view.getByLabelText("Expected media route")); // unknown → direct
+  await act(async () => { first.onSample(measuredTelemetry({ token: "private-token", sdp: "private-sdp", address: "192.0.2.123" })); });
+  await fireEvent.press(view.getByLabelText("Export measurement JSON"));
+  expect(exported[1]).toMatchObject({ capacity_mbps: 15, expected_route: "direct", target_bitrate_mbps: 8, samples: [{ elapsed_s: 0, source_width: 1600, decoded_width: 1280, total_freeze_s: null, max_freeze_s: null, adaptive_downgrades: 0 }] });
+  expect(JSON.stringify(exported[1])).not.toMatch(/private-token|private-sdp|192\.0\.2\.123/);
+  await view.rerender(element("B"));
+  await act(async () => { first.onSample(measuredTelemetry()); }); // retired callback cannot enter successor
+  await fireEvent.press(view.getByLabelText("Export measurement JSON"));
+  expect(exported[2]).toMatchObject({ target_bitrate_mbps: 4, samples: [] });
+  const second = (Core.makeTelemetrySampler as jest.Mock).mock.calls[1][0];
+  await act(async () => { second.onSample(measuredTelemetry({ bitrateMbps: 4 })); });
+  await fireEvent.press(view.getByLabelText("Export measurement JSON"));
+  expect(exported[3].samples).toHaveLength(1);
+});
+test("local quality mutation invalidates source evidence and records the new target", async () => {
+  let apply!: (tier: string) => void;
+  (Adaptive.makeAdaptive as jest.Mock).mockImplementation((opts: any) => { apply = opts.onApply; return makeFakeAdaptive(); });
+  const client = { kind: "local", select: jest.fn(async () => selectResp({ tier: "1080" })), instances: jest.fn(async () => []), setQuality: jest.fn(async () => {}), keyframe: jest.fn() };
+  const exported: any[] = [];
+  (SC.useServer as jest.Mock).mockReturnValue({ client, preferences: { ...Core.DEFAULT_STREAM_PREFERENCES, showHudOnConnect: true } });
+  (Core.connectEngineSession as jest.Mock).mockResolvedValue(makeFakeSession());
+  const view = await render(<Stream {...({ route: { params: { serial: "A" } }, navigation: {}, RTCImpl: FakeRTCPeerConnection, VideoView: FakeVideoView, onExportMeasurement: (run: any) => { exported.push(run); } } as any)} />);
+  const sampler = (Core.makeTelemetrySampler as jest.Mock).mock.calls[0][0];
+  await act(async () => { sampler.onSample(measuredTelemetry()); apply("720"); });
+  expect(sampler.sourceDimensions?.()).toBeNull();
+  await act(async () => { sampler.onSample(measuredTelemetry({ sourceWidth: null, sourceHeight: null, bitrateMbps: 4, framesDecoded: 60 })); });
+  await fireEvent.press(view.getByLabelText("Export measurement JSON"));
+  expect(exported[0]).toMatchObject({ target_bitrate_mbps: 4, samples: [{ source_width: null, source_height: null, adaptive_downgrades: 1 }] });
+});
+
+test("manual quality selection does not count as an adaptive downgrade", async () => {
+  const real = jest.requireActual("@wc/core");
+  (Adaptive.makeAdaptive as jest.Mock).mockImplementation((opts: any) => real.makeAdaptive(opts));
+  const client = { kind: "local", select: jest.fn(async () => selectResp({ tier: "1080" })), instances: jest.fn(async () => []), setQuality: jest.fn(async () => {}), keyframe: jest.fn() };
+  const exported: any[] = [];
+  (SC.useServer as jest.Mock).mockReturnValue({ client, preferences: { ...Core.DEFAULT_STREAM_PREFERENCES, showHudOnConnect: true } });
+  (Core.connectEngineSession as jest.Mock).mockResolvedValue(makeFakeSession());
+  const view = await render(<Stream {...({ route: { params: { serial: "A" } }, navigation: {}, RTCImpl: FakeRTCPeerConnection, VideoView: FakeVideoView, onExportMeasurement: (run: any) => { exported.push(run); } } as any)} />);
+  await fireEvent.press(view.getByLabelText("Stream settings"));
+  await fireEvent.press(view.getByText("720p"));
+  await act(async () => { (Core.makeTelemetrySampler as jest.Mock).mock.calls[0][0].onSample(measuredTelemetry({ sourceWidth: null, sourceHeight: null, bitrateMbps: 4 })); });
+  await fireEvent.press(view.getByLabelText("Export measurement JSON"));
+  expect(exported[0].samples[0].adaptive_downgrades).toBe(0);
+  await view.unmount();
+});

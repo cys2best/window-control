@@ -7,16 +7,17 @@ type NetChipProps = {
   state: HostReachability["state"];
   host: string;
   kind?: "local" | "remote";
+  route?: "direct" | "relay" | "unknown";
 };
 
-export function NetChip({ state, host, kind = "local" }: NetChipProps) {
+export function NetChip({ state, host, route = "unknown" }: NetChipProps) {
   const pulse = useRef(new Animated.Value(1)).current;
   const failed = state === "unreachable";
   const reachable = state === "reachable";
   const color = failed ? theme.color.live : reachable ? theme.color.telemetry : theme.color.textMuted;
   const backgroundColor = failed ? theme.net.disconnected.chipBg
     : reachable ? theme.net.connected.chipBg : theme.color.surfaceRaised;
-  const label = `${kind === "remote" ? "Route unknown" : "LAN"} · ${host}`;
+  const label = `${route === "direct" ? "Direct" : route === "relay" ? "Relay" : "Route unknown"} · ${host}`;
   useEffect(() => {
     if (!reachable) { pulse.setValue(1); return undefined; }
     const animation = Animated.loop(Animated.sequence([

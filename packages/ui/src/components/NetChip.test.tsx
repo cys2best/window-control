@@ -10,8 +10,8 @@ test.each([
   ["checking", theme.color.textMuted],
 ] as const)("%s shows the host with its actual state", async (state, color) => {
   const screen = await render(<NetChip state={state} host="192.168.1.8:8080" />);
-  expect(screen.getByText("LAN · 192.168.1.8:8080")).toHaveStyle({ color });
-  expect(screen.getByLabelText(`LAN · 192.168.1.8:8080, ${state}`)).toBeTruthy();
+  expect(screen.getByText("Route unknown · 192.168.1.8:8080")).toHaveStyle({ color });
+  expect(screen.getByLabelText(`Route unknown · 192.168.1.8:8080, ${state}`)).toBeTruthy();
 });
 
 test("omits a chip when there is no host to report", async () => {
@@ -29,3 +29,8 @@ test("a remote target labels its route unknown rather than inventing LAN or rela
   expect(screen.queryByText(/^LAN ·/)).toBeNull();
   expect(screen.queryByText(/^Relay ·/)).toBeNull();
 });
+
+ test.each(["direct", "relay"])("labels the measured %s route", async route => {
+   const view = await render(<NetChip {...({ state: "reachable", host: "host", route } as any)} />);
+   expect(view.getByText(`${route === "direct" ? "Direct" : "Relay"} · host`)).toBeTruthy();
+ });
