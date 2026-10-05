@@ -59,9 +59,31 @@ jobs:
         run: |
           engine\build\Release\engine_tests.exe
           if ($LASTEXITCODE -ne 0) {
-            throw "engine_tests.exe failed with exit code $LASTEXITCODE"
+            $failedExit = $LASTEXITCODE
+            # Preserve the original failed result; rerun only to capture an
+            # unhandled-exception dump, never to turn a failed gate green.
+            $diagnostics = Join-Path $env:RUNNER_TEMP 'engine-failure-diagnostics'
+            New-Item -ItemType Directory -Force -Path $diagnostics | Out-Null
+            Invoke-WebRequest 'https://download.sysinternals.com/files/Procdump.zip' -OutFile "$diagnostics\procdump.zip"
+            Expand-Archive "$diagnostics\procdump.zip" "$diagnostics\procdump"
+            & "$diagnostics\procdump\procdump64.exe" -accepteula -ma -e -x $diagnostics "$env:GITHUB_WORKSPACE\engine\build\Release\engine_tests.exe"
+            throw "engine_tests.exe originally failed with exit code $failedExit; diagnostic rerun cannot replace this failure"
           }
         shell: pwsh
+
+      - name: Preserve native failure executable and crash dump
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: engine-failure-diagnostics
+          path: |
+            engine/build/Release/*.exe
+            engine/build/Release/*.dll
+            engine/build/Release/*.pdb
+            engine/build/CMakeFiles/**/CMakeCXXCompiler.cmake
+            ${{ runner.temp }}/engine-failure-diagnostics/*.dmp
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Stage engine.exe + runtime DLLs (flat)
         run: |
