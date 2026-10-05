@@ -68,6 +68,15 @@ jobs:
           New-Item -ItemType Directory -Force -Path engine\dist | Out-Null
           Copy-Item engine\build\Release\engine.exe engine\dist\
           Copy-Item engine\build\Release\*.dll engine\dist\
+          $compilerFile = Get-ChildItem engine\build\CMakeFiles -Recurse -Filter CMakeCXXCompiler.cmake | Select-Object -First 1
+          $compilerText = Get-Content $compilerFile.FullName -Raw
+          if ($compilerText -notmatch 'VC[/\\]Tools[/\\]MSVC[/\\](\d+\.\d+\.\d+)') {
+            throw 'Cannot determine the actual MSVC tool version'
+          }
+          @{compiler_version = $Matches[1]} | ConvertTo-Json | Set-Content engine\dist\compiler-version.json
+          New-Item -ItemType Directory -Force -Path engine\tests-dist | Out-Null
+          Copy-Item engine\dist\* engine\tests-dist\
+          Copy-Item engine\build\Release\engine_tests.exe engine\tests-dist\
         shell: pwsh
 
       - name: Upload engine.exe artifact (with runtime DLLs)
@@ -75,6 +84,14 @@ jobs:
         with:
           name: engine-windows
           path: engine\dist\*
+          retention-days: 30
+
+      - name: Upload staged native tests
+        uses: actions/upload-artifact@v4
+        with:
+          name: engine-tests-windows
+          path: engine\tests-dist\*
+          if-no-files-found: error
           retention-days: 30
 
   build:
@@ -110,6 +127,12 @@ jobs:
           name: engine-windows
           path: src\assets\engine
 
+      - name: Download staged native tests
+        uses: actions/download-artifact@v4
+        with:
+          name: engine-tests-windows
+          path: staged-native-tests
+
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -128,12 +151,63 @@ jobs:
 
       - name: Download VC++ Redistributable
         run: |
-          curl -L -o build\vc_redist.x64.exe "https://aka.ms/vs/17/release/vc_redist.x64.exe"
+          curl -fL -o build\vc_redist.x64.exe "https://aka.ms/vc14/vc_redist.x64.exe"
         shell: cmd
+
+      - name: Verify actual compiler and bundled runtime versions
+        run: |
+          $file = (Get-Item build\vc_redist.x64.exe).VersionInfo
+          $runtime = "$($file.FileMajorPart).$($file.FileMinorPart).$($file.FileBuildPart).$($file.FilePrivatePart)"
+          uv run python scripts/validate_windows_runtime.py --compiler-metadata src/assets/engine/compiler-version.json --runtime-version $runtime --output build/runtime-version.json
+          if ($LASTEXITCODE -ne 0) { throw 'Bundled VC runtime predates the actual compiler or version is unknown' }
+        shell: pwsh
+
+      - name: Execute installer runtime upgrade regression
+        run: |
+          New-Item -ItemType Directory -Force -Path release | Out-Null
+          ISCC build\vc_runtime_test.iss
+          if ($LASTEXITCODE -ne 0) { throw 'Runtime regression harness compilation failed' }
+          $result = Join-Path $env:RUNNER_TEMP 'vc-runtime-regression.txt'
+          $process = Start-Process release\VCRuntimeRegression.exe -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /RESULT=$result" -Wait -PassThru
+          if (!(Test-Path $result)) { throw "Runtime upgrade regression failed: exit $($process.ExitCode)" }
+          Get-Content $result
+          Copy-Item $result build\vc-runtime-regression.txt
+        shell: pwsh
+
+      - name: Run downloaded native tests without development DLL paths
+        run: |
+          $runtime = Start-Process build\vc_redist.x64.exe -ArgumentList '/install /quiet /norestart' -Wait -PassThru
+          if ($runtime.ExitCode -notin @(0, 1638, 3010)) { throw "VC runtime installation failed: $($runtime.ExitCode)" }
+          $stage = Join-Path $env:RUNNER_TEMP 'native-artifact-smoke'
+          Copy-Item staged-native-tests $stage -Recurse
+          $savedPath = $env:PATH
+          try {
+            $env:PATH = "$env:SystemRoot\System32"
+            Push-Location $stage
+            & .\engine_tests.exe --gtest_output=xml:native-tests.xml
+            if ($LASTEXITCODE -ne 0) { throw "Downloaded engine_tests failed: $LASTEXITCODE" }
+          } finally {
+            Pop-Location
+            $env:PATH = $savedPath
+          }
+          Copy-Item "$stage\native-tests.xml" build\native-tests-staged.xml
+        shell: pwsh
+
+      - name: Smoke staged packaged host and current-user DPAPI
+        run: |
+          $stage = Join-Path $env:RUNNER_TEMP 'packaged-host-smoke'
+          Copy-Item dist\EmuCtrl $stage -Recurse
+          $certificate = Join-Path $env:RUNNER_TEMP 'packaged-smoke-cert.pem'
+          $key = Join-Path $env:RUNNER_TEMP 'packaged-smoke-key.pem'
+          & 'C:\Program Files\Git\usr\bin\openssl.exe' req -x509 -newkey rsa:2048 -nodes -days 1 -subj '/CN=localhost' -addext 'subjectAltName=DNS:localhost' -keyout $key -out $certificate
+          if ($LASTEXITCODE -ne 0) { throw 'Local smoke TLS certificate generation failed' }
+          $env:PYTHONPATH = "$env:GITHUB_WORKSPACE\src"
+          uv run python scripts/smoke_windows_package.py --package $stage --certificate $certificate --key $key --output build/packaged-host-smoke.json
+          if ($LASTEXITCODE -ne 0) { throw 'Staged packaged host smoke failed' }
+        shell: pwsh
 
       - name: Build installer with Inno Setup
         run: |
-          mkdir release
           ISCC build\installer.iss
         shell: cmd
 
@@ -141,11 +215,25 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: WindowControlInstaller
-          path: release/WindowControlInstaller.exe
+          path: release/EmuCtrlInstaller.exe
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload packaged smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: packaged-smoke-evidence
+          path: |
+            build/runtime-version.json
+            build/vc-runtime-regression.txt
+            build/native-tests-staged.xml
+            build/packaged-host-smoke.json
+          if-no-files-found: warn
           retention-days: 30
 
       - name: Upload to release (on tag)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: release/WindowControlInstaller.exe
+          files: release/EmuCtrlInstaller.exe

@@ -169,3 +169,17 @@ def test_ci_stages_manifest_runtime_dlls_before_native_tests():
     assert workflow.index("cmake --build engine") < copy < workflow.index("Run engine_tests")
     assert "Copy-Item engine\\build\\Release\\*.dll engine\\dist\\" in workflow
 
+
+def test_installer_output_is_available_at_ci_upload_and_release_paths(tmp_path):
+    # Inno's output and GitHub's consumers must agree. The measured mismatch
+    # produced a successful build with no downloadable installer artifact.
+    installer = (BUILD_DIR / "installer.iss").read_text()
+    output_name = re.search(r"^OutputBaseFilename=(.+)$", installer, re.M).group(1)
+    release = tmp_path / "release"
+    release.mkdir()
+    (release / f"{output_name}.exe").write_bytes(b"installer output")
+    workflow = (REPO_ROOT / ".github/workflows/build.yml").read_text()
+    consumers = re.findall(r"^\s+(?:path|files): (release/[^\s]+\.exe)$", workflow, re.M)
+    assert len(consumers) == 2
+    for consumer in consumers:
+        assert (tmp_path / consumer).is_file(), f"Missing installer output: {consumer}"

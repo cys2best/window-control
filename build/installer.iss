@@ -4,6 +4,7 @@
 #define MyAppVersion "3.2.0"
 #define MyAppPublisher "EmuCtrl"
 #define MyAppExeName "EmuCtrl.exe"
+#define VCRuntimeVersion GetFileVersion("vc_redist.x64.exe")
 
 [Setup]
 AppId={{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}
@@ -29,17 +30,27 @@ PrivilegesRequired=admin
 
 ; Tailscale recommendation (not mandatory)
 [Code]
+#include "vc_runtime_check.iss"
+
 function NeedsVCRedist(): Boolean;
 var
   Installed: Cardinal;
+  Version: String;
 begin
-  // Check for VC++ 2015-2022 x64 (minimum version 14.0)
-  Result := not RegQueryDWordValue(
+  // CI verifies the bundled runtime is at least the actual MSVC tool version.
+  Installed := 0;
+  Version := '';
+  RegQueryDWordValue(
     HKLM,
     'SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64',
     'Installed',
     Installed
-  ) or (Installed = 0);
+  );
+  RegQueryStringValue(HKLM,
+    'SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64', 'Version', Version);
+  Result := VCRuntimeNeedsUpgrade(Installed, Version, '{#VCRuntimeVersion}');
+  Log(Format('VC runtime installed=%d version=%s bundled={#VCRuntimeVersion} upgrade=%d',
+    [Installed, Version, Ord(Result)]));
 end;
 
 procedure StopAndRemoveService();
@@ -131,7 +142,7 @@ Name: "startupicon"; Description: "Start EmuCtrl with Windows"; GroupDescription
 [Files]
 ; One-dir build: copy entire dist\EmuCtrl\ folder contents
 Source: "..\dist\EmuCtrl\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
-; VC++ 2015-2022 x64 redistributable (downloaded by CI, bundled here)
+; Latest supported v14 x64 redistributable (downloaded by CI, bundled here)
 Source: "..\build\vc_redist.x64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall; Check: NeedsVCRedist
 
 [Icons]
