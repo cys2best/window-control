@@ -157,7 +157,11 @@ class SharedRemoteStack:
                 status = self.http.get('/').status_code
                 last_status = f'HTTP {status}'
                 if status == 200:
-                    return
+                    # A static page can be ready before the upstream ASGI app.
+                    broker_status = self.http.get('/installations').status_code
+                    last_status = f'broker HTTP {broker_status}'
+                    if broker_status == 405:
+                        return
             except httpx.HTTPError as exc:
                 last_status = type(exc).__name__
             time.sleep(.25)
@@ -169,7 +173,13 @@ class SharedRemoteStack:
         pytest.fail('HTTPS stack did not become ready: ' + last_status)
 
     def socket(self):
-        return self.sockets.enter_context(connect('wss://localhost:8443/connect', ssl=self.ssl, origin='https://localhost:8443', open_timeout=5, close_timeout=2))
+        try:
+            return self.sockets.enter_context(connect('wss://localhost:8443/connect', ssl=self.ssl, origin='https://localhost:8443', open_timeout=5, close_timeout=2))
+        except (TimeoutError, OSError):
+            result = subprocess.run([*self.command, 'logs', '--no-color', '--tail', '50', 'edge', 'broker'], capture_output=True, text=True, timeout=15)
+            secret = (self.directory / 'turn-secret').read_text().strip()
+            print((result.stdout + result.stderr).replace(secret, '[REDACTED]')[-8000:])
+            pytest.fail('WSS opening handshake failed before authentication', pytrace=False)
 
     def receive(self, ws):
         return json.loads(ws.recv(timeout=5))
