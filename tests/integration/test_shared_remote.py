@@ -365,15 +365,10 @@ class SharedRemoteStack:
         finally:
             probe.close()
 
-    def deny_permission(self, credentials, address):
-        probe = self.probe(credentials, 'udp')
-        try:
-            assert probe.allocate()
-            code = probe.permission(address)
-            print(f'TURN permission: destination={address}; code={code}')
-            return code == 403
-        finally:
-            probe.close()
+    def deny_permission(self, probe, address):
+        code = probe.permission(address)
+        print(f'TURN permission: destination={address}; code={code}')
+        return code == 403
 
     def restart_broker(self):
         self.compose('restart', 'broker')
@@ -447,8 +442,15 @@ def test_tls_hostname_and_untrusted_ca_fail(shared_remote_stack):
 
 def test_denied_private_loopback_and_metadata_permissions(shared_remote_stack):
     credentials = shared_remote_stack.approved_credentials()
-    for address in ('10.0.0.1', '127.0.0.3', '169.254.169.254', '192.168.1.1', '100.100.100.200'):
-        assert shared_remote_stack.deny_permission(credentials, address)
+    probe = shared_remote_stack.probe(credentials, 'udp')
+    try:
+        assert probe.allocate()
+        # Refresh(0) is acknowledged before coturn's expiry timer frees capacity.
+        # Permissions share one allocation; they don't require a new reservation.
+        for address in ('10.0.0.1', '127.0.0.3', '169.254.169.254', '192.168.1.1', '100.100.100.200'):
+            assert shared_remote_stack.deny_permission(probe, address)
+    finally:
+        probe.close()
 
 
 def test_aggregate_admission_rejection_keeps_b_alive(shared_remote_stack):
