@@ -76,6 +76,7 @@ class WireProbe:
         self.sock.connect((server, port or (5349 if transport == 'tls' else 3478)))
         self.auth = b''
         self.key = None
+        self.allocated = False
 
     def receive(self):
         if self.transport == 'udp':
@@ -106,7 +107,11 @@ class WireProbe:
         self.auth = attr(6, username) + attr(0x14, realm) + attr(0x15, challenge[0x15])
         self.key = hashlib.md5(username + b':' + realm + b':' + self.credentials['credential'].encode()).digest()
         kind, response = self.request(3, attr(0x19, b'\x11\0\0\0'))
-        return kind == 0x103 and 0x16 in response
+        self.allocated = kind == 0x103 and 0x16 in response
+        if not self.allocated:
+            error = response.get(9, b'\0\0\0\0')
+            print(f'TURN allocation rejected: transport={self.transport}; code={error[2] * 100 + error[3]}')
+        return self.allocated
 
     def permission(self, address):
         kind, response = self.request(8, attr(0x12, peer_address(address)))
@@ -124,7 +129,19 @@ class WireProbe:
         return attributes(data)[0x13]
 
     def close(self):
-        self.sock.close()
+        active_failure = sys.exc_info()[0] is not None
+        try:
+            if self.allocated:
+                # Closing a UDP socket does not release its server allocation.
+                kind, response = self.request(4, attr(0x0D, struct.pack('!I', 0)))
+                assert kind == 0x104 and response.get(0x0D) == b'\0' * 4, 'TURN deallocation was not acknowledged'
+                self.allocated = False
+        except Exception:
+            if not active_failure:
+                raise
+            print('TURN cleanup failed; preserving the original test failure')
+        finally:
+            self.sock.close()
 
 
 def wire(op, payload=None):
@@ -316,7 +333,9 @@ class SharedRemoteStack:
         probe = self.probe(credentials, 'udp')
         try:
             assert probe.allocate()
-            return probe.permission(address) == 403
+            code = probe.permission(address)
+            print(f'TURN permission: destination={address}; code={code}')
+            return code == 403
         finally:
             probe.close()
 
