@@ -3,6 +3,7 @@
 The bundled clients check coturn's shipped interface. WireProbe supplies arbitrary
 payloads and returns actual DATA-indication bytes (not the input argument).
 """
+import asyncio
 import base64
 from contextlib import ExitStack
 from dataclasses import dataclass
@@ -19,12 +20,13 @@ import struct
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import uuid
 
 import httpx
 import pytest
-from websockets.sync.client import connect, ClientConnection
+from websockets.asyncio.client import connect
 
 ROOT = Path(__file__).resolve().parents[2]
 IMAGE = 'coturn/coturn@sha256:71c3c990283385567f11794ee692e3a47b66fd9b0bb39e42afbe776e331dd888'
@@ -148,25 +150,52 @@ def wire(op, payload=None):
     return json.dumps(dict(v=1, id=str(uuid.uuid4()), op=op, payload=payload or {}))
 
 
-class HandshakeProbe(ClientConnection):
-    """Record framing counts only while opening; never frame/header contents."""
-    def __init__(self, sock, protocol, **kwargs):
-        super().__init__(sock, protocol, **kwargs)
-        self.opening_reads = []
-        receive_data = protocol.receive_data
-        def observe(data):
-            if protocol.state.name == 'CONNECTING':
-                status = data[9:12] if data.startswith(b'HTTP/1.1 ') else b''
-                self.opening_reads.append((len(data), int(status) if status.isdigit() else None))
-            receive_data(data)
-        protocol.receive_data = observe
+class WebSocketLoop:
+    """Keep TLS reads and writes on one event loop, including during TURN probes."""
+    def __init__(self):
+        self.loop = asyncio.new_event_loop()
+        self.thread = threading.Thread(target=self.loop.run_forever, daemon=True)
+        self.thread.start()
 
-    def handshake(self, *args, **kwargs):
+    def run(self, operation, timeout=5):
+        async def bounded():
+            return await asyncio.wait_for(operation, timeout)
+        future = asyncio.run_coroutine_threadsafe(bounded(), self.loop)
         try:
-            return super().handshake(*args, **kwargs)
-        except TimeoutError:
-            print(f'WSS diagnostic: reads={self.opening_reads}; state={self.protocol.state.name}; response={self.response is not None}; reader_buffer_bytes={len(self.protocol.reader.buffer)}; receive_thread_alive={self.recv_events_thread.is_alive()}')
+            return future.result(timeout=timeout + 1)
+        except BaseException:
+            future.cancel()
             raise
+
+    def close(self):
+        async def finish():
+            pending = [task for task in asyncio.all_tasks() if task is not asyncio.current_task()]
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+            await self.loop.shutdown_asyncgens()
+        try:
+            self.run(finish(), timeout=3)
+        finally:
+            self.loop.call_soon_threadsafe(self.loop.stop)
+            self.thread.join(timeout=5)
+            assert not self.thread.is_alive(), 'WebSocket event loop did not stop'
+            self.loop.close()
+
+
+class BlockingWebSocket:
+    def __init__(self, owner, connection):
+        self.owner = owner
+        self.connection = connection
+
+    def send(self, message):
+        return self.owner.run(self.connection.send(message))
+
+    def recv(self, timeout=5):
+        return self.owner.run(self.connection.recv(), timeout=timeout)
+
+    def close(self):
+        return self.owner.run(self.connection.close(), timeout=3)
 
 
 class SharedRemoteStack:
@@ -177,6 +206,9 @@ class SharedRemoteStack:
         self.ssl = ssl.create_default_context(cafile=str(directory / 'ca.pem'))
         self.http = httpx.Client(base_url='https://localhost:8443', verify=self.ssl, timeout=10)
         self.sockets = ExitStack()
+        self.websocket_loop = WebSocketLoop()
+        # Registered first so every connection closes before the loop stops.
+        self.sockets.callback(self.websocket_loop.close)
         self.saved = None
 
     def compose(self, *args, timeout=240):
@@ -212,10 +244,14 @@ class SharedRemoteStack:
 
     def socket(self):
         try:
-            return self.sockets.enter_context(connect('wss://localhost:8443/connect', ssl=self.ssl, origin='https://localhost:8443', open_timeout=5, close_timeout=2, create_connection=HandshakeProbe))
+            async def opening():
+                return await connect('wss://localhost:8443/connect', ssl=self.ssl, origin='https://localhost:8443', open_timeout=5, close_timeout=2)
+            connection = BlockingWebSocket(self.websocket_loop, self.websocket_loop.run(opening()))
+            self.sockets.callback(connection.close)
+            return connection
         except (TimeoutError, OSError):
             print('WSS proxy environment present: ' + str({key: bool(os.environ.get(key)) for key in ('HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'all_proxy', 'no_proxy')}))
-            # Compare the same CA-verified endpoint without the sync WS parser.
+            # Compare the same CA-verified endpoint without the WS client.
             try:
                 with socket.create_connection(('127.0.0.1', 8443), timeout=5) as plain:
                     with self.ssl.wrap_socket(plain, server_hostname='localhost') as secure:
@@ -370,9 +406,13 @@ def shared_remote_stack():
     finally:
         try:
             if stack is not None:
-                stack.sockets.close()
-                stack.http.close()
-                stack.compose('down', '--volumes', '--remove-orphans', timeout=60)
+                try:
+                    stack.sockets.close()
+                finally:
+                    try:
+                        stack.http.close()
+                    finally:
+                        stack.compose('down', '--volumes', '--remove-orphans', timeout=60)
         finally:
             shutil.rmtree(directory)
 
