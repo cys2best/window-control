@@ -24,7 +24,7 @@ import uuid
 
 import httpx
 import pytest
-from websockets.sync.client import connect
+from websockets.sync.client import connect, ClientConnection
 
 ROOT = Path(__file__).resolve().parents[2]
 IMAGE = 'coturn/coturn@sha256:71c3c990283385567f11794ee692e3a47b66fd9b0bb39e42afbe776e331dd888'
@@ -131,6 +131,27 @@ def wire(op, payload=None):
     return json.dumps(dict(v=1, id=str(uuid.uuid4()), op=op, payload=payload or {}))
 
 
+class HandshakeProbe(ClientConnection):
+    """Record framing counts only while opening; never frame/header contents."""
+    def __init__(self, sock, protocol, **kwargs):
+        super().__init__(sock, protocol, **kwargs)
+        self.opening_reads = []
+        receive_data = protocol.receive_data
+        def observe(data):
+            if protocol.state.name == 'CONNECTING':
+                status = data[9:12] if data.startswith(b'HTTP/1.1 ') else b''
+                self.opening_reads.append((len(data), int(status) if status.isdigit() else None))
+            receive_data(data)
+        protocol.receive_data = observe
+
+    def handshake(self, *args, **kwargs):
+        try:
+            return super().handshake(*args, **kwargs)
+        except TimeoutError:
+            print(f'WSS diagnostic: reads={self.opening_reads}; state={self.protocol.state.name}; response={self.response is not None}; reader_buffer_bytes={len(self.protocol.reader.buffer)}; receive_thread_alive={self.recv_events_thread.is_alive()}')
+            raise
+
+
 class SharedRemoteStack:
     def __init__(self, directory):
         self.directory = directory
@@ -174,8 +195,27 @@ class SharedRemoteStack:
 
     def socket(self):
         try:
-            return self.sockets.enter_context(connect('wss://localhost:8443/connect', ssl=self.ssl, origin='https://localhost:8443', open_timeout=5, close_timeout=2))
+            return self.sockets.enter_context(connect('wss://localhost:8443/connect', ssl=self.ssl, origin='https://localhost:8443', open_timeout=5, close_timeout=2, create_connection=HandshakeProbe))
         except (TimeoutError, OSError):
+            print('WSS proxy environment present: ' + str({key: bool(os.environ.get(key)) for key in ('HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'all_proxy', 'no_proxy')}))
+            # Compare the same CA-verified endpoint without the sync WS parser.
+            try:
+                with socket.create_connection(('127.0.0.1', 8443), timeout=5) as plain:
+                    with self.ssl.wrap_socket(plain, server_hostname='localhost') as secure:
+                        key = base64.b64encode(os.urandom(16)).decode()
+                        secure.sendall(('GET /connect HTTP/1.1\r\nHost: localhost:8443\r\nOrigin: https://localhost:8443\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: ' + key + '\r\n\r\n').encode())
+                        headers = b''
+                        while b'\r\n\r\n' not in headers and len(headers) < 8192:
+                            data = secure.recv(4096)
+                            if not data:
+                                break
+                            headers += data
+                        status = headers[9:12] if headers.startswith(b'HTTP/1.1 ') else b''
+                        print(f'Raw trusted TLS upgrade: status={int(status) if status.isdigit() else None}; received_bytes={len(headers)}; headers_complete={b"\r\n\r\n" in headers}')
+            except (TimeoutError, OSError) as exc:
+                print('Raw trusted TLS upgrade: ' + type(exc).__name__)
+            runtime = subprocess.run([*self.command, 'exec', '-T', 'broker', 'python', '-c', 'import sys,ssl,uvicorn,websockets; print(sys.version.split()[0], ssl.OPENSSL_VERSION, uvicorn.__version__, websockets.__version__)'], capture_output=True, text=True, timeout=15)
+            print('Broker runtime: ' + runtime.stdout.strip())
             result = subprocess.run([*self.command, 'logs', '--no-color', '--tail', '50', 'edge', 'broker'], capture_output=True, text=True, timeout=15)
             secret = (self.directory / 'turn-secret').read_text().strip()
             print((result.stdout + result.stderr).replace(secret, '[REDACTED]')[-8000:])
