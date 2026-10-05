@@ -151,14 +151,22 @@ class SharedRemoteStack:
 
     def ready(self):
         deadline = time.monotonic() + 30
+        last_status = 'no response'
         while time.monotonic() < deadline:
             try:
-                if self.http.get('/').status_code == 200:
+                status = self.http.get('/').status_code
+                last_status = f'HTTP {status}'
+                if status == 200:
                     return
-            except httpx.HTTPError:
-                pass
+            except httpx.HTTPError as exc:
+                last_status = type(exc).__name__
             time.sleep(.25)
-        pytest.fail('HTTPS stack did not become ready')
+        # Startup-only diagnostics, before any credential-bearing session traffic.
+        secret = (self.directory / 'turn-secret').read_text().strip()
+        for arguments in [('ps', '--all'), ('logs', '--no-color', '--tail', '40', 'edge', 'broker', 'turn', 'turn-production')]:
+            result = subprocess.run([*self.command, *arguments], capture_output=True, text=True, timeout=15)
+            print((result.stdout + result.stderr).replace(secret, '[REDACTED]')[-8000:])
+        pytest.fail('HTTPS stack did not become ready: ' + last_status)
 
     def socket(self):
         return self.sockets.enter_context(connect('wss://localhost:8443/connect', ssl=self.ssl, origin='https://localhost:8443', open_timeout=5, close_timeout=2))
