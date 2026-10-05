@@ -175,7 +175,17 @@ class SharedRemoteStack:
         return json.loads(ws.recv(timeout=5))
 
     def approve(self, identity=None):
-        identity = identity or self.http.post('/installations').json()
+        if identity is None:
+            response = self.http.post('/installations')
+            status = response.status_code
+            content_type = response.headers.get('content-type', '')
+            if status != 200 or 'application/json' not in content_type:
+                print(f'POST /installations: status={status}; content_type={content_type}; bytes={len(response.content)}')
+                result = subprocess.run([*self.command, 'logs', '--no-color', '--tail', '50', 'edge', 'broker'], capture_output=True, text=True, timeout=15)
+                secret = (self.directory / 'turn-secret').read_text().strip()
+                print((result.stdout + result.stderr).replace(secret, '[REDACTED]')[-8000:])
+                pytest.fail('Installation registration failed before credentials were issued', pytrace=False)
+            identity = response.json()
         assert 'credential' in identity
         host = self.socket()
         host.send(wire('host_auth', identity))
