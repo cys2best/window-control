@@ -183,3 +183,18 @@ def test_installer_output_is_available_at_ci_upload_and_release_paths(tmp_path):
     assert len(consumers) == 2
     for consumer in consumers:
         assert (tmp_path / consumer).is_file(), f"Missing installer output: {consumer}"
+
+
+def test_inno_code_section_sources_use_pascal_comments():
+    # Inside [Code] a line starting with ';' is Pascal, not an INI comment.
+    # The measured compile error was "'BEGIN' expected" on such an include.
+    for name in ("installer.iss", "vc_runtime_test.iss"):
+        script = (BUILD_DIR / name).read_text()
+        code = script.split("[Code]", 1)[1]
+        code = re.split(r"^\[\w+\]$", code, maxsplit=1, flags=re.M)[0]
+        includes = re.findall(r'^#include "(.+)"$', code, re.M)
+        assert "vc_runtime_check.iss" in includes
+        sources = {name: code, **{i: (BUILD_DIR / i).read_text() for i in includes}}
+        for source, text in sources.items():
+            ini_comments = [line for line in text.splitlines() if line.lstrip().startswith(";")]
+            assert not ini_comments, f"{source}: INI comment inside [Code]: {ini_comments}"

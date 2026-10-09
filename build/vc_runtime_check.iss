@@ -1,4 +1,4 @@
-; Shared by the real installer and the executable Windows regression harness.
+// Shared by the real installer and the executable Windows regression harness.
 function VCRuntimeNeedsUpgrade(Installed: Cardinal; Version, Required: String): Boolean;
 var
   InstalledVersion, RequiredVersion: Int64;
