@@ -5,11 +5,6 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
-    inputs:
-      native_crash_diagnostics:
-        description: Repeat the native tests under a debugger and print the faulting stacks
-        type: boolean
-        default: false
 
 jobs:
   build-engine:
@@ -58,23 +53,6 @@ jobs:
         # libnice/GLib use UNKNOWN imported targets, so CMake's
         # TARGET_RUNTIME_DLLS cannot discover their complete DLL closure.
         run: Copy-Item engine\build\vcpkg_installed\x64-windows\bin\*.dll engine\build\Release\
-        shell: pwsh
-
-      - name: Trace the intermittent InputRouter access violation
-        # Evidence only: symbolized stacks for a crash that the normal gate
-        # reproduces in roughly half of its runs. It never replaces that gate.
-        if: inputs.native_crash_diagnostics
-        timeout-minutes: 20
-        continue-on-error: true
-        run: |
-          cmake --build engine\build --config RelWithDebInfo --target engine_tests
-          Copy-Item engine\build\vcpkg_installed\x64-windows\bin\*.dll engine\build\RelWithDebInfo\
-          $cdb = "${env:ProgramFiles(x86)}\Windows Kits\10\Debuggers\x64\cdb.exe"
-          if (!(Test-Path $cdb)) { throw "cdb.exe is not installed on this runner" }
-          $symbols = "$env:GITHUB_WORKSPACE\engine\build\RelWithDebInfo"
-          & $cdb -G -lines -y $symbols -c 'g; .ecxr; kb 60; ~*kb 40; q' `
-            "$symbols\engine_tests.exe" --gtest_repeat=15 --gtest_brief=1
-          Write-Host "debugger exit code: $LASTEXITCODE"
         shell: pwsh
 
       - name: Run engine_tests
