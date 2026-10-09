@@ -69,8 +69,11 @@ add_executable(engine_tests
   test/test_input_router.cpp
   test/test_main_wiring.cpp
   test/test_send_pacer.cpp
+  test/crash_trace.cpp
 )
-target_link_libraries(engine_tests PRIVATE engine_core GTest::gtest GTest::gtest_main)
+target_link_libraries(engine_tests PRIVATE engine_core GTest::gtest GTest::gtest_main dbghelp.lib)
+# Public symbols for the test binary only, so crash_trace.cpp can name frames.
+target_link_options(engine_tests PRIVATE /DEBUG /OPT:REF /OPT:ICF /INCREMENTAL:NO)
 add_test(NAME engine_tests COMMAND engine_tests)
 
 add_executable(engine src/main.cpp)
