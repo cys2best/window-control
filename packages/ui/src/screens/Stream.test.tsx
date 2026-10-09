@@ -660,7 +660,10 @@ test("scheduled renewal retires old peer and sampler before fresh admission at o
     client.select.mockResolvedValueOnce(selected).mockResolvedValueOnce(fresh);
     let finishClose!: ()=>void;
     first.close.mockImplementation(()=>new Promise<void>(r=>{finishClose=r;}));
-    (Core.connectEngineSession as jest.Mock).mockResolvedValueOnce(first).mockResolvedValueOnce(second);
+    // Report a live peer: the disconnected signal pulse is a JS-driven frame
+    // loop, and 3200 virtual seconds of its frames exhaust the test timeout.
+    const connected=(value:any)=>async(opts:any)=>{opts.onState("connected");return value;};
+    (Core.connectEngineSession as jest.Mock).mockImplementationOnce(connected(first)).mockImplementationOnce(connected(second));
     (SC.useServer as jest.Mock).mockReturnValue({client});
     const view=await render(remoteElement());
     await act(async()=>{jest.advanceTimersByTime(3199999);}); expect(client.select).toHaveBeenCalledTimes(1);
