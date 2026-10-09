@@ -49,8 +49,8 @@ begin
   RegQueryStringValue(HKLM,
     'SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64', 'Version', Version);
   Result := VCRuntimeNeedsUpgrade(Installed, Version, '{#VCRuntimeVersion}');
-  Log(Format('VC runtime installed=%d version=%s bundled={#VCRuntimeVersion} upgrade=%d',
-    [Installed, Version, Ord(Result)]));
+  Log(Format('VC runtime installed=%d version=%s bundled={#VCRuntimeVersion} upgrade=%d', [Installed,
+    Version, Ord(Result)]));
 end;
 
 procedure StopAndRemoveService();

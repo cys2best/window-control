@@ -198,3 +198,7 @@ def test_inno_code_section_sources_use_pascal_comments():
         for source, text in sources.items():
             ini_comments = [line for line in text.splitlines() if line.lstrip().startswith(";")]
             assert not ini_comments, f"{source}: INI comment inside [Code]: {ini_comments}"
+            # A line opening with '[' is parsed as a section tag even in
+            # Pascal; the measured error was "Invalid section tag".
+            tags = [line for line in text.splitlines() if line.lstrip().startswith("[")]
+            assert not tags, f"{source}: line parsed as a section tag: {tags}"
