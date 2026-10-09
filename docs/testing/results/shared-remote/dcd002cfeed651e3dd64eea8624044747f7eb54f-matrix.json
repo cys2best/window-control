@@ -1,0 +1,253 @@
+{
+  "branch": "feat/direct-webrtc-shared-turn",
+  "tested_sha": "dcd002cfeed651e3dd64eea8624044747f7eb54f",
+  "windows_workflow_run": 37877480719,
+  "installer_artifact": {
+    "name": "WindowControlInstaller",
+    "id": 11593082083,
+    "bytes": 76068179
+  },
+  "engine_artifact": {
+    "name": "engine-windows",
+    "id": 11592464557,
+    "bytes": 9101613
+  },
+  "native_tests_artifact": {
+    "name": "engine-tests-windows",
+    "id": 11592718946,
+    "bytes": 9601586
+  },
+  "mobile_build_id": null,
+  "libraries": {
+    "libdatachannel": "0.21.1#2",
+    "libnice": "0.1.22",
+    "msvc_tools": "14.51.36231",
+    "vc_runtime": "14.51.36247.0"
+  },
+  "release_ready": false,
+  "cases": [
+    {
+      "name": "source-python-non-docker",
+      "status": "pass",
+      "reason": "857 passed, 2 skipped; tests/integration excluded locally because the Docker daemon context is unavailable",
+      "capacity_evidence": null,
+      "media_evidence": null,
+      "assessor_status": null,
+      "evidence": "uv run pytest tests/ apps/desktop/ --ignore=tests/integration, 2026-10-09, macOS"
+    },
+    {
+      "name": "source-core-ui-web-mobile-jest",
+      "status": "pass",
+      "reason": "core 208, ui 135, web 22, mobile 20 passed serially under Node 22.23.3; web export build exit 0",
+      "capacity_evidence": null,
+      "media_evidence": null,
+      "assessor_status": null
+    },
+    {
+      "name": "shared-stack-integration-linux",
+      "status": "pass",
+      "reason": "26 passed at 9db20d00283fed3104a80f19d34aee6ad33cfdbd; not rerun because no broker, TURN or fixture file changed afterwards",
+      "capacity_evidence": null,
+      "media_evidence": null,
+      "assessor_status": null,
+      "evidence": "frontend-packages run 37285601611"
+    },
+    {
+      "name": "windows-native-googletest",
+      "status": "pass",
+      "reason": "124 passed in the build tree and again from the downloaded staged artifact with PATH limited to System32",
+      "capacity_evidence": null,
+      "media_evidence": null,
+      "assessor_status": null,
+      "evidence": "build.yml run 37877480719",
+      "known_issue": "InputRouter.EchoIsReflectedVerbatimOnSamePeer ended the process with 0xC0000005 in 2 of 10 suite executions on this branch (run 37288341569 at a9ac235, staged step of run 37874798974 at c50da4f). The fault is outside the test thread. Cause not established: 15 repeats under cdb did not reproduce it, and no crash has occurred since the in-process stack tracer was added."
+    },
+    {
+      "name": "windows-compiler-runtime-gate",
+      "status": "pass",
+      "reason": "MSVC tools 14.51.36231, bundled x64 runtime 14.51.36247.0; 8 installer upgrade-decision cases passed",
+      "capacity_evidence": null,
+      "media_evidence": null,
+      "assessor_status": null,
+      "evidence": "packaged-smoke-evidence artifact 11593321099"
+    },
+    {
+      "name": "windows-installer-artifact",
+      "status": "pass",
+      "reason": "EmuCtrlInstaller.exe compiled and uploaded as WindowControlInstaller, 76068179 bytes; the installer itself was not installed or launched",
+      "capacity_evidence": null,
+      "media_evidence": null,
+      "assessor_status": null,
+      "evidence": "artifact 11593082083"
+    },
+    {
+      "name": "windows-staged-host-smoke",
+      "status": "pass",
+      "reason": "Copied PyInstaller onedir host: startup, local API without remote service, bundled web export, current-user DPAPI save and reload after restart against a local HTTPS registration fixture; no capture or media",
+      "capacity_evidence": null,
+      "media_evidence": null,
+      "assessor_status": null,
+      "evidence": "packaged-host-smoke.json in artifact 11593321099"
+    },
+    {
+      "name": "windows-installed-persistent-pc",
+      "status": "untested",
+      "reason": "No persistent clean Windows PC was supplied; installer upgrade of an older runtime, service install and LAN access from another device were not exercised",
+      "capacity_evidence": null,
+      "media_evidence": null,
+      "assessor_status": null
+    },
+    {
+      "name": "iphone-full-hd-direct-ipv4",
+      "status": "untested",
+      "reason": "No physical iPhone, native mobile build, persistent installed Windows PC or controlled network path was supplied",
+      "capacity_evidence": null,
+      "media_evidence": null,
+      "assessor_status": null
+    },
+    {
+      "name": "iphone-full-hd-direct-ipv6",
+      "status": "untested",
+      "reason": "No physical iPhone, native mobile build, persistent installed Windows PC or controlled network path was supplied",
+      "capacity_evidence": null,
+      "media_evidence": null,
+      "assessor_status": null
+    },
+    {
+      "name": "iphone-full-hd-direct-mixed",
+      "status": "untested",
+      "reason": "No physical iPhone, native mobile build, persistent installed Windows PC or controlled network path was supplied",
+      "capacity_evidence": null,
+      "media_evidence": null,
+      "assessor_status": null
+    },
+    {
+      "name": "iphone-full-hd-turn-udp-ipv4",
+      "status": "untested",
+      "reason": "No physical iPhone, native mobile build, persistent installed Windows PC or controlled network path was supplied",
+      "capacity_evidence": null,
+      "media_evidence": null,
+      "assessor_status": null
+    },
+    {
+      "name": "iphone-full-hd-turn-udp-ipv6",
+      "status": "untested",
+      "reason": "No physical iPhone, native mobile build, persistent installed Windows PC or controlled network path was supplied",
+      "capacity_evidence": null,
+      "media_evidence": null,
+      "assessor_status": null
+    },
+    {
+      "name": "iphone-full-hd-turn-udp-mixed",
+      "status": "untested",
+      "reason": "No physical iPhone, native mobile build, persistent installed Windows PC or controlled network path was supplied",
+      "capacity_evidence": null,
+      "media_evidence": null,
+      "assessor_status": null
+    },
+    {
+      "name": "iphone-full-hd-turn-tcp-udp-blocked-ipv4",
+      "status": "untested",
+      "reason": "No physical iPhone, native mobile build, persistent installed Windows PC or controlled network path was supplied",
+      "capacity_evidence": null,
+      "media_evidence": null,
+      "assessor_status": null
+    },
+    {
+      "name": "iphone-full-hd-turn-tcp-udp-blocked-ipv6",
+      "status": "untested",
+      "reason": "No physical iPhone, native mobile build, persistent installed Windows PC or controlled network path was supplied",
+      "capacity_evidence": null,
+      "media_evidence": null,
+      "assessor_status": null
+    },
+    {
+      "name": "iphone-full-hd-turn-tcp-udp-blocked-mixed",
+      "status": "untested",
+      "reason": "No physical iPhone, native mobile build, persistent installed Windows PC or controlled network path was supplied",
+      "capacity_evidence": null,
+      "media_evidence": null,
+      "assessor_status": null
+    },
+    {
+      "name": "iphone-full-hd-turn-tls-443-udp-blocked-ipv4",
+      "status": "untested",
+      "reason": "No physical iPhone, native mobile build, persistent installed Windows PC or controlled network path was supplied",
+      "capacity_evidence": null,
+      "media_evidence": null,
+      "assessor_status": null
+    },
+    {
+      "name": "iphone-full-hd-turn-tls-443-udp-blocked-ipv6",
+      "status": "untested",
+      "reason": "No physical iPhone, native mobile build, persistent installed Windows PC or controlled network path was supplied",
+      "capacity_evidence": null,
+      "media_evidence": null,
+      "assessor_status": null
+    },
+    {
+      "name": "iphone-full-hd-turn-tls-443-udp-blocked-mixed",
+      "status": "untested",
+      "reason": "No physical iPhone, native mobile build, persistent installed Windows PC or controlled network path was supplied",
+      "capacity_evidence": null,
+      "media_evidence": null,
+      "assessor_status": null
+    },
+    {
+      "name": "iphone-owner-pairing-and-saved-token",
+      "status": "untested",
+      "reason": "No physical iPhone, native mobile build, persistent installed Windows PC or controlled network path was supplied",
+      "capacity_evidence": null,
+      "media_evidence": null,
+      "assessor_status": null
+    },
+    {
+      "name": "two-installations-isolation",
+      "status": "untested",
+      "reason": "No physical iPhone, native mobile build, persistent installed Windows PC or controlled network path was supplied",
+      "capacity_evidence": null,
+      "media_evidence": null,
+      "assessor_status": null
+    },
+    {
+      "name": "revocation-within-5s",
+      "status": "untested",
+      "reason": "No physical iPhone, native mobile build, persistent installed Windows PC or controlled network path was supplied",
+      "capacity_evidence": null,
+      "media_evidence": null,
+      "assessor_status": null
+    },
+    {
+      "name": "service-outage-grace-60s",
+      "status": "untested",
+      "reason": "No physical iPhone, native mobile build, persistent installed Windows PC or controlled network path was supplied",
+      "capacity_evidence": null,
+      "media_evidence": null,
+      "assessor_status": null
+    },
+    {
+      "name": "credential-renewal-3300s-expiry-3600s",
+      "status": "untested",
+      "reason": "No physical iPhone, native mobile build, persistent installed Windows PC or controlled network path was supplied",
+      "capacity_evidence": null,
+      "media_evidence": null,
+      "assessor_status": null
+    },
+    {
+      "name": "broker-restart-pc-offline-turn-unavailable",
+      "status": "untested",
+      "reason": "No physical iPhone, native mobile build, persistent installed Windows PC or controlled network path was supplied",
+      "capacity_evidence": null,
+      "media_evidence": null,
+      "assessor_status": null
+    },
+    {
+      "name": "network-switch-and-lan-during-outage",
+      "status": "untested",
+      "reason": "No physical iPhone, native mobile build, persistent installed Windows PC or controlled network path was supplied",
+      "capacity_evidence": null,
+      "media_evidence": null,
+      "assessor_status": null
+    }
+  ]
+}

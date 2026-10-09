@@ -4,6 +4,24 @@ The assessor validates measured JSON exported by the client. Its synthetic
 pytest fixtures test the assessor only; they are not captured Windows/iPhone
 runs and cannot establish connectivity, packaged launch or release acceptance.
 
+The October 9 tested code commit is
+`dcd002cfeed651e3dd64eea8624044747f7eb54f`, branch
+`feat/direct-webrtc-shared-turn`; its Windows workflow run is `37877480719`
+(native tests, runtime gate, staged host smoke and installer all passed).
+Actual results and unavailable cases are recorded in
+[the exact-SHA matrix](results/shared-remote/dcd002cfeed651e3dd64eea8624044747f7eb54f-matrix.json).
+The later result-documentation commit is not the CI-tested code SHA. No physical
+iPhone, persistent installed Windows PC or controlled media path was supplied,
+so no device or release-ready claim follows from source/build checks.
+
+The staged CI smoke uses copied actual PyInstaller onedir output with Windows
+System32 as its child PATH; it does not install `EmuCtrlInstaller.exe`. Current
+user DPAPI save/restart uses a local trusted HTTPS registration fixture and
+deliberately unavailable WSS; it establishes identity persistence and local API
+startup, not public broker pairing, LAN from another device or media capture.
+Raw engine downloads require the matching/newer x64 VC runtime; see
+[packaging compatibility](remote-engine-compatibility.md).
+
 ## Capture and assessment
 
 Use the exact packaged Windows engine and iPhone build being tested. Disable
@@ -137,3 +155,12 @@ Captured artifacts and assessor output must omit private addresses, raw
 candidates, tokens, pairing secrets, TURN credentials and SDP. The assessor
 emits fixed reasons and whitelisted aggregate metrics rather than echoing input
 text or file errors. Store separately sanitized capacity and timing evidence.
+
+One native failure is unresolved. `InputRouter.EchoIsReflectedVerbatimOnSamePeer`
+ended the Windows test process with access violation `0xC0000005` in 2 of 10
+suite executions on this branch (run `37288341569`, and the staged step of run
+`37874798974`). The same binary passed in the other executions, including both
+executions of the tested commit. The fault occurs outside the test thread and
+its cause is not established. The test executable now prints the faulting
+thread, address and symbolized frames (`engine/test/crash_trace.cpp`); read the
+`[crash]` lines of the next failed run before changing engine or fixture code.

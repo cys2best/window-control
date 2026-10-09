@@ -1,19 +1,26 @@
-# Mobile Device Smoke Test Checklist (v3.1.0)
+# Mobile Device Smoke Test Checklist
 
-Run this checklist on a physical iOS or Android device (via Expo Go or dev build) connected to the WindowControl host on LAN or over Tailscale.
+Run on a physical iPhone with a development/native build containing
+`react-native-webrtc`; Expo Go cannot establish native WebRTC acceptance. Record
+the exact mobile build ID, Windows artifact ID and tested SHA in the
+[shared remote matrix](../../../docs/testing/shared-remote-validation.md).
+No physical iPhone or mobile build ID was supplied for the October 9 validation;
+all device rows remain untested. Source Jest results are separate evidence.
+
+For public remote cases disable Tailscale on both endpoints, make no router
+changes and use the owner-authorized remote QR/link plus six-digit code. No app
+account or login is introduced. Retain LAN pairing coverage separately.
 
 ---
 
-## 1. Zero-Config Launch & Authentication
-- [ ] **Direct Launch without Manual URL**:
-  - Launch the mobile app from a clean state (or after clearing app storage).
-  - **Pass condition**: App opens directly to the **Login** screen without prompting for a manual "Server base URL".
-- [ ] **Automatic API Base Connection**:
-  - Enter valid account credentials and tap Sign In.
-  - **Pass condition**: Authenticates seamlessly using the configured default tunnel (`EXPO_PUBLIC_API_URL`) and transitions to the **InstanceList** screen.
-- [ ] **Persistent Session on Relaunch**:
-  - Force quit the app and reopen it.
-  - **Pass condition**: Bypasses Login and navigates directly to the **InstanceList** screen.
+## 1. Owner pairing and saved identity
+- [ ] Open the PC owner's QR/link, enter its six-digit code and reach the instance list.
+- [ ] Confirm the code expires at 300 seconds, is single-use and is invalidated after five wrong attempts.
+- [ ] Force quit and reopen the app; reconnect using the saved device token.
+- [ ] Pair a second independent PC concurrently; wrong/revoked tokens,
+  cross-installation sessions, pairing replay, stale revisions and arbitrary
+  forwarding reject without affecting the other PC.
+- [ ] With remote service absent, local pairing and LAN access remain usable.
 
 ---
 
@@ -32,7 +39,9 @@ Run this checklist on a physical iOS or Android device (via Expo Go or dev build
 ## 3. Dual-Transport WebRTC Streaming
 - [ ] **Stream Connection & Video Display**:
   - Tap an instance card.
-  - **Pass condition**: Dual-transport manager races local WHEP against VPS relay; video paints quickly, toolbar network dot turns green, and stats overlay shows active streaming.
+  - **Pass condition**: Local WHEP and remote admission retain their separate
+    authorization paths. Observe the actual selected direct or TURN route;
+    a public WSS signaling connection is not evidence of relayed media.
 - [ ] **Touch Tap Registration**:
   - Tap on the stream video; confirm tap registers accurately at the matching coordinates on the remote emulator.
 - [ ] **Rapid Drag & Release**:
@@ -46,6 +55,16 @@ Run this checklist on a physical iOS or Android device (via Expo Go or dev build
 ---
 
 ## 4. Settings & Adaptive Bitrate
+- [ ] **Sustained remote full-HD acceptance**:
+  - Independently measure at least 12 Mbps on each controlled path. Capture
+    ten minutes at landscape 1920×1080, 8 Mbps target and at least 30 decoded FPS.
+  - Verify zero adaptive downgrades, no freeze over one second and less than 1%
+    total freeze time. Export real measurement JSON and require assessor exit 0.
+  - Repeat direct, TURN/UDP, UDP-blocked TURN/TCP and UDP-blocked TURN/TLS:443
+    with IPv4, IPv6 and mixed-family relay reachability. Record selected protocol
+    and family rather than inferring them from configured URLs.
+  - Missing native longest-freeze telemetry produces inconclusive evidence;
+    do not replace null observations with zeros.
 - [ ] **Resolution Pinning (480p / 720p / 1080p / 1440p)**:
   - Open Settings modal, select 1080p or 480p; confirm resolution changes immediately.
 - [ ] **Auto Adaptive Streaming**:
@@ -58,6 +77,11 @@ Run this checklist on a physical iOS or Android device (via Expo Go or dev build
 ---
 
 ## 5. Instance Switching & Error Recovery
+- [ ] Measure revocation stopping input/media within five seconds; retain the
+  original 60-second service-outage grace. Exercise broker restart, PC offline,
+  TURN unavailable, negotiation cancellation, network switch and LAN during outage.
+- [ ] Run production 3600-second TURN credentials, renewal at 3300 seconds and
+  rejection of new allocations using expired credentials; record elapsed times.
 - [ ] **Quick-Switch Drawer**:
   - While streaming, open drawer (swipe from left or tap drawer icon) and select another instance.
   - **Pass condition**: Immediately switches to the new instance with keyframe prefetch (minimal buffering).

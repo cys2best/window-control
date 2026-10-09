@@ -1,7 +1,13 @@
 # Remote Engine Compatibility & TURN Backend Verification
 
-Date: 2026-10-02
-Status: Windows run 37001202701 failed at archive integrity verification; source/build inputs repaired, Windows rerun pending.
+Date: 2026-10-09
+Status: Windows workflow run 37877480719 passed at
+`dcd002cfeed651e3dd64eea8624044747f7eb54f`: 124 native tests in the build tree and
+from the staged artifact, the compiler/runtime gate, the staged host smoke and
+the installer build. See the
+[result matrix](results/shared-remote/dcd002cfeed651e3dd64eea8624044747f7eb54f-matrix.json)
+for artifact IDs and for one unresolved intermittent native crash. Device media
+remains untested.
 
 ## Background & Rationale
 
@@ -55,10 +61,49 @@ To support TURN fallback across restrictive firewalls and cellular networks:
   supplements `TARGET_RUNTIME_DLLS`, which cannot discover the full closure of
   libnice's private `UNKNOWN` imported target.
 
+## Runtime and installer compatibility
+
+The October 4 installer job produced `EmuCtrlInstaller.exe` while upload/release
+steps requested `WindowControlInstaller.exe`; the artifact API had no installer.
+Both consumers now request the actual filename and upload fails on missing output.
+The retained GitHub artifact name is `WindowControlInstaller`.
+
+The prior engine used MSVC tools `14.51.36231` while the workflow's `vs/17`
+download bundled runtime `14.44.35211.0`. This is a measured version mismatch,
+not a reproduced runtime crash. The current download uses Microsoft's
+[latest supported v14 x64 alias](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist/).
+Packaging records the actual CMake compiler's MSVC tool-directory version and
+the downloaded runtime's PE FileVersion, and fails if the runtime is older or
+either version is unknown. The installer compares the installed x64 registry
+version with the bundled runtime; `Installed=1` alone no longer skips upgrades.
+An executable Inno harness covers missing/older/equal/newer/unknown versions.
+Its first two Windows runs failed to compile: code compiled inside `[Code]` may
+not use `;` comments, and no line there may open with `[`. Both are now guarded
+by `tests/test_build_files.py`.
+
+Raw `engine-windows` contains third-party DLLs, but does not contain Microsoft's
+`MSVCP140.dll`, `MSVCP140_ATOMIC_WAIT.dll`, `VCRUNTIME140.dll` or
+`VCRUNTIME140_1.dll`. Install an x64 VC runtime at least as new as the recorded
+tool version before launching a raw engine artifact. The installer bundles it.
+Onedir staged launch with an installed runtime tests a different boundary from
+installing the complete installer on a persistent clean Windows PC.
+
+The Windows build job downloads a separately staged native-test artifact onto
+a machine without the engine build tree, sets PATH to Windows System32 and
+runs the unfiltered GoogleTest executable. It copies the actual PyInstaller
+onedir output to a clean directory and launches the frozen host with the same
+restricted PATH. Its smoke checks local API and bundled web export while remote
+service is absent, then current-user DPAPI save/decryption/reuse after frozen
+restart using a trusted local HTTPS registration fixture. This exercises neither
+physical iPhone connectivity nor capture/media. It also does not install the
+installer or demonstrate cross-machine/user persistence.
+
 ## Verification Status
 
 - [x] Python build guards verify overlay existence, `USE_NICE=ON`, and CI workflow cache keys (`test_engine_overlay_selects_libnice`).
 - [x] Source guards, independent archive SHA512 verification, and exact upstream patch/application checks cover the repaired inputs.
-- [ ] Windows native compilation: Requires Windows runner / CI (`engine/` only compiles on Windows). Native C++ compilation and `ctest` DLL closure must run in the Windows CI environment.
-- [ ] After the Windows rerun, launch the staged executable from a clean directory and verify SRTP/OpenSSL peer APIs and libnice/GLib runtime DLL closure. Source checks do not prove these interfaces or standalone launch.
-- [ ] TURN/TLS live connection test: Task 11 validates end-to-end media playback over TURN/TLS.
+- [x] Prior Windows native compilation and 124 GoogleTests: run 37114034029 at `1c943f4`; libdatachannel 0.21.1#2 and libnice 0.1.22. This does not validate later checkpoints.
+- [x] Current native/build/artifact and staged launch results: run 37877480719 at `dcd002c`; MSVC tools 14.51.36231, bundled runtime 14.51.36247.0, installer artifact 11593082083.
+- [ ] Intermittent access violation in `InputRouter.EchoIsReflectedVerbatimOnSamePeer` (2 of 10 executions): cause not established.
+- [ ] Install on a persistent clean Windows PC, verify its runtime upgrade and frozen DPAPI/LAN behavior; no persistent Windows test setup supplied.
+- [ ] Actual iPhone direct/TURN connectivity and sustained full-HD media; no iPhone build, controlled service/network profiles or capacity evidence supplied. Synthetic assessor tests cannot establish playback.
