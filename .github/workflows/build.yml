@@ -9,30 +9,46 @@ on:
 jobs:
   build-engine:
     runs-on: windows-latest
+    env:
+      # The runner image's C:\vcpkg moves with every image update, which
+      # changes vcpkg's ABI hashes and forces a full rebuild of every port.
+      # Pinning the scripts keeps the cached vcpkg_installed tree reusable.
+      VCPKG_REVISION: 617ef1c0c422737d117eda00a471ea1be5bad088
 
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check out pinned vcpkg scripts
+        uses: actions/checkout@v4
+        with:
+          repository: microsoft/vcpkg
+          ref: ${{ env.VCPKG_REVISION }}
+          path: .vcpkg
+          # The builtin registry baseline is resolved from git history.
+          fetch-depth: 0
+
+      - name: Bootstrap pinned vcpkg
+        run: .\.vcpkg\bootstrap-vcpkg.bat -disableMetrics
+        shell: pwsh
+
       - name: Restore vcpkg cache
+        # Manifest mode installs into the build tree, not C:\vcpkg\installed.
         uses: actions/cache@v4
         with:
           path: |
-            C:\vcpkg\installed
-            C:\vcpkg\buildtrees
-            C:\vcpkg\downloads
-          key: vcpkg-${{ runner.os }}-${{ hashFiles('engine/vcpkg.json') }}
-          restore-keys: |
-            vcpkg-${{ runner.os }}-
+            engine/build/vcpkg_installed
+            .vcpkg/downloads
+          key: vcpkg-${{ runner.os }}-${{ env.VCPKG_REVISION }}-${{ hashFiles('engine/vcpkg.json', 'engine/vcpkg-configuration.json') }}
 
       - name: Configure (CMake + vcpkg manifest install)
         run: |
           cmake -S engine -B engine\build `
-            -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake `
+            "-DCMAKE_TOOLCHAIN_FILE=$env:GITHUB_WORKSPACE/.vcpkg/scripts/buildsystems/vcpkg.cmake" `
             -DVCPKG_TARGET_TRIPLET=x64-windows
         shell: pwsh
 
       - name: Build
-        run: cmake --build engine\build --config Release
+        run: cmake --build engine\build --config Release --parallel
         shell: pwsh
 
       - name: Run engine_tests
@@ -69,6 +85,7 @@ jobs:
       - uses: astral-sh/setup-uv@v4
         with:
           version: "latest"
+          enable-cache: true
 
       - name: Install dependencies
         run: uv sync
@@ -93,12 +110,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: npm
 
       - name: Build apps/web's static export
         # npm is a .cmd shim: without `call`, cmd ends the script after the
         # first one and the build line never runs.
         run: |
-          call npm install || exit /b 1
+          call npm ci || exit /b 1
           call npm run build -w apps/web || exit /b 1
         shell: cmd
 
