@@ -46,3 +46,8 @@ CLAUDE.local.md
 .agent-sync/todo/
 # Added by code-review-graph
 .code-review-graph/
+
+# Local Terraform state/providers and installed deps under infra/
+infra/**/.terraform/
+infra/**/*.tfstate*
+infra/**/node_modules/
