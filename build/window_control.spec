@@ -49,12 +49,50 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    # Pillow's AVIF codec (~7.5 MB); the app only reads PNG/ICO.
+    excludes=['PIL._avif'],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
     noarchive=False,
 )
+
+_assets_dir = (_root / 'src' / 'assets').resolve()
+# adb plus the server jar are all scrcpy_server.py uses; scrcpy's desktop
+# client (scrcpy.exe, SDL2, ffmpeg DLLs) never runs.
+_scrcpy_keep = {'adb.exe', 'AdbWinApi.dll', 'AdbWinUsbApi.dll', 'scrcpy-server'}
+# The UI is plain Qt Widgets: no OpenGL fallbacks (ANGLE, software GL) and
+# no Quick/QML/Network, which only the virtual keyboard and bearer plugins
+# pull in. Windows IME goes through qwindows, not platforminputcontexts.
+_qt_unused_bins = {
+    'opengl32sw.dll', 'd3dcompiler_47.dll', 'libEGL.dll', 'libGLESv2.dll',
+    'Qt5Quick.dll', 'Qt5Qml.dll', 'Qt5QmlModels.dll', 'Qt5Network.dll',
+}
+_qt_unused_dirs = {
+    ('PyQt5', 'Qt5', 'translations'),
+    ('PyQt5', 'Qt5', 'plugins', 'platforminputcontexts'),
+    ('PyQt5', 'Qt5', 'plugins', 'bearer'),
+}
+
+
+def _bundled(entry):
+    dest, src, _typecode = entry
+    parts = Path(dest).parts
+    if parts[0] != 'assets' and src and Path(src).resolve().is_relative_to(_assets_dir):
+        # PyInstaller resolves the DLL imports of the .exe files under
+        # assets/ and copies them a second time next to EmuCtrl.exe.
+        return False
+    if parts[:2] == ('assets', 'scrcpy') and parts[-1] not in _scrcpy_keep:
+        return False
+    if parts[:2] == ('assets', 'mediamtx'):  # legacy local download
+        return False
+    if parts[:3] == ('PyQt5', 'Qt5', 'bin') and parts[-1] in _qt_unused_bins:
+        return False
+    return not any(parts[:len(d)] == d for d in _qt_unused_dirs)
+
+
+a.binaries = [e for e in a.binaries if _bundled(e)]
+a.datas = [e for e in a.datas if _bundled(e)]
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 

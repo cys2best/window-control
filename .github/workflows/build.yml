@@ -138,6 +138,22 @@ jobs:
             ForEach-Object { "{0,8:N2} MB  {1}" -f ($_.Length / 1MB), $_.FullName.Substring((Resolve-Path dist\EmuCtrl).Path.Length + 1) }
         shell: pwsh
 
+      - name: Smoke packaged app
+        # The HTTP server only starts after QApplication exists, so port 8080
+        # answering proves the trimmed Qt bundle still loads its platform plugin.
+        run: |
+          $app = Start-Process dist\EmuCtrl\EmuCtrl.exe -PassThru
+          $up = $false
+          for ($i = 0; $i -lt 60 -and -not $up; $i++) {
+            Start-Sleep -Seconds 1
+            $up = (Test-NetConnection 127.0.0.1 -Port 8080 -WarningAction SilentlyContinue).TcpTestSucceeded
+          }
+          $exited = $app.HasExited
+          taskkill /F /T /PID $app.Id | Out-Null
+          Get-Content C:\ProgramData\EmuCtrl\service_crash.log -ErrorAction SilentlyContinue
+          if (-not $up) { throw "EmuCtrl.exe never served port 8080 (exited=$exited)" }
+        shell: pwsh
+
       - name: Download VC++ Redistributable
         run: |
           curl -L -o build\vc_redist.x64.exe "https://aka.ms/vs/17/release/vc_redist.x64.exe"
