@@ -44,3 +44,5 @@ engine/test/verification-*/
 # Personal, unshared agent notes
 CLAUDE.local.md
 .agent-sync/todo/
+# Added by code-review-graph
+.code-review-graph/
