@@ -33,6 +33,7 @@ jobs:
 
       - name: Restore vcpkg cache
         # Manifest mode installs into the build tree, not C:\vcpkg\installed.
+        id: vcpkg-cache
         uses: actions/cache@v4
         with:
           path: |
@@ -41,10 +42,15 @@ jobs:
           key: vcpkg-${{ runner.os }}-${{ env.VCPKG_REVISION }}-${{ hashFiles('engine/vcpkg.json', 'engine/vcpkg-configuration.json') }}
 
       - name: Configure (CMake + vcpkg manifest install)
+        # GitHub serves a mix of runner image versions, and vcpkg's package
+        # ABI hashes cmake/PowerShell versions, so a restored tree is rebuilt
+        # whenever the image differs. On a cache hit, skip the install and use
+        # the restored DLLs as-is (MSVC v14x keeps binary compatibility).
         run: |
           cmake -S engine -B engine\build `
             "-DCMAKE_TOOLCHAIN_FILE=$env:GITHUB_WORKSPACE/.vcpkg/scripts/buildsystems/vcpkg.cmake" `
-            -DVCPKG_TARGET_TRIPLET=x64-windows
+            -DVCPKG_TARGET_TRIPLET=x64-windows `
+            "-DVCPKG_MANIFEST_INSTALL=$(if ('${{ steps.vcpkg-cache.outputs.cache-hit }}' -eq 'true') { 'OFF' } else { 'ON' })"
         shell: pwsh
 
       - name: Build
