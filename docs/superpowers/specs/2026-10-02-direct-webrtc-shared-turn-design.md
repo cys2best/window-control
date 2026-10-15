@@ -1,7 +1,9 @@
 # Direct WebRTC With Shared TURN Fallback — Design
 
 Date: 2026-10-02
-Status: Written design for user review; implementation has not started.
+Status: Design approved by the user; implementation has not started.
+
+Implementation plan: [Direct WebRTC With Shared TURN Fallback](../plans/2026-10-02-direct-webrtc-shared-turn.md).
 
 ## Intent and scope
 
