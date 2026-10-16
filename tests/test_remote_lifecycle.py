@@ -130,6 +130,9 @@ async def test_renewal_uses_distinct_endpoint_credentials_and_revoked_token_cann
     async with local_broker(tmp_path) as (origin, http, app):
         app.state.media.settings.turn_urls = ["turn:relay.example:3478"]
         identity = InstallationIdentity(**(await http.post("/installations")).json())
+        licenses = app.state.licenses
+        licenses.activate(licenses.issue(now=0), identity.installation_id, now=0,
+                          installation_exists=lambda _id: True)
         engine, now = Engine(), [1000.]
         client, stop, task, _, pairing, token = await host(origin, identity, Actions(), engine=engine, clock=lambda: now[0])
         ws, _ = await viewer(origin, identity, token)
