@@ -409,3 +409,33 @@ def test_deactivate_hides_button_and_shows_not_activated(qapp):
     wait_until(qapp, lambda: window._license_deactivate_btn.isHidden())
     assert actions.calls == [("deactivate",)]
     assert window._license_status_label.text().startswith("Relay: not activated")
+
+
+def test_remote_invitation_shows_qr_and_copies_link(qapp):
+    from broker.identity_store import InstallationIdentity
+    from server.pairing import PairingStore
+    from server.remote_pairing import RemotePairing
+    store = PairingStore()
+    remote = RemotePairing(store, InstallationIdentity(installation_id="pc", credential="secret"),
+                           "https://remote.example", publish=lambda invitation: None)
+    remote.set_online(True)
+    with patch("gui.launcher.check_for_update"):
+        from gui.launcher import LauncherWindow
+        window = LauncherWindow(pairing=store, remote_pairing=remote)
+        assert not window._remote_invite_box.isVisibleTo(window)
+        window._pair_btn.click()
+        _wait_remote_result(qapp, window)
+        url = remote.active_invitation().url
+        assert window._remote_invite_box.isVisibleTo(window)
+        qr = window._remote_qr_label.pixmap()
+        assert qr is not None and not qr.isNull() and qr.width() == qr.height()
+        qapp.processEvents()
+        assert window.height() >= _content_height(window)
+
+        qapp.clipboard().clear()
+        window._copy_link_btn.click()
+        assert qapp.clipboard().text() == url
+
+        store.pair(store.active_code()[0], "Local phone")
+        window._refresh_pairing()
+        assert not window._remote_invite_box.isVisibleTo(window)

@@ -3,14 +3,16 @@ import sys
 import subprocess
 import time
 import html
+import io
 import math
 import threading
+import qrcode
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QLabel, QGroupBox, QFrame, QListWidget, QListWidgetItem, QLineEdit
+    QPushButton, QLabel, QGroupBox, QFrame, QListWidget, QListWidgetItem, QLineEdit, QApplication
 )
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, pyqtSlot
-from PyQt5.QtGui import QFont
+from PyQt5.QtGui import QFont, QPixmap
 
 from config import PORT, VERSION
 from server.pairing import PairingStore
@@ -20,6 +22,9 @@ from gui.theme import (
     CANVAS, CYAN, DIM, HAIRLINE, INK, MINT, MUTED, SURFACE,
     SURFACE_RAISED, TANGERINE, DESTRUCTIVE_HOVER, register_fonts,
 )
+
+
+QR_SIZE = 140
 
 
 class LauncherWindow(QMainWindow):
@@ -184,6 +189,7 @@ class LauncherWindow(QMainWindow):
         self._remote_link_label.setOpenExternalLinks(True)
         self._remote_link_label.hide()
         devices_layout.addWidget(self._remote_link_label)
+        devices_layout.addWidget(self._build_remote_invite_box())
         self._remote_error_label = QLabel("")
         self._remote_error_label.setWordWrap(True)
         self._remote_error_label.setStyleSheet(f"color: {DESTRUCTIVE_HOVER};")
@@ -499,6 +505,52 @@ class LauncherWindow(QMainWindow):
         self._refresh_pairing()
         QTimer.singleShot(0, self._fit_height)
 
+    def _build_remote_invite_box(self) -> QWidget:
+        self._remote_invite_box = QWidget()
+        row = QHBoxLayout(self._remote_invite_box)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(10)
+        self._remote_qr_label = QLabel()
+        self._remote_qr_label.setFixedSize(QR_SIZE, QR_SIZE)
+        row.addWidget(self._remote_qr_label)
+        self._copy_link_btn = QPushButton("Copy link")
+        self._copy_link_btn.setFixedHeight(32)
+        self._copy_link_btn.setStyleSheet(self._btn_style(SURFACE, CYAN, INK))
+        self._copy_link_btn.clicked.connect(self._copy_remote_link)
+        row.addWidget(self._copy_link_btn, 0, Qt.AlignTop)
+        row.addStretch(1)
+        self._remote_qr_url = None
+        self._remote_invite_box.hide()
+        return self._remote_invite_box
+
+    def _copy_remote_link(self):
+        if self._remote_qr_url:
+            QApplication.clipboard().setText(self._remote_qr_url)
+            self._copy_link_btn.setText("Copied")
+            QTimer.singleShot(1500, lambda: self._copy_link_btn.setText("Copy link"))
+
+    def _show_remote_qr(self, url):
+        # The countdown refreshes every second; encode only when the link changes.
+        if url != self._remote_qr_url:
+            image = qrcode.make(url, border=2)
+            buffer = io.BytesIO()
+            image.save(buffer, format="PNG")
+            pixmap = QPixmap()
+            pixmap.loadFromData(buffer.getvalue(), "PNG")
+            self._remote_qr_label.setPixmap(pixmap.scaled(QR_SIZE, QR_SIZE, Qt.KeepAspectRatio,
+                                                          Qt.FastTransformation))
+            self._remote_qr_url = url
+        if not self._remote_invite_box.isVisibleTo(self):
+            self._remote_invite_box.show()
+            QTimer.singleShot(0, self._fit_height)
+
+    def _hide_remote_qr(self):
+        self._remote_qr_url = None
+        self._remote_qr_label.clear()
+        if self._remote_invite_box.isVisibleTo(self):
+            self._remote_invite_box.hide()
+            QTimer.singleShot(0, self._fit_height)
+
     def _refresh_pairing(self):
         active = self._pairing.active_code()
         if active is None:
@@ -515,10 +567,12 @@ class LauncherWindow(QMainWindow):
         if invitation is None:
             self._remote_link_label.clear()
             self._remote_link_label.hide()
+            self._hide_remote_qr()
         else:
             url = html.escape(invitation.url, quote=True)
             self._remote_link_label.setText(f'<a href="{url}">{url}</a>')
             self._remote_link_label.show()
+            self._show_remote_qr(invitation.url)
 
         devices = self._pairing.list_devices()
         ids = [device.id for device in devices]
