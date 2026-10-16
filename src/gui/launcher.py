@@ -19,8 +19,9 @@ from server.pairing import PairingStore
 from server.tailscale import has_tailscale, detect_local_ip, detect_tailscale_ip
 from updater import check_for_update
 from gui.theme import (
-    CANVAS, CYAN, DIM, HAIRLINE, INK, MINT, MUTED, SURFACE,
-    SURFACE_RAISED, TANGERINE, DESTRUCTIVE_HOVER, register_fonts,
+    ACTION, ACTION_HOVER, ACTION_INK, BUTTON, BUTTON_BORDER, BUTTON_HOVER,
+    CANVAS, DIM, HAIRLINE, INK, KILN, MUTED, STATUS, SURFACE,
+    SURFACE_RAISED, DESTRUCTIVE_HOVER, register_fonts,
 )
 
 
@@ -115,12 +116,12 @@ class LauncherWindow(QMainWindow):
 
         self._status_dot = QWidget()
         self._status_dot.setFixedSize(10, 10)
-        self._status_dot.setStyleSheet(f"background: {MINT}; border-radius: 5px;")
+        self._status_dot.setStyleSheet(f"background: {STATUS}; border-radius: 5px;")
         status_row.addWidget(self._status_dot)
 
         self._status_label = QLabel(f"Server Running: :{PORT}")
         self._status_label.setFont(self._mono_font(10, QFont.DemiBold))
-        self._status_label.setStyleSheet(f"color: {MINT};")
+        self._status_label.setStyleSheet(f"color: {STATUS};")
         status_row.addWidget(self._status_label)
         status_row.addStretch()
         header_layout.addLayout(status_row)
@@ -156,7 +157,7 @@ class LauncherWindow(QMainWindow):
         streams_title.setStyleSheet(f"font-size: 11px; font-weight: 600; color: {MUTED};")
         self._streams_label = QLabel("Idle")
         self._streams_label.setFont(self._mono_font(10, QFont.DemiBold))
-        self._streams_label.setStyleSheet(f"color: {MINT};")
+        self._streams_label.setStyleSheet(f"color: {STATUS};")
         streams_layout.addWidget(streams_title)
         streams_layout.addWidget(self._streams_label)
         group_layout.addLayout(streams_layout)
@@ -173,13 +174,13 @@ class LauncherWindow(QMainWindow):
         pair_row.setSpacing(10)
         self._pair_btn = QPushButton("Pair device")
         self._pair_btn.setFixedHeight(32)
-        self._pair_btn.setStyleSheet(self._btn_style(SURFACE, CYAN, INK))
+        self._pair_btn.setStyleSheet(self._btn_style(ACTION, ACTION_HOVER, ACTION_INK))
         self._pair_btn.clicked.connect(self._start_pairing)
         pair_row.addWidget(self._pair_btn)
         self._pair_code_label = QLabel("")
         self._pair_code_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self._pair_code_label.setFont(self._mono_font(13, QFont.DemiBold))
-        self._pair_code_label.setStyleSheet(f"color: {MINT};")
+        self._pair_code_label.setStyleSheet(f"color: {STATUS};")
         pair_row.addWidget(self._pair_code_label, 1)
         devices_layout.addLayout(pair_row)
 
@@ -202,7 +203,7 @@ class LauncherWindow(QMainWindow):
         self._device_list.setFont(self._mono_font(10))
         self._device_list.setStyleSheet(
             f"QListWidget {{ background: {SURFACE}; color: {INK};"
-            f" border: 1px solid {HAIRLINE}; border-radius: 6px; }}"
+            f" border: 1px solid {HAIRLINE}; border-radius: 2px; }}"
         )
         devices_layout.addWidget(self._device_list)
 
@@ -233,7 +234,7 @@ class LauncherWindow(QMainWindow):
         # --- Update banner ---
         self._update_banner = QWidget()
         self._update_banner.setStyleSheet(
-            f"background: {SURFACE_RAISED}; border: 1px solid {TANGERINE}; border-radius: 6px;"
+            f"background: {SURFACE_RAISED}; border: 1px solid {KILN}; border-radius: 2px;"
         )
         banner_layout = QVBoxLayout(self._update_banner)
         banner_layout.setContentsMargins(10, 8, 10, 8)
@@ -241,13 +242,13 @@ class LauncherWindow(QMainWindow):
 
         self._update_label = QLabel()
         self._update_label.setFont(self._ui_font(12))
-        self._update_label.setStyleSheet(f"color: {TANGERINE}; background: transparent; border: none;")
+        self._update_label.setStyleSheet(f"color: {KILN}; background: transparent; border: none;")
         self._update_label.setWordWrap(True)
         banner_layout.addWidget(self._update_label)
 
         self._install_btn = QPushButton("Install Update")
         self._install_btn.setMinimumHeight(32)
-        self._install_btn.setStyleSheet(self._btn_style(TANGERINE, INK, CANVAS))
+        self._install_btn.setStyleSheet(self._btn_style(KILN, INK, CANVAS))
         self._install_btn.clicked.connect(self._on_install_update)
         banner_layout.addWidget(self._install_btn)
 
@@ -268,7 +269,7 @@ class LauncherWindow(QMainWindow):
 
         self._stop_btn = QPushButton("Stop Server")
         self._stop_btn.setMinimumHeight(38)
-        self._stop_btn.setStyleSheet(self._btn_style(SURFACE_RAISED, TANGERINE, TANGERINE, border=f"1px solid {TANGERINE}"))
+        self._stop_btn.setStyleSheet(self._btn_style(SURFACE_RAISED, "rgba(232,137,92,0.16)", KILN, border=f"1px solid {KILN}"))
         self._stop_btn.clicked.connect(self._handle_stop_server)
         actions_layout.addWidget(self._stop_btn)
 
@@ -304,7 +305,7 @@ class LauncherWindow(QMainWindow):
                 font-weight: 600;
                 color: {INK};
                 border: 1px solid {HAIRLINE};
-                border-radius: 6px;
+                border-radius: 2px;
                 margin-top: 10px;
                 padding-top: 12px;
                 background: {SURFACE_RAISED};
@@ -335,9 +336,9 @@ class LauncherWindow(QMainWindow):
                 background: {bg};
                 color: {text_color};
                 border: {border};
-                border-radius: 6px;
+                border-radius: 2px;
                 font-size: 13px;
-                font-weight: 600;
+                font-weight: 500;
                 padding: 8px 14px;
             }}
             QPushButton:hover {{ background: {hover}; }}
@@ -413,8 +414,8 @@ class LauncherWindow(QMainWindow):
         self._license_input.setFixedHeight(32)
         self._license_input.setStyleSheet(
             f"QLineEdit {{ background: {SURFACE}; border: 1px solid {HAIRLINE};"
-            f" border-radius: 6px; padding: 0 8px; }}"
-            f"QLineEdit:focus {{ border-color: {CYAN}; }}"
+            f" border-radius: 2px; padding: 0 8px; }}"
+            f"QLineEdit:focus {{ border-color: {ACTION_HOVER}; }}"
         )
         palette = self._license_input.palette()
         # Colors go through the palette: a stylesheet color also paints the placeholder.
@@ -424,7 +425,7 @@ class LauncherWindow(QMainWindow):
         entry.addWidget(self._license_input, 1)
         self._license_activate_btn = QPushButton("Activate")
         self._license_activate_btn.setFixedHeight(32)
-        self._license_activate_btn.setStyleSheet(self._btn_style(SURFACE, CYAN, INK))
+        self._license_activate_btn.setStyleSheet(self._btn_style(BUTTON, BUTTON_HOVER, INK, f"1px solid {BUTTON_BORDER}"))
         self._license_activate_btn.clicked.connect(self._activate_license)
         entry.addWidget(self._license_activate_btn)
         column.addLayout(entry)
@@ -528,7 +529,7 @@ class LauncherWindow(QMainWindow):
         row.addWidget(self._remote_qr_label)
         self._copy_link_btn = QPushButton("Copy link")
         self._copy_link_btn.setFixedHeight(32)
-        self._copy_link_btn.setStyleSheet(self._btn_style(SURFACE, CYAN, INK))
+        self._copy_link_btn.setStyleSheet(self._btn_style(BUTTON, BUTTON_HOVER, INK, f"1px solid {BUTTON_BORDER}"))
         self._copy_link_btn.clicked.connect(self._copy_remote_link)
         row.addWidget(self._copy_link_btn, 0, Qt.AlignTop)
         row.addStretch(1)
@@ -624,17 +625,17 @@ class LauncherWindow(QMainWindow):
             self._streams_label.setStyleSheet(f"color: {MUTED};")
         elif count == 1:
             self._streams_label.setText("1 client streaming")
-            self._streams_label.setStyleSheet(f"color: {MINT};")
+            self._streams_label.setStyleSheet(f"color: {STATUS};")
         else:
             self._streams_label.setText(f"{count} clients streaming")
-            self._streams_label.setStyleSheet(f"color: {MINT};")
+            self._streams_label.setStyleSheet(f"color: {STATUS};")
 
     def _handle_stop_server(self):
         if self._on_stop_server is not None:
             self._on_stop_server()
-        self._status_dot.setStyleSheet(f"background: {TANGERINE}; border-radius: 5px;")
+        self._status_dot.setStyleSheet(f"background: {KILN}; border-radius: 5px;")
         self._status_label.setText("Server Stopped")
-        self._status_label.setStyleSheet(f"color: {TANGERINE};")
+        self._status_label.setStyleSheet(f"color: {KILN};")
         self._stop_btn.setEnabled(False)
 
     def _on_update_available(self, latest: str):

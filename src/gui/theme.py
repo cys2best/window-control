@@ -8,8 +8,9 @@ from PyQt5.QtGui import QFontDatabase
 from config import ASSETS_DIR
 
 
-# The host widget follows Windows 11 Fluent/Mica rather than the mobile/web
-# cyber canvas. Cyan remains the single shared brand accent.
+# The host widget follows Windows 11 Fluent/Mica rather than the app canvas
+# (EmuCtrl v2). Kiln is the only brand colour crossing into the desktop
+# shell; primary actions use the v2 near-white action with dark ink.
 CANVAS = "#1c1c1c"
 SURFACE = "#1c1c1c"
 SURFACE_RAISED = "#232323"
@@ -17,9 +18,14 @@ HAIRLINE = "#333333"
 INK = "#e0e0e0"
 MUTED = "#a0a0a0"
 DIM = "#808080"
-CYAN = "#00E5FF"
-TANGERINE = "#FF5722"
-MINT = "#10B981"
+ACTION = "#faf9f5"
+ACTION_HOVER = "#b0aea5"
+ACTION_INK = "#101010"
+BUTTON = "#2b2b2b"
+BUTTON_HOVER = "#333333"
+BUTTON_BORDER = "#3a3a3a"
+STATUS = "#faf9f5"
+KILN = "#e8895c"
 DESTRUCTIVE_HOVER = "#C42B1C"
 
 
