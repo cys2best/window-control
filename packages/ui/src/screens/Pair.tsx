@@ -30,7 +30,12 @@ export function Pair({ navigation, route, remoteOptions }: { navigation: any; ro
   const { base, setServer, setTarget, client, hostReachability, target } = useServer();
   const invitation = route?.params?.invitation;
   const [local, setLocal] = useState(false);
-  const remote = Boolean(invitation) && !local;
+  // The hosted remote web is no host itself, and an iPhone home-screen app
+  // (own storage) cannot receive the scanned link: take a pasted link there.
+  const awaitingInvitation = Platform.OS === "web" && !invitation && Boolean(remoteOptions)
+    && target?.kind === "local" && hostReachability.state === "unreachable";
+  const [pastedLink, setPastedLink] = useState("");
+  const remote = (Boolean(invitation) && !local) || awaitingInvitation;
   const current = useRef({ client, target, invitation, remote });
   current.current = { client, target, invitation, remote };
   const mounted = useRef(true);
@@ -39,10 +44,6 @@ export function Pair({ navigation, route, remoteOptions }: { navigation: any; ro
   // The web app is served by the host it talks to; a native app has to be
   // told where the host is.
   const needsHost = !remote && (Platform.OS !== "web" || local);
-  // The hosted remote web is no host itself: without an invitation a code
-  // has nowhere to go, so point at the link the PC shows instead.
-  const awaitingInvitation = Platform.OS === "web" && !invitation && Boolean(remoteOptions)
-    && target?.kind === "local" && hostReachability.state === "unreachable";
   const [host, setHost] = useState(base ?? "");
   const [code, setCode] = useState("");
   const [focusedField, setFocusedField] = useState<string | null>(null);
@@ -58,9 +59,11 @@ export function Pair({ navigation, route, remoteOptions }: { navigation: any; ro
     setError("");
     let invite: ReturnType<typeof parseRemoteInvite> | null = null;
     if (remote) {
+      const link = invitation ?? pastedLink.trim();
+      if (!link) { setError("Paste the pairing link shown on your PC"); return; }
       try {
-        if (!remoteOptions || !invitation) throw new Error("unconfigured service");
-        invite = parseRemoteInvite(invitation, remoteOptions.trustedOrigin);
+        if (!remoteOptions) throw new Error("unconfigured service");
+        invite = parseRemoteInvite(link, remoteOptions.trustedOrigin);
       } catch {
         setError("This invitation is invalid or belongs to another service."); return;
       }
@@ -130,10 +133,9 @@ export function Pair({ navigation, route, remoteOptions }: { navigation: any; ro
         </Text>
         <Text style={{ fontFamily: theme.font.regular, fontSize: 13.5, lineHeight: 21, color: theme.color.textMuted, marginTop: 9, marginBottom: 22 }}>
           {awaitingInvitation
-            ? "Open the pairing link shown on your PC: in EmuCtrl Host, click Pair device, then scan its QR code or open the copied link here. You only do this once per device."
+            ? "On your PC, open EmuCtrl Host and click Pair device. Paste the link it shows (scan its QR code, then copy the link), and enter the code. You only do this once per device."
             : "On your PC, open EmuCtrl Host and click Pair device. Enter the code it shows. You only do this once per device."}
         </Text>
-        {awaitingInvitation ? null : (<>
         {invitation ? <Pressable accessibilityRole="button" onPress={() => { setLocal(value => !value); setError(""); }} style={{ marginBottom: 16 }}><Text style={{ color: theme.color.accent }}>{local ? "Use invitation" : "Advanced: local host"}</Text></Pressable> : null}
         {needsHost || remote ? null : (
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 22 }}>
@@ -150,6 +152,16 @@ export function Pair({ navigation, route, remoteOptions }: { navigation: any; ro
               style={{ ...fieldStyle("host"), fontFamily: theme.font.mono }} />
           </View>
         ) : null}
+        {awaitingInvitation ? (
+          <View style={{ marginBottom: 12 }}>
+            <Text style={labelStyle}>PAIRING LINK</Text>
+            <TextInput value={pastedLink} onChangeText={(value) => { setPastedLink(value); setError(""); }}
+              accessibilityLabel="Pairing link" placeholder="Pairing link" placeholderTextColor={theme.color.textDim}
+              autoCapitalize="none" autoCorrect={false} keyboardType="url" editable={!busy}
+              onFocus={() => setFocusedField("link")} onBlur={() => setFocusedField(null)}
+              style={{ ...fieldStyle("link"), fontFamily: theme.font.mono }} />
+          </View>
+        ) : null}
         <Text style={labelStyle}>PAIRING CODE</Text>
         <TextInput value={code} onChangeText={(value) => { setCode(value); setError(""); }}
           accessibilityLabel="Pairing code" placeholder="Pairing code" placeholderTextColor={theme.color.textDim}
@@ -161,7 +173,6 @@ export function Pair({ navigation, route, remoteOptions }: { navigation: any; ro
         <View style={{ marginTop: 20 }}>
           <Button label={busy ? "Please wait…" : "Pair"} onPress={() => { void submit(); }} loading={busy} />
         </View>
-        </>)}
       </ScrollView>
     </KeyboardAvoidingView>
   );

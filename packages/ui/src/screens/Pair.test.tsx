@@ -301,16 +301,41 @@ test("real provider completes owned remote pairing and navigates after its publi
   expect(context.authToken).toBe("owned"); expect(context.client?.kind).toBe("remote"); await view.unmount();
 });
 
-test("on the hosted web without an invitation, asks for the PC's link instead of a code", async () => {
+function hostedWithoutInvitation() {
   jest.replaceProperty(Platform, "OS", "web");
+  const setTarget = jest.fn().mockResolvedValue({});
   mockServer({
-    base: trustedOrigin, target: { kind: "local", base: trustedOrigin },
+    base: trustedOrigin, target: { kind: "local", base: trustedOrigin }, setTarget,
     hostReachability: { state: "unreachable", host: "remote.example", rttMs: null, paired: null },
   });
+  return setTarget;
+}
+
+test("on the hosted web without an invitation, a pasted pairing link plus code pairs remotely", async () => {
+  // An iPhone home-screen app has its own storage and cannot receive the
+  // scanned link, so the link is pasted into it.
+  const setTarget = hostedWithoutInvitation();
+  (Core.pairRemote as jest.Mock).mockResolvedValue({ installationId: "a".repeat(32), token: "secret" });
   const screen = await render(<Pair navigation={navigation} remoteOptions={remoteOptions} />);
-  expect(screen.getByText(/Open the pairing link shown on your PC/)).toBeTruthy();
-  expect(screen.queryByPlaceholderText("Pairing code")).toBeNull();
-  expect(screen.queryByText("Pair")).toBeNull();
+  await fireEvent.changeText(screen.getByPlaceholderText("Pairing link"), ` ${invitation} `);
+  await fireEvent.changeText(screen.getByPlaceholderText("Pairing code"), "123456");
+  await fireEvent.press(screen.getByText("Pair"));
+  await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith("InstanceList"));
+  expect(Core.pairRemote).toHaveBeenCalledWith(trustedOrigin, "abcdefghijklmnopqrstuv", "123456", "Browser", remoteOptions);
+  expect(setTarget).toHaveBeenCalledWith({ kind: "remote", serviceUrl: trustedOrigin, installationId: "a".repeat(32) }, "secret", { isCurrent: expect.any(Function) });
+  expect(pairDevice).not.toHaveBeenCalled();
+});
+
+test("on the hosted web a missing or foreign pairing link never reaches any transport", async () => {
+  hostedWithoutInvitation();
+  const screen = await render(<Pair navigation={navigation} remoteOptions={remoteOptions} />);
+  await fireEvent.changeText(screen.getByPlaceholderText("Pairing code"), "123456");
+  await fireEvent.press(screen.getByText("Pair"));
+  expect(await screen.findByText("Paste the pairing link shown on your PC")).toBeTruthy();
+  await fireEvent.changeText(screen.getByPlaceholderText("Pairing link"), invitation.replace("remote.example", "evil.example"));
+  await fireEvent.press(screen.getByText("Pair"));
+  expect(await screen.findByText("This invitation is invalid or belongs to another service.")).toBeTruthy();
+  expect(Core.pairRemote).not.toHaveBeenCalled(); expect(pairDevice).not.toHaveBeenCalled();
 });
 
 test("a reachable local host on web still pairs by code alone", async () => {
