@@ -3,12 +3,14 @@ import anyio
 import uuid
 import time
 from contextlib import asynccontextmanager, suppress
-from typing import List
+from typing import List, Literal
+import httpx
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request
 from fastapi.responses import JSONResponse
 from pathlib import Path
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from broker.cloudflare_turn import CloudflareTurnError, fetch_turn_server
 from broker.identity_store import InstallationStore, InstallationStoreError
 from broker.license_store import LicenseStore, LicenseStoreError
 from broker.limits import BrokerLimits
@@ -20,17 +22,21 @@ from remote_protocol import (parse_frame, decode_frame, parse_reply, format_repl
                              parse_media_authorization, parse_media_release)
 
 COMMAND_TIMEOUT_SECONDS = 30.0
+CLOUDFLARE_TURN_TIMEOUT_SECONDS = 3.0
 
 
 class BrokerSettings(BaseModel):
     storage_path: str
     allowed_origins: List[str]
-    turn_shared_secret: str = Field(repr=False)
+    turn_shared_secret: str = Field("", repr=False)
     max_active_streams: int = Field(gt=0)
     stun_urls: list[str] = Field(default_factory=list)
     turn_urls: list[str] = Field(default_factory=list)
     relay_available: bool = True
     license_path: str | None = None
+    relay_provider: Literal["coturn", "cloudflare"] = "coturn"
+    cloudflare_turn_key_id: str | None = Field(None, repr=False)
+    cloudflare_turn_api_token: str | None = Field(None, repr=False)
     model_config = ConfigDict(strict=True, extra="forbid", hide_input_in_errors=True)
 
     @field_validator("stun_urls", "turn_urls")
@@ -44,11 +50,13 @@ class BrokerSettings(BaseModel):
                 raise ValueError("invalid ICE scheme")
         return values
 
-    @field_validator("turn_shared_secret")
-    def signing_secret(cls, value):
-        if not value:
+    @model_validator(mode="after")
+    def relay_credentials(self):
+        if self.relay_provider == "coturn" and not self.turn_shared_secret:
             raise ValueError("missing TURN signing secret")
-        return value
+        if self.relay_provider == "cloudflare" and not (self.cloudflare_turn_key_id and self.cloudflare_turn_api_token):
+            raise ValueError("missing Cloudflare TURN key or token")
+        return self
 
 class DeleteInstallationRequest(BaseModel):
     credential: str
@@ -57,13 +65,28 @@ class ActivateLicenseRequest(BaseModel):
     credential: str
     key: str
 
-def create_broker_app(settings: BrokerSettings) -> FastAPI:
+def create_broker_app(settings: BrokerSettings, *, turn_client: httpx.AsyncClient | None = None) -> FastAPI:
     store = InstallationStore(settings.storage_path)
     licenses = LicenseStore(settings.license_path or Path(settings.storage_path).with_name("licenses.json"))
     limits = BrokerLimits()
     registry = Registry()
 
     media = MediaAdmission(settings, limits, registry, time.time, licenses)
+    owns_turn_client = turn_client is None and settings.relay_provider == "cloudflare"
+    if owns_turn_client:
+        turn_client = httpx.AsyncClient(timeout=CLOUDFLARE_TURN_TIMEOUT_SECONDS)
+
+    async def fetch_relay_servers():
+        """Distinct Cloudflare credentials per endpoint; any failure means STUN-only."""
+        async def one():
+            return await fetch_turn_server(settings.cloudflare_turn_key_id, settings.cloudflare_turn_api_token,
+                                           client=turn_client)
+        try:
+            host_server, viewer_server = await asyncio.wait_for(
+                asyncio.gather(one(), one()), CLOUDFLARE_TURN_TIMEOUT_SECONDS)
+        except (CloudflareTurnError, asyncio.TimeoutError):
+            return None
+        return {"host": host_server, "viewer": viewer_server}
 
     @asynccontextmanager
     async def lifespan(app):
@@ -79,6 +102,8 @@ def create_broker_app(settings: BrokerSettings) -> FastAPI:
             task.cancel()
             with suppress(asyncio.CancelledError):
                 await task
+            if owns_turn_client:
+                await turn_client.aclose()
 
     app = FastAPI(lifespan=lifespan)
 
@@ -152,6 +177,7 @@ def create_broker_app(settings: BrokerSettings) -> FastAPI:
     app.state.licenses = licenses
     app.state.limits = limits
     app.state.media = media
+    app.state.turn_client = turn_client
 
     @asynccontextmanager
     async def outbound(connection):
@@ -376,8 +402,11 @@ def create_broker_app(settings: BrokerSettings) -> FastAPI:
                                 pending.future.set_result(reply)
                         elif parsed.get("op") == "media_authorize":
                             request = parse_media_authorization(raw)
+                            relay_servers = None
+                            if settings.relay_provider == "cloudflare" and media.wants_relay(host.installation_id):
+                                relay_servers = await fetch_relay_servers()
                             try:
-                                bundles = media.authorize(host, request)
+                                bundles = media.authorize(host, request, relay_servers)
                                 response = format_reply(Reply(v=1, id=request.id, ok=True, result=bundles.model_dump()))
                             except MediaError as exc:
                                 response = format_error_reply(request.id, ErrorCode(exc.code), "Media admission rejected")

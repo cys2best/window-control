@@ -55,7 +55,14 @@ class MediaAdmission:
         self.session_history: dict[str, tuple[int, set[str]]] = {}
         self.cancellations = []
 
-    def authorize(self, host: HostConnection, request: MediaAuthorization) -> MediaBundles:
+    def wants_relay(self, installation_id: str) -> bool:
+        return (self.settings.relay_available
+                and (self.settings.relay_provider == 'cloudflare' or bool(self.settings.turn_urls))
+                and self.licenses.is_licensed(installation_id, now=self.clock()))
+
+    def authorize(self, host: HostConnection, request: MediaAuthorization,
+                  relay_servers: dict[str, dict] | None = None) -> MediaBundles:
+        """relay_servers: Cloudflare TURN servers prefetched per endpoint; used only if still licensed now."""
         now = self.clock()
         self.sweep(now)
         pending = self.registry.pending_requests.get(request.payload['routing_id'])
@@ -92,8 +99,12 @@ class MediaAdmission:
             raise MediaError('quota_exceeded')
         relay = (self.settings.relay_available and bool(self.settings.turn_urls)
                  and self.licenses.is_licensed(host.installation_id, now=now))
+        if self.settings.relay_provider == 'cloudflare':
+            relay = (relay_servers is not None and {'host', 'viewer'} <= relay_servers.keys()
+                     and self.wants_relay(host.installation_id))
         bundles = MediaBundles(**{
-            endpoint: self._bundle(host.installation_id, session_id, endpoint, now, relay)
+            endpoint: self._bundle(host.installation_id, session_id, endpoint, now, relay,
+                                   relay_servers.get(endpoint) if relay and relay_servers else None)
             for endpoint in ('host', 'viewer')
         })
         self.admissions[host.installation_id] = Admission(
@@ -107,11 +118,13 @@ class MediaAdmission:
         pending.media_authorized = True
         return bundles
 
-    def _bundle(self, installation_id, session_id, endpoint, now, relay):
+    def _bundle(self, installation_id, session_id, endpoint, now, relay, relay_server=None):
         servers = []
         if self.settings.stun_urls:
             servers.append({'urls': list(self.settings.stun_urls)})
-        if relay:
+        if relay and relay_server is not None:
+            servers.append(dict(relay_server))
+        elif relay:
             credentials = issue_turn_credentials(self.settings.turn_shared_secret, installation_id, session_id, endpoint, now)
             servers.append({'urls': list(self.settings.turn_urls), 'username': credentials.username,
                             'credential': credentials.credential})

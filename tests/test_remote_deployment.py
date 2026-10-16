@@ -203,3 +203,21 @@ def test_turn_configs_cap_allocations_per_credential_and_share_port_range():
             assert setting in lines, (name, setting)
     readme = (INFRA / 'README.md').read_text()
     assert '49160-50159' in readme and '49200' not in readme
+
+
+def test_cloudflare_environment_loads_without_coturn_inputs(tmp_path):
+    env = {key: value for key, value in os.environ.items() if not key.startswith('REMOTE_')}
+    key_file, token_file = tmp_path / 'key-id', tmp_path / 'token'
+    key_file.write_text('keyid0123456789abcdef\n')
+    token_file.write_text('token-secret-never-print-0123\n')
+    env.update(PYTHONPATH=str(ROOT / 'src'), REMOTE_ALLOWED_ORIGINS='["https://control.example.com"]',
+               REMOTE_STORE_PATH=str(tmp_path / 'store'), REMOTE_STUN_URLS='["stun:stun.cloudflare.com:3478"]',
+               REMOTE_MAX_ACTIVE_STREAMS='2', REMOTE_RELAY_PROVIDER='cloudflare',
+               REMOTE_CLOUDFLARE_TURN_KEY_ID_FILE=str(key_file), REMOTE_CLOUDFLARE_TURN_TOKEN_FILE=str(token_file))
+    check = ('from broker.main import app; s = app.state.media.settings; '
+             'assert s.relay_provider == "cloudflare", s.relay_provider; '
+             'assert s.cloudflare_turn_key_id == "keyid0123456789abcdef"; print(repr(s))')
+    result = subprocess.run([sys.executable, '-c', check], env=env, capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+    output = result.stdout + result.stderr
+    assert 'token-secret-never-print' not in output and 'keyid0123456789abcdef' not in output
