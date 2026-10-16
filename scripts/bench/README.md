@@ -27,5 +27,8 @@ No Google Chrome installed (e.g. running on Windows)? Add `--channel msedge`
 to every command to drive Edge instead. Or point `--executable` at another Chromium-based
 browser, e.g. `--executable "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"`.
 
+Each run sets the bench instance to `--tier` first (default `360`; the host
+otherwise falls back to 720, which a relayed Tailscale path cannot carry).
+
 Exit codes: 0 valid run, 2 run marked failed (see the reasons in the `.md`), 1 error.
 Keep the Chrome window visible during a run.

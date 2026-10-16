@@ -16,6 +16,8 @@ const { values, positionals } = parseArgs({
     n: { type: "string", default: "200" },
     warmup: { type: "string", default: "10" },
     label: { type: "string", default: "run" },
+    // Encoder tier for the bench instance (the host's default is 720).
+    tier: { type: "string", default: "360" },
     setup: { type: "boolean", default: false },
     compare: { type: "boolean", default: false },
     profile: { type: "string", default: path.join(os.homedir(), ".emuctrl-bench-profile") },
@@ -57,7 +59,7 @@ async function run() {
   const context = await launch();
   try {
     const page = context.pages()[0] ?? (await context.newPage());
-    const url = `${values.host}/bench?serial=${encodeURIComponent(values.serial)}&n=${count}&warmup=${warmup}`;
+    const url = `${values.host}/bench?serial=${encodeURIComponent(values.serial)}&n=${count}&warmup=${warmup}&tier=${encodeURIComponent(values.tier)}`;
     const response = await page.goto(url);
     const pageError = benchPageError(response?.status() ?? null);
     if (pageError) {

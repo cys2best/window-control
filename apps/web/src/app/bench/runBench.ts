@@ -21,7 +21,10 @@ export type BenchResult = {
 
 type RunBenchOpts = {
   select: (serial: string) => Promise<SelectResp>;
+  setQuality?: (serial: string, tier: string) => Promise<void>;
   serial: string;
+  // Encoder tier to run at; the host otherwise keeps the instance's own tier.
+  tier?: string;
   count: number;
   warmup: number;
   video: HTMLVideoElement;
@@ -30,8 +33,12 @@ type RunBenchOpts = {
 
 const SAMPLE_SIZE = 8;
 
-export async function runBench({ select, serial, count, warmup, video, onStatus }: RunBenchOpts): Promise<BenchResult> {
+export async function runBench({ select, setQuality, serial, tier, count, warmup, video, onStatus }: RunBenchOpts): Promise<BenchResult> {
   const startedAt = new Date().toISOString();
+  if (tier && setQuality) {
+    onStatus(`setting tier ${tier}`);
+    await setQuality(serial, tier);
+  }
   onStatus("selecting instance");
   const selection = await select(serial);
 

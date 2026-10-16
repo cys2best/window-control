@@ -25,7 +25,9 @@ export default function BenchPageClient() {
 
     runBench({
       select: (serial) => client.select(serial),
+      setQuality: (serial, tier) => client.setQuality(serial, tier),
       serial: params.get("serial") ?? "",
+      tier: params.get("tier") ?? undefined,
       count: intParam(params, "n", 200),
       warmup: intParam(params, "warmup", 10),
       video: videoRef.current,
