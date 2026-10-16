@@ -6,7 +6,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parseArgs } from "node:util";
-import { compareResults, formatComparison, formatSummary, resultBaseName } from "./report.mjs";
+import { benchPageError, compareResults, formatComparison, formatSummary, resultBaseName } from "./report.mjs";
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
@@ -53,7 +53,12 @@ async function run() {
   try {
     const page = context.pages()[0] ?? (await context.newPage());
     const url = `${values.host}/bench?serial=${encodeURIComponent(values.serial)}&n=${count}&warmup=${warmup}`;
-    await page.goto(url);
+    const response = await page.goto(url);
+    const pageError = benchPageError(response?.status() ?? null);
+    if (pageError) {
+      await context.close();
+      fail(pageError);
+    }
     // About 0.5 s per tap plus a 0.7 s worst-case gap, plus setup and fetch.
     const timeout = ((count + warmup) * 2.7 + 120) * 1000;
     await page.waitForFunction(() => window.__benchResult || window.__benchError, null, { timeout, polling: 500 });

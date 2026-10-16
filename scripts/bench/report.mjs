@@ -60,3 +60,12 @@ export function formatComparison(rows) {
   }
   return lines.join("\n") + "\n";
 }
+
+// The host registers /bench only in bench mode; anything but 200 means the
+// page will never post a result, so fail now instead of waiting out the run.
+export function benchPageError(status) {
+  if (status === null || status === undefined) return "no response from host /bench";
+  if (status === 404) return "host bench mode off (/bench returned 404); start the host with EMUCTRL_BENCH=1";
+  if (status !== 200) return `host /bench returned HTTP ${status}`;
+  return null;
+}

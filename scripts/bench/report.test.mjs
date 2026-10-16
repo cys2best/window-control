@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { compareResults, formatComparison, formatSummary, resultBaseName } from "./report.mjs";
+import { benchPageError, compareResults, formatComparison, formatSummary, resultBaseName } from "./report.mjs";
 
 const stage = (p50, p95, ci) => ({ count: 100, mean: p50, p50, p95, p99: p95 + 5, p50CiHalf: ci });
 const result = (p50) => ({
@@ -34,4 +34,10 @@ test("compare skips stages missing from either run", () => {
   const a = result(90);
   delete a.stats.guest;
   assert.deepEqual(compareResults(a, result(80)).map((r) => r.stage), ["tap_to_photon"]);
+});
+
+test("a missing bench page is reported as bench mode off", () => {
+  assert.match(benchPageError(404), /bench mode off.*EMUCTRL_BENCH=1/);
+  assert.match(benchPageError(null), /no response/);
+  assert.equal(benchPageError(200), null);
 });
