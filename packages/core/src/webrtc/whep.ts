@@ -167,10 +167,7 @@ export function connectWhep(opts: ConnectWhepOpts): Promise<WhepSession> {
   });
 
   pc.addTransceiver("video", { direction: "recvonly" });
-  // Ordered, but a message that cannot be delivered within 500 ms is dropped:
-  // on a lossy link a fully reliable channel holds every later tap behind one
-  // retransmission (seen as 1-2 s input lag over a relayed path).
-  channel = pc.createDataChannel("input", { ordered: true, maxPacketLifeTime: 500 });
+  channel = pc.createDataChannel("input", { ordered: true });
   input = createInputSender(channel);
   channelReady = channel.readyState === "open";
   listen(channel, "open", () => {
