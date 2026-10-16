@@ -26,13 +26,13 @@ function RailKey({ label, active, onPress, children, testID = "rail-key" }: { la
   return <Pressable testID={testID} accessibilityRole="button" accessibilityLabel={label}
     onPress={() => { onPress(); }}
     style={({ pressed }) => ({ width: 52, height: 52, flexShrink: 1, minHeight: 28, alignItems: "center", justifyContent: "center",
-      backgroundColor: pressed ? "rgba(255,87,34,0.18)" : active ? "rgba(0,229,255,0.13)" : "transparent",
+      backgroundColor: pressed ? "rgba(232,137,92,0.16)" : active ? "rgba(250,249,245,0.16)" : "transparent",
       borderWidth: active ? 1 : 0, borderColor: theme.color.accent })}>
     {children}
   </Pressable>;
 }
 
-const iconStroke = "rgba(230,234,242,0.75)";
+const iconStroke = "#b0aea5";
 
 export function StreamRail(props: StreamRailProps) {
   const action = (fn: () => void) => () => { props.onWake(); props.tick(); fn(); };

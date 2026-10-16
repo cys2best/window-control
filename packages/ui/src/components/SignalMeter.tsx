@@ -42,7 +42,7 @@ export function SignalMeter({ telemetry, connected, onPress }: SignalMeterProps)
           const filled = index < level.bars;
           const style = {
             width: 3, height, borderRadius: 1,
-            backgroundColor: filled ? toneColor[level.tone] : "rgba(230,234,242,0.18)",
+            backgroundColor: filled ? toneColor[level.tone] : "#393836",
           };
           return !connected && index === 0
             ? <Animated.View key={height} testID="signal-bar" style={[style, { opacity: disconnectedOpacity }]} />

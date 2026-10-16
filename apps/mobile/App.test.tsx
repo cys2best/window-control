@@ -9,7 +9,7 @@ jest.mock("react-native-gesture-handler", () => ({ GestureHandlerRootView: ({ ch
 jest.mock("expo-font", () => ({ useFonts: () => [true] }));
 jest.mock("expo-screen-orientation", () => ({ lockAsync: jest.fn(), OrientationLock: { PORTRAIT_UP: 1 } }));
 jest.mock("expo-crypto", () => ({ randomUUID: jest.fn() }));
-jest.mock("@expo-google-fonts/space-grotesk", () => ({}));
+jest.mock("@expo-google-fonts/be-vietnam-pro", () => ({}));
 jest.mock("@expo-google-fonts/jetbrains-mono", () => ({}));
 jest.mock("@wc/ui", () => ({ theme: { color: { bg: "black" } } }));
 jest.mock("./src/platform/storage", () => ({ plainStorage: { getItem: jest.fn(), setItem: jest.fn(), deleteItem: jest.fn() }, secureStorage: { getItem: jest.fn(), setItem: jest.fn(), deleteItem: jest.fn() } }));

@@ -22,20 +22,20 @@ export function InstanceRow({ instance, client, onPress }:
   return (
     <Pressable accessibilityRole="button" accessibilityLabel={instance.title} onPress={onPress}
       style={{ flex: 1, minWidth: 260, margin: 8, overflow: "hidden", backgroundColor: theme.color.surfaceRaised,
-        borderRadius: 14, borderWidth: 1, borderColor: instance.active ? theme.color.accent : theme.color.border }}>
+        borderRadius: 2, borderWidth: 1, borderColor: instance.active ? theme.color.accent : theme.color.border }}>
       <View style={{ aspectRatio: 16 / 9, overflow: "hidden", backgroundColor: theme.color.surface }}>
         {preview !== null && <Image testID="instance-preview" source={preview} resizeMode="cover" style={{ width: "100%", height: "100%" }} />}
         {instance.active ? <Animated.View testID="instance-scanline" pointerEvents="none"
           style={{ position: "absolute", left: 0, right: 0, height: 2, backgroundColor: theme.color.accent,
             opacity: 0.82, transform: [{ translateY }] }} /> : null}
-        {instance.active ? <View style={{ position: "absolute", left: 11, top: 10, paddingHorizontal: 7, paddingVertical: 3, backgroundColor: theme.color.live, borderRadius: 4 }}><Text style={{ fontFamily: theme.font.monoBold, fontSize: 9, letterSpacing: .7, color: theme.color.bg }}>LIVE</Text></View> : null}
+        {instance.active ? <View style={{ position: "absolute", left: 11, top: 10, paddingHorizontal: 7, paddingVertical: 3, backgroundColor: theme.color.live, borderRadius: 2 }}><Text style={{ fontFamily: theme.font.monoBold, fontSize: 9, letterSpacing: .7, color: theme.color.text }}>LIVE</Text></View> : null}
         {(hasResolution || hasFps) ? <View style={{ position: "absolute", right: 10, top: 10, flexDirection: "row", gap: 5 }}>
-          {hasResolution ? <Text style={{ paddingHorizontal: 6, paddingVertical: 3, borderRadius: 4, backgroundColor: "rgba(6,7,11,.72)", borderWidth: 1, borderColor: theme.color.border, fontFamily: theme.font.mono, fontSize: 9, color: theme.color.textMuted }}>{instance.w}×{instance.h}</Text> : null}
-          {hasFps ? <Text style={{ paddingHorizontal: 6, paddingVertical: 3, borderRadius: 4, backgroundColor: "rgba(6,7,11,.72)", borderWidth: 1, borderColor: theme.color.border, fontFamily: theme.font.mono, fontSize: 9, color: theme.color.textMuted }}>{instance.fps} FPS</Text> : null}
+          {hasResolution ? <Text style={{ paddingHorizontal: 6, paddingVertical: 3, borderRadius: 2, backgroundColor: "rgba(20,20,19,.72)", borderWidth: 1, borderColor: theme.color.border, fontFamily: theme.font.mono, fontSize: 9, color: theme.color.textMuted }}>{instance.w}×{instance.h}</Text> : null}
+          {hasFps ? <Text style={{ paddingHorizontal: 6, paddingVertical: 3, borderRadius: 2, backgroundColor: "rgba(20,20,19,.72)", borderWidth: 1, borderColor: theme.color.border, fontFamily: theme.font.mono, fontSize: 9, color: theme.color.textMuted }}>{instance.fps} FPS</Text> : null}
         </View> : null}
         <Text numberOfLines={1} style={{ position: "absolute", left: 11, right: 11, bottom: 10, fontFamily: theme.font.semibold, fontSize: 15, color: theme.color.text, textShadowColor: "rgba(0,0,0,.9)", textShadowOffset: { width: 0, height: 2 }, textShadowRadius: 10 }}>{instance.title}</Text>
       </View>
-      <View style={{ minHeight: 42, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 11, borderTopWidth: 1, borderColor: "#1b1f2b" }}><Text style={{ fontFamily: theme.font.mono, fontSize: 9.5, letterSpacing: .5, color: theme.color.textMuted }}>{instance.serial}</Text><Text style={{ fontFamily: theme.font.mono, fontSize: 8.5, letterSpacing: .8, color: theme.color.accent }}>TAP TO STREAM</Text></View>
+      <View style={{ minHeight: 42, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 11, borderTopWidth: 1, borderColor: "#292826" }}><Text style={{ fontFamily: theme.font.mono, fontSize: 9.5, letterSpacing: .5, color: theme.color.textMuted }}>{instance.serial}</Text><Text style={{ fontFamily: theme.font.mono, fontSize: 8.5, letterSpacing: .8, color: theme.color.accent }}>TAP TO STREAM</Text></View>
     </Pressable>
   );
 }

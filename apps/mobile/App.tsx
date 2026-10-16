@@ -3,12 +3,7 @@ import React, { useEffect } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { NavigationContainer, useNavigationContainerRef } from "@react-navigation/native";
 import { useFonts } from "expo-font";
-import {
-  SpaceGrotesk_400Regular,
-  SpaceGrotesk_500Medium,
-  SpaceGrotesk_600SemiBold,
-  SpaceGrotesk_700Bold,
-} from "@expo-google-fonts/space-grotesk";
+import { BeVietnamPro_400Regular, BeVietnamPro_500Medium } from "@expo-google-fonts/be-vietnam-pro";
 import {
   JetBrainsMono_400Regular,
   JetBrainsMono_500Medium,
@@ -36,10 +31,8 @@ function Gate() {
 
 export default function App() {
   const [fontsLoaded] = useFonts({
-    SpaceGrotesk_400Regular,
-    SpaceGrotesk_500Medium,
-    SpaceGrotesk_600SemiBold,
-    SpaceGrotesk_700Bold,
+    BeVietnamPro_400Regular,
+    BeVietnamPro_500Medium,
     JetBrainsMono_400Regular,
     JetBrainsMono_500Medium,
     JetBrainsMono_700Bold,

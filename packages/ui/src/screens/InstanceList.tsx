@@ -75,14 +75,14 @@ export function InstanceList({ navigation }: { navigation: any }) {
   const header = (
     <View>
       <View testID="host-status-card" style={{ padding: 14, marginBottom: 20,
-        backgroundColor: theme.color.surfaceRaised, borderRadius: 14, borderWidth: 1, borderColor: theme.color.border }}>
+        backgroundColor: theme.color.surfaceRaised, borderRadius: 2, borderWidth: 1, borderColor: theme.color.border }}>
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
           <Text numberOfLines={1} style={{ flex: 1, fontFamily: theme.font.semibold, fontSize: 14, color: theme.color.text }}>{hostReachability?.host ?? "Host unavailable"}</Text>
           {hostReachability ? <NetChip kind={target?.kind} state={hostReachability.state} host={hostReachability.host} /> : null}
         </View>
-        <View style={{ flexDirection: "row", marginTop: 13, paddingTop: 12, borderTopWidth: 1, borderColor: "#1b1f2b" }}>
+        <View style={{ flexDirection: "row", marginTop: 13, paddingTop: 12, borderTopWidth: 1, borderColor: "#292826" }}>
           <View style={{ flex: 1 }}><Text style={{ fontFamily: theme.font.mono, fontSize: 8.5, letterSpacing: 1.15, color: theme.color.textDim }}>PING</Text>{rtt !== null ? <Text style={{ fontFamily: theme.font.mono, fontSize: 18, color: theme.color.telemetry, marginTop: 3 }}>{rtt}<Text style={{ fontSize: 10, color: theme.color.textDim }}> ms</Text></Text> : <Text style={{ fontFamily: theme.font.mono, fontSize: 18, color: theme.color.textDim, marginTop: 3 }}>—</Text>}</View>
-          <View style={{ flex: 1.45, borderLeftWidth: 1, borderColor: "#1b1f2b", paddingLeft: 12 }}><Text style={{ fontFamily: theme.font.mono, fontSize: 8.5, letterSpacing: 1.15, color: theme.color.textDim }}>ADDRESS</Text><Text numberOfLines={1} style={{ fontFamily: theme.font.mono, fontSize: 11, color: theme.color.text, marginTop: 6 }}>{hostReachability?.host ?? "—"}</Text></View>
+          <View style={{ flex: 1.45, borderLeftWidth: 1, borderColor: "#292826", paddingLeft: 12 }}><Text style={{ fontFamily: theme.font.mono, fontSize: 8.5, letterSpacing: 1.15, color: theme.color.textDim }}>ADDRESS</Text><Text numberOfLines={1} style={{ fontFamily: theme.font.mono, fontSize: 11, color: theme.color.text, marginTop: 6 }}>{hostReachability?.host ?? "—"}</Text></View>
         </View>
       </View>
       <View testID="instances-heading" onLayout={(event) => setInstancesOffset(event.nativeEvent.layout.y)} style={{ flexDirection: "row", alignItems: "baseline", gap: 10, marginBottom: 12 }}>
@@ -104,7 +104,7 @@ export function InstanceList({ navigation }: { navigation: any }) {
       <FlatList testID="instance-grid" accessibilityLabel={`Instance grid, ${columns} columns`} ref={listRef} data={items} key={`grid-${columns}`} numColumns={columns} keyExtractor={(i) => i.id}
         ListHeaderComponent={header} refreshing={refreshing} onRefresh={onRefresh}
         contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 120, flexGrow: 1 }}
-        ListEmptyComponent={<View style={{ padding: 34, backgroundColor: theme.color.surfaceRaised, borderRadius: 14, alignItems: "center" }}>
+        ListEmptyComponent={<View style={{ padding: 34, backgroundColor: theme.color.surfaceRaised, borderRadius: 2, alignItems: "center" }}>
           <Text style={{ fontFamily: theme.font.semibold, fontSize: 17, color: theme.color.text, marginBottom: 8 }}>{reachable ? "No windows found" : "Can't reach the server"}</Text>
           <Text style={{ fontFamily: theme.font.regular, fontSize: 13, textAlign: "center", color: theme.color.textMuted }}>{reachable ? "The server answered, but nothing is running. Start an instance in LDPlayer, then pull to refresh." : "We couldn't reach the server on its last check. Confirm it's running and reachable, then pull to refresh."}</Text>
         </View>}

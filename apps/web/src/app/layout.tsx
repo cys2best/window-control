@@ -31,7 +31,7 @@ export const viewport: Viewport = {
   maximumScale: 1,
   userScalable: false,
   viewportFit: "cover",
-  themeColor: "#06070b",
+  themeColor: "#141413",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -41,7 +41,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link
-          href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap"
+          href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500&family=JetBrains+Mono:wght@400;500;700&display=swap"
           rel="stylesheet"
         />
         {/* react-native-web screens size themselves with `flex: 1`, which
@@ -51,7 +51,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             viewport tracks Safari's collapsing toolbar, and unlike an
             overflow-hidden body, iOS (home-screen app included) cannot
             scroll the document underneath it. */}
-        <style>{"html,body{height:100%;margin:0;background:#06070b;overflow:hidden;overscroll-behavior:none}body{position:fixed;inset:0;display:flex;flex-direction:column}"}</style>
+        <style>{"html,body{height:100%;margin:0;background:#141413;overflow:hidden;overscroll-behavior:none}body{position:fixed;inset:0;display:flex;flex-direction:column}"}</style>
       </head>
       <body>
         <Providers>{children}</Providers>

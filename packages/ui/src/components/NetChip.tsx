@@ -32,7 +32,7 @@ export function NetChip({ state, host, route = "unknown" }: NetChipProps) {
     <View accessible accessibilityLabel={`${label}, ${state}`}
       style={{ flexDirection: "row", alignItems: "center", gap: 7, paddingHorizontal: 12, paddingVertical: 8,
         backgroundColor, borderRadius: theme.radius.pill, maxWidth: "100%" }}>
-      <Animated.View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: color, opacity: pulse }} />
+      <Animated.View style={{ width: 6, height: 6, borderRadius: 2, backgroundColor: color, opacity: pulse }} />
       <Text numberOfLines={1} style={{ flexShrink: 1, fontFamily: theme.font.mono, fontSize: 10, color }}>{label}</Text>
     </View>
   );

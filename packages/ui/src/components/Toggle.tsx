@@ -15,14 +15,14 @@ export function Toggle({ value, onChange, label }: { value: boolean; onChange: (
         width: 44,
         height: 26,
         padding: 3,
-        borderRadius: 13,
+        borderRadius: 2,
         justifyContent: "center",
         alignItems: value ? "flex-end" : "flex-start",
         backgroundColor: value ? theme.color.accent : theme.color.surfaceRaised,
         borderWidth: value ? 0 : 1,
         borderColor: theme.color.border,
       }}>
-        <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: value ? theme.color.bg : theme.color.textMuted }} />
+        <View style={{ width: 20, height: 20, borderRadius: 1, backgroundColor: value ? theme.color.bg : theme.color.textMuted }} />
       </View>
       <Text style={{ color: theme.color.text, fontFamily: theme.font.medium, fontSize: 14 }}>{label}</Text>
     </Pressable>

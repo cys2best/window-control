@@ -33,8 +33,8 @@ test("native capsule clears the safe bottom inset by 34px", async () => {
       <BottomNav onInstances={() => {}} onResume={() => {}} onHealth={() => {}} />
     </SafeAreaInsetsContext.Provider>,
   );
-  expect(StyleSheet.flatten(screen.getByTestId("navigation-capsule").props.style)).toMatchObject({ height: 60, bottom: 68, backgroundColor: "rgba(19,22,31,.82)" });
-  expect(StyleSheet.flatten(screen.getByRole("button", { name: "Resume" }).props.style)).toMatchObject({ width: 66, height: 48, backgroundColor: "#00E5FF" });
+  expect(StyleSheet.flatten(screen.getByTestId("navigation-capsule").props.style)).toMatchObject({ height: 60, bottom: 68, backgroundColor: "rgba(30,29,27,.86)" });
+  expect(StyleSheet.flatten(screen.getByRole("button", { name: "Resume" }).props.style)).toMatchObject({ width: 66, height: 48, backgroundColor: "#faf9f5" });
 });
 
 test.each([767, 768])("web width %i uses the appropriate utility position", async (width) => {

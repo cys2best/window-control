@@ -22,6 +22,6 @@ test("shows no invented RTT when telemetry is unavailable", async () => {
   const screen = await render(<SignalMeter telemetry={{ ...telemetry, rttMs: null, loss: null }} connected={false} onPress={() => {}} />);
 
   expect(screen.getByText("—")).toBeTruthy();
-  expect(screen.getAllByTestId("signal-bar")[0]).toHaveStyle({ backgroundColor: "#FF5722" });
+  expect(screen.getAllByTestId("signal-bar")[0]).toHaveStyle({ backgroundColor: "#e8895c" });
   screen.unmount();
 });

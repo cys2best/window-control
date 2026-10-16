@@ -14,9 +14,9 @@ export function Button({ label, onPress, variant = "primary", loading, disabled 
         borderWidth: primary ? 0 : 1,
         borderColor: primary ? "transparent" : theme.color.border,
         shadowColor: primary ? theme.color.accent : "transparent",
-        shadowOpacity: primary ? 0.36 : 0,
-        shadowRadius: primary ? 12 : 0,
-        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: primary ? 0.26 : 0,
+        shadowRadius: primary ? 14 : 0,
+        shadowOffset: { width: 0, height: 0 },
         elevation: primary ? 6 : 0,
         opacity: disabled ? 0.45 : 1,
       }}>
