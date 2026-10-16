@@ -20,6 +20,7 @@ resource "aws_instance" "shared_remote" {
     http_endpoint               = "enabled"
     http_tokens                 = "required"
     http_put_response_hop_limit = 1
+    instance_metadata_tags      = "enabled"
   }
 
   root_block_device {
@@ -31,6 +32,7 @@ resource "aws_instance" "shared_remote" {
   tags = {
     Name                 = "shared-remote"
     "max-active-streams" = tostring(var.max_active_streams)
+    "remote-hostname"    = var.hostname
   }
 
   lifecycle {
