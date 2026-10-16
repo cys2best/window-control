@@ -12,6 +12,7 @@ server {
     error_log /dev/stderr warn;
     root /usr/share/nginx/html;
     client_max_body_size 64k;
+    include /etc/nginx/cloudflare-realip.conf;
     location = /connect {
         proxy_pass http://broker:8000;
         proxy_http_version 1.1;

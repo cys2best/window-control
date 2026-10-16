@@ -12,4 +12,5 @@ RUN test -n "$REMOTE_ORIGIN" && npm run build -w apps/web
 FROM nginx:1.28-alpine
 COPY --from=web /app/apps/web/out /usr/share/nginx/html
 COPY infra/shared-remote/edge.conf.template /etc/nginx/templates/default.conf.template
+COPY infra/shared-remote/cloudflare-realip.conf /etc/nginx/cloudflare-realip.conf
 ENV NGINX_ENVSUBST_FILTER=REMOTE_DOMAIN

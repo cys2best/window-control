@@ -221,3 +221,33 @@ def test_cloudflare_environment_loads_without_coturn_inputs(tmp_path):
     assert result.returncode == 0, result.stderr
     output = result.stdout + result.stderr
     assert 'token-secret-never-print' not in output and 'keyid0123456789abcdef' not in output
+
+
+def test_edge_trusts_cloudflare_header_only_from_vendored_ranges():
+    import ipaddress
+    template = (INFRA / 'edge.conf.template').read_text()
+    assert 'include /etc/nginx/cloudflare-realip.conf;' in template
+    conf = (INFRA / 'cloudflare-realip.conf').read_text()
+    assert 'real_ip_header CF-Connecting-IP;' in conf
+    assert 'real_ip_recursive off;' in conf
+    cidrs = [line.split()[1].rstrip(';') for line in conf.splitlines() if line.startswith('set_real_ip_from ')]
+    assert len(cidrs) >= 10
+    for cidr in cidrs:
+        network = ipaddress.IPv4Network(cidr)
+        assert network.is_global and network.prefixlen >= 8
+    dockerfile = (INFRA / 'edge.Dockerfile').read_text()
+    assert 'COPY infra/shared-remote/cloudflare-realip.conf /etc/nginx/cloudflare-realip.conf' in dockerfile
+    assert '!infra/shared-remote/cloudflare-realip.conf' in (INFRA / 'edge.Dockerfile.dockerignore').read_text()
+
+
+def test_cloudflare_ip_drift_check(tmp_path, capsys):
+    spec = importlib.util.spec_from_file_location('check_cloudflare_ips', ROOT / 'scripts/check_cloudflare_ips.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    vendored = module.cloudflare_cidrs((INFRA / 'cloudflare-realip.conf').read_text())
+    live = tmp_path / 'ips-v4'
+    live.write_text('\n'.join(vendored) + '\n')
+    assert module.main(['--live-file', str(live)]) == 0
+    live.write_text('\n'.join(vendored + ['198.51.100.0/24']) + '\n')
+    assert module.main(['--live-file', str(live)]) == 1
+    assert '198.51.100.0/24' in capsys.readouterr().out
