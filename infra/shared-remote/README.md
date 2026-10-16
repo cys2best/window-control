@@ -1,5 +1,9 @@
 # Shared signaling and TURN deployment proposal
 
+> **Deployed path:** the live service runs on AWS behind Cloudflare with Cloudflare Realtime TURN, using
+> `compose.cloudflare.yml` (no coturn); see [`infra/aws/README.md`](../aws/README.md). The coturn stack below
+> (`compose.production.yml`) remains for self-hosted relay and the Linux integration suite.
+
 This directory prepares a Linux deployment. It does not provision or purchase a
 service. Provider, region, public DNS names, iOS team/app identifiers, and monthly
 budget remain operator decisions. Windows/iPhone TURN/TLS on port 443 and media

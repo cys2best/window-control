@@ -98,3 +98,17 @@ def test_deploy_script_passes_shellcheck():
     assert shellcheck, 'shellcheck is required for this check'
     result = subprocess.run([shellcheck, str(SCRIPT)], capture_output=True, text=True, timeout=60)
     assert result.returncode == 0, result.stdout
+
+
+def test_runbook_covers_first_run_and_never_inlines_secrets():
+    readme = ROOT / 'infra/aws/README.md'
+    assert readme.is_file(), 'missing AWS runbook'
+    text = readme.read_text()
+    for needle in ('use_lockfile', 'bootstrap', 'put-parameter', 'file://', 'image_tag', 'prevent_destroy',
+                   't4g.micro', 'broker.admin issue', 'AWS_DEPLOY_ROLE_ARN', 'REMOTE_INSTANCE_ID',
+                   'REMOTE_HOSTNAME', 'REMOTE_SERVICE_URL=https://emuctrl.nendojo.com', 'CLOUDFLARE_API_TOKEN'):
+        assert needle in text, needle
+    for line in text.splitlines():
+        if 'put-parameter' in line:
+            assert '--value "' not in line and "--value '" not in line, line
+    assert 'infra/aws/README.md' in (ROOT / 'infra/shared-remote/README.md').read_text()
