@@ -1,7 +1,9 @@
 # Direct WebRTC With Shared TURN Fallback — Design
 
 Date: 2026-10-02
-Status: Written design for user review; implementation has not started.
+Status: Design approved by the user; implementation has not started.
+
+Implementation plan: [Direct WebRTC With Shared TURN Fallback](../plans/2026-10-02-direct-webrtc-shared-turn.md).
 
 ## Intent and scope
 
@@ -71,6 +73,27 @@ Support TURN/UDP plus TURN over TCP/TLS for networks blocking endpoint UDP. TURN
 The current engine manifest selects libdatachannel without a libnice backend. Official [libdatachannel documentation](https://libdatachannel.org/pages/reference.html) states TURN TCP/TLS support requires libnice. Verify the actual Windows dependency versions/backend and test the packaged binary before selecting the smallest required backend/build change. ICE-TCP support alone is not evidence of TURN/TLS compatibility. Preserve capture and encoding regardless of the ICE backend choice.
 
 The old public implementation is reference material, not a drop-in replacement. In particular, do not restore static distributed TURN credentials, the generic loopback HTTP tunnel, Supabase login, or an engine-level public WSS client merely to recover connectivity.
+
+## Relay license keys (added 2026-10-16)
+
+Anonymous registration lets anyone obtain relay credentials by pairing a fake viewer to a fake PC, and relay abuse would be untraceable. A license key gates **relay access only**; it is not a login. Registration, pairing, signaling and STUN-only direct sessions stay key-free.
+
+- **Key format.** `EMU-XXXXX-XXXXX-XXXXX-XXXXX`: 20 Crockford base32 characters (100 random bits). Input is normalized: uppercase, spaces and dashes removed, `O`→`0`, `I`/`L`→`1`. The broker stores only the SHA-256 digest of the normalized key.
+- **One PC per key.** A key binds to one installation ID. A media admission for that installation issues TURN credentials and `relay_available: true`; any other installation gets a STUN-only bundle with `relay_available: false`, which the existing viewer path already reports as `relay_unavailable`.
+- **Activation.** The owner pastes the key once in the launcher. The PC calls `POST /installations/{id}/license` with its installation credential and the key.
+  - Unknown, revoked or expired key → `403 invalid_license`.
+  - Unbound key, key bound to this installation, or key bound to an installation that no longer exists → bind, `200`.
+  - Key bound to another live installation and no move in the last 7 days → **move**: revoke the previous installation exactly as `DELETE /installations/{id}` does (its viewers and admission are canceled, its identity is deleted), bind to the caller, record `moved_at`, `200`.
+  - Same case but within 7 days of `moved_at` → `409 license_in_use` with `retry_after` seconds; nothing changes. The first activation does not start the cooldown.
+- **Deactivation.** Launcher "Deactivate license" calls `DELETE /installations/{id}/license` with the credential. The key becomes unbound with `moved_at` cleared, so the next activation is immediate. The installation itself stays registered.
+- **Status.** The `host_auth` reply adds `relay_licensed: bool`; the launcher shows *Relay: active* or *Relay: not activated*. Activation and deactivation responses return the same flag.
+- **Operator administration.** `python -m broker.admin issue [--days N] [--note TEXT]` prints a new key once. `reset KEY` unbinds without cooldown. `revoke KEY` disables the key permanently. `list` prints digest prefix, binding, dates and note, never keys. The CLI and the broker share the license file through an exclusive file lock; every broker read reloads the file, so admin changes apply without restart.
+- **Out of scope.** Per-key traffic metering, paid key issuance, and hardware fingerprinting. Per-key relay volume remains bounded by the existing allocation bandwidth, issuance and aggregate capacity limits.
+
+### Hardening added with license keys
+
+- **Coturn per-credential quota.** `user-quota=4` caps simultaneous allocations per TURN username (UDP and TCP/TLS attempts for one endpoint). Relay ports widen from 49160–49200 to **49160–50159**, in coturn config, firewall examples and the test config.
+- **`viewer_auth` rate limit.** Like `pair`, `viewer_auth` is limited per client IP (10 per minute) and per target installation (30 per minute) before any frame is forwarded to the PC. Exceeding either returns `quota_exceeded` and closes the socket.
 
 ## Failure and recovery behavior
 
