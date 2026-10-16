@@ -12,6 +12,8 @@ import time
 from dataclasses import dataclass
 from typing import Callable
 
+import crash_log
+
 
 def _no_window_flags():
     """Return CREATE_NO_WINDOW flag on Windows to suppress console flashes."""
@@ -20,15 +22,7 @@ def _no_window_flags():
     return {}
 
 
-def _log(msg: str):
-    for _p in [r"C:\ProgramData\EmuCtrl", r"C:\Windows\Temp"]:
-        try:
-            os.makedirs(_p, exist_ok=True)
-            with open(os.path.join(_p, "service_crash.log"), "a") as f:
-                f.write(msg + "\n")
-            return
-        except Exception:
-            continue
+_log = crash_log.log
 
 
 @dataclass(frozen=True)

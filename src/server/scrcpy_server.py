@@ -14,21 +14,14 @@ import traceback
 from dataclasses import dataclass
 from typing import Callable
 
+import crash_log
 from config import ASSETS_DIR, QUALITY_TIERS, DEFAULT_TIER
 
 _SCRCPY_BASE_PORT = 27183   # instance 0 → 27183, instance 1 → 27184, …
 _SERVER_JAR = "scrcpy-server"  # filename in assets/scrcpy/
 
 
-def _log(msg: str):
-    for _p in [r"C:\ProgramData\EmuCtrl", r"C:\Windows\Temp"]:
-        try:
-            os.makedirs(_p, exist_ok=True)
-            with open(os.path.join(_p, "service_crash.log"), "a") as f:
-                f.write(msg + "\n")
-            return
-        except Exception:
-            continue
+_log = crash_log.log
 
 
 def no_window_flags():

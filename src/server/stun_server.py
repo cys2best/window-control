@@ -18,10 +18,11 @@ candidate the engine can reach directly, with no relay hop.
 Only STUN Binding requests are handled — enough for ICE candidate discovery.
 """
 
-import os
 import socket
 import struct
 import threading
+
+import crash_log
 
 _MAGIC_COOKIE = 0x2112A442
 _BINDING_REQUEST = 0x0001
@@ -31,15 +32,7 @@ _ATTR_XOR_MAPPED_ADDRESS = 0x0020
 _FAMILY_IPV4 = 0x01
 
 
-def _log(msg: str):
-    for _p in [r"C:\ProgramData\EmuCtrl", r"C:\Windows\Temp", r"C:\Temp", "/tmp"]:
-        try:
-            os.makedirs(_p, exist_ok=True)
-            with open(os.path.join(_p, "service_crash.log"), "a") as f:
-                f.write(msg + "\n")
-            return
-        except Exception:
-            continue
+_log = crash_log.log
 
 
 def _pack_mapped_address(attr_type: int, ip: str, port: int, txid: bytes) -> bytes:

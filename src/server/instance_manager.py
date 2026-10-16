@@ -5,6 +5,7 @@ import time
 import traceback
 from typing import TYPE_CHECKING
 
+import crash_log
 from config import DEFAULT_TIER
 from server import adb_manager
 from server.engine_runtime import EngineSelection
@@ -14,17 +15,7 @@ if TYPE_CHECKING:
     from server.engine_orchestrator import EngineOrchestrator
 
 
-def _log(msg: str):
-    import os
-
-    for path in [r"C:\ProgramData\EmuCtrl", r"C:\Windows\Temp"]:
-        try:
-            os.makedirs(path, exist_ok=True)
-            with open(os.path.join(path, "service_crash.log"), "a") as log_file:
-                log_file.write(msg + "\n")
-            return
-        except Exception:
-            continue
+_log = crash_log.log
 
 
 def instance_name(serial: str) -> str:

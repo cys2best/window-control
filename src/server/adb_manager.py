@@ -7,6 +7,8 @@ import sys
 import threading
 import traceback
 
+import crash_log
+
 
 def _bundled_adb() -> str:
     from config import ASSETS_DIR
@@ -26,15 +28,7 @@ _ADB_PATH_FALLBACKS = [
 ]
 
 
-def _log(msg: str):
-    for _p in [r"C:\ProgramData\EmuCtrl", r"C:\Windows\Temp"]:
-        try:
-            os.makedirs(_p, exist_ok=True)
-            with open(os.path.join(_p, "service_crash.log"), "a") as f:
-                f.write(msg + "\n")
-            return
-        except Exception:
-            continue
+_log = crash_log.log
 
 
 _adb_path_cache: str | None = None

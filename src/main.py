@@ -15,6 +15,7 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 
 import config
+import crash_log
 
 # apps/desktop/tray.py lives outside src/ (a sibling app directory,
 # like apps/web and apps/mobile), so unlike gui.launcher it is
@@ -32,34 +33,26 @@ if not hasattr(sys, "_MEIPASS"):
         sys.path.insert(0, _desktop_dir)
 
 
-def _log_early(msg: str):
-    for _p in [r"C:\ProgramData\EmuCtrl", r"C:\Windows\Temp", r"C:\Temp"]:
-        try:
-            os.makedirs(_p, exist_ok=True)
-            with open(os.path.join(_p, "service_crash.log"), "a") as _f:
-                _f.write(msg + "\n")
-            return
-        except Exception:
-            continue
+_log = crash_log.log
 
 
-_log_early(f"[gui-imports-start] pid={os.getpid()} user={os.environ.get('USERNAME','?')}")
+_log(f"[gui-imports-start] pid={os.getpid()} user={os.environ.get('USERNAME','?')}")
 
 try:
     import threading
     import uvicorn
-    _log_early("[gui-imports] threading+uvicorn OK")
+    _log("[gui-imports] threading+uvicorn OK")
 except Exception:
     import traceback as _tb
-    _log_early(f"[gui-imports] threading/uvicorn FAILED: {_tb.format_exc()[:400]}")
+    _log(f"[gui-imports] threading/uvicorn FAILED: {_tb.format_exc()[:400]}")
     raise
 
 try:
     from PyQt5.QtWidgets import QApplication
-    _log_early("[gui-imports] PyQt5 OK")
+    _log("[gui-imports] PyQt5 OK")
 except Exception:
     import traceback as _tb
-    _log_early(f"[gui-imports] PyQt5 FAILED: {_tb.format_exc()[:400]}")
+    _log(f"[gui-imports] PyQt5 FAILED: {_tb.format_exc()[:400]}")
     raise
 
 try:
@@ -69,23 +62,11 @@ try:
     from gui.launcher import LauncherWindow
     from server.pairing import PairingStore, default_store_path
     from tray import TrayIcon
-    _log_early("[gui-imports] app modules OK")
+    _log("[gui-imports] app modules OK")
 except Exception:
     import traceback as _tb
-    _log_early(f"[gui-imports] app modules FAILED: {_tb.format_exc()[:600]}")
+    _log(f"[gui-imports] app modules FAILED: {_tb.format_exc()[:600]}")
     raise
-
-
-def _log(msg: str):
-    import os
-    for _p in [r"C:\ProgramData\EmuCtrl", r"C:\Windows\Temp"]:
-        try:
-            os.makedirs(_p, exist_ok=True)
-            with open(os.path.join(_p, "service_crash.log"), "a") as f:
-                f.write(msg + "\n")
-            return
-        except Exception:
-            continue
 
 
 def _ensure_assets():

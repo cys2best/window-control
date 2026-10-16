@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from starlette.requests import HTTPConnection
 from starlette.routing import Match
 
+import crash_log
 from config import WEB_BUILD_DIR, STUN_PORT
 from server import adb_manager
 from server.instance_manager import InstanceManager
@@ -157,15 +158,7 @@ class AccessGate:
         await response(scope, receive, send)
 
 
-def _log(msg: str):
-    for _p in [r"C:\ProgramData\EmuCtrl", r"C:\Windows\Temp"]:
-        try:
-            os.makedirs(_p, exist_ok=True)
-            with open(os.path.join(_p, "service_crash.log"), "a") as f:
-                f.write(msg + "\n")
-            return
-        except Exception:
-            continue
+_log = crash_log.log
 
 
 class SelectRequest(BaseModel):

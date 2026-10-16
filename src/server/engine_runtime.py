@@ -26,6 +26,7 @@ import time
 from dataclasses import dataclass
 from typing import Callable, Literal, Optional
 
+import crash_log
 from config import DEFAULT_TIER, QUALITY_TIERS
 
 from server.engine_admin import (
@@ -46,17 +47,7 @@ _HEALTHY_STATE = "connected"
 _RECOVERABLE_STATES = ("stalled", "disconnected")
 
 
-def _log(msg: str):
-    import os
-
-    for _p in [r"C:\ProgramData\EmuCtrl", r"C:\Windows\Temp"]:
-        try:
-            os.makedirs(_p, exist_ok=True)
-            with open(os.path.join(_p, "service_crash.log"), "a") as f:
-                f.write(msg + "\n")
-            return
-        except Exception:
-            continue
+_log = crash_log.log
 
 
 @dataclass(frozen=True)
