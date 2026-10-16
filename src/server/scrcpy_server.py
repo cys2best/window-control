@@ -7,6 +7,7 @@ Python's own media sockets.
 """
 
 import os
+import re
 import subprocess
 import sys
 import time
@@ -14,7 +15,7 @@ import traceback
 from dataclasses import dataclass
 from typing import Callable
 
-from config import ASSETS_DIR, QUALITY_TIERS, DEFAULT_TIER
+from config import ASSETS_DIR, BENCH_SCRCPY_OVERRIDES, QUALITY_TIERS, DEFAULT_TIER
 
 _SCRCPY_BASE_PORT = 27183   # instance 0 → 27183, instance 1 → 27184, …
 _SERVER_JAR = "scrcpy-server"  # filename in assets/scrcpy/
@@ -46,14 +47,32 @@ def _server_jar_path() -> str:
     return os.path.join(ASSETS_DIR, "scrcpy", _SERVER_JAR)
 
 
-def build_scrcpy_args(tier: str, scid: int) -> list[str]:
+# A bench override token goes into an `adb shell` command line, so only plain
+# key=value with no shell metacharacters is accepted.
+_OVERRIDE_TOKEN = re.compile(r"[a-z_]+=[A-Za-z0-9_.,=:-]+")
+
+
+def _apply_overrides(args: list[str], overrides: str) -> list[str]:
+    tokens = overrides.split()
+    for token in tokens:
+        if not _OVERRIDE_TOKEN.fullmatch(token):
+            raise ValueError(f"invalid scrcpy override: {token!r}")
+    # scid stays last: scrcpy_server_process_pattern anchors on it.
+    head, scid_arg = args[:-1], args[-1]
+    for token in tokens:
+        key = token.split("=", 1)[0]
+        head = [a for a in head if a.split("=", 1)[0] != key] + [token]
+    return head + [scid_arg]
+
+
+def build_scrcpy_args(tier: str, scid: int, overrides: str = "") -> list[str]:
     """Build scrcpy-server arguments from a quality tier.
 
     Returns the app_process arg tokens (the part after `com.genymobile.scrcpy.Server 3.1`).
     Includes max_size, video_bit_rate, max_fps from the tier, plus video_codec_options and scid.
     """
     t = QUALITY_TIERS.get(tier, QUALITY_TIERS[DEFAULT_TIER])
-    return [
+    args = [
         "tunnel_forward=true",
         "video_codec=h264",
         f"max_size={t['max_size']}",
@@ -97,6 +116,7 @@ def build_scrcpy_args(tier: str, scid: int) -> list[str]:
         "video_codec_options=i-frame-interval=2,profile=1,level=512,bitrate-mode=1,priority=0,latency=1",
         f"scid={scid:x}",
     ]
+    return _apply_overrides(args, overrides) if overrides else args
 
 
 def scrcpy_server_process_pattern(scid: int) -> str:
@@ -138,7 +158,7 @@ def start_server(adb: str, serial: str, port: int, scid: int, tier: str) -> bool
                 adb, "-s", serial, "shell",
                 "CLASSPATH=/data/local/tmp/scrcpy-server.jar"
                 " app_process / com.genymobile.scrcpy.Server 3.1 "
-                + " ".join(build_scrcpy_args(tier, scid)),
+                + " ".join(build_scrcpy_args(tier, scid, BENCH_SCRCPY_OVERRIDES)),
             ],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,

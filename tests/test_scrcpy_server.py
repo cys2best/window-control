@@ -151,3 +151,31 @@ def test_encoder_is_asked_for_realtime_low_latency_output():
 
     assert options["priority"] == "0"  # MediaFormat.KEY_PRIORITY: 0 = realtime
     assert options["latency"] == "1"   # MediaFormat.KEY_LATENCY: emit after 1 queued frame
+
+
+def test_bench_overrides_replace_matching_options():
+    from server.scrcpy_server import build_scrcpy_args
+
+    args = build_scrcpy_args("360", 1, overrides="max_fps=60 video_encoder=OMX.google.h264.encoder")
+
+    assert "max_fps=60" in args
+    assert "max_fps=30" not in args
+    assert "video_encoder=OMX.google.h264.encoder" in args
+
+
+def test_bench_overrides_reject_shell_metacharacters():
+    import pytest
+
+    from server.scrcpy_server import build_scrcpy_args
+
+    for bad in ["max_fps=60;reboot", "max_fps=$(id)", "max fps=60", "max_fps=60&&x"]:
+        with pytest.raises(ValueError):
+            build_scrcpy_args("360", 1, overrides=bad)
+
+
+def test_bench_overrides_come_from_env_only_in_bench_mode():
+    from config import bench_scrcpy_overrides_from_env
+
+    env = {"EMUCTRL_BENCH_SCRCPY_ARGS": "max_fps=60"}
+    assert bench_scrcpy_overrides_from_env({**env, "EMUCTRL_BENCH": "1"}) == "max_fps=60"
+    assert bench_scrcpy_overrides_from_env(env) == ""

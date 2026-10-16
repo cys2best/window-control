@@ -39,6 +39,17 @@ def bench_mode_from_env(environ) -> bool:
 
 BENCH_MODE = bench_mode_from_env(os.environ)
 
+
+def bench_scrcpy_overrides_from_env(environ) -> str:
+    """Lab-only scrcpy-server options (space-separated key=value) that replace
+    the tier's, e.g. "max_fps=60"; ignored unless bench mode is on."""
+    if not bench_mode_from_env(environ):
+        return ""
+    return environ.get("EMUCTRL_BENCH_SCRCPY_ARGS", "").strip()
+
+
+BENCH_SCRCPY_OVERRIDES = bench_scrcpy_overrides_from_env(os.environ)
+
 ADB_PATH = "adb"       # overridden at runtime by _find_adb()
 SCRCPY_PATH = os.path.join("assets", "scrcpy", "scrcpy.exe")
 
