@@ -47,9 +47,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         {/* react-native-web screens size themselves with `flex: 1`, which
             only fills the viewport when the body is a full-height flex
             column; otherwise they collapse to content height and the
-            default white page shows below. 100dvh (falling back to 100%)
-            tracks mobile Safari's collapsing toolbar. */}
-        <style>{"html,body{height:100%;margin:0;background:#06070b}body{display:flex;flex-direction:column;height:100dvh;overflow:hidden}"}</style>
+            default white page shows below. A fixed body pinned to the
+            viewport tracks Safari's collapsing toolbar, and unlike an
+            overflow-hidden body, iOS (home-screen app included) cannot
+            scroll the document underneath it. */}
+        <style>{"html,body{height:100%;margin:0;background:#06070b;overflow:hidden;overscroll-behavior:none}body{position:fixed;inset:0;display:flex;flex-direction:column}"}</style>
       </head>
       <body>
         <Providers>{children}</Providers>
