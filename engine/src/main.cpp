@@ -1,5 +1,7 @@
 // engine/src/main.cpp
 #include "admin_handler.h"
+#include "bench_log.h"
+#include "bench_messages.h"
 #include "engine_config.h"
 #include "http_server.h"
 #include "input_router.h"
@@ -64,7 +66,7 @@ int main(int argc, char** argv) {
     if (argc < 3) {
         std::cerr << "Usage: engine.exe <instance_name> <scrcpy_port>\n"
                      "Environment: ENGINE_WHEP_CAPABILITY_SECRET, "
-                     "ENGINE_LOCAL_ICE_SERVERS, ENGINE_VIDEO_BIT_RATE\n";
+                     "ENGINE_LOCAL_ICE_SERVERS, ENGINE_VIDEO_BIT_RATE, EMUCTRL_BENCH\n";
         return 1;
     }
 
@@ -82,6 +84,12 @@ int main(int argc, char** argv) {
             } catch (const std::exception&) {
                 std::cerr << "[engine] ignoring unreadable ENGINE_VIDEO_BIT_RATE" << std::endl;
             }
+        }
+
+        // Lab latency bench (scripts/bench). Off unless exactly "1".
+        if (bench::EnabledFromEnv(GetEnvOrEmpty("EMUCTRL_BENCH").c_str())) {
+            bench::SetEnabled(true);
+            std::cerr << "[engine] bench mode on" << std::endl;
         }
 
         PeerRegistry registry;

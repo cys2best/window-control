@@ -4,6 +4,8 @@
 // to per-peer WebRTC DataChannels instead of one shared WebSocket.
 #include "input_router.h"
 #include "peer_registry.h"
+#include "bench_log.h"
+#include "bench_messages.h"
 #include <algorithm>
 #include <cmath>
 #include <nlohmann/json.hpp>
@@ -100,12 +102,20 @@ std::int32_t InputRouter::KeycodeForKey(const std::string& key) const {
 }
 
 void InputRouter::HandleMessage(PeerSession* peer, const std::string& jsonMessage) {
+    const std::int64_t receivedUs = bench::Enabled() ? bench::NowUs() : 0;
     auto msg = json::parse(jsonMessage, nullptr, false);
     if (msg.is_discarded()) return;
     std::string type = msg.value("type", "");
 
     if (type == "echo") {
         if (peer) peer->SendInputMessage(jsonMessage);
+        return;
+    }
+
+    // Answered before the control check: bench messages never touch scrcpy.
+    if (bench::IsBenchMessage(type)) {
+        auto reply = bench::HandleMessage(msg);
+        if (reply && peer) peer->SendInputMessage(*reply);
         return;
     }
 
@@ -135,6 +145,13 @@ void InputRouter::HandleMessage(PeerSession* peer, const std::string& jsonMessag
             ScrcpyControlClient::ACTION_DOWN, *x, *y, status.width, status.height);
         control->SendTouch(
             ScrcpyControlClient::ACTION_UP, *x, *y, status.width, status.height);
+        if (receivedUs != 0) {
+            auto seq = msg.find("bench_seq");
+            if (seq != msg.end() && seq->is_number_unsigned()) {
+                bench::Record(bench::Entry{bench::EntryKind::Input, seq->get<std::uint64_t>(),
+                                           receivedUs, bench::NowUs(), 0});
+            }
+        }
     } else if (type == "drag_start") {
         {
             std::lock_guard<std::mutex> lock(fingerMutex_);

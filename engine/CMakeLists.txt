@@ -40,6 +40,7 @@ add_library(engine_core
   src/engine_config.cpp
   src/send_pacer.cpp
   src/bench_log.cpp
+  src/bench_messages.cpp
 )
 target_include_directories(engine_core PUBLIC src)
 target_link_libraries(engine_core PUBLIC
@@ -67,6 +68,7 @@ add_executable(engine_tests
   test/test_main_wiring.cpp
   test/test_send_pacer.cpp
   test/test_bench_log.cpp
+  test/test_bench_messages.cpp
 )
 target_link_libraries(engine_tests PRIVATE engine_core GTest::gtest GTest::gtest_main)
 add_test(NAME engine_tests COMMAND engine_tests)

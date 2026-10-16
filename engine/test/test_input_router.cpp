@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include "bench_log.h"
 #include "input_router.h"
 #include "scrcpy_source.h"
 #include "peer_registry.h"
@@ -418,4 +419,56 @@ TEST(InputRouter, ClickClearsActiveDragState) {
     EXPECT_EQ(events[0].action, ScrcpyControlClient::ACTION_DOWN);
     EXPECT_EQ(events[1].action, ScrcpyControlClient::ACTION_DOWN);
     EXPECT_EQ(events[2].action, ScrcpyControlClient::ACTION_UP);
+}
+
+TEST(InputRouter, BenchClickRecordsInputTiming) {
+    bench::SetEnabled(true);
+    FakeScrcpyServer fake;
+    fake.Serve();
+    PeerRegistry registry;
+    ScrcpySource source(registry);
+    source.ConnectInitial(fake.Port());
+    InputRouter router(source);
+
+    router.HandleMessageForTest(R"({"type":"click","x":0.5,"y":0.5,"bench_seq":7})");
+
+    const auto chunk = bench::Fetch(0, 10);
+    ASSERT_EQ(chunk.entries.size(), 1u);
+    EXPECT_EQ(chunk.entries[0].kind, bench::EntryKind::Input);
+    EXPECT_EQ(chunk.entries[0].key, 7u);
+    EXPECT_GT(chunk.entries[0].t1Us, 0);
+    EXPECT_GE(chunk.entries[0].t2Us, chunk.entries[0].t1Us);
+    bench::SetEnabled(false);
+}
+
+TEST(InputRouter, BenchClickWithInvalidSeqStillTapsButRecordsNothing) {
+    bench::SetEnabled(true);
+    FakeScrcpyServer fake;
+    fake.Serve();
+    PeerRegistry registry;
+    ScrcpySource source(registry);
+    source.ConnectInitial(fake.Port());
+    InputRouter router(source);
+
+    router.HandleMessageForTest(R"({"type":"click","x":0.5,"y":0.5,"bench_seq":-1})");
+    router.HandleMessageForTest(R"({"type":"click","x":0.5,"y":0.5,"bench_seq":1.5})");
+    router.HandleMessageForTest(R"({"type":"click","x":0.5,"y":0.5,"bench_seq":"7"})");
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    EXPECT_EQ(bench::Fetch(0, 10).total, 0u);
+    EXPECT_EQ(fake.ControlBytesReceived(), 3u * 2u * 32u);  // DOWN + UP per click
+    bench::SetEnabled(false);
+}
+
+TEST(InputRouter, ClickRecordsNothingWhenBenchIsOff) {
+    bench::SetEnabled(false);
+    FakeScrcpyServer fake;
+    fake.Serve();
+    PeerRegistry registry;
+    ScrcpySource source(registry);
+    source.ConnectInitial(fake.Port());
+    InputRouter router(source);
+
+    router.HandleMessageForTest(R"({"type":"click","x":0.5,"y":0.5,"bench_seq":7})");
+    EXPECT_EQ(bench::Fetch(0, 10).total, 0u);
 }
