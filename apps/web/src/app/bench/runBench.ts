@@ -36,6 +36,11 @@ export async function runBench({ select, serial, count, warmup, video, onStatus 
   const selection = await select(serial);
 
   const subscribers = new Set<(message: any) => void>();
+  // A dropped stream silently swallows clicks and pings; end the run instead
+  // of letting every later wait time out with a misleading reason.
+  let reportLost: (error: Error) => void = () => {};
+  const lost = new Promise<never>((_, reject) => { reportLost = reject; });
+  lost.catch(() => {});
   onStatus("connecting");
   const session = await connectWhep({
     whepUrl: selection.whep_url,
@@ -44,7 +49,7 @@ export async function runBench({ select, serial, count, warmup, video, onStatus 
     RTCImpl: window.RTCPeerConnection,
     onStream: (stream) => { video.srcObject = stream; },
     onInputRtt: () => {},
-    onState: () => {},
+    onState: (state) => { if (state === "disconnected") reportLost(new Error("stream disconnected mid-run")); },
     onMessage: (message) => subscribers.forEach((handler) => handler(message)),
   });
   await video.play().catch(() => {});
@@ -88,7 +93,7 @@ export async function runBench({ select, serial, count, warmup, video, onStatus 
       waiters.push(done);
     });
 
-  try {
+  const measure = async (): Promise<BenchResult> => {
     const bench = makeBenchClient(channel, { now: () => performance.now() });
     onStatus("syncing clocks");
     const before = await bench.syncClock();
@@ -124,6 +129,10 @@ export async function runBench({ select, serial, count, warmup, video, onStatus 
       taps, frames, engine: engineLog.entries,
       stats: analysis.stats, validity: analysis.validity, missRate: analysis.missRate,
     };
+  };
+
+  try {
+    return await Promise.race([measure(), lost]);
   } finally {
     stopped = true;
     await session.close();
