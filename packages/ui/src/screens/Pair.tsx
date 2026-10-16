@@ -26,7 +26,11 @@ function withDefaultPort(url: string): string {
   return hasPort ? url : `${scheme}${authority}:${DEFAULT_HOST_PORT}${rest}`;
 }
 
-export function Pair({ navigation, route, remoteOptions }: { navigation: any; route?: { params?: { invitation?: string } }; remoteOptions?: RemoteClientOptions }) {
+// Native apps pass a camera scanner; what it reads goes into the host field
+// (an address, or the PC's invite link, which then pairs remotely).
+export type QrScannerComponent = React.ComponentType<{ onScanned: (data: string) => void; onClose: () => void }>;
+
+export function Pair({ navigation, route, remoteOptions, QrScanner }: { navigation: any; route?: { params?: { invitation?: string } }; remoteOptions?: RemoteClientOptions; QrScanner?: QrScannerComponent }) {
   const { base, setServer, setTarget, client, hostReachability, target } = useServer();
   const invitation = route?.params?.invitation;
   const [local, setLocal] = useState(false);
@@ -45,6 +49,7 @@ export function Pair({ navigation, route, remoteOptions }: { navigation: any; ro
   // told where the host is.
   const needsHost = !remote && (Platform.OS !== "web" || local);
   const [host, setHost] = useState(base ?? "");
+  const [scanning, setScanning] = useState(false);
   const [code, setCode] = useState("");
   const [focusedField, setFocusedField] = useState<string | null>(null);
   const [error, setError] = useState("");
@@ -58,6 +63,12 @@ export function Pair({ navigation, route, remoteOptions }: { navigation: any; ro
     if (busyRef.current) return;
     setError("");
     let invite: ReturnType<typeof parseRemoteInvite> | null = null;
+    // A native app has no invite route without universal links: the PC's
+    // link arrives pasted (or scanned) into the host field instead.
+    if (!remote && needsHost && remoteOptions) {
+      try { invite = parseRemoteInvite(host.trim(), remoteOptions.trustedOrigin); } catch {}
+    }
+    const viaInvite = remote || invite !== null;
     if (remote) {
       const link = invitation ?? pastedLink.trim();
       if (!link) { setError("Paste the pairing link shown on your PC"); return; }
@@ -70,10 +81,10 @@ export function Pair({ navigation, route, remoteOptions }: { navigation: any; ro
     }
     const origin = typeof window !== "undefined" && window.location?.origin ? window.location.origin : "";
     const entered = needsHost ? host.trim() : (base || origin);
-    if (!remote && !entered) { setError("Enter your host address"); return; }
+    if (!viaInvite && !entered) { setError("Enter your host address"); return; }
     const digits = code.replace(/\s+/g, "");
     if (!digits) { setError("Enter the pairing code shown on your PC"); return; }
-    if (remote && !/^\d{6}$/.test(digits)) { setError("Enter the six-digit pairing code shown on your PC"); return; }
+    if (viaInvite && !/^\d{6}$/.test(digits)) { setError("Enter the six-digit pairing code shown on your PC"); return; }
     const captured = current.current;
     const n = ++attempt.current;
     const isCurrent = () => mounted.current && attempt.current === n && current.current.client === captured.client && current.current.target === captured.target && current.current.invitation === captured.invitation && current.current.remote === captured.remote;
@@ -100,7 +111,7 @@ export function Pair({ navigation, route, remoteOptions }: { navigation: any; ro
       }
     } catch (err: unknown) {
       if (!isCurrent()) return;
-      if (remote) {
+      if (viaInvite) {
         const reason = err instanceof Error ? err.message : "";
         setError(reason === "offline" || reason === "pairing offline" ? "Your PC is offline. Open the host and try again."
           : reason === "expired_pairing" ? "This invitation has expired. Create a new one on your PC."
@@ -150,6 +161,11 @@ export function Pair({ navigation, route, remoteOptions }: { navigation: any; ro
               autoCapitalize="none" autoCorrect={false} keyboardType="url" editable={!busy}
               onFocus={() => setFocusedField("host")} onBlur={() => setFocusedField(null)}
               style={{ ...fieldStyle("host"), fontFamily: theme.font.mono }} />
+            {QrScanner ? (
+              <Pressable accessibilityRole="button" disabled={busy} onPress={() => { setError(""); setScanning(true); }} style={{ marginTop: 10 }}>
+                <Text style={{ color: theme.color.accent, fontFamily: theme.font.semibold }}>Scan QR code</Text>
+              </Pressable>
+            ) : null}
           </View>
         ) : null}
         {awaitingInvitation ? (
@@ -174,6 +190,11 @@ export function Pair({ navigation, route, remoteOptions }: { navigation: any; ro
           <Button label={busy ? "Please wait…" : "Pair"} onPress={() => { void submit(); }} loading={busy} />
         </View>
       </ScrollView>
+      {QrScanner && scanning ? (
+        <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: theme.color.screen }}>
+          <QrScanner onScanned={(data) => { setHost(data.trim()); setError(""); setScanning(false); }} onClose={() => setScanning(false)} />
+        </View>
+      ) : null}
     </KeyboardAvoidingView>
   );
 }

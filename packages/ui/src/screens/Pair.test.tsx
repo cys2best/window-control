@@ -348,3 +348,53 @@ test("a reachable local host on web still pairs by code alone", async () => {
   expect(screen.queryByText(/Open the pairing link shown on your PC/)).toBeNull();
   expect(screen.getByPlaceholderText("Pairing code")).toBeTruthy();
 });
+
+test("on a native app an invite link pasted as the host address pairs remotely", async () => {
+  // Native apps have no invite route without universal links; the link the
+  // PC shows is pasted (or scanned) into the host field instead.
+  const setTarget = jest.fn().mockResolvedValue({}); mockServer({ setTarget });
+  (Core.pairRemote as jest.Mock).mockResolvedValue({ installationId: "a".repeat(32), token: "secret" });
+  const screen = await render(<Pair navigation={navigation} remoteOptions={remoteOptions} />);
+  await fireEvent.changeText(screen.getByPlaceholderText("Host address"), ` ${invitation} `);
+  await fireEvent.changeText(screen.getByPlaceholderText("Pairing code"), "123456");
+  await fireEvent.press(screen.getByText("Pair"));
+  await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith("InstanceList"));
+  expect(Core.pairRemote).toHaveBeenCalledWith(trustedOrigin, "abcdefghijklmnopqrstuv", "123456", "iPhone", remoteOptions);
+  expect(pairDevice).not.toHaveBeenCalled();
+});
+
+test("a host address on another origin is still local pairing", async () => {
+  mockServer();
+  const screen = await render(<Pair navigation={navigation} remoteOptions={remoteOptions} />);
+  await fireEvent.changeText(screen.getByPlaceholderText("Host address"), "http://100.64.0.2:8080");
+  await fireEvent.changeText(screen.getByPlaceholderText("Pairing code"), "123456");
+  await fireEvent.press(screen.getByText("Pair"));
+  await waitFor(() => expect(pairDevice).toHaveBeenCalledWith("http://100.64.0.2:8080", "123456", "iPhone"));
+  expect(Core.pairRemote).not.toHaveBeenCalled();
+});
+
+test("a native app scans the PC's QR code into the host field and pairs remotely with it", async () => {
+  const setTarget = jest.fn().mockResolvedValue({}); mockServer({ setTarget });
+  (Core.pairRemote as jest.Mock).mockResolvedValue({ installationId: "a".repeat(32), token: "secret" });
+  let scanned!: (data: string) => void;
+  const QrScanner = ({ onScanned }: { onScanned: (data: string) => void; onClose: () => void }) => {
+    scanned = onScanned;
+    const { Text } = require("react-native");
+    return <Text>camera</Text>;
+  };
+  const screen = await render(<Pair navigation={navigation} remoteOptions={remoteOptions} QrScanner={QrScanner} />);
+  expect(screen.queryByText("camera")).toBeNull();
+  await fireEvent.press(screen.getByText("Scan QR code"));
+  expect(screen.getByText("camera")).toBeTruthy();
+  await act(async () => { scanned(invitation); });
+  expect(screen.queryByText("camera")).toBeNull();
+  expect(screen.getByPlaceholderText("Host address").props.value).toBe(invitation);
+  await fireEvent.changeText(screen.getByPlaceholderText("Pairing code"), "123456");
+  await fireEvent.press(screen.getByText("Pair"));
+  await waitFor(() => expect(Core.pairRemote).toHaveBeenCalledWith(trustedOrigin, "abcdefghijklmnopqrstuv", "123456", "iPhone", remoteOptions));
+});
+
+test("without a scanner (web) there is no scan button", async () => {
+  const screen = await render(<Pair navigation={navigation} remoteOptions={remoteOptions} />);
+  expect(screen.queryByText("Scan QR code")).toBeNull();
+});
