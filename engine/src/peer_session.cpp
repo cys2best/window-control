@@ -1,4 +1,5 @@
 #include "peer_session.h"
+#include "bench_log.h"
 #include "send_pacer.h"
 #include <chrono>
 #include <condition_variable>
@@ -212,8 +213,21 @@ void PeerSession::SendVideoNalu(const uint8_t* data, size_t size) {
     double elapsedSeconds = std::chrono::duration<double>(elapsed).count();
     rtpConfig->timestamp = rtpConfig->startTimestamp +
         rtpConfig->secondsToTimestamp(elapsedSeconds);
+    const std::uint32_t rtpTimestamp = rtpConfig->timestamp;
 
+    const bool benching = bench::Enabled();
+    const std::int64_t packetizedUs = benching ? bench::NowUs() : 0;
+
+    // Synchronous through the packetizer and PacedSendHandler, so this
+    // returns once the pacer has released the frame's last packet.
     videoTrack->send(reinterpret_cast<const std::byte*>(data), size);
+
+    if (benching) {
+        const std::int64_t readUs = bench::CurrentFrameReadUs();
+        bench::Record(bench::Entry{bench::EntryKind::Frame, rtpTimestamp,
+                                   readUs != 0 ? readUs : packetizedUs,
+                                   packetizedUs, bench::NowUs()});
+    }
 }
 
 void PeerSession::SendInputMessage(const std::string& jsonMessage) {

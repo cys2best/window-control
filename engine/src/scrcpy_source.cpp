@@ -1,4 +1,5 @@
 #include "scrcpy_source.h"
+#include "bench_log.h"
 
 #include <exception>
 #include <latch>
@@ -162,6 +163,7 @@ bool ScrcpySource::Reconnect(int newPort, std::uint64_t requestedGeneration) {
 }
 
 void ScrcpySource::FanOut(const std::uint8_t* data, size_t size) {
+    bench::MarkFrameRead();
     lastFrameAt_.store(std::chrono::steady_clock::now());
     videoFanout_.SendAccessUnit(data, size);
 }

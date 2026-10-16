@@ -1,8 +1,10 @@
 #include <gtest/gtest.h>
+#include "bench_log.h"
 #include "peer_session.h"
 #include <rtc/rtc.hpp>
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -288,4 +290,34 @@ TEST(PeerSession, ClearCallbacksSuppressesLaterInputDispatch) {
 
     EXPECT_EQ(delivered.load(), 0);
     session.Close();
+}
+
+TEST(PeerSession, BenchModeRecordsFrameTimingKeyedByRtpTimestamp) {
+    bench::SetEnabled(true);
+    rtc::PeerConnection viewerPc(ManualNegotiationConfig());
+    OfferChannels channels;
+    std::string offer = CreateGatheredOffer(viewerPc, channels);
+
+    PeerSession session("bench-peer", {});
+    viewerPc.setRemoteDescription(rtc::Description(session.AnswerOffer(offer), "answer"));
+
+    // The track opens shortly after the connection; keep sending a tiny IDR
+    // NAL until one frame is recorded.
+    const std::uint8_t idr[] = {0, 0, 0, 1, 0x65, 0x88, 0x84, 0x00};
+    for (int i = 0; i < 200 && bench::Fetch(0, 1).total == 0; ++i) {
+        session.SendVideoNalu(idr, sizeof(idr));
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    }
+
+    const auto chunk = bench::Fetch(0, 1);
+    ASSERT_EQ(chunk.entries.size(), 1u);
+    const auto& frame = chunk.entries[0];
+    EXPECT_EQ(frame.kind, bench::EntryKind::Frame);
+    EXPECT_LE(frame.key, 0xFFFFFFFFull);
+    EXPECT_GT(frame.t2Us, 0);
+    EXPECT_LE(frame.t1Us, frame.t2Us);  // no FanOut here: read falls back to packetized
+    EXPECT_GE(frame.t3Us, frame.t2Us);
+
+    session.Close();
+    bench::SetEnabled(false);
 }
