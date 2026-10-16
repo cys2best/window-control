@@ -23,7 +23,7 @@ function fakePc() {
     addEventListener: (k: string, f: Function) => { (listeners[k] ||= []).push(f); },
     removeEventListener: () => {},
     addTransceiver: (...args: any[]) => { pc.calls.push("addTransceiver"); return { receiver: {} }; },
-    createDataChannel: (...args: any[]) => { pc.calls.push("createDataChannel:" + args[0]); return dc; },
+    createDataChannel: (...args: any[]) => { pc.calls.push("createDataChannel:" + args[0]); pc.channelOptions = args[1]; return dc; },
     createOffer: async () => { pc.calls.push("createOffer"); return { type: "offer", sdp: "OFFER" }; },
     setLocalDescription: async () => { pc.calls.push("setLocalDescription"); },
     setRemoteDescription: jest.fn(async () => { pc.calls.push("setRemoteDescription"); }),
@@ -402,4 +402,19 @@ test("asks the video receiver to render frames without jitter buffering", async 
   await promise;
   expect(receiver.jitterBufferTarget).toBe(0);
   expect(receiver.playoutDelayHint).toBe(0);
+});
+
+test("input expires instead of blocking later input behind a lost packet", async () => {
+  const pc = fakePc();
+  const fetchImpl = jest.fn(async () => whepResponse()) as any;
+  const promise = connectWhep({
+    whepUrl: "http://host/whep", whepToken: "tok", iceServers: [],
+    onStream: () => {}, onInputRtt: () => {}, onState: () => {},
+    RTCImpl: function () { return pc; } as any, fetchImpl,
+  });
+  await Promise.resolve();
+  await Promise.resolve();
+  fireReady(pc);
+  await promise;
+  expect(pc.channelOptions).toEqual({ ordered: true, maxPacketLifeTime: 500 });
 });
