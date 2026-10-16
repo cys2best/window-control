@@ -100,3 +100,19 @@ test("frames from a second viewer do not disturb the join", () => {
 test("a transport change fails the run", () => {
   expect(analyze(input(20, { transportChanged: true }), fixedRandom).validity.failed).toBe(true);
 });
+
+test("a flip read before its own input reached the emulator is not counted", () => {
+  const data = input(20);
+  // Taps 0–1: their matched frame was read 50 ms before the input was injected
+  // (a queued earlier click caused it), so they measure nothing.
+  for (const seq of [0, 1]) {
+    const frame = data.engine.find((e) => e.kind === "frame" && e.key === 9000 + seq)!;
+    frame.t1Us = data.engine.find((e) => e.kind === "input" && e.key === seq)!.t2Us - 50_000;
+  }
+  const { stats, validity, missRate } = analyze(data, fixedRandom);
+  expect(stats.tap_to_photon!.count).toBe(18);
+  expect(stats.guest!.count).toBe(18);
+  expect(missRate).toBeCloseTo(0.1);
+  expect(validity.failed).toBe(true);
+  expect(validity.reasons.join(" ")).toContain("before its input");
+});

@@ -60,12 +60,6 @@ export function analyze(input: AnalyzeInput, random: () => number = Math.random)
   const reasons: string[] = [];
   let failed = false;
 
-  const measured = input.taps.filter((t) => !t.miss && t.t1 !== null);
-  const missRate = input.taps.length === 0 ? 1 : (input.taps.length - measured.length) / input.taps.length;
-  if (missRate > MAX_MISS_RATE) {
-    failed = true;
-    reasons.push(`miss rate ${(missRate * 100).toFixed(1)}% exceeds 5%`);
-  }
   if (input.transportChanged) {
     failed = true;
     reasons.push("transport changed during the run");
@@ -79,6 +73,25 @@ export function analyze(input: AnalyzeInput, random: () => number = Math.random)
   const frames = new Map<number, EngineEntry>();
   for (const entry of input.engine) (entry.kind === "input" ? inputs : frames).set(entry.key, entry);
   const local = (us: number) => engineToLocalMs(us, input.offsetUs);
+
+  // A flip read before this tap's input reached the emulator was caused by an
+  // earlier, queued click: the tap measured nothing and counts as a miss.
+  const causal = (tap: TapRecord) => {
+    const inp = inputs.get(tap.seq);
+    const frame = tap.rtpTimestamp === null ? undefined : frames.get(tap.rtpTimestamp);
+    return !inp || !frame || frame.t1Us >= inp.t2Us;
+  };
+  const answered = input.taps.filter((t) => !t.miss && t.t1 !== null);
+  const measured = answered.filter(causal);
+  const misattributed = answered.length - measured.length;
+  if (misattributed > 0) {
+    reasons.push(`${misattributed} taps matched a flip read before its input reached the emulator (queued input); counted as misses`);
+  }
+  const missRate = input.taps.length === 0 ? 1 : (input.taps.length - measured.length) / input.taps.length;
+  if (missRate > MAX_MISS_RATE) {
+    failed = true;
+    reasons.push(`miss rate ${(missRate * 100).toFixed(1)}% exceeds 5%`);
+  }
 
   const values = Object.fromEntries(STAGES.map((s) => [s, [] as number[]])) as Record<StageName, number[]>;
   let joined = 0;
