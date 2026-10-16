@@ -15,8 +15,27 @@
   let white = false;
   document.addEventListener("pointerdown", (event) => {
     event.preventDefault();
+    const handledAt = performance.now();
     white = !white;
     document.body.style.background = white ? "#fff" : "#000";
+    // Split the guest's share of the latency: event.timeStamp is when Android
+    // created the touch; the first animation frame after the change is the
+    // one that draws it, and the frame after that has it on screen.
+    requestAnimationFrame((firstFrame) => {
+      requestAnimationFrame((nextFrame) => {
+        const since = (t) => Math.max(0, t - event.timeStamp);
+        fetch("/bench/target-timings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            input_ms: since(handledAt),
+            frame_ms: since(firstFrame),
+            next_frame_ms: since(nextFrame),
+          }),
+          keepalive: true,
+        }).catch(() => {});
+      });
+    });
     if (!document.fullscreenElement && document.documentElement.requestFullscreen) {
       document.documentElement.requestFullscreen().catch(() => {});
     }

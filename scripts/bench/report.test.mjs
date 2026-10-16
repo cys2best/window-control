@@ -41,3 +41,18 @@ test("a missing bench page is reported as bench mode off", () => {
   assert.match(benchPageError(null), /no response/);
   assert.equal(benchPageError(200), null);
 });
+
+test("summary splits the guest stage with the target page's own timings", () => {
+  const r = result(90);
+  r.targetTimings = [10, 20, 30].map((v) => ({ input_ms: v / 10, frame_ms: v, next_frame_ms: v + 16 }));
+  const md = formatSummary(r);
+  assert.match(md, /\| touch → page handler \| 3 \| 2\.0 \|/);
+  assert.match(md, /\| touch → first frame drawn \| 3 \| 20\.0 \|/);
+  assert.match(md, /\| touch → frame on screen \| 3 \| 36\.0 \|/);
+  // guest p50 40 − on-screen p50 36 = 4 ms left for capture, encode and send.
+  assert.match(md, /capture \+ encode \+ send ≈ 4\.0 ms/);
+});
+
+test("summary omits the guest split when the target page sent nothing", () => {
+  assert.doesNotMatch(formatSummary(result(90)), /touch → page handler/);
+});

@@ -6,6 +6,10 @@ import type {
   Analysis, BenchChannel, EngineEntry, FrameMeta, FrameSample, SelectResp, TapRecord,
 } from "@wc/core";
 
+// Measured by the target page inside the guest, from the touch event's own
+// timestamp (see src/server/bench/target.html).
+export type TargetTiming = { input_ms: number; frame_ms: number; next_frame_ms: number };
+
 export type BenchResult = {
   meta: {
     serial: string; tier: string | null; transport: string | null; offsetUs: number; driftUs: number;
@@ -17,6 +21,7 @@ export type BenchResult = {
   stats: Analysis["stats"];
   validity: Analysis["validity"];
   missRate: number;
+  targetTimings: TargetTiming[];
 };
 
 type RunBenchOpts = {
@@ -25,6 +30,7 @@ type RunBenchOpts = {
   serial: string;
   // Encoder tier to run at; the host otherwise keeps the instance's own tier.
   tier?: string;
+  targetTimings?: { clear(): Promise<void>; list(): Promise<TargetTiming[]> };
   count: number;
   warmup: number;
   video: HTMLVideoElement;
@@ -33,7 +39,7 @@ type RunBenchOpts = {
 
 const SAMPLE_SIZE = 8;
 
-export async function runBench({ select, setQuality, serial, tier, count, warmup, video, onStatus }: RunBenchOpts): Promise<BenchResult> {
+export async function runBench({ select, setQuality, serial, tier, targetTimings, count, warmup, video, onStatus }: RunBenchOpts): Promise<BenchResult> {
   const startedAt = new Date().toISOString();
   if (tier && setQuality) {
     onStatus(`setting tier ${tier}`);
@@ -103,6 +109,7 @@ export async function runBench({ select, setQuality, serial, tier, count, warmup
     });
 
   const measure = async (): Promise<BenchResult> => {
+    await targetTimings?.clear();
     const bench = makeBenchClient(channel, { now: () => performance.now() });
     onStatus("syncing clocks");
     const before = await bench.syncClock();
@@ -124,6 +131,7 @@ export async function runBench({ select, setQuality, serial, tier, count, warmup
     const after = await bench.syncClock();
     onStatus("fetching engine log");
     const engineLog = await bench.fetchAll();
+    const guestTimings = targetTimings ? await targetTimings.list() : [];
     stopped = true;
 
     const driftUs = clockDriftUs(before, after);
@@ -138,6 +146,7 @@ export async function runBench({ select, setQuality, serial, tier, count, warmup
       },
       taps, frames, engine: engineLog.entries,
       stats: analysis.stats, validity: analysis.validity, missRate: analysis.missRate,
+      targetTimings: guestTimings,
     };
   };
 

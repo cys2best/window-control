@@ -65,3 +65,51 @@ def test_bench_shell_served_in_bench_mode(web_dir):
 def test_bench_mode_keeps_api_routes_paired(web_dir):
     client = _make(LAN, bench=True)
     assert client.get("/instances").status_code == 401
+
+
+TIMING = {"input_ms": 3.5, "frame_ms": 12.0, "next_frame_ms": 28.5}
+
+
+def test_target_timings_absent_without_bench_mode():
+    client = _make(LOOPBACK, bench=False)
+    assert client.post("/bench/target-timings", json=TIMING).status_code == 404
+    assert client.get("/bench/target-timings").status_code == 404
+
+
+def test_target_timings_are_collected_listed_and_cleared():
+    client = _make(LAN, bench=True)  # unpaired: the guest page and bench page both post/read
+    assert client.post("/bench/target-timings", json=TIMING).status_code == 204
+    assert client.get("/bench/target-timings").json() == [TIMING]
+    assert client.delete("/bench/target-timings").status_code == 204
+    assert client.get("/bench/target-timings").json() == []
+
+
+@pytest.mark.parametrize("body", [
+    {"input_ms": "3", "frame_ms": 1, "next_frame_ms": 2},
+    {"input_ms": float("nan"), "frame_ms": 1, "next_frame_ms": 2},
+    {"input_ms": -1, "frame_ms": 1, "next_frame_ms": 2},
+    {"frame_ms": 1, "next_frame_ms": 2},
+])
+def test_target_timings_reject_malformed_values(body):
+    client = _make(LOOPBACK, bench=True)
+    response = client.post("/bench/target-timings",
+                           content=__import__("json").dumps(body, allow_nan=True),
+                           headers={"Content-Type": "application/json"})
+    assert response.status_code == 422
+    assert client.get("/bench/target-timings").json() == []
+
+
+def test_target_timings_keep_only_the_newest_entries():
+    client = _make(LOOPBACK, bench=True)
+    for i in range(2005):
+        client.post("/bench/target-timings", json={**TIMING, "input_ms": float(i)})
+    entries = client.get("/bench/target-timings").json()
+    assert len(entries) == 2000
+    assert entries[-1]["input_ms"] == 2004.0
+
+
+def test_target_page_reports_its_timings_to_the_host():
+    client = _make(LOOPBACK, bench=True)
+    page = client.get("/bench/target.html", headers=GUEST_HEADERS).text
+    assert '"/bench/target-timings"' in page
+    assert "event.timeStamp" in page

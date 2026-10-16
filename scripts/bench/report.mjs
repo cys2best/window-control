@@ -11,6 +11,46 @@ export function resultBaseName(date, label) {
   return `${stamp}-${label}`;
 }
 
+// Same rank interpolation as packages/core/src/bench/analyze.ts.
+function percentile(sorted, p) {
+  if (sorted.length === 0) return NaN;
+  const rank = (sorted.length - 1) * p;
+  const lo = Math.floor(rank);
+  const hi = Math.ceil(rank);
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (rank - lo);
+}
+
+const GUEST_SPLIT = [
+  ["input_ms", "touch → page handler"],
+  ["frame_ms", "touch → first frame drawn"],
+  ["next_frame_ms", "touch → frame on screen"],
+];
+
+// The target page's own timings divide the guest stage into Android + page
+// work and what is left for scrcpy's capture, encode and send.
+function formatGuestSplit(result) {
+  const timings = result.targetTimings ?? [];
+  if (timings.length === 0) return [];
+  const lines = [
+    "",
+    "Inside the guest (target page's own timings):",
+    "",
+    "| step | n | p50 ms | p95 ms |",
+    "|---|---|---|---|",
+  ];
+  const p50s = {};
+  for (const [key, label] of GUEST_SPLIT) {
+    const sorted = timings.map((t) => t[key]).sort((a, b) => a - b);
+    p50s[key] = percentile(sorted, 0.5);
+    lines.push(`| ${label} | ${sorted.length} | ${ms(p50s[key])} | ${ms(percentile(sorted, 0.95))} |`);
+  }
+  const guest = result.stats.guest;
+  if (guest) {
+    lines.push("", `capture + encode + send ≈ ${ms(guest.p50 - p50s.next_frame_ms)} ms (guest p50 − frame on screen p50)`);
+  }
+  return lines;
+}
+
 export function formatSummary(result) {
   const { meta, stats, validity, missRate } = result;
   const lines = [
@@ -30,6 +70,7 @@ export function formatSummary(result) {
     if (!s) continue;
     lines.push(`| ${stage} | ${s.count} | ${ms(s.p50)} | ${ms(s.p95)} | ${ms(s.p99)} | ${ms(s.mean)} | ${ms(s.p50CiHalf)} |`);
   }
+  lines.push(...formatGuestSplit(result));
   return lines.join("\n") + "\n";
 }
 

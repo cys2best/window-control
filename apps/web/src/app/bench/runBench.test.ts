@@ -41,3 +41,19 @@ test("sets the requested quality tier before selecting the instance", async () =
   }).catch(() => {});
   expect(calls.slice(0, 2)).toEqual(["quality:emulator-5556:360", "select"]);
 });
+
+test("clears the target page's timings before measuring", async () => {
+  HTMLCanvasElement.prototype.getContext = jest.fn(() => ({})) as any;
+  const calls: string[] = [];
+  const video = { play: async () => {}, requestVideoFrameCallback: jest.fn() } as any;
+  await runBench({
+    select: async () => { calls.push("select"); return { whep_url: "http://host/whep", whep_token: "t", ice_servers: [] } as any; },
+    targetTimings: { clear: async () => { calls.push("clear"); }, list: async () => [] },
+    serial: "emulator-5556",
+    count: 5,
+    warmup: 1,
+    video,
+    onStatus: () => {},
+  }).catch(() => {});
+  expect(calls).toEqual(["select", "clear"]);
+});

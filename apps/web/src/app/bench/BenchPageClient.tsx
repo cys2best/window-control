@@ -28,6 +28,11 @@ export default function BenchPageClient() {
       setQuality: (serial, tier) => client.setQuality(serial, tier),
       serial: params.get("serial") ?? "",
       tier: params.get("tier") ?? undefined,
+      // Same origin as this page: the host serves both in bench mode.
+      targetTimings: {
+        clear: async () => { await fetch("/bench/target-timings", { method: "DELETE" }); },
+        list: async () => (await fetch("/bench/target-timings")).json(),
+      },
       count: intParam(params, "n", 200),
       warmup: intParam(params, "warmup", 10),
       video: videoRef.current,

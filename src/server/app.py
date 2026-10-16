@@ -1,5 +1,7 @@
 import asyncio
+import collections
 import io
+import json
 import logging
 import ipaddress
 import os
@@ -11,7 +13,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, ValidationError
 from starlette.requests import HTTPConnection
 from starlette.routing import Match
 
@@ -33,7 +35,7 @@ _PAIRING_EXEMPT_PATHS = {
     "/index.txt", "/pair.txt", "/stream.txt", "/instances.txt", "/account.txt",
     "/manifest.json", "/icon-192.png", "/icon-512.png", "/favicon.ico", "/404.html",
     # Lab bench (registered only in bench mode): static shell and target page.
-    "/bench", "/bench.txt", "/bench/target.html",
+    "/bench", "/bench.txt", "/bench/target.html", "/bench/target-timings",
 }
 
 # apps/web's static export emits one `<route>.txt` file per route. Only
@@ -106,6 +108,19 @@ def is_trusted_loopback(peer: str | None, headers, method: str = "GET") -> bool:
         return False
     return True
 
+
+
+_Millis = Field(ge=0, allow_inf_nan=False, strict=True)
+
+
+def _reject_constant(name: str):
+    raise ValueError(f"non-finite number {name}")
+
+
+class TargetTiming(BaseModel):
+    input_ms: float = _Millis       # touch event created -> page handler ran
+    frame_ms: float = _Millis       # touch event created -> first frame with the new colour began
+    next_frame_ms: float = _Millis  # touch event created -> the frame after (new colour on screen)
 
 class AccessGate:
     """Network allowlist, then device pairing.
@@ -408,6 +423,30 @@ def create_app(instance_manager: InstanceManager,
         @app.get("/bench")
         async def bench_page():
             return _serve_web_page("bench.html")
+
+        # Per-tap timings the target page measures inside the guest, relative
+        # to the touch event's own timestamp; the bench page clears them before
+        # a run and reads them after. Lab-only, bounded, numbers only.
+        target_timings: collections.deque = collections.deque(maxlen=2000)
+
+        @app.post("/bench/target-timings", status_code=204)
+        async def add_target_timing(request: Request):
+            # Parsed by hand: FastAPI's 422 body echoes the input, and a NaN
+            # in it cannot be serialized, which would turn the 422 into a 500.
+            try:
+                raw = json.loads(await request.body(), parse_constant=_reject_constant)
+                timing = TargetTiming.model_validate(raw)
+            except (ValueError, ValidationError):
+                raise HTTPException(status_code=422, detail="Invalid timing")
+            target_timings.append(timing.model_dump())
+
+        @app.get("/bench/target-timings")
+        async def list_target_timings():
+            return list(target_timings)
+
+        @app.delete("/bench/target-timings", status_code=204)
+        async def clear_target_timings():
+            target_timings.clear()
 
         @app.get("/bench/target.html")
         async def bench_target_page():
