@@ -13,6 +13,10 @@ export type ConnectPeerOpts = {
   onState?: (state: "connecting" | "connected" | "disconnected") => void;
   onInputRtt?: (ms: number) => void;
 };
+// Non-trickle offers wait for gathering, but one unreachable TURN URL can keep
+// it open until the deadline. Candidates arrive well within this; send them.
+export const REMOTE_GATHERING_CAP_MS = 3000;
+
 export function peerError(code: string): Error {
   return Object.assign(new Error(code), { code });
 }
@@ -123,7 +127,11 @@ export function connectPeer(opts: ConnectPeerOpts, legacyLocalGatheringCapMs?: n
         if (!checkActive()) return;
         await pc.setLocalDescription(offer);
         if (!checkActive()) return;
-        await waitForIceGatheringComplete(pc, legacyLocalGatheringCapMs ?? opts.deadline - performance.now(), controller.signal);
+        try {
+          await waitForIceGatheringComplete(pc, legacyLocalGatheringCapMs ?? Math.min(REMOTE_GATHERING_CAP_MS, opts.deadline - performance.now()), controller.signal);
+        } catch (error: any) {
+          if (legacyLocalGatheringCapMs !== undefined || error?.code !== "ice-gathering-timeout") throw error;
+        }
         if (!checkActive()) return;
         const result = await opts.negotiator.exchange(pc.localDescription.sdp, opts.deadline, controller.signal);
         if (!checkActive()) { void invoke(() => opts.negotiator.close(result.resourceId)).catch(() => {}); return; }

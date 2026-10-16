@@ -1,4 +1,4 @@
-import { connectPeer, PeerNegotiator } from "./peer";
+import { connectPeer, PeerNegotiator, REMOTE_GATHERING_CAP_MS } from "./peer";
 import { fakePc, fireReady, flush } from "./peer.testUtils";
 
 function transport(): PeerNegotiator {
@@ -55,4 +55,13 @@ test("deadline rejects promptly even when transport cancellation never completes
   const promise = connectPeer({ iceServers: [], negotiator, RTCImpl: function () { return pc; }, deadline: performance.now()+30000 });
   const rejected = expect(promise).rejects.toThrow("timeout"); await flush();
   jest.advanceTimersByTime(30000); await rejected; expect(pc.close).toHaveBeenCalledTimes(1);
+});
+test("a TURN server that never finishes gathering still sends the offer after a short cap", async () => {
+  jest.useFakeTimers(); const pc = fakePc(), negotiator = transport();
+  pc.iceGatheringState = "gathering";
+  const promise = connectPeer({ iceServers: [], negotiator, RTCImpl: function () { return pc; }, deadline: performance.now()+30000 });
+  await flush(); expect(negotiator.exchange).not.toHaveBeenCalled();
+  jest.advanceTimersByTime(REMOTE_GATHERING_CAP_MS); await flush();
+  expect(negotiator.exchange).toHaveBeenCalledWith("OFFER", expect.any(Number), expect.anything());
+  fireReady(pc); await expect(promise).resolves.toBeTruthy();
 });
