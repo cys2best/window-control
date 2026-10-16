@@ -41,4 +41,22 @@ describe("RootPage redirection", () => {
     render(<RootPage />);
     expect(replaceMock).toHaveBeenCalledWith("/instances");
   });
+
+  test("when the site itself is no host (hosted remote web), router.replace(\"/pair\") is called", () => {
+    (useServer as jest.Mock).mockReturnValue({
+      ready: true, paired: null, target: { kind: "local", base: "https://emuctrl.example" },
+      hostReachability: { state: "unreachable", host: "emuctrl.example", rttMs: null, paired: null },
+    });
+    render(<RootPage />);
+    expect(replaceMock).toHaveBeenCalledWith("/pair");
+  });
+
+  test("when a remote host is offline, keeps waiting instead of re-pairing", () => {
+    (useServer as jest.Mock).mockReturnValue({
+      ready: true, paired: null, target: { kind: "remote", serviceUrl: "https://emuctrl.example", installationId: "i" },
+      hostReachability: { state: "unreachable", host: "emuctrl.example", rttMs: null, paired: null },
+    });
+    render(<RootPage />);
+    expect(replaceMock).not.toHaveBeenCalled();
+  });
 });
