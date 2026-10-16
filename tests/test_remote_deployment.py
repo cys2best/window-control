@@ -251,3 +251,73 @@ def test_cloudflare_ip_drift_check(tmp_path, capsys):
     live.write_text('\n'.join(vendored + ['198.51.100.0/24']) + '\n')
     assert module.main(['--live-file', str(live)]) == 1
     assert '198.51.100.0/24' in capsys.readouterr().out
+
+
+def cloudflare_test_environment(tmp_path):
+    (tmp_path / 'key-id').write_text('0123456789abcdef0123456789abcdef\n')
+    (tmp_path / 'token').write_text('cloudflare-token-value_0123456789\n')
+    for name in ('edge-fullchain.pem', 'edge-key.pem'):
+        (tmp_path / name).write_text('origin certificate')
+    return dict(REMOTE_HTTPS_BIND_ADDRESS='10.0.1.10', REMOTE_DOMAIN='emuctrl.example.com',
+                REMOTE_MAX_ACTIVE_STREAMS='4', REMOTE_CERT_DIRECTORY=str(tmp_path),
+                REMOTE_CLOUDFLARE_TURN_KEY_ID_FILE=str(tmp_path / 'key-id'),
+                REMOTE_CLOUDFLARE_TURN_TOKEN_FILE=str(tmp_path / 'token'))
+
+
+def test_cloudflare_preflight_accepts_minimal_inputs_and_rejects_bad_ones(monkeypatch, tmp_path):
+    config = load_configure()
+    env = cloudflare_test_environment(tmp_path)
+    monkeypatch.setattr(config.socket, 'getaddrinfo', lambda *a, **kw: [(2, 1, 6, '', ('104.16.0.1', 0))])
+    config.validate_cloudflare(env)
+    (tmp_path / 'short').write_text('short')
+    for change in ({'REMOTE_CLOUDFLARE_TURN_KEY_ID_FILE': str(tmp_path / 'missing')},
+                   {'REMOTE_CLOUDFLARE_TURN_TOKEN_FILE': str(tmp_path / 'short')},
+                   {'REMOTE_HTTPS_BIND_ADDRESS': '0.0.0.0'},
+                   {'REMOTE_MAX_ACTIVE_STREAMS': '0'},
+                   {'REMOTE_DOMAIN': ''}):
+        with pytest.raises((ValueError, OSError)):
+            config.validate_cloudflare({**env, **change})
+    (tmp_path / 'edge-key.pem').unlink()
+    with pytest.raises(ValueError):
+        config.validate_cloudflare(env)
+    (tmp_path / 'edge-key.pem').write_text('origin key')
+    monkeypatch.setattr(config.socket, 'getaddrinfo', lambda *a, **kw: [(2, 1, 6, '', ('10.0.0.1', 0))])
+    with pytest.raises(ValueError):
+        config.validate_cloudflare(env)
+
+
+def test_cloudflare_preflight_entrypoint_skips_turn_rendering(monkeypatch, tmp_path):
+    config = load_configure()
+    env = {**cloudflare_test_environment(tmp_path), 'REMOTE_RELAY_PROVIDER': 'cloudflare'}
+    monkeypatch.setattr(config.socket, 'getaddrinfo', lambda *a, **kw: [(2, 1, 6, '', ('104.16.0.1', 0))])
+    config.run(env, tmp_path / 'private/turnserver.conf', tmp_path / 'association')
+    assert not (tmp_path / 'private/turnserver.conf').exists()
+
+
+def test_cloudflare_compose_runs_only_preflight_broker_edge_from_images():
+    import yaml
+    text = (INFRA / 'compose.cloudflare.yml').read_text()
+    compose = yaml.safe_load(text)
+    assert set(compose['services']) == {'preflight', 'broker', 'edge'}
+    assert all('build' not in service for service in compose['services'].values())
+    for name in ('REMOTE_BROKER_IMAGE', 'REMOTE_EDGE_IMAGE', 'REMOTE_DATA_DIRECTORY', 'REMOTE_CLOUDFLARE_TURN_KEY_ID_FILE',
+                 'REMOTE_CLOUDFLARE_TURN_TOKEN_FILE', 'REMOTE_HTTPS_BIND_ADDRESS', 'REMOTE_DOMAIN',
+                 'REMOTE_MAX_ACTIVE_STREAMS', 'REMOTE_CERT_DIRECTORY'):
+        assert '${' + name + ':?required}' in text
+    services = compose['services']
+    assert services['preflight']['image'] == services['broker']['image'] == '${REMOTE_BROKER_IMAGE:?required}'
+    assert services['edge']['image'] == '${REMOTE_EDGE_IMAGE:?required}'
+    broker = services['broker']
+    assert '"--workers", "1"' in text and '--forwarded-allow-ips' in broker['command']
+    assert '${REMOTE_DATA_DIRECTORY:?required}:/data' in broker['volumes']
+    assert broker['environment']['REMOTE_RELAY_PROVIDER'] == 'cloudflare'
+    assert broker['environment']['REMOTE_STUN_URLS'] == '["stun:stun.cloudflare.com:3478"]'
+    assert broker['environment']['REMOTE_LICENSE_PATH'] == '/data/licenses.json'
+    assert broker['environment']['REMOTE_STORE_PATH'] == '/data/installations.json'
+    assert 'REMOTE_TURN_URLS' not in broker['environment'] and 'REMOTE_TURN_SECRET_FILE' not in broker['environment']
+    for service in ('preflight', 'broker'):
+        mounts = services[service]['volumes']
+        assert any(m.startswith('${REMOTE_CLOUDFLARE_TURN_KEY_ID_FILE:?required}:') and m.endswith(':ro') for m in mounts)
+        assert any(m.startswith('${REMOTE_CLOUDFLARE_TURN_TOKEN_FILE:?required}:') and m.endswith(':ro') for m in mounts)
+    assert services['edge']['ports'] == ['${REMOTE_HTTPS_BIND_ADDRESS:?required}:443:443/tcp']
+    assert services['preflight']['environment']['REMOTE_RELAY_PROVIDER'] == 'cloudflare'

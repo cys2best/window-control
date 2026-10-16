@@ -1,0 +1,65 @@
+# Cloudflare relay stack: no coturn. Images come from ECR; the deploy script supplies every value.
+x-operator: &operator
+  REMOTE_RELAY_PROVIDER: cloudflare
+  REMOTE_HTTPS_BIND_ADDRESS: ${REMOTE_HTTPS_BIND_ADDRESS:?required}
+  REMOTE_DOMAIN: ${REMOTE_DOMAIN:?required}
+  REMOTE_MAX_ACTIVE_STREAMS: ${REMOTE_MAX_ACTIVE_STREAMS:?required}
+  REMOTE_CERT_DIRECTORY: /run/certs
+  REMOTE_CLOUDFLARE_TURN_KEY_ID_FILE: /run/secrets/cloudflare_turn_key_id
+  REMOTE_CLOUDFLARE_TURN_TOKEN_FILE: /run/secrets/cloudflare_turn_token
+  REMOTE_IOS_TEAM_ID: ${REMOTE_IOS_TEAM_ID:-}
+  REMOTE_IOS_APP_ID: ${REMOTE_IOS_APP_ID:-}
+  REMOTE_IOS_ASSOCIATED_DOMAIN: ${REMOTE_IOS_ASSOCIATED_DOMAIN:-}
+services:
+  preflight:
+    image: ${REMOTE_BROKER_IMAGE:?required}
+    command: ["python", "/configuration/configure.py"]
+    environment: *operator
+    volumes:
+      - .:/configuration:ro
+      - ${REMOTE_CLOUDFLARE_TURN_KEY_ID_FILE:?required}:/run/secrets/cloudflare_turn_key_id:ro
+      - ${REMOTE_CLOUDFLARE_TURN_TOKEN_FILE:?required}:/run/secrets/cloudflare_turn_token:ro
+      - ${REMOTE_CERT_DIRECTORY:?required}:/run/certs:ro
+      - association:/association
+  broker:
+    container_name: shared-remote-broker
+    image: ${REMOTE_BROKER_IMAGE:?required}
+    command: ["uvicorn", "broker.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--no-access-log", "--forwarded-allow-ips", "*"]
+    restart: unless-stopped
+    deploy:
+      replicas: 1
+    environment:
+      REMOTE_RELAY_PROVIDER: cloudflare
+      REMOTE_ALLOWED_ORIGINS: '["https://${REMOTE_DOMAIN:?required}"]'
+      REMOTE_MAX_ACTIVE_STREAMS: "${REMOTE_MAX_ACTIVE_STREAMS:?required}"
+      REMOTE_STORE_PATH: /data/installations.json
+      REMOTE_LICENSE_PATH: /data/licenses.json
+      REMOTE_STUN_URLS: '["stun:stun.cloudflare.com:3478"]'
+      REMOTE_CLOUDFLARE_TURN_KEY_ID_FILE: /run/secrets/cloudflare_turn_key_id
+      REMOTE_CLOUDFLARE_TURN_TOKEN_FILE: /run/secrets/cloudflare_turn_token
+    volumes:
+      - ${REMOTE_DATA_DIRECTORY:?required}:/data
+      - ${REMOTE_CLOUDFLARE_TURN_KEY_ID_FILE:?required}:/run/secrets/cloudflare_turn_key_id:ro
+      - ${REMOTE_CLOUDFLARE_TURN_TOKEN_FILE:?required}:/run/secrets/cloudflare_turn_token:ro
+    depends_on:
+      preflight:
+        condition: service_completed_successfully
+    networks: [signaling]
+  edge:
+    image: ${REMOTE_EDGE_IMAGE:?required}
+    restart: unless-stopped
+    environment:
+      REMOTE_DOMAIN: ${REMOTE_DOMAIN:?required}
+    ports:
+      - "${REMOTE_HTTPS_BIND_ADDRESS:?required}:443:443/tcp"
+    volumes:
+      - ${REMOTE_CERT_DIRECTORY:?required}:/run/certs:ro
+      - association:/run/association:ro
+    depends_on:
+      broker:
+        condition: service_started
+    networks: [signaling]
+networks:
+  signaling:
+volumes:
+  association:

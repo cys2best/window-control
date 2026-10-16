@@ -1,4 +1,4 @@
-"""Fail-closed production preflight and private coturn config rendering."""
+"""Fail-closed production preflight and private coturn config rendering (coturn or Cloudflare relay)."""
 import argparse
 import ipaddress
 import json
@@ -15,6 +15,10 @@ REQUIRED = (
     'REMOTE_TURN_ALLOCATION_BPS', 'REMOTE_TURN_AGGREGATE_BPS',
     'REMOTE_TURN_TOTAL_ALLOCATIONS', 'REMOTE_TURN_SECRET_FILE',
     'REMOTE_CERT_DIRECTORY',
+)
+CLOUDFLARE_REQUIRED = (
+    'REMOTE_HTTPS_BIND_ADDRESS', 'REMOTE_DOMAIN', 'REMOTE_MAX_ACTIVE_STREAMS', 'REMOTE_CERT_DIRECTORY',
+    'REMOTE_CLOUDFLARE_TURN_KEY_ID_FILE', 'REMOTE_CLOUDFLARE_TURN_TOKEN_FILE',
 )
 TURN_INPUTS = {
     'REMOTE_TURN_BIND_ADDRESS', 'REMOTE_TURN_RELAY_BIND_ADDRESS',
@@ -36,6 +40,45 @@ def denied_address(address):
     return any(address_in_range(address, line.split('=', 1)[1]) for line in template.read_text().splitlines() if line.startswith('denied-peer-ip='))
 
 
+def validate_public_domain(domain):
+    if not re.fullmatch(r'(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?', domain):
+        raise ValueError('Invalid public DNS name')
+    addresses = socket.getaddrinfo(domain, 443, type=socket.SOCK_STREAM)
+    if not addresses or any(denied_address(address[4][0]) for address in addresses):
+        raise ValueError('Public service DNS resolves to a denied destination')
+
+
+def validate_association(env):
+    association = [env.get(key, '') for key in ('REMOTE_IOS_TEAM_ID', 'REMOTE_IOS_APP_ID', 'REMOTE_IOS_ASSOCIATED_DOMAIN')]
+    if any(association) and not all(association):
+        raise ValueError('iOS association requires team, app and domain together')
+    if all(association):
+        if not re.fullmatch(r'[A-Z0-9]{10}', association[0]) or not re.fullmatch(r'[A-Za-z0-9.-]+', association[1]) or association[2] != env['REMOTE_DOMAIN']:
+            raise ValueError('Invalid iOS association inputs')
+
+
+def validate_cloudflare(env):
+    """Cloudflare relay: no TURN files or second address; a proxied name resolves to public Cloudflare addresses."""
+    if any(not env.get(key) for key in CLOUDFLARE_REQUIRED):
+        raise ValueError('Required production settings are missing')
+    for key in CLOUDFLARE_REQUIRED:
+        if '\n' in env[key] or '\r' in env[key]:
+            raise ValueError('Invalid production setting')
+    if ipaddress.ip_address(env['REMOTE_HTTPS_BIND_ADDRESS']).is_unspecified:
+        raise ValueError('HTTPS requires an explicit bind address')
+    validate_public_domain(env['REMOTE_DOMAIN'])
+    if not env['REMOTE_MAX_ACTIVE_STREAMS'].isdigit() or int(env['REMOTE_MAX_ACTIVE_STREAMS']) <= 0:
+        raise ValueError('Explicit positive capacity settings required')
+    for key in ('REMOTE_CLOUDFLARE_TURN_KEY_ID_FILE', 'REMOTE_CLOUDFLARE_TURN_TOKEN_FILE'):
+        if not re.fullmatch(r'[A-Za-z0-9_-]{16,256}', Path(env[key]).read_text().strip()):
+            raise ValueError('Cloudflare TURN key ID and token files must hold 16-256 safe characters')
+    certs = Path(env['REMOTE_CERT_DIRECTORY'])
+    for name in ('edge-fullchain.pem', 'edge-key.pem'):
+        if not (certs / name).is_file():
+            raise ValueError('Required certificate files are missing')
+    validate_association(env)
+
+
 def validate_production(env):
     if any(not env.get(key) for key in REQUIRED):
         raise ValueError('Required production settings are missing')
@@ -48,12 +91,7 @@ def validate_production(env):
     if denied_address(str(binds[3])):
         raise ValueError('TURN public address must be publicly routable')
     for key in ('REMOTE_DOMAIN', 'REMOTE_TURN_DOMAIN'):
-        domain = env[key]
-        if not re.fullmatch(r'(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?', domain):
-            raise ValueError('Invalid public DNS name')
-        addresses = socket.getaddrinfo(domain, 443, type=socket.SOCK_STREAM)
-        if not addresses or any(denied_address(address[4][0]) for address in addresses):
-            raise ValueError('Public service DNS resolves to a denied destination')
+        validate_public_domain(env[key])
     for key in ('REMOTE_MAX_ACTIVE_STREAMS', 'REMOTE_TURN_ALLOCATION_BPS', 'REMOTE_TURN_AGGREGATE_BPS', 'REMOTE_TURN_TOTAL_ALLOCATIONS'):
         if not env[key].isdigit() or int(env[key]) <= 0:
             raise ValueError('Explicit positive capacity settings required')
@@ -70,12 +108,7 @@ def validate_production(env):
     for name in ('edge-fullchain.pem', 'edge-key.pem', 'turn-fullchain.pem', 'turn-key.pem'):
         if not (certs / name).is_file():
             raise ValueError('Required certificate files are missing')
-    association = [env.get(key, '') for key in ('REMOTE_IOS_TEAM_ID', 'REMOTE_IOS_APP_ID', 'REMOTE_IOS_ASSOCIATED_DOMAIN')]
-    if any(association) and not all(association):
-        raise ValueError('iOS association requires team, app and domain together')
-    if all(association):
-        if not re.fullmatch(r'[A-Z0-9]{10}', association[0]) or not re.fullmatch(r'[A-Za-z0-9.-]+', association[1]) or association[2] != env['REMOTE_DOMAIN']:
-            raise ValueError('Invalid iOS association inputs')
+    validate_association(env)
 
 
 def render_turn(env, template, target):
@@ -107,14 +140,24 @@ def write_association(env, directory):
     target.write_text(json.dumps({'applinks': {'details': [{'appIDs': [env['REMOTE_IOS_TEAM_ID'] + '.' + env['REMOTE_IOS_APP_ID']], 'components': [{'/': '/pair'}]}]}}))
 
 
+def run(env, output, association):
+    provider = env.get('REMOTE_RELAY_PROVIDER') or 'coturn'
+    if provider == 'cloudflare':
+        validate_cloudflare(env)
+    elif provider == 'coturn':
+        validate_production(env)
+        render_turn(env, Path(__file__).with_name('turnserver.production.conf.template'), output)
+    else:
+        raise ValueError('Unknown relay provider')
+    write_association(env, association)
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--output', type=Path, default=Path('/private/turnserver.conf'))
     parser.add_argument('--association', type=Path, default=Path('/association'))
     args = parser.parse_args()
     try:
-        validate_production(os.environ)
-        render_turn(os.environ, Path(__file__).with_name('turnserver.production.conf.template'), args.output)
-        write_association(os.environ, args.association)
+        run(os.environ, args.output, args.association)
     except (ValueError, OSError, KeyError):
         raise SystemExit('Production preflight failed; check required inputs, DNS, certificate and secret files') from None
