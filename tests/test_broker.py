@@ -527,3 +527,16 @@ def test_refused_viewer_auth_creates_no_installation_buckets():
     assert all(limits.check_viewer_auth("10.0.0.1", f"id{i}") for i in range(10))
     assert not any(limits.check_viewer_auth("10.0.0.1", f"spray{i}") for i in range(500))
     assert len(limits.buckets) == 11
+
+
+def test_invitation_tolerates_a_pc_clock_ahead_but_keeps_the_broker_ttl():
+    # A PC clock a little ahead of the broker's stamps expires_at past broker
+    # now + 300; rejecting it dropped the host connection and the invite.
+    import time
+    from broker.registry import Registry
+    registry = Registry()
+    host = registry.register_host("installation", object())
+    now = time.time()
+    assert registry.open_invitation(host, "h" * 43, now + 300 + 30)
+    assert registry.invitations["h" * 43][2] <= time.time() + 300
+    assert not registry.open_invitation(host, "j" * 43, now + 300 + 3600)

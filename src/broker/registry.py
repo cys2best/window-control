@@ -13,6 +13,9 @@ MAX_SETTLED_REQUESTS = 2048
 SETTLED_REQUEST_TTL_SECONDS = 60
 
 
+INVITATION_CLOCK_SKEW_SECONDS = 120
+
+
 class HostConnection:
     def __init__(self, websocket, installation_id, epoch):
         self.websocket = websocket
@@ -142,8 +145,12 @@ class Registry:
         return host is not None and host.epoch == epoch
 
     def open_invitation(self, host, handle, expires_at):
-        if not self.is_valid_host(host.installation_id, host.epoch) or not time.time() < expires_at <= time.time() + 300:
+        now = time.time()
+        # PC clocks drift; tolerate a skew but never keep an invitation past
+        # the broker's own five minutes.
+        if not self.is_valid_host(host.installation_id, host.epoch) or not now < expires_at <= now + 300 + INVITATION_CLOCK_SKEW_SECONDS:
             return False
+        expires_at = min(expires_at, now + 300)
         self.invitations = {key: value for key, value in self.invitations.items() if value[2] > time.time()}
         existing = self.invitations.get(handle)
         if existing and existing[:2] != (host.installation_id, host.epoch):
