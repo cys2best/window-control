@@ -1,7 +1,9 @@
 # Latency Bench Harness — Design
 
 Date: 2026-10-16
-Status: Design approved by the user in conversation; spec awaiting review.
+Status: Design and spec approved by the user; implementation has not started.
+
+Implementation plan: [Latency Bench Harness](../plans/2026-10-16-latency-bench-harness.md).
 
 ## Intent and scope
 
@@ -60,7 +62,7 @@ CI.
 | 4 | Engine bench messages | `engine/src/input_router.cpp` | `bench.ping` → reply `{type:"bench.pong", id, engine_us}`. `bench.start` clears the log. `bench.fetch {from, count}` → returns a chunk of entries. All ignored when bench is off. |
 | 5 | Clock sync | `packages/core/src/bench/clock.ts` | Ping/pong over the DataChannel; estimates the receiver ↔ engine offset. |
 | 6 | Bench page | `apps/web/src/app/bench/` | Connects with the `packages/core` WHEP session, runs the tap protocol, collects per-frame metadata, fetches the engine log, returns a result object to Playwright. |
-| 7 | Analysis | `packages/core/src/bench/analyze.ts` | Pure functions: join taps → frames → engine entries, stage durations, percentiles, run validity. |
+| 7 | Analysis | `packages/core/src/bench/analyze.ts` | Runs in the bench page; the runner only writes files. Pure functions: join taps → frames → engine entries, stage durations, percentiles, run validity. |
 | 8 | Runner | `scripts/bench/run.mjs` | Launches Playwright Chrome with a pre-paired persistent profile, opens `/bench?n=…&label=…`, waits for the result, writes JSON + Markdown. `--compare a.json b.json` prints per-stage deltas. |
 
 ## Data flow
@@ -151,7 +153,7 @@ larger of the two runs' p50 bootstrap 95% interval half-widths.
 
 ## Testing
 
-- Vitest, `packages/core/src/bench/`: min-RTT offset and drift; tap → frame →
+- Jest, `packages/core/src/bench/`: min-RTT offset and drift; tap → frame →
   engine join by RTP timestamp, including missing entries; percentiles and
   bootstrap interval; threshold detector on synthetic luminance sequences;
   validity flags.
