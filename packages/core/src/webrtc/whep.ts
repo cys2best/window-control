@@ -55,6 +55,8 @@ export type ConnectWhepOpts = {
   onStream: (stream: MediaStream) => void;
   onInputRtt: (ms: number) => void;
   onState: (state: "connecting" | "connected" | "disconnected") => void;
+  // Every parsed JSON message on the input channel (used by the lab bench).
+  onMessage?: (message: any) => void;
   RTCImpl: any;
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
@@ -168,14 +170,16 @@ export function connectWhep(opts: ConnectWhepOpts): Promise<WhepSession> {
   });
   listen(channel, "message", (event: any) => {
     if (closed) return;
+    let msg: any;
     try {
-      const msg = JSON.parse(event.data);
-      if (msg && msg.type === "echo" && typeof msg.t === "number") {
-        opts.onInputRtt(Date.now() - msg.t);
-      }
+      msg = JSON.parse(event.data);
     } catch {
-      // ignore malformed messages
+      return; // ignore malformed messages
     }
+    if (msg && msg.type === "echo" && typeof msg.t === "number") {
+      opts.onInputRtt(Date.now() - msg.t);
+    }
+    try { opts.onMessage?.(msg); } catch {}
   });
   listen(channel, "close", () => { fail(whepError("input-closed", "Input channel closed")); });
   listen(channel, "error", () => { fail(whepError("input-failed", "Input channel failed")); });

@@ -359,3 +359,29 @@ test("resource cleanup on superseded instance switch closes and DELETEs", async 
   const deleteCalls = fetchImpl.mock.calls.filter((c: any) => c[1] && c[1].method === "DELETE");
   expect(deleteCalls.length).toBe(1);
 });
+
+test("passes every parsed input-channel message to onMessage", async () => {
+  const pc = fakePc();
+  const fetchImpl = jest.fn(async () => whepResponse()) as any;
+  const messages: any[] = [];
+  const promise = connectWhep({
+    whepUrl: "http://host/whep",
+    whepToken: "tok",
+    iceServers: [],
+    onStream: () => {},
+    onInputRtt: () => {},
+    onState: () => {},
+    onMessage: (message) => messages.push(message),
+    RTCImpl: function () { return pc; } as any,
+    fetchImpl,
+  });
+  await Promise.resolve();
+  await Promise.resolve();
+  fireReady(pc);
+  await promise;
+
+  pc.dc._fire("message", { data: JSON.stringify({ type: "bench.pong", id: 1, engine_us: 5 }) });
+  pc.dc._fire("message", { data: "not json" });
+
+  expect(messages).toEqual([{ type: "bench.pong", id: 1, engine_us: 5 }]);
+});
