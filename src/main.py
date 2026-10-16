@@ -141,6 +141,26 @@ def create_identity_store(service_url):
         return None
 
 
+class LicenseActions:
+    """Launcher license calls; results also update the live client's status."""
+
+    def __init__(self, store, client):
+        self._store = store
+        self._client = client
+
+    def _record(self, licensed):
+        client = self._client()
+        if client is not None:
+            client.relay_licensed = licensed
+        return licensed
+
+    def activate(self, key):
+        return self._record(self._store.activate_license(key))
+
+    def deactivate(self):
+        return self._record(self._store.deactivate_license())
+
+
 def forward_remote_state(launcher, client, remote_pairing, error):
     """Called from the server loop; launcher signals hop to the Qt thread."""
     if launcher is None:
@@ -309,7 +329,8 @@ def main():
                     _log(f"[GUI] watchdog restart failed: {_tb.format_exc()[:300]}")
     threading.Thread(target=_watchdog, daemon=True).start()
 
-    launcher = LauncherWindow(on_stop_server=stop_server, pairing=pairing, license_actions=identity_store)
+    launcher = LauncherWindow(on_stop_server=stop_server, pairing=pairing, license_actions=(
+        LicenseActions(identity_store, lambda: remote_client) if identity_store is not None else None))
 
     def show_launcher():
         launcher.show()

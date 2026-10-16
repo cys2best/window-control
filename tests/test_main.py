@@ -404,3 +404,23 @@ def test_identity_store_is_shared_with_launcher_license_actions(monkeypatch):
         raise RemoteIdentityError("Windows user data directory is unavailable")
     monkeypatch.setattr("server.remote_identity.default_identity_path", unavailable)
     assert module.create_identity_store("https://service.example") is None
+
+
+def test_license_result_updates_client_so_later_states_stay_current():
+    from types import SimpleNamespace
+    import main as module
+
+    class Store:
+        def activate_license(self, key):
+            return True
+
+        def deactivate_license(self):
+            return False
+
+    client = SimpleNamespace(relay_licensed=False)
+    actions = module.LicenseActions(Store(), lambda: client)
+    assert actions.activate("EMU-ABCDE-FGHJK-MNPQR-STVWX") is True
+    assert client.relay_licensed is True
+    assert actions.deactivate() is False
+    assert client.relay_licensed is False
+    assert module.LicenseActions(Store(), lambda: None).activate("key") is True
