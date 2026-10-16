@@ -5,6 +5,7 @@ import * as Haptics from "expo-haptics";
 import { Account, Pair, InstanceList, Stream } from "@wc/ui";
 import { exportMeasurement } from "../platform/measurement";
 import { VideoView } from "../platform/VideoView";
+import { QrScanner } from "../platform/QrScanner";
 import { useServer, type RemoteClientOptions } from "@wc/core";
 
 const Stack = createNativeStackNavigator();
@@ -28,7 +29,7 @@ export function RootNavigator({ remoteOptions }: { remoteOptions?: RemoteClientO
   const initialRoute = authToken ? "InstanceList" : "Pair";
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }} initialRouteName={initialRoute}>
-      <Stack.Screen name="Pair">{(props: any) => <Pair {...props} remoteOptions={remoteOptions} />}</Stack.Screen>
+      <Stack.Screen name="Pair">{(props: any) => <Pair {...props} remoteOptions={remoteOptions} QrScanner={QrScanner} />}</Stack.Screen>
       <Stack.Screen name="InstanceList" component={InstanceList} />
       <Stack.Screen name="Account" component={Account} />
       <Stack.Screen name="Stream" component={StreamScreen} />

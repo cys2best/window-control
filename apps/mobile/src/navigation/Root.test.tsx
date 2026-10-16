@@ -11,18 +11,20 @@ jest.mock("@wc/core", () => ({ ...jest.requireActual("@wc/core"), useServer: jes
 jest.mock("@wc/ui", () => ({ Pair: (props: any) => { mockPair(props); return null; }, Account: () => null, InstanceList: () => null, Stream: () => null }));
 jest.mock("../platform/VideoView", () => ({ VideoView: () => null }));
 jest.mock("expo-haptics", () => ({}));
+jest.mock("../platform/QrScanner", () => ({ QrScanner: () => null }));
 
 test.each([["saved-token", "InstanceList"], [null, "Pair"]])("token %s keeps initial local route %s", async (authToken, expected) => {
   (Core.useServer as jest.Mock).mockReturnValue({ authToken });
   const view = await render(<RootNavigator />); expect(view.getByText(expected)).toBeTruthy(); await view.unmount();
 });
 
-test("Pair route receives stable configured options and the invitation params", async () => {
+test("Pair route receives stable configured options, the QR scanner and the invitation params", async () => {
   (Core.useServer as jest.Mock).mockReturnValue({ authToken: null });
   const remoteOptions = { trustedOrigin: "https://remote.example", requestId: () => "id" };
   const view = await render(<RootNavigator remoteOptions={remoteOptions} />);
   const screens = mockNavigator.mock.calls[mockNavigator.mock.calls.length - 1][0].children;
   const props = { route: { params: { invitation: "https://remote.example/pair#invite=abcdefghijklmnopqrstuv" } }, navigation: {} };
   const pairView = await render(screens[0].props.children(props));
-  expect(mockPair).toHaveBeenLastCalledWith({ ...props, remoteOptions }); await pairView.unmount(); await view.unmount();
+  const { QrScanner } = require("../platform/QrScanner");
+  expect(mockPair).toHaveBeenLastCalledWith({ ...props, remoteOptions, QrScanner }); await pairView.unmount(); await view.unmount();
 });

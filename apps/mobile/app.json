@@ -11,7 +11,7 @@
       "supportsTablet": true,
       "infoPlist": {
         "UIUserInterfaceStyle": "Dark",
-        "NSCameraUsageDescription": "Required by the WebRTC engine; the app does not use the camera.",
+        "NSCameraUsageDescription": "Scans the pairing QR code shown on your PC.",
         "NSMicrophoneUsageDescription": "Required by the WebRTC engine; the app does not use the microphone.",
         "ITSAppUsesNonExemptEncryption": false,
         "NSAppTransportSecurity": {
@@ -50,11 +50,20 @@
       "@config-plugins/react-native-webrtc",
       "expo-font",
       "expo-secure-store",
-      ["expo-splash-screen", {
-        "backgroundColor": "#06070b",
-        "image": "./assets/splash-icon.png",
-        "imageWidth": 200
-      }]
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#06070b",
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 200
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Scans the pairing QR code shown on your PC."
+        }
+      ]
     ],
     "extra": {
       "eas": {
