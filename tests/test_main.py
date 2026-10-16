@@ -172,7 +172,7 @@ def test_main_starts_server_without_android_mjpeg_pipeline(monkeypatch):
     assert exit_info.value.code == 0
     assert len(app_calls) == 1
     assert len(app_calls[0][0]) == 1
-    assert set(app_calls[0][1]) == {"pairing"}
+    assert set(app_calls[0][1]) == {"pairing", "bench"}
     assert all(getattr(target, "__name__", "") != "capture_loop" for target in thread_targets)
 
 
