@@ -20,6 +20,9 @@ const { values, positionals } = parseArgs({
     compare: { type: "boolean", default: false },
     profile: { type: "string", default: path.join(os.homedir(), ".emuctrl-bench-profile") },
     out: { type: "string", default: "bench-results" },
+    // Branded browser to drive: "chrome" or "msedge". Playwright's bundled
+    // Chromium has no H.264 decoder, so it cannot play the stream.
+    channel: { type: "string", default: "chrome" },
   },
 });
 
@@ -30,7 +33,7 @@ function fail(message) {
 
 async function launch() {
   return chromium.launchPersistentContext(values.profile, {
-    channel: "chrome",
+    channel: values.channel,
     headless: false, // a hidden tab throttles requestVideoFrameCallback
     viewport: { width: 1280, height: 800 },
   });
