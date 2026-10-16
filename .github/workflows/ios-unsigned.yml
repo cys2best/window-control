@@ -1,0 +1,65 @@
+name: iOS unsigned build
+
+# Manual button. Builds a Release .ipa with the JavaScript bundled in and no code signature, for
+# re-signing and installing with a free Apple ID (Sideloadly/AltStore, 7 days). No Apple secrets here.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-unsigned
+  cancel-in-progress: true
+
+env:
+  REMOTE_SERVICE_URL: https://emuctrl.nendojo.com
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - name: Toolchain
+        run: xcodebuild -version && node --version
+      - name: Install dependencies
+        run: npm ci
+      # Prebuild without the remote URL: it would add the associated-domains capability, which a
+      # free Apple ID cannot sign.
+      - name: Generate the iOS project
+        working-directory: apps/mobile
+        run: npx expo prebuild --platform ios --clean --no-install
+      - name: Install pods
+        working-directory: apps/mobile/ios
+        run: pod install
+      # The bundling phase inlines EXPO_PUBLIC_* into the app, so the remote URL is set here.
+      - name: Build Release without signing
+        working-directory: apps/mobile/ios
+        env:
+          EXPO_PUBLIC_REMOTE_SERVICE_URL: ${{ env.REMOTE_SERVICE_URL }}
+        run: |
+          set -o pipefail
+          workspace=$(ls -d *.xcworkspace | head -n 1)
+          scheme=${workspace%.xcworkspace}
+          xcodebuild -workspace "$workspace" -scheme "$scheme" -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build | tail -n 200
+      - name: Package .ipa
+        working-directory: apps/mobile/ios
+        run: |
+          app=$(ls -d build/Build/Products/Release-iphoneos/*.app | head -n 1)
+          test -f "$app/main.jsbundle"
+          mkdir -p Payload
+          cp -R "$app" Payload/
+          zip -qry EmuCtrl-unsigned.ipa Payload
+          ls -lh EmuCtrl-unsigned.ipa
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: EmuCtrl-unsigned-ipa
+          path: apps/mobile/ios/EmuCtrl-unsigned.ipa
+          retention-days: 14
