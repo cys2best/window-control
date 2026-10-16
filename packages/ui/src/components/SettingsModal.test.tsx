@@ -16,3 +16,10 @@ test("settings persist HUD and haptic preferences", async () => {
   expect(onPreferences).toHaveBeenCalledWith({ showHudOnConnect: true });
   expect(onPreferences).toHaveBeenCalledWith({ haptics: false });
 });
+
+test("the modal allows landscape, so iOS can present it over the landscape-locked stream", async () => {
+  // A Modal defaults to portrait-only on iOS; over a landscape-only screen
+  // that has no common orientation and the app crashes.
+  const view = await render(<SettingsModal preferences={{ quality: "auto", showHudOnConnect: false, haptics: true, hideRailWhilePlaying: true }} onPickQuality={jest.fn()} onPreferences={jest.fn()} onClose={jest.fn()} />);
+  expect(view.getByTestId("settings-modal").props.supportedOrientations).toEqual(expect.arrayContaining(["landscape-left", "landscape-right"]));
+});
