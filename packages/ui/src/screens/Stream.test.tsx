@@ -903,3 +903,29 @@ test("manual quality selection does not count as an adaptive downgrade", async (
   expect(exported[0].samples[0].adaptive_downgrades).toBe(0);
   await view.unmount();
 });
+
+test("a portrait-rotated stream maps page coordinates to the same device point", async () => {
+  const createPanResponder = jest.spyOn(PanResponder, "create").mockImplementation(() => ({ panHandlers: {} }) as any);
+  const starts: number[][] = [];
+  for (const portraitViewportWidth of [undefined, 390]) {
+    const session = makeFakeSession();
+    (Core.connectEngineSession as jest.Mock).mockResolvedValue(session as any);
+    const client = { select: jest.fn().mockResolvedValue(selectResp()), instances: jest.fn().mockResolvedValue([]), setQuality: jest.fn(), keyframe: jest.fn() };
+    (SC.useServer as jest.Mock).mockReturnValue({ base: "http://h", client, setBase: jest.fn(), ready: true } as any);
+    createPanResponder.mockClear();
+    const view = await render(<Stream route={{ params: { serial: "A" } }} navigation={{ navigate: jest.fn(), setParams: jest.fn() }}
+      RTCImpl={FakeRTCPeerConnection} VideoView={FakeVideoView} portraitViewportWidth={portraitViewportWidth} />);
+    await waitFor(() => expect(Core.connectEngineSession).toHaveBeenCalled());
+    await act(async () => { fireEvent(view.getByTestId("stream-surface"), "layout", { nativeEvent: { layout: { width: 708, height: 390 } } }); });
+    const pan = createPanResponder.mock.calls[0][0] as any;
+    // Unrotated: element-local point (50, 100). Rotated: the screen point
+    // that lands there (pageX = 390 - 100, pageY = rail 68 + 50).
+    const event = portraitViewportWidth === undefined ? touch(50, 100)
+      : { nativeEvent: { locationX: 0, locationY: 0, pageX: 290, pageY: 118, touches: [{ pageX: 290, pageY: 118 }] } };
+    await act(async () => { pan.onPanResponderGrant(event); });
+    starts.push(session.input.dragStart.mock.calls[0]);
+    view.unmount();
+    (Core.connectEngineSession as jest.Mock).mockClear();
+  }
+  expect(starts[1]).toEqual(starts[0]);
+});

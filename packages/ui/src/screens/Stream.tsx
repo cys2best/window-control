@@ -6,6 +6,7 @@ import { useServer, connectEngineSession, EngineSession, normalizeCoords, makeAd
 import { theme } from "../theme/tokens";
 import { StreamRail, STREAM_RAIL_WIDTH } from "../components/StreamRail";
 import { SwapControl } from "../components/SwapControl";
+import { rotatedDelta, rotatedPoint } from "./streamRotation";
 import { SettingsModal } from "../components/SettingsModal";
 import { SwitchDrawer } from "../components/SwitchDrawer";
 import { StatsOverlay } from "../components/StatsOverlay";
@@ -23,6 +24,7 @@ export function Stream({
   VideoView,
   performHaptic,
   onExportMeasurement,
+  portraitViewportWidth,
 }: {
   route: any;
   navigation: any;
@@ -30,6 +32,8 @@ export function Stream({
   VideoView: VideoViewComponent;
   performHaptic?: () => void;
   onExportMeasurement?: (run: RemoteRunEvidence) => void | Promise<void>;
+  // Set while the web app draws this screen rotated on a portrait phone.
+  portraitViewportWidth?: number;
 }) {
   const { client, clearAuth, preferences = DEFAULT_STREAM_PREFERENCES, updatePreferences = () => {} } = useServer() as any;
   const { serial } = route.params;
@@ -337,6 +341,12 @@ export function Stream({
   }, []);
 
   const norm = (px: number, py: number) => normalizeCoords({ x: px, y: py }, rect.current, content.current);
+  // The responder below is created once; read rotation through a ref.
+  const portraitWidth = useRef(portraitViewportWidth);
+  portraitWidth.current = portraitViewportWidth;
+  const at = (t: any) => portraitWidth.current === undefined ? { x: t.locationX, y: t.locationY }
+    : rotatedPoint(t.pageX, t.pageY, portraitWidth.current, STREAM_RAIL_WIDTH);
+  const dragDy = (gs: { dx: number; dy: number }) => portraitWidth.current === undefined ? gs.dy : rotatedDelta(gs.dx, gs.dy).dy;
 
   // react-native-gesture-handler's Pan gesture never delivers onUpdate in
   // this project (confirmed: onStart is immediately followed by a clean
@@ -354,7 +364,7 @@ export function Stream({
       onPanResponderGrant: (e) => {
         isScroll.current = e.nativeEvent.touches.length >= 2;
         dragStarted.current = false;
-        const { locationX: x, locationY: y } = e.nativeEvent;
+        const { x, y } = at(e.nativeEvent);
         lastTouch.current = { x, y };
         if (isScroll.current) {
           scrollLast.current = 0;
@@ -376,11 +386,12 @@ export function Stream({
           if (!isScroll.current) {
             isScroll.current = true;
             if (dragStarted.current) {
-              const c = norm(e.nativeEvent.locationX, e.nativeEvent.locationY);
+              const p = at(e.nativeEvent);
+              const c = norm(p.x, p.y);
               input.dragEnd(c.x, c.y);
               dragStarted.current = false;
             }
-            scrollLast.current = gs.dy;
+            scrollLast.current = dragDy(gs);
             twoFingerMoved.current = false;
           }
           if (!twoFingerMoved.current) {
@@ -388,34 +399,34 @@ export function Stream({
             twoFingerMoved.current = true;
             // Treat the threshold-crossing movement as gesture activation,
             // not scrolling, so a HUD toggle never leaks a tiny scroll.
-            scrollLast.current = gs.dy;
+            scrollLast.current = dragDy(gs);
             return;
           }
-          const delta = gs.dy - scrollLast.current;
+          const delta = dragDy(gs) - scrollLast.current;
           if (Math.abs(delta) < 1) return;
-          scrollLast.current = gs.dy;
-          const x = (touches[0].locationX + touches[1].locationX) / 2;
-          const y = (touches[0].locationY + touches[1].locationY) / 2;
+          scrollLast.current = dragDy(gs);
+          const a = at(touches[0]), b = at(touches[1]);
+          const x = (a.x + b.x) / 2;
+          const y = (a.y + b.y) / 2;
           const c = norm(x, y);
           input.scroll(c.x, c.y, -delta / rect.current.height);
           return;
         }
         if (isScroll.current) return; // was a 2-finger gesture that dropped to 1 finger
-        const { locationX: x, locationY: y } = e.nativeEvent;
+        const { x, y } = at(e.nativeEvent);
         lastTouch.current = { x, y };
         if (Math.abs(gs.dx) < 3 && Math.abs(gs.dy) < 3) return;
         const c = norm(x, y);
         input.dragMove(c.x, c.y);
       },
       onPanResponderRelease: (e) => {
-        const { locationX: x, locationY: y } = e.nativeEvent;
-        lastTouch.current = { x, y };
+        lastTouch.current = at(e.nativeEvent);
         if (isScroll.current && !twoFingerMoved.current) setStatsOn((v) => !v);
         releaseActiveDrag();
       },
       onPanResponderTerminate: (e) => {
         if (e?.nativeEvent) {
-          lastTouch.current = { x: e.nativeEvent.locationX, y: e.nativeEvent.locationY };
+          lastTouch.current = at(e.nativeEvent);
         }
         releaseActiveDrag();
       },
@@ -470,7 +481,7 @@ export function Stream({
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.color.streamBg }}>
-      <View collapsable={false} style={{ flex: 1, marginHorizontal: STREAM_RAIL_WIDTH }} {...panResponder.panHandlers}
+      <View testID="stream-surface" collapsable={false} style={{ flex: 1, marginHorizontal: STREAM_RAIL_WIDTH }} {...panResponder.panHandlers}
         onLayout={(e) => { rect.current = { width: e.nativeEvent.layout.width, height: e.nativeEvent.layout.height }; }}>
         {stream ? <VideoView stream={stream} /> : null}
       </View>

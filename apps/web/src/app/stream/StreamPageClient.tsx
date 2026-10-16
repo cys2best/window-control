@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useServer } from "@wc/core";
 import { exportMeasurement } from "../../platform/measurement";
 import { VideoView } from "../../platform/VideoView";
+import { PortraitRotation } from "../../platform/portraitRotation";
 
 // Screens navigate by PascalCase route name (e.g. "Pair", "InstanceList")
 // which doesn't lowercase-map onto this app's actual path segments 1:1.
@@ -37,7 +38,9 @@ export default function StreamPageClient() {
   if (!ready || !paired) return null;
 
   return (
+    <PortraitRotation>{(portraitViewportWidth) => (
     <Stream
+      portraitViewportWidth={portraitViewportWidth}
       route={{ params: { serial, title: serial } }}
       navigation={{
         navigate: (route: string) => router.push(toPath(route)),
@@ -51,5 +54,6 @@ export default function StreamPageClient() {
         if (typeof navigator !== "undefined") navigator.vibrate?.(10);
       }}
     />
+    )}</PortraitRotation>
   );
 }
