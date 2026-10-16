@@ -14,6 +14,7 @@ from urllib.error import HTTPError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from broker.identity_store import InstallationIdentity
+from config import VERSION
 from broker.license_store import normalize_key
 
 
@@ -103,7 +104,9 @@ class _NoRedirect(HTTPRedirectHandler):
 
 def _http_json(method: str, url: str, payload: dict, timeout: float) -> dict:
     request = Request(url, data=json.dumps(payload).encode("utf-8"), method=method,
-                      headers={"Content-Type": "application/json", "Accept": "application/json"})
+                      headers={"Content-Type": "application/json", "Accept": "application/json",
+                               # Cloudflare rejects the default Python-urllib agent (error 1010).
+                               "User-Agent": f"EmuCtrl/{VERSION}"})
     # In particular, never forward a reset credential to a redirected origin.
     try:
         with build_opener(_NoRedirect()).open(request, timeout=timeout) as response:

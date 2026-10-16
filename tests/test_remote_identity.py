@@ -221,3 +221,29 @@ def test_discard_identity_keeps_recoverable_backup(tmp_path):
     assert not path.exists() and len(service.calls) == calls
     assert (tmp_path / "identity.json.retired").read_bytes() == saved
     store.discard_identity()
+
+
+def test_requests_identify_as_emuctrl_not_python_urllib(monkeypatch):
+    # Cloudflare's browser integrity check answers Python-urllib with 403 (error 1010).
+    import config
+    from server import remote_identity
+    sent = {}
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self, limit):
+            return b'{"ok": true}'
+
+    class Opener:
+        def open(self, request, timeout):
+            sent["user_agent"] = request.get_header("User-agent")
+            return Response()
+
+    monkeypatch.setattr(remote_identity, "build_opener", lambda *handlers: Opener())
+    remote_identity._http_json("POST", "https://remote.example/installations", {}, 10.0)
+    assert sent["user_agent"] == f"EmuCtrl/{config.VERSION}"
