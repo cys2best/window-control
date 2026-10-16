@@ -142,6 +142,13 @@ export function connectWhep(opts: ConnectWhepOpts): Promise<WhepSession> {
   listen(pc, "track", (event: any) => {
     if (closed) return;
     if (!event.track || event.track.kind !== "video") return;
+    // Interactive stream: show each frame as soon as it decodes instead of
+    // letting the adaptive jitter buffer hold frames back. Two spellings:
+    // jitterBufferTarget (standard, ms) and playoutDelayHint (older Chrome, s).
+    if (event.receiver) {
+      try { event.receiver.jitterBufferTarget = 0; } catch {}
+      try { event.receiver.playoutDelayHint = 0; } catch {}
+    }
     const stream = event.streams && event.streams[0];
     if (!stream) return;
     videoStream = stream;

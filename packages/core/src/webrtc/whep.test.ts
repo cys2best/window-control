@@ -385,3 +385,21 @@ test("passes every parsed input-channel message to onMessage", async () => {
 
   expect(messages).toEqual([{ type: "bench.pong", id: 1, engine_us: 5 }]);
 });
+
+test("asks the video receiver to render frames without jitter buffering", async () => {
+  const pc = fakePc();
+  const fetchImpl = jest.fn(async () => whepResponse()) as any;
+  const promise = connectWhep({
+    whepUrl: "http://host/whep", whepToken: "tok", iceServers: [],
+    onStream: () => {}, onInputRtt: () => {}, onState: () => {},
+    RTCImpl: function () { return pc; } as any, fetchImpl,
+  });
+  await Promise.resolve();
+  await Promise.resolve();
+  const receiver: any = {};
+  pc._fire("track", { track: { kind: "video" }, receiver, streams: [{ toURL: () => "x" }] });
+  fireReady(pc);
+  await promise;
+  expect(receiver.jitterBufferTarget).toBe(0);
+  expect(receiver.playoutDelayHint).toBe(0);
+});
