@@ -55,6 +55,20 @@ class MediaAdmission:
         self.session_history: dict[str, tuple[int, set[str]]] = {}
         self.cancellations = []
 
+    def _pending(self, host, request, now):
+        pending = self.registry.pending_requests.get(request.payload['routing_id'])
+        if (self.registry.get_host(host.installation_id) is not host or pending is None
+                or pending.future.done() or pending.media_authorized
+                or pending.op not in {'select', 'renew'}
+                or (pending.installation_id, pending.host_epoch) != (host.installation_id, host.epoch)
+                or now >= pending.received_at + 30):
+            return None
+        return pending
+
+    def relay_worth_fetching(self, host: HostConnection, request: MediaAuthorization) -> bool:
+        """Cheap pre-check so only plausible admissions cost Cloudflare calls."""
+        return self._pending(host, request, self.clock()) is not None and self.wants_relay(host.installation_id)
+
     def wants_relay(self, installation_id: str) -> bool:
         return (self.settings.relay_available
                 and (self.settings.relay_provider == 'cloudflare' or bool(self.settings.turn_urls))
@@ -65,12 +79,8 @@ class MediaAdmission:
         """relay_servers: Cloudflare TURN servers prefetched per endpoint; used only if still licensed now."""
         now = self.clock()
         self.sweep(now)
-        pending = self.registry.pending_requests.get(request.payload['routing_id'])
-        if (self.registry.get_host(host.installation_id) is not host or pending is None
-                or pending.future.done() or pending.media_authorized
-                or pending.op not in {'select', 'renew'}
-                or (pending.installation_id, pending.host_epoch) != (host.installation_id, host.epoch)
-                or now >= pending.received_at + 30):
+        pending = self._pending(host, request, now)
+        if pending is None:
             raise MediaError('invalid_request')
         viewer = pending.viewer
         if (self.registry.viewers.get(viewer.viewer_id) is not viewer or not viewer.authenticated

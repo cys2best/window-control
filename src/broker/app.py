@@ -403,7 +403,7 @@ def create_broker_app(settings: BrokerSettings, *, turn_client: httpx.AsyncClien
                         elif parsed.get("op") == "media_authorize":
                             request = parse_media_authorization(raw)
                             relay_servers = None
-                            if settings.relay_provider == "cloudflare" and media.wants_relay(host.installation_id):
+                            if settings.relay_provider == "cloudflare" and media.relay_worth_fetching(host, request):
                                 relay_servers = await fetch_relay_servers()
                             try:
                                 bundles = media.authorize(host, request, relay_servers)

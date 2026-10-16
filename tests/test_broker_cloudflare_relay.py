@@ -150,3 +150,19 @@ def test_cloudflare_settings_require_key_and_token_and_hide_them(tmp_path):
     with pytest.raises(ValidationError):
         BrokerSettings(storage_path=str(tmp_path / "s"), allowed_origins=["https://control.example.com"],
                        max_active_streams=1)
+
+
+def test_invalid_media_authorize_never_calls_cloudflare(cloudflare_env):
+    fake = FakeCloudflare()
+    with cloudflare_env(fake) as client:
+        identity = register(client)
+        assert activate(client, identity, client.app.state.licenses.issue(now=0)).status_code == 200
+        with client.websocket_connect("/connect") as host, client.websocket_connect("/connect") as viewer:
+            authenticate_host(host, identity)
+            approve_viewer(host, viewer, identity)
+            for _ in range(3):
+                host.send_text(wire("media_authorize", {"routing_id": str(uuid.uuid4()),
+                                                        "session_id": str(uuid.uuid4()), "generation": 1}))
+                reply = host.receive_json()
+                assert reply["ok"] is False and reply["error"]["code"] == "invalid_request"
+    assert fake.calls == 0
