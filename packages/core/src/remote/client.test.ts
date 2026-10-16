@@ -15,6 +15,13 @@ test("authenticates first with no URL secrets and maps instances and authenticat
   await expect(promise).resolves.toEqual([{ id: "adb:A", serial: "A", title: "Alpha", active: true, w: 1920, h: 1080, fps: 60 }]);
   const ping = c.ping(); await tick(); now = 137; expect(last(s.sent).op).toBe("instances"); s.reply({ instances: [] }); await expect(ping).resolves.toBe(37);
 });
+test("ping reports whole milliseconds like the local client", async () => {
+  // performance.now() is fractional; the instance list printed 334.80000000074506 ms.
+  let now = 100.25; const c = make({ now: () => now }); const first = c.instances();
+  const s = FakeSocket.sockets[0]; s.open(); s.reply({ authenticated: true, viewer_id: "viewer" }); await tick();
+  s.reply({ instances: [] }); await first;
+  const ping = c.ping(); await tick(); now = 435.05; s.reply({ instances: [] }); await expect(ping).resolves.toBe(335);
+});
 test("caps pending work at 32 including requests awaiting authentication", async () => {
   const c = make(); const promises = Array.from({ length: 32 }, () => c.instances().catch(e => e.code));
   await expect(c.instances()).rejects.toMatchObject({ code: "busy" });

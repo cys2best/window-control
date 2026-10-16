@@ -167,7 +167,7 @@ export function connectRemoteClient(target: Extract<ServerTarget, { kind: "remot
         return { id: d.id, serial: d.serial, title: d.title ?? d.name, active: d.active, w: d.w as number, h: d.h as number, fps: typeof d.fps === "number" ? d.fps : undefined } as Instance;
       });
     }); },
-    async ping(): Promise<number> { const start = now(); await this.instances(); return Math.max(0, now() - start); },
+    async ping(): Promise<number> { const start = now(); await this.instances(); return Math.max(0, Math.round(now() - start)); },
     async select(serial: string, opts?: RequestOptions): Promise<RemoteSelection> { validateInput(serial, "serial"); return command("select", { serial }, selected, opts); },
     preview(serial: string, opts?: RequestOptions): Promise<PreviewSource> { validateInput(serial, "serial"); return command("preview", { serial }, r => ({ uri: validatePreview(r) }), opts); },
     keyframe(serial: string): Promise<void> { validateInput(serial, "serial"); return command("keyframe", { serial }, simple); },
