@@ -439,3 +439,24 @@ def test_remote_invitation_shows_qr_and_copies_link(qapp):
         store.pair(store.active_code()[0], "Local phone")
         window._refresh_pairing()
         assert not window._remote_invite_box.isVisibleTo(window)
+
+
+def test_key_entry_hides_once_relay_is_active_and_returns_after(qapp):
+    window = license_window(LicenseActions())
+    window.set_relay_licensed(False)
+    assert not window._license_input.isHidden() and not window._license_activate_btn.isHidden()
+    assert not window._license_help_label.isHidden()
+    window.set_relay_licensed(True)
+    assert window._license_input.isHidden() and window._license_activate_btn.isHidden()
+    assert window._license_help_label.isHidden()
+    assert not window._license_deactivate_btn.isHidden()
+    window.set_relay_licensed(False)
+    assert not window._license_input.isHidden()
+
+
+def test_license_placeholder_is_readable_on_the_dark_field(qapp):
+    from PyQt5.QtGui import QPalette
+    from gui.theme import MUTED, SURFACE
+    window = license_window(LicenseActions())
+    assert window._license_input.palette().color(QPalette.PlaceholderText).name() == MUTED
+    assert f"background: {SURFACE}" in window._license_input.styleSheet()

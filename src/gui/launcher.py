@@ -12,7 +12,7 @@ from PyQt5.QtWidgets import (
     QPushButton, QLabel, QGroupBox, QFrame, QListWidget, QListWidgetItem, QLineEdit, QApplication
 )
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, pyqtSlot
-from PyQt5.QtGui import QFont, QPixmap
+from PyQt5.QtGui import QColor, QFont, QPalette, QPixmap
 
 from config import PORT, VERSION
 from server.pairing import PairingStore
@@ -411,6 +411,16 @@ class LauncherWindow(QMainWindow):
         self._license_input.setPlaceholderText("EMU-XXXXX-XXXXX-XXXXX-XXXXX")
         self._license_input.setFont(self._mono_font(10))
         self._license_input.setFixedHeight(32)
+        self._license_input.setStyleSheet(
+            f"QLineEdit {{ background: {SURFACE}; border: 1px solid {HAIRLINE};"
+            f" border-radius: 6px; padding: 0 8px; }}"
+            f"QLineEdit:focus {{ border-color: {CYAN}; }}"
+        )
+        palette = self._license_input.palette()
+        # Colors go through the palette: a stylesheet color also paints the placeholder.
+        palette.setColor(QPalette.Text, QColor(INK))
+        palette.setColor(QPalette.PlaceholderText, QColor(MUTED))
+        self._license_input.setPalette(palette)
         entry.addWidget(self._license_input, 1)
         self._license_activate_btn = QPushButton("Activate")
         self._license_activate_btn.setFixedHeight(32)
@@ -444,6 +454,9 @@ class LauncherWindow(QMainWindow):
             "Relay: active on this PC" if value else
             "Relay: not activated — remote works only when a direct connection is possible")
         self._license_deactivate_btn.setVisible(value is True)
+        # A key is entered once; while relay is active only Deactivate applies.
+        for widget in (self._license_input, self._license_activate_btn, self._license_help_label):
+            widget.setVisible(value is not True)
         self._fit_height()
 
     def _activate_license(self):
