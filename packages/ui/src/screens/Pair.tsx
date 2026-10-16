@@ -39,6 +39,10 @@ export function Pair({ navigation, route, remoteOptions }: { navigation: any; ro
   // The web app is served by the host it talks to; a native app has to be
   // told where the host is.
   const needsHost = !remote && (Platform.OS !== "web" || local);
+  // The hosted remote web is no host itself: without an invitation a code
+  // has nowhere to go, so point at the link the PC shows instead.
+  const awaitingInvitation = Platform.OS === "web" && !invitation && Boolean(remoteOptions)
+    && target?.kind === "local" && hostReachability.state === "unreachable";
   const [host, setHost] = useState(base ?? "");
   const [code, setCode] = useState("");
   const [focusedField, setFocusedField] = useState<string | null>(null);
@@ -125,8 +129,11 @@ export function Pair({ navigation, route, remoteOptions }: { navigation: any; ro
           Pair this device
         </Text>
         <Text style={{ fontFamily: theme.font.regular, fontSize: 13.5, lineHeight: 21, color: theme.color.textMuted, marginTop: 9, marginBottom: 22 }}>
-          On your PC, open EmuCtrl Host and click Pair device. Enter the code it shows. You only do this once per device.
+          {awaitingInvitation
+            ? "Open the pairing link shown on your PC: in EmuCtrl Host, click Pair device, then scan its QR code or open the copied link here. You only do this once per device."
+            : "On your PC, open EmuCtrl Host and click Pair device. Enter the code it shows. You only do this once per device."}
         </Text>
+        {awaitingInvitation ? null : (<>
         {invitation ? <Pressable accessibilityRole="button" onPress={() => { setLocal(value => !value); setError(""); }} style={{ marginBottom: 16 }}><Text style={{ color: theme.color.accent }}>{local ? "Use invitation" : "Advanced: local host"}</Text></Pressable> : null}
         {needsHost || remote ? null : (
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 22 }}>
@@ -154,6 +161,7 @@ export function Pair({ navigation, route, remoteOptions }: { navigation: any; ro
         <View style={{ marginTop: 20 }}>
           <Button label={busy ? "Please wait…" : "Pair"} onPress={() => { void submit(); }} loading={busy} />
         </View>
+        </>)}
       </ScrollView>
     </KeyboardAvoidingView>
   );

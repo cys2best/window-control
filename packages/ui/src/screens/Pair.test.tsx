@@ -300,3 +300,26 @@ test("real provider completes owned remote pairing and navigates after its publi
   expect(context.target).toEqual({ kind: "remote", serviceUrl: trustedOrigin, installationId: "a".repeat(32) });
   expect(context.authToken).toBe("owned"); expect(context.client?.kind).toBe("remote"); await view.unmount();
 });
+
+test("on the hosted web without an invitation, asks for the PC's link instead of a code", async () => {
+  jest.replaceProperty(Platform, "OS", "web");
+  mockServer({
+    base: trustedOrigin, target: { kind: "local", base: trustedOrigin },
+    hostReachability: { state: "unreachable", host: "remote.example", rttMs: null, paired: null },
+  });
+  const screen = await render(<Pair navigation={navigation} remoteOptions={remoteOptions} />);
+  expect(screen.getByText(/Open the pairing link shown on your PC/)).toBeTruthy();
+  expect(screen.queryByPlaceholderText("Pairing code")).toBeNull();
+  expect(screen.queryByText("Pair")).toBeNull();
+});
+
+test("a reachable local host on web still pairs by code alone", async () => {
+  jest.replaceProperty(Platform, "OS", "web");
+  mockServer({
+    base: "http://192.168.1.8:8080", target: { kind: "local", base: "http://192.168.1.8:8080" },
+    hostReachability: { state: "reachable", host: "192.168.1.8:8080", rttMs: 12, paired: false },
+  });
+  const screen = await render(<Pair navigation={navigation} remoteOptions={remoteOptions} />);
+  expect(screen.queryByText(/Open the pairing link shown on your PC/)).toBeNull();
+  expect(screen.getByPlaceholderText("Pairing code")).toBeTruthy();
+});
