@@ -3,10 +3,11 @@ import sys
 import subprocess
 import time
 import html
+import math
 import threading
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QLabel, QGroupBox, QFrame, QListWidget, QListWidgetItem
+    QPushButton, QLabel, QGroupBox, QFrame, QListWidget, QListWidgetItem, QLineEdit
 )
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, pyqtSlot
 from PyQt5.QtGui import QFont
@@ -27,8 +28,11 @@ class LauncherWindow(QMainWindow):
     window_selected = pyqtSignal(str)
     remote_pairing_changed = pyqtSignal(object, str)
     _remote_pairing_ready = pyqtSignal(int, object, str)
+    relay_licensed_changed = pyqtSignal(object)
+    _license_ready = pyqtSignal(int, object, str)
 
-    def __init__(self, parent=None, on_stop_server=None, pairing=None, remote_pairing=None):
+    def __init__(self, parent=None, on_stop_server=None, pairing=None, remote_pairing=None,
+                 license_actions=None):
         super().__init__(parent)
         self.setWindowTitle(f"EmuCtrl Host v{VERSION}")
         self.setFixedSize(400, 560)
@@ -39,6 +43,10 @@ class LauncherWindow(QMainWindow):
         self._remote_request_id = 0
         self.remote_pairing_changed.connect(self.set_remote_pairing)
         self._remote_pairing_ready.connect(self._on_remote_pairing_ready)
+        self._license_actions = license_actions
+        self._license_request_id = 0
+        self.relay_licensed_changed.connect(self.set_relay_licensed)
+        self._license_ready.connect(self._on_license_ready)
         self._device_ids: list[str] | None = None
         self._active_streams_count = 0
         self._pending_update_version = None
@@ -181,6 +189,7 @@ class LauncherWindow(QMainWindow):
         self._remote_error_label.setStyleSheet(f"color: {DESTRUCTIVE_HOVER};")
         self._remote_error_label.hide()
         devices_layout.addWidget(self._remote_error_label)
+        devices_layout.addWidget(self._build_license_row())
 
         self._device_list = QListWidget()
         self._device_list.setFixedHeight(64)
@@ -380,6 +389,107 @@ class LauncherWindow(QMainWindow):
                     self._remote_pairing_ready.emit(request_id, invitation, "")
 
             threading.Thread(target=open_remote, daemon=True, name="remote-pairing").start()
+
+    def _build_license_row(self) -> QWidget:
+        self._license_row = QWidget()
+        column = QVBoxLayout(self._license_row)
+        column.setContentsMargins(0, 4, 0, 0)
+        column.setSpacing(6)
+        self._license_status_label = QLabel("")
+        self._license_status_label.setWordWrap(True)
+        self._license_status_label.setStyleSheet(f"color: {MUTED};")
+        column.addWidget(self._license_status_label)
+        entry = QHBoxLayout()
+        entry.setSpacing(10)
+        self._license_input = QLineEdit()
+        self._license_input.setPlaceholderText("EMU-XXXXX-XXXXX-XXXXX-XXXXX")
+        self._license_input.setFont(self._mono_font(10))
+        self._license_input.setFixedHeight(32)
+        entry.addWidget(self._license_input, 1)
+        self._license_activate_btn = QPushButton("Activate")
+        self._license_activate_btn.setFixedHeight(32)
+        self._license_activate_btn.setStyleSheet(self._btn_style(SURFACE, CYAN, INK))
+        self._license_activate_btn.clicked.connect(self._activate_license)
+        entry.addWidget(self._license_activate_btn)
+        column.addLayout(entry)
+        self._license_help_label = QLabel(
+            "Using a key that is active on another PC moves it here and disconnects "
+            "that PC and its paired phones.")
+        self._license_help_label.setWordWrap(True)
+        self._license_help_label.setStyleSheet(f"color: {DIM};")
+        column.addWidget(self._license_help_label)
+        self._license_error_label = QLabel("")
+        self._license_error_label.setWordWrap(True)
+        self._license_error_label.setStyleSheet(f"color: {DESTRUCTIVE_HOVER};")
+        self._license_error_label.hide()
+        column.addWidget(self._license_error_label)
+        self._license_deactivate_btn = QPushButton("Deactivate license")
+        self._license_deactivate_btn.setFixedHeight(32)
+        self._license_deactivate_btn.setStyleSheet(self._btn_style(SURFACE, DESTRUCTIVE_HOVER, INK))
+        self._license_deactivate_btn.clicked.connect(self._deactivate_license)
+        column.addWidget(self._license_deactivate_btn)
+        self.set_relay_licensed(None)
+        return self._license_row
+
+    def set_relay_licensed(self, value):
+        """Qt thread only; workers emit relay_licensed_changed."""
+        self._license_row.setVisible(value is not None and self._license_actions is not None)
+        self._license_status_label.setText(
+            "Relay: active on this PC" if value else
+            "Relay: not activated — remote works only when a direct connection is possible")
+        self._license_deactivate_btn.setVisible(value is True)
+        self._fit_height()
+
+    def _activate_license(self):
+        key = self._license_input.text().strip()
+        if key:
+            self._run_license("activate", key)
+
+    def _deactivate_license(self):
+        self._run_license("deactivate")
+
+    def _run_license(self, action, *args):
+        if self._license_actions is None:
+            return
+        self._license_request_id += 1
+        request_id = self._license_request_id
+        actions = self._license_actions
+        self._license_error_label.hide()
+        self._license_activate_btn.setEnabled(False)
+        self._license_deactivate_btn.setEnabled(False)
+
+        def run():
+            # Network I/O stays off the Qt thread, like remote pairing.
+            from server.remote_identity import LicenseError
+            try:
+                licensed = getattr(actions, action)(*args)
+            except LicenseError as error:
+                if error.code == "invalid_license":
+                    message = "That license key is not valid."
+                elif error.code == "license_in_use":
+                    days = max(1, math.ceil((error.retry_after or 0) / 86400))
+                    message = f"This key was moved recently. Try again in {days} day{'s' if days != 1 else ''}."
+                else:
+                    message = "Could not reach the remote service. Try again later."
+                self._license_ready.emit(request_id, None, message)
+            except Exception:
+                self._license_ready.emit(request_id, None, "Could not reach the remote service. Try again later.")
+            else:
+                self._license_ready.emit(request_id, bool(licensed), "")
+
+        threading.Thread(target=run, daemon=True, name="relay-license").start()
+
+    def _on_license_ready(self, request_id, licensed, error):
+        if request_id != self._license_request_id:
+            return
+        self._license_activate_btn.setEnabled(True)
+        self._license_deactivate_btn.setEnabled(True)
+        self._license_error_label.setText(error)
+        self._license_error_label.setVisible(bool(error))
+        if not error:
+            self._license_input.clear()
+            self.set_relay_licensed(licensed)
+        self._fit_height()
 
     def _on_remote_pairing_ready(self, request_id, invitation, error):
         if request_id != self._remote_request_id:

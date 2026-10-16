@@ -314,3 +314,98 @@ def test_background_identity_result_can_attach_remote_without_resetting_local_co
         window._pair_btn.click()
         _wait_remote_result(qapp, window)
         assert remote.active_invitation().url in window._remote_link_label.text()
+
+
+class LicenseActions:
+    def __init__(self, result=None, error=None):
+        self.result, self.error, self.calls = result, error, []
+
+    def _run(self, name, *args):
+        self.calls.append((name, *args))
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+    def activate(self, key):
+        return self._run("activate", key)
+
+    def deactivate(self):
+        return self._run("deactivate")
+
+
+def wait_until(qapp, condition, timeout=2.0):
+    import time
+    deadline = time.monotonic() + timeout
+    while not condition():
+        assert time.monotonic() < deadline, "condition not met"
+        qapp.processEvents()
+        time.sleep(0.01)
+
+
+def license_window(actions):
+    with patch("gui.launcher.check_for_update"):
+        from gui.launcher import LauncherWindow
+        return LauncherWindow(license_actions=actions)
+
+
+def test_license_row_hidden_until_status_known(qapp):
+    window = license_window(LicenseActions())
+    assert window._license_row.isHidden()
+    window.set_relay_licensed(False)
+    assert not window._license_row.isHidden()
+    assert window._license_status_label.text() == "Relay: not activated — remote works only when a direct connection is possible"
+    assert window._license_deactivate_btn.isHidden()
+    assert "moves it here and disconnects that PC" in window._license_help_label.text()
+    window.set_relay_licensed(None)
+    assert window._license_row.isHidden()
+
+
+def test_activate_success_shows_active_and_clears_field(qapp):
+    actions = LicenseActions(result=True)
+    window = license_window(actions)
+    window.set_relay_licensed(False)
+    window._license_input.setText("EMU-ABCDE-FGHJK-MNPQR-STVWX")
+    window._license_activate_btn.click()
+    wait_until(qapp, lambda: window._license_status_label.text() == "Relay: active on this PC")
+    assert actions.calls == [("activate", "EMU-ABCDE-FGHJK-MNPQR-STVWX")]
+    assert window._license_input.text() == ""
+    assert not window._license_deactivate_btn.isHidden()
+    assert window._license_error_label.isHidden()
+
+
+def test_license_in_use_shows_days(qapp):
+    from server.remote_identity import LicenseError
+    window = license_window(LicenseActions(error=LicenseError("license_in_use", 86400 + 1)))
+    window.set_relay_licensed(False)
+    window._license_input.setText("EMU-ABCDE-FGHJK-MNPQR-STVWX")
+    window._license_activate_btn.click()
+    wait_until(qapp, lambda: not window._license_error_label.isHidden())
+    assert window._license_error_label.text() == "This key was moved recently. Try again in 2 days."
+    assert window._license_input.text() == "EMU-ABCDE-FGHJK-MNPQR-STVWX"
+
+
+def test_license_activation_failure_keeps_launcher_usable(qapp):
+    from server.remote_identity import LicenseError
+    window = license_window(LicenseActions(error=LicenseError("unavailable")))
+    window.set_relay_licensed(False)
+    window._license_input.setText("EMU-ABCDE-FGHJK-MNPQR-STVWX")
+    window._license_activate_btn.click()
+    wait_until(qapp, lambda: not window._license_error_label.isHidden())
+    assert window._license_error_label.text() == "Could not reach the remote service. Try again later."
+    assert window._pair_btn.isEnabled() and window._license_activate_btn.isEnabled()
+    window._license_input.setText("nonsense")
+    from server.remote_identity import LicenseError as Invalid
+    window._license_actions = LicenseActions(error=Invalid("invalid_license"))
+    window._license_activate_btn.click()
+    wait_until(qapp, lambda: window._license_error_label.text() == "That license key is not valid.")
+
+
+def test_deactivate_hides_button_and_shows_not_activated(qapp):
+    actions = LicenseActions(result=False)
+    window = license_window(actions)
+    window.set_relay_licensed(True)
+    assert not window._license_deactivate_btn.isHidden()
+    window._license_deactivate_btn.click()
+    wait_until(qapp, lambda: window._license_deactivate_btn.isHidden())
+    assert actions.calls == [("deactivate",)]
+    assert window._license_status_label.text().startswith("Relay: not activated")

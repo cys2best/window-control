@@ -209,6 +209,7 @@ class RemoteHostClient:
                         # The broker deleted this installation, e.g. its license moved.
                         if self.identity_store is not None:
                             self.identity_store.discard_identity()
+                        self.relay_licensed = None
                         self._notify(LICENSE_MOVED_MESSAGE)
                         return
                     epoch = (reply.result or {}).get("host_epoch")

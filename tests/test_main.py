@@ -366,3 +366,41 @@ async def test_remote_client_receives_identity_store_for_license_moves():
     client = await module.build_remote_client("https://service.example", actions, PairingStore(),
                                               lambda *args: None, identity_store=store)
     assert client.identity_store is store
+
+
+def test_remote_state_forwards_pairing_and_relay_license_status():
+    import main as module
+
+    class Signal:
+        def __init__(self):
+            self.emitted = []
+
+        def emit(self, *args):
+            self.emitted.append(args)
+
+    class Launcher:
+        remote_pairing_changed = Signal()
+        relay_licensed_changed = Signal()
+
+    class Client:
+        relay_licensed = True
+
+    launcher = Launcher()
+    module.forward_remote_state(launcher, Client(), "pairing", "")
+    module.forward_remote_state(launcher, None, None, "offline")
+    assert launcher.remote_pairing_changed.emitted == [("pairing", ""), (None, "offline")]
+    assert launcher.relay_licensed_changed.emitted == [(True,)]
+    module.forward_remote_state(None, Client(), None, "")
+
+
+def test_identity_store_is_shared_with_launcher_license_actions(monkeypatch):
+    import main as module
+    from server.remote_identity import RemoteIdentityError
+    assert module.create_identity_store("") is None
+    created = module.create_identity_store("https://service.example")
+    assert hasattr(created, "activate_license") and hasattr(created, "deactivate_license")
+
+    def unavailable():
+        raise RemoteIdentityError("Windows user data directory is unavailable")
+    monkeypatch.setattr("server.remote_identity.default_identity_path", unavailable)
+    assert module.create_identity_store("https://service.example") is None

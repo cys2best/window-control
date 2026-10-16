@@ -588,7 +588,9 @@ async def test_not_paired_host_auth_discards_identity_and_stops_reconnecting():
     client = module.RemoteHostClient("https://service.example", InstallationIdentity(installation_id="test", credential="secret"),
                                      RemoteDispatcher(Actions(), PairingStore()), connector=connector,
                                      identity_store=IdentityStore(), on_state=lambda _pairing, error: errors.append(error))
+    client.relay_licensed = True  # Licensed before the license moved away.
     await asyncio.wait_for(client.run(asyncio.Event()), 2)
     assert len(connects) == 1 and discarded == [True]
+    assert client.relay_licensed is None
     # run() repeats the final state on exit; no other error (e.g. "unavailable") is reported.
     assert set(errors) == {"This PC's relay license moved to another PC. Restart EmuCtrl to reconnect; remote phones must pair again."}

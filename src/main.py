@@ -130,6 +130,26 @@ def build_engine_orchestrator() -> "EngineOrchestrator":
     return EngineOrchestrator(runtime_config)
 
 
+def create_identity_store(service_url):
+    """One identity store shared by the host client and launcher license actions."""
+    from server.remote_identity import RemoteIdentityStore, RemoteIdentityError
+    if not service_url:
+        return None
+    try:
+        return RemoteIdentityStore()
+    except RemoteIdentityError:
+        return None
+
+
+def forward_remote_state(launcher, client, remote_pairing, error):
+    """Called from the server loop; launcher signals hop to the Qt thread."""
+    if launcher is None:
+        return
+    launcher.remote_pairing_changed.emit(remote_pairing, error)
+    if client is not None:
+        launcher.relay_licensed_changed.emit(client.relay_licensed)
+
+
 async def build_remote_client(service_url, actions, pairing, on_state, *, identity_store=None):
     """Called on the server loop; registration/protection run in its executor."""
     import asyncio
@@ -221,13 +241,17 @@ def main():
 
     pairing = PairingStore(default_store_path())
     launcher = None
+    remote_client = None
+    identity_store = create_identity_store(config.REMOTE_SERVICE_URL)
 
     def remote_state(remote_pairing, error):
-        if launcher is not None:
-            launcher.remote_pairing_changed.emit(remote_pairing, error)
+        forward_remote_state(launcher, remote_client, remote_pairing, error)
 
     async def remote_factory(actions):
-        return await build_remote_client(config.REMOTE_SERVICE_URL, actions, pairing, remote_state)
+        nonlocal remote_client
+        remote_client = await build_remote_client(config.REMOTE_SERVICE_URL, actions, pairing, remote_state,
+                                                  identity_store=identity_store)
+        return remote_client
 
     fastapi_app = create_app(instance_manager, pairing=pairing, remote_factory=remote_factory)
 
@@ -285,7 +309,7 @@ def main():
                     _log(f"[GUI] watchdog restart failed: {_tb.format_exc()[:300]}")
     threading.Thread(target=_watchdog, daemon=True).start()
 
-    launcher = LauncherWindow(on_stop_server=stop_server, pairing=pairing)
+    launcher = LauncherWindow(on_stop_server=stop_server, pairing=pairing, license_actions=identity_store)
 
     def show_launcher():
         launcher.show()
