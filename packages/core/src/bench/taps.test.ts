@@ -91,3 +91,33 @@ test("a still screen that sends no frames until tapped is still a stable target"
     expect(r.t1! - r.t0).toBe(60);
   }
 });
+
+test("a frame arriving sooner than one round trip after the click is not that click's flip", async () => {
+  // Each click is followed 20 ms later by a stray frame already showing the
+  // expected colour, then by the real flip at 150 ms.
+  let now = 0;
+  let last: FrameSample = { lum: 0, rtpTimestamp: 0, receiveTime: 0, expectedDisplayTime: 0 };
+  let shown = 0;
+  const pending: Array<{ at: number; lum: number }> = [];
+  const deps: TapDeps = {
+    now: () => now,
+    random: () => 0.5,
+    sleep: async (ms) => { now += ms; },
+    lastFrame: () => last,
+    sendClick: () => {
+      const next = shown === 0 ? 255 : 0;
+      pending.push({ at: now + 20, lum: next }, { at: now + 150, lum: next });
+      shown = next;
+    },
+    nextFrame: async (timeoutMs) => {
+      const i = pending.findIndex((p) => p.at > now);
+      if (i < 0 || pending[i].at - now > timeoutMs) { now += timeoutMs; return null; }
+      const { at, lum } = pending.splice(i, 1)[0];
+      now = at;
+      last = { lum, rtpTimestamp: at * 90, receiveTime: at, expectedDisplayTime: at };
+      return last;
+    },
+  };
+  const records = await runTaps(deps, { ...OPTIONS, minRoundTripMs: 100 });
+  for (const r of records) expect(r.t1! - r.t0).toBe(150);
+});

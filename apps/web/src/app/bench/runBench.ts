@@ -110,7 +110,7 @@ export async function runBench({ select, serial, count, warmup, video, onStatus 
       now: () => performance.now(),
       sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
       random: Math.random,
-    }, { ...DEFAULT_TAP_OPTIONS, count, warmup });
+    }, { ...DEFAULT_TAP_OPTIONS, count, warmup, minRoundTripMs: before.rttMs });
 
     const pairAfter = selectedCandidatePair(await session.pc.getStats());
     onStatus("syncing clocks");

@@ -36,6 +36,9 @@ export type TapOptions = {
   gapMinMs: number;
   gapMaxMs: number;
   stableMs: number;
+  // Fastest possible click-to-frame return (the clock-sync minimum RTT): a
+  // frame received sooner than this after the click cannot show its flip.
+  minRoundTripMs?: number;
 };
 
 export const DEFAULT_TAP_OPTIONS: TapOptions = {
@@ -83,7 +86,8 @@ export async function runTaps(deps: TapDeps, options: TapOptions = DEFAULT_TAP_O
       const remaining = options.missTimeoutMs - (deps.now() - t0);
       const frame = remaining > 0 ? await deps.nextFrame(remaining) : null;
       if (!frame) break;
-      if (frame.expectedDisplayTime >= t0 && classify(frame.lum) === expected) {
+      const arrived = frame.receiveTime ?? frame.expectedDisplayTime;
+      if (arrived >= t0 + (options.minRoundTripMs ?? 0) && classify(frame.lum) === expected) {
         record = {
           seq, t0, t1: frame.expectedDisplayTime,
           rtpTimestamp: frame.rtpTimestamp, receiveTime: frame.receiveTime, miss: false,
