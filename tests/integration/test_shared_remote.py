@@ -289,6 +289,11 @@ class SharedRemoteStack:
                 print((result.stdout + result.stderr).replace(secret, '[REDACTED]')[-8000:])
                 pytest.fail('Installation registration failed before credentials were issued', pytrace=False)
             identity = response.json()
+            # Relay credentials require a license bound to this installation.
+            key = self.compose('exec', '-T', 'broker', 'python', '-m', 'broker.admin', 'issue', timeout=30).strip()
+            activation = self.http.post(f"/installations/{identity['installation_id']}/license",
+                                     json=dict(credential=identity['credential'], key=key))
+            assert activation.json() == {'relay_licensed': True}
         assert 'credential' in identity
         host = self.socket()
         host.send(wire('host_auth', identity))

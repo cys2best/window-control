@@ -155,6 +155,25 @@ where applicable), region, address charges and measured overhead. No provider
 quote or production monthly cost is assumed. Record a monthly budget and alert
 threshold before authorizing paid deployment.
 
+## License keys
+
+Relay (TURN) credentials are issued only to installations bound to a license
+key; registration, pairing and direct STUN-only sessions need no key. The broker
+stores only key digests in `/data/licenses.json` and rereads it on every check,
+so admin changes apply without a restart:
+
+```sh
+docker exec shared-remote-broker python -m broker.admin issue [--days N] [--note TEXT]
+docker exec shared-remote-broker python -m broker.admin list
+docker exec shared-remote-broker python -m broker.admin reset KEY
+docker exec shared-remote-broker python -m broker.admin revoke KEY
+```
+
+`issue` prints the key once; it cannot be recovered later. `list` shows digest
+prefix, bound installation, dates and note, never keys. `reset` unbinds a key
+without the 7-day move cooldown; `revoke` disables it permanently. A revoked
+PC's running relay allocation ends at its TURN credential expiry.
+
 ## Real integration and teardown
 
 Linux with Docker Engine/Compose and OpenSSL is required. From the repository:
