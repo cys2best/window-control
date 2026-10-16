@@ -320,6 +320,9 @@ def create_broker_app(settings: BrokerSettings) -> FastAPI:
                         return
                 else:
                     installation_id = command.payload["installation_id"]
+                    if not limits.check_viewer_auth(ip, installation_id):
+                        await websocket.send_text(format_error_reply(command.id, ErrorCode.QUOTA_EXCEEDED, "Authentication quota exceeded"))
+                        return
                 current = registry.get_host(installation_id)
                 if current is None:
                     await websocket.send_text(format_error_reply(command.id, ErrorCode.OFFLINE, "Host offline"))

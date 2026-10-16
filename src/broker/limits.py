@@ -14,12 +14,14 @@ class TokenBucket:
         self.tokens = capacity
         self.last_fill = clock()
 
-    def consume(self, amount: int = 1) -> bool:
+    def refill(self) -> None:
         now = self.clock()
         elapsed = now - self.last_fill
         self.tokens = min(self.capacity, self.tokens + elapsed * self.fill_rate)
         self.last_fill = now
-        
+
+    def consume(self, amount: int = 1) -> bool:
+        self.refill()
         if self.tokens >= amount:
             self.tokens -= amount
             return True
@@ -34,23 +36,40 @@ class BrokerLimits:
         self._lock = threading.RLock()
 
     def _consume(self, key: str, capacity: int, fill_rate: float) -> bool:
+        return self._consume_all((key, capacity, fill_rate))
+
+    def _consume_all(self, *specs: tuple[str, int, float]) -> bool:
+        """Take one token from every bucket, or from none of them."""
         with self._lock:
             now = self.clock()
             for old_key, bucket in list(self.buckets.items()):
                 # Recreating this key now grants no more than natural refill.
                 if now - bucket.last_fill >= bucket.capacity / bucket.fill_rate:
                     del self.buckets[old_key]
-            if key not in self.buckets:
-                if len(self.buckets) >= MAX_RATE_LIMIT_KEYS:
-                    return False
-                self.buckets[key] = TokenBucket(capacity, fill_rate, self.clock)
-            return self.buckets[key].consume()
+            buckets = []
+            for key, capacity, fill_rate in specs:
+                if key not in self.buckets:
+                    if len(self.buckets) >= MAX_RATE_LIMIT_KEYS:
+                        return False
+                    self.buckets[key] = TokenBucket(capacity, fill_rate, self.clock)
+                bucket = self.buckets[key]
+                bucket.refill()
+                buckets.append(bucket)
+            if any(bucket.tokens < 1 for bucket in buckets):
+                return False
+            for bucket in buckets:
+                bucket.tokens -= 1
+            return True
 
     def check_registration(self, ip: str) -> bool:
         return self._consume(f"reg_{ip}", 5, 5 / 3600.0)
 
     def check_pairing(self, ip: str) -> bool:
         return self._consume(f"pairing_{ip}", 10, 10 / 60.0)
+
+    def check_viewer_auth(self, ip: str, installation_id: str) -> bool:
+        return self._consume_all((f"vauth_ip_{ip}", 10, 10 / 60.0),
+                                 (f"vauth_inst_{installation_id}", 30, 30 / 60.0))
 
     def check_authenticated_command(self, viewer_id: str) -> bool:
         return self._consume(f"cmd_{viewer_id}", 120, 2.0)

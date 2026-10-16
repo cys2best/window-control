@@ -488,3 +488,35 @@ def test_foreign_host_cannot_consume_settled_routing_id(broker_env):
             request_id = "22222222-2222-2222-2222-222222222222"
             host_a.send_text(wire("pairing_close", {"handle": "r" * 43}, request_id))
             assert json.loads(host_a.receive_text())["id"] == request_id
+
+
+def test_viewer_auth_eleventh_attempt_per_ip_is_refused_without_reaching_host(broker_env):
+    client, _, _ = broker_env
+    identity = client.post("/installations").json()
+    with client.websocket_connect("/connect") as host_ws:
+        authenticate_host(host_ws, identity)
+        for _ in range(10):
+            with client.websocket_connect("/connect") as viewer_ws:
+                approve_viewer(host_ws, viewer_ws, identity)
+        with client.websocket_connect("/connect") as viewer_ws:
+            viewer_ws.send_text(wire("viewer_auth", {"installation_id": identity["installation_id"], "token": "pc-device-token"}))
+            reply = viewer_ws.receive_json()
+            assert reply["error"]["code"] == "quota_exceeded"
+            with pytest.raises(WebSocketDisconnect):
+                viewer_ws.receive_text()
+        # The next host frame is the reply to its own command, not a routed viewer_auth.
+        host_ws.send_text(wire("pairing_close", {"handle": "x" * 43}))
+        assert host_ws.receive_json()["ok"]
+
+
+def test_viewer_auth_installation_budget_spans_ips():
+    now = [0.0]
+    limits = BrokerLimits(lambda: now[0])
+    assert all(limits.check_viewer_auth(f"10.0.0.{i}", "inst") for i in range(30))
+    assert not limits.check_viewer_auth("10.0.1.1", "inst")
+    # A refused attempt consumes nothing from the IP budget.
+    assert all(limits.check_viewer_auth("10.0.1.1", f"other{i}") for i in range(10))
+    assert not limits.check_viewer_auth("10.0.1.1", "other-x")
+    now[0] += 2
+    assert limits.check_viewer_auth("10.0.2.1", "inst")
+    assert not limits.check_viewer_auth("10.0.2.2", "inst")
