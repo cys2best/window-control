@@ -9,10 +9,11 @@ static-auth-secret=${REMOTE_TURN_SECRET}
 cert=/run/certs/turn-fullchain.pem
 pkey=/run/certs/turn-key.pem
 min-port=49160
-max-port=49200
+max-port=50159
 max-bps=${REMOTE_TURN_ALLOCATION_BPS}
 bps-capacity=${REMOTE_TURN_AGGREGATE_BPS}
 total-quota=${REMOTE_TURN_TOTAL_ALLOCATIONS}
+user-quota=4
 no-multicast-peers
 no-cli
 no-tlsv1

@@ -194,3 +194,12 @@ def test_license_file_is_durable_and_reachable_through_edge(tmp_path):
     check = f'from broker.main import app; assert str(app.state.licenses.path) == {str(tmp_path / "keys.json")!r}'
     result = subprocess.run([sys.executable, '-c', check], env=env, capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, result.stderr
+
+
+def test_turn_configs_cap_allocations_per_credential_and_share_port_range():
+    for name in ('turnserver.production.conf.template', 'turnserver.test.conf'):
+        lines = (INFRA / name).read_text().splitlines()
+        for setting in ('user-quota=4', 'min-port=49160', 'max-port=50159'):
+            assert setting in lines, (name, setting)
+    readme = (INFRA / 'README.md').read_text()
+    assert '49160-50159' in readme and '49200' not in readme

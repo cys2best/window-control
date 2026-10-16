@@ -91,7 +91,7 @@ pairing remains available. Partial or mismatching values fail preflight.
 ## Network and abuse boundaries
 
 Allow ingress only to A TCP 443; B UDP/TCP 3478 and TCP 443; and the relay address
-UDP/TCP 49160–49200. Preserve those relay ports through provider NAT. The host and
+UDP/TCP 49160–50159. Preserve those relay ports through provider NAT. The host and
 provider firewall both need these rules. For an existing nftables `inet filter`
 input chain, equivalent rules are below (substitute operator values; preserve
 existing SSH/established-connection rules and default policy):
@@ -100,8 +100,8 @@ existing SSH/established-connection rules and default policy):
 ip daddr ADDRESS_A tcp dport 443 accept
 ip daddr ADDRESS_B udp dport 3478 accept
 ip daddr ADDRESS_B tcp dport { 3478, 443 } accept
-ip daddr RELAY_LOCAL_ADDRESS udp dport 49160-49200 accept
-ip daddr RELAY_LOCAL_ADDRESS tcp dport 49160-49200 accept
+ip daddr RELAY_LOCAL_ADDRESS udp dport 49160-50159 accept
+ip daddr RELAY_LOCAL_ADDRESS tcp dport 49160-50159 accept
 ```
 
 For IPv6 host listeners use equivalent `ip6 daddr` rules with the operator's
@@ -195,7 +195,7 @@ A missing daemon is a test failure, never a skipped success.
 
 For manual stack inspection, generate a new empty external directory and use
 `test.env` with `compose.test.yml` under a unique `--project-name`. Test listeners
-are HTTPS/WSS 8443, TURN UDP/TCP 3478, TLS 5349 and relay 49160–49200. Host-network
+are HTTPS/WSS 8443, TURN UDP/TCP 3478, TLS 5349 and relay 49160–50159. Host-network
 TURN listeners mean only one such test stack may run per Linux host at a time.
 Always use the same project, file and env file for teardown:
 
