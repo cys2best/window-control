@@ -12,7 +12,7 @@ from config import VERSION, GITHUB_REPO
 def _fetch_latest_version() -> str | None:
     url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "WindowControl"})
+        req = urllib.request.Request(url, headers={"User-Agent": "EmuCtrl"})
         with urllib.request.urlopen(req, timeout=5) as resp:
             data = json.loads(resp.read())
         tag = data.get("tag_name", "")
@@ -24,7 +24,7 @@ def _fetch_latest_version() -> str | None:
 def _get_asset_url(version: str) -> str:
     return (
         f"https://github.com/{GITHUB_REPO}/releases/download/"
-        f"v{version}/WindowControlInstaller.exe"
+        f"v{version}/EmuCtrlInstaller.exe"
     )
 
 
@@ -41,9 +41,9 @@ def download_and_install(version: str, on_progress=None, on_error=None):
 
     def _run():
         url = _get_asset_url(version)
-        dest = os.path.join(tempfile.gettempdir(), "WindowControlInstaller.exe")
+        dest = os.path.join(tempfile.gettempdir(), "EmuCtrlInstaller.exe")
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "WindowControl"})
+            req = urllib.request.Request(url, headers={"User-Agent": "EmuCtrl"})
             with urllib.request.urlopen(req, timeout=60) as resp:
                 total = int(resp.headers.get("Content-Length", 0))
                 downloaded = 0

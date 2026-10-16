@@ -27,6 +27,7 @@ public:
     std::string DeviceName() const;
     int Width() const;
     int Height() const;
+    bool LastReadFailed() const;
 
 private:
     struct Impl;

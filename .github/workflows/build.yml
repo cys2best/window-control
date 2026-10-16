@@ -9,35 +9,60 @@ on:
 jobs:
   build-engine:
     runs-on: windows-latest
+    env:
+      # The runner image's C:\vcpkg moves with every image update, which
+      # changes vcpkg's ABI hashes and forces a full rebuild of every port.
+      # Pinning the scripts keeps the cached vcpkg_installed tree reusable.
+      VCPKG_REVISION: 617ef1c0c422737d117eda00a471ea1be5bad088
 
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check out pinned vcpkg scripts
+        uses: actions/checkout@v4
+        with:
+          repository: microsoft/vcpkg
+          ref: ${{ env.VCPKG_REVISION }}
+          path: .vcpkg
+          # The builtin registry baseline is resolved from git history.
+          fetch-depth: 0
+
+      - name: Bootstrap pinned vcpkg
+        run: .\.vcpkg\bootstrap-vcpkg.bat -disableMetrics
+        shell: pwsh
+
       - name: Restore vcpkg cache
+        # Manifest mode installs into the build tree, not C:\vcpkg\installed.
+        id: vcpkg-cache
         uses: actions/cache@v4
         with:
           path: |
-            C:\vcpkg\installed
-            C:\vcpkg\buildtrees
-            C:\vcpkg\downloads
-          key: vcpkg-${{ runner.os }}-${{ hashFiles('engine/vcpkg.json') }}
-          restore-keys: |
-            vcpkg-${{ runner.os }}-
+            engine/build/vcpkg_installed
+            .vcpkg/downloads
+          key: vcpkg-${{ runner.os }}-${{ env.VCPKG_REVISION }}-${{ hashFiles('engine/vcpkg.json', 'engine/vcpkg-configuration.json') }}
 
       - name: Configure (CMake + vcpkg manifest install)
+        # GitHub serves a mix of runner image versions, and vcpkg's package
+        # ABI hashes cmake/PowerShell versions, so a restored tree is rebuilt
+        # whenever the image differs. On a cache hit, skip the install and use
+        # the restored DLLs as-is (MSVC v14x keeps binary compatibility).
         run: |
           cmake -S engine -B engine\build `
-            -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake `
-            -DVCPKG_TARGET_TRIPLET=x64-windows
+            "-DCMAKE_TOOLCHAIN_FILE=$env:GITHUB_WORKSPACE/.vcpkg/scripts/buildsystems/vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows `
+            "-DVCPKG_MANIFEST_INSTALL=$(if ('${{ steps.vcpkg-cache.outputs.cache-hit }}' -eq 'true') { 'OFF' } else { 'ON' })"
         shell: pwsh
 
       - name: Build
-        run: cmake --build engine\build --config Release
+        run: cmake --build engine\build --config Release --parallel
         shell: pwsh
 
-      - name: Run engine_tests (excludes SignalingClient — no server available in CI)
+      - name: Run engine_tests
         run: |
-          engine\build\Release\engine_tests.exe --gtest_filter=-SignalingClient.*
+          engine\build\Release\engine_tests.exe
+          if ($LASTEXITCODE -ne 0) {
+            throw "engine_tests.exe failed with exit code $LASTEXITCODE"
+          }
         shell: pwsh
 
       - name: Stage engine.exe + runtime DLLs (flat)
@@ -66,6 +91,7 @@ jobs:
       - uses: astral-sh/setup-uv@v4
         with:
           version: "latest"
+          enable-cache: true
 
       - name: Install dependencies
         run: uv sync
@@ -87,9 +113,46 @@ jobs:
           name: engine-windows
           path: src\assets\engine
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Build apps/web's static export
+        # npm is a .cmd shim: without `call`, cmd ends the script after the
+        # first one and the build line never runs.
+        run: |
+          call npm ci || exit /b 1
+          call npm run build -w apps/web || exit /b 1
+        shell: cmd
+
       - name: Build EXE with PyInstaller
         run: uv run pyinstaller build/window_control.spec --distpath dist --workpath build/work --noconfirm
         shell: cmd
+
+      - name: Report bundle size
+        run: |
+          $files = Get-ChildItem dist\EmuCtrl -Recurse -File
+          "Total: {0:N1} MB in {1} files" -f (($files | Measure-Object Length -Sum).Sum / 1MB), $files.Count
+          $files | Sort-Object Length -Descending | Select-Object -First 40 |
+            ForEach-Object { "{0,8:N2} MB  {1}" -f ($_.Length / 1MB), $_.FullName.Substring((Resolve-Path dist\EmuCtrl).Path.Length + 1) }
+        shell: pwsh
+
+      - name: Smoke packaged app
+        # The HTTP server only starts after QApplication exists, so port 8080
+        # answering proves the trimmed Qt bundle still loads its platform plugin.
+        run: |
+          $app = Start-Process dist\EmuCtrl\EmuCtrl.exe -PassThru
+          $up = $false
+          for ($i = 0; $i -lt 60 -and -not $up; $i++) {
+            Start-Sleep -Seconds 1
+            $up = (Test-NetConnection 127.0.0.1 -Port 8080 -WarningAction SilentlyContinue).TcpTestSucceeded
+          }
+          $exited = $app.HasExited
+          taskkill /F /T /PID $app.Id | Out-Null
+          Get-Content C:\ProgramData\EmuCtrl\service_crash.log -ErrorAction SilentlyContinue
+          if (-not $up) { throw "EmuCtrl.exe never served port 8080 (exited=$exited)" }
+        shell: pwsh
 
       - name: Download VC++ Redistributable
         run: |
@@ -106,11 +169,12 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: WindowControlInstaller
-          path: release/WindowControlInstaller.exe
+          path: release/EmuCtrlInstaller.exe
+          if-no-files-found: error
           retention-days: 30
 
       - name: Upload to release (on tag)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: release/WindowControlInstaller.exe
+          files: release/EmuCtrlInstaller.exe

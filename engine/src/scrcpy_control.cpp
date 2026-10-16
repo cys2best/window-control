@@ -10,6 +10,7 @@
 #include <vector>
 #include <mutex>
 #include <iostream>
+#include <atomic>
 
 #pragma comment(lib, "ws2_32.lib")
 
@@ -35,7 +36,8 @@ void PushU64BE(std::vector<uint8_t>& buf, uint64_t v) {
 struct ScrcpyControlClient::Impl {
     int port;
     SOCKET sock = INVALID_SOCKET;
-    std::mutex sendMutex;
+    mutable std::mutex sendMutex;
+    std::atomic<bool> lastSendFailed{false};
     bool wsaInitialized = false;
 
     explicit Impl(int p) : port(p) {
@@ -48,21 +50,50 @@ struct ScrcpyControlClient::Impl {
         if (wsaInitialized) WSACleanup();
     }
 
+    void DisconnectLocked() {
+        if (sock == INVALID_SOCKET) return;
+        shutdown(sock, SD_BOTH);
+        closesocket(sock);
+        sock = INVALID_SOCKET;
+    }
+
     void Send(const std::vector<uint8_t>& msg) {
         std::lock_guard<std::mutex> lock(sendMutex);
-        if (sock == INVALID_SOCKET) return;
-        send(sock, reinterpret_cast<const char*>(msg.data()), static_cast<int>(msg.size()), 0);
+        if (sock == INVALID_SOCKET) {
+            lastSendFailed.store(true);
+            return;
+        }
+
+        size_t sent = 0;
+        while (sent < msg.size()) {
+            int result = send(
+                sock,
+                reinterpret_cast<const char*>(msg.data() + sent),
+                static_cast<int>(msg.size() - sent),
+                0);
+            if (result == SOCKET_ERROR || result == 0) {
+                lastSendFailed.store(true);
+                DisconnectLocked();
+                return;
+            }
+            sent += static_cast<size_t>(result);
+        }
     }
 };
 
 ScrcpyControlClient::ScrcpyControlClient(int port) : impl_(std::make_unique<Impl>(port)) {}
 
-ScrcpyControlClient::~ScrcpyControlClient() = default;
+ScrcpyControlClient::~ScrcpyControlClient() {
+    Disconnect();
+}
 
 void ScrcpyControlClient::Connect() {
+    std::lock_guard<std::mutex> lock(impl_->sendMutex);
+    impl_->DisconnectLocked();
+
     std::cerr << "[debug] control: socket()..." << std::endl;
-    impl_->sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (impl_->sock == INVALID_SOCKET) {
+    SOCKET newSock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (newSock == INVALID_SOCKET) {
         throw std::runtime_error("ScrcpyControlClient: socket() failed");
     }
 
@@ -72,13 +103,21 @@ void ScrcpyControlClient::Connect() {
     inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
 
     std::cerr << "[debug] control: connect() on port " << impl_->port << "..." << std::endl;
-    if (connect(impl_->sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
+    if (connect(newSock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
+        closesocket(newSock);
         throw std::runtime_error("ScrcpyControlClient: connect() failed on port " + std::to_string(impl_->port));
     }
     std::cerr << "[debug] control: connected" << std::endl;
 
     int flag = 1;
-    setsockopt(impl_->sock, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&flag), sizeof(flag));
+    setsockopt(newSock, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&flag), sizeof(flag));
+
+    impl_->sock = newSock;
+}
+
+void ScrcpyControlClient::Disconnect() {
+    std::lock_guard<std::mutex> lock(impl_->sendMutex);
+    impl_->DisconnectLocked();
 }
 
 void ScrcpyControlClient::SendTouch(uint8_t action, double nx, double ny, int screenWidth, int screenHeight, uint64_t pointerId) {
@@ -123,5 +162,14 @@ void ScrcpyControlClient::RequestIdr() {
 }
 
 bool ScrcpyControlClient::IsConnected() const {
+    std::lock_guard<std::mutex> lock(impl_->sendMutex);
     return impl_->sock != INVALID_SOCKET;
+}
+
+bool ScrcpyControlClient::LastSendFailed() const {
+    return impl_->lastSendFailed.load();
+}
+
+void ScrcpyControlClient::ResetSendFailureFlag() {
+    impl_->lastSendFailed.store(false);
 }

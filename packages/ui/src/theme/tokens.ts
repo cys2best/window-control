@@ -1,0 +1,46 @@
+import { Platform } from "react-native";
+
+// Expo registers the native families under their asset names. The web app
+// loads the same faces from Google Fonts, where CSS requires their family
+// names instead. Using the Expo identifiers in a browser silently falls back
+// to a serif system face.
+const isWeb = Platform.OS === "web";
+
+export const theme = {
+  color: {
+    bg: "#06070b",
+    screen: "#06070b",
+    streamBg: "#000000",
+    surface: "#090a0f",
+    surfaceRaised: "#13161f",
+    card: "#13161f",
+    cardActive: "#101822",
+    glass: "rgba(9,10,15,0.72)",
+    border: "#222738",
+    text: "#E6EAF2",
+    textMuted: "#7A8496",
+    textDim: "#5C6679",
+    accent: "#00E5FF",
+    accentInk: "#00E5FF",
+    live: "#FF5722",
+    telemetry: "#10B981",
+    warning: "#EDBB00",
+    error: "#FF5722",
+    errorBg: "rgba(255,87,34,0.12)",
+  },
+  net: {
+    connected: { dot: "#10B981", chipBg: "rgba(16,185,129,0.10)", chipFg: "#10B981" },
+    connecting: { dot: "#EDBB00", chipBg: "rgba(237,187,0,0.10)", chipFg: "#EDBB00" },
+    disconnected: { dot: "#FF5722", chipBg: "rgba(255,87,34,0.10)", chipFg: "#FF5722" },
+  },
+  radius: { card: 14, input: 11, pill: 999, sm: 8 },
+  font: {
+    regular: isWeb ? "Space Grotesk" : "SpaceGrotesk_400Regular",
+    medium: isWeb ? "Space Grotesk" : "SpaceGrotesk_500Medium",
+    semibold: isWeb ? "Space Grotesk" : "SpaceGrotesk_600SemiBold",
+    bold: isWeb ? "Space Grotesk" : "SpaceGrotesk_700Bold",
+    mono: isWeb ? "JetBrains Mono" : "JetBrainsMono_400Regular",
+    monoMedium: isWeb ? "JetBrains Mono" : "JetBrainsMono_500Medium",
+    monoBold: isWeb ? "JetBrains Mono" : "JetBrainsMono_700Bold",
+  },
+} as const;

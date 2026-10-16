@@ -1,0 +1,159 @@
+import {
+  analyze, centerLuminance, clockDriftUs, connectWhep, DEFAULT_TAP_OPTIONS,
+  makeBenchClient, runTaps, selectedCandidatePair,
+} from "@wc/core";
+import type {
+  Analysis, BenchChannel, EngineEntry, FrameMeta, FrameSample, SelectResp, TapRecord,
+} from "@wc/core";
+
+// Measured by the target page inside the guest, from the touch event's own
+// timestamp (see src/server/bench/target.html).
+export type TargetTiming = { input_ms: number; frame_ms: number; next_frame_ms: number };
+
+export type BenchResult = {
+  meta: {
+    serial: string; tier: string | null; transport: string | null; offsetUs: number; driftUs: number;
+    syncRttMs: number; count: number; warmup: number; userAgent: string; startedAt: string;
+  };
+  taps: TapRecord[];
+  frames: FrameMeta[];
+  engine: EngineEntry[];
+  stats: Analysis["stats"];
+  validity: Analysis["validity"];
+  missRate: number;
+  targetTimings: TargetTiming[];
+};
+
+type RunBenchOpts = {
+  select: (serial: string) => Promise<SelectResp>;
+  setQuality?: (serial: string, tier: string) => Promise<void>;
+  serial: string;
+  // Encoder tier to run at; the host otherwise keeps the instance's own tier.
+  tier?: string;
+  targetTimings?: { clear(): Promise<void>; list(): Promise<TargetTiming[]> };
+  count: number;
+  warmup: number;
+  video: HTMLVideoElement;
+  onStatus: (status: string) => void;
+};
+
+const SAMPLE_SIZE = 8;
+
+export async function runBench({ select, setQuality, serial, tier, targetTimings, count, warmup, video, onStatus }: RunBenchOpts): Promise<BenchResult> {
+  const startedAt = new Date().toISOString();
+  if (tier && setQuality) {
+    onStatus(`setting tier ${tier}`);
+    await setQuality(serial, tier);
+  }
+  onStatus("selecting instance");
+  const selection = await select(serial);
+
+  const subscribers = new Set<(message: any) => void>();
+  // A dropped stream silently swallows clicks and pings; end the run instead
+  // of letting every later wait time out with a misleading reason.
+  let reportLost: (error: Error) => void = () => {};
+  const lost = new Promise<never>((_, reject) => { reportLost = reject; });
+  lost.catch(() => {});
+  onStatus("connecting");
+  const session = await connectWhep({
+    whepUrl: selection.whep_url,
+    whepToken: selection.whep_token || "",
+    iceServers: selection.ice_servers || [],
+    RTCImpl: window.RTCPeerConnection,
+    onStream: (stream) => { video.srcObject = stream; },
+    onInputRtt: () => {},
+    onState: (state) => { if (state === "disconnected") reportLost(new Error("stream disconnected mid-run")); },
+    onMessage: (message) => subscribers.forEach((handler) => handler(message)),
+  });
+  await video.play().catch(() => {});
+
+  const channel: BenchChannel = {
+    send: (message) => session.input.send(message),
+    subscribe: (handler) => { subscribers.add(handler); return () => { subscribers.delete(handler); }; },
+  };
+
+  // Frame pump: every presented frame is sampled once and handed to all waiters.
+  const canvas = document.createElement("canvas");
+  canvas.width = SAMPLE_SIZE;
+  canvas.height = SAMPLE_SIZE;
+  const context = canvas.getContext("2d", { willReadFrequently: true })!;
+  const frames: FrameMeta[] = [];
+  let waiters: Array<(sample: FrameSample) => void> = [];
+  let lastSample: FrameSample | null = null;
+  let stopped = false;
+  const onFrame = (_now: number, meta: any) => {
+    context.drawImage(video, 0, 0, SAMPLE_SIZE, SAMPLE_SIZE);
+    const lum = centerLuminance(context.getImageData(0, 0, SAMPLE_SIZE, SAMPLE_SIZE).data, SAMPLE_SIZE, SAMPLE_SIZE);
+    const sample: FrameSample = {
+      lum,
+      rtpTimestamp: typeof meta.rtpTimestamp === "number" ? meta.rtpTimestamp : null,
+      receiveTime: typeof meta.receiveTime === "number" ? meta.receiveTime : null,
+      expectedDisplayTime: meta.expectedDisplayTime,
+    };
+    if (sample.rtpTimestamp !== null && sample.receiveTime !== null) {
+      frames.push({ rtpTimestamp: sample.rtpTimestamp, receiveTime: sample.receiveTime, expectedDisplayTime: sample.expectedDisplayTime });
+    }
+    lastSample = sample;
+    const ready = waiters;
+    waiters = [];
+    ready.forEach((resolve) => resolve(sample));
+    if (!stopped) (video as any).requestVideoFrameCallback(onFrame);
+  };
+  (video as any).requestVideoFrameCallback(onFrame);
+
+  const nextFrame = (timeoutMs: number) =>
+    new Promise<FrameSample | null>((resolve) => {
+      const done = (sample: FrameSample) => { clearTimeout(timer); resolve(sample); };
+      const timer = setTimeout(() => { waiters = waiters.filter((w) => w !== done); resolve(null); }, timeoutMs);
+      waiters.push(done);
+    });
+
+  const measure = async (): Promise<BenchResult> => {
+    await targetTimings?.clear();
+    const bench = makeBenchClient(channel, { now: () => performance.now() });
+    onStatus("syncing clocks");
+    const before = await bench.syncClock();
+    await bench.start();
+    const pairBefore = selectedCandidatePair(await session.pc.getStats());
+
+    onStatus(`tapping (${warmup} warm-up + ${count})`);
+    const taps = await runTaps({
+      sendClick: (seq) => session.input.send({ type: "click", x: 0.5, y: 0.5, bench_seq: seq }),
+      nextFrame,
+      lastFrame: () => lastSample,
+      now: () => performance.now(),
+      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+      random: Math.random,
+    }, { ...DEFAULT_TAP_OPTIONS, count, warmup, minRoundTripMs: before.rttMs });
+
+    const pairAfter = selectedCandidatePair(await session.pc.getStats());
+    onStatus("syncing clocks");
+    const after = await bench.syncClock();
+    onStatus("fetching engine log");
+    const engineLog = await bench.fetchAll();
+    const guestTimings = targetTimings ? await targetTimings.list() : [];
+    stopped = true;
+
+    const driftUs = clockDriftUs(before, after);
+    const analysis = analyze({
+      taps, frames, engine: engineLog.entries, engineWrapped: engineLog.wrapped,
+      offsetUs: before.offsetUs, driftUs, transportChanged: pairBefore.id !== pairAfter.id,
+    });
+    return {
+      meta: {
+        serial, tier: selection.tier ?? null, transport: pairAfter.remoteType, offsetUs: before.offsetUs,
+        driftUs, syncRttMs: before.rttMs, count, warmup, userAgent: navigator.userAgent, startedAt,
+      },
+      taps, frames, engine: engineLog.entries,
+      stats: analysis.stats, validity: analysis.validity, missRate: analysis.missRate,
+      targetTimings: guestTimings,
+    };
+  };
+
+  try {
+    return await Promise.race([measure(), lost]);
+  } finally {
+    stopped = true;
+    await session.close();
+  }
+}

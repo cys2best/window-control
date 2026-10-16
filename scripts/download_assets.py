@@ -1,12 +1,11 @@
 """
-Download mediamtx and scrcpy Windows binaries into assets/ if missing.
+Download scrcpy Windows binaries into assets/ if missing.
 
 Usage:
     uv run python scripts/download_assets.py
 
 Downloads:
-    assets/mediamtx/mediamtx.exe   — from bluenviron/mediamtx releases
-    assets/scrcpy/scrcpy.exe       — from Genymobile/scrcpy releases
+    assets/scrcpy/scrcpy.exe — from Genymobile/scrcpy releases
 """
 
 import io
@@ -16,23 +15,12 @@ import sys
 import urllib.request
 import zipfile
 
-# Pinned versions — bump here to upgrade
-MEDIAMTX_VERSION = "v1.9.1"
+# Pinned version — bump here to upgrade
 SCRCPY_VERSION = "v3.1"
 
 ASSETS_DIR = os.path.join(os.path.dirname(__file__), "..", "src", "assets")
 
 DOWNLOADS = [
-    {
-        "name": "mediamtx",
-        "url": (
-            f"https://github.com/bluenviron/mediamtx/releases/download/"
-            f"{MEDIAMTX_VERSION}/mediamtx_{MEDIAMTX_VERSION}_windows_amd64.zip"
-        ),
-        "dest_dir": os.path.join(ASSETS_DIR, "mediamtx"),
-        "check": os.path.join(ASSETS_DIR, "mediamtx", "mediamtx.exe"),
-        "extract": "mediamtx.exe",  # file inside the zip to extract
-    },
     {
         "name": "scrcpy",
         "url": (

@@ -1,15 +1,4 @@
-"""
-ADB-based Android VM capture and input for LDPlayer/VirtualBox headless instances.
-
-Capture pipeline:
-  adb exec-out screenrecord --output-format=h264 --time-limit=3600 -
-    | ffmpeg -i pipe:0 -vf fps=15 -f image2pipe -vcodec mjpeg pipe:1
-    -> Python reads JPEG frames -> FrameQueue
-
-Input:
-  adb shell input tap X Y
-  adb shell input keyevent KEYCODE
-"""
+"""ADB discovery, screenshots, and input for LDPlayer instances."""
 
 import os
 import re
@@ -38,7 +27,7 @@ _ADB_PATH_FALLBACKS = [
 
 
 def _log(msg: str):
-    for _p in [r"C:\ProgramData\WindowControl", r"C:\Windows\Temp"]:
+    for _p in [r"C:\ProgramData\EmuCtrl", r"C:\Windows\Temp"]:
         try:
             os.makedirs(_p, exist_ok=True)
             with open(os.path.join(_p, "service_crash.log"), "a") as f:
@@ -71,29 +60,10 @@ def _find_adb() -> str | None:
     return None
 
 
-def _get_ffmpeg() -> str | None:
-    try:
-        import imageio_ffmpeg
-        return imageio_ffmpeg.get_ffmpeg_exe()
-    except Exception:
-        return None
-
-
-def _get_ldconsole_names() -> dict[int, str]:
-    """Map LDPlayer instance index → title via `ldconsole.exe list2`.
-
-    This is the AUTHORITATIVE index→name source. The old approach — dnplayer
-    window titles sorted by PID, indexed by (adb_port-5554)/2 — is wrong twice:
-    PID order is unrelated to instance index, and the title list is dense while
-    device indices are sparse (a stopped instance leaves a gap), so every name
-    after the first gap shifts. ldconsole's list2 keys the title by the real
-    instance index, and each instance's ADB port is 5554 + index*2.
-
-    list2 columns: index,title,topHwnd,bindHwnd,androidStarted,pid,vboxPid.
-    Windows only; returns {} on any failure (caller falls back to a generic name).
-    """
+def _find_ldconsole() -> str | None:
+    """Locate the LDPlayer console executable using discovery's existing paths."""
     if sys.platform != "win32":
-        return {}
+        return None
     # ldconsole.exe lives at the LDPlayer install ROOT, not next to adb (adb may
     # be the bundled scrcpy adb or resolved via PATH). Search install roots too.
     candidates: list[str] = []
@@ -116,9 +86,29 @@ def _get_ldconsole_names() -> dict[int, str]:
     ):
         candidates.append(os.path.join(base, "ldconsole.exe"))
         candidates.append(os.path.join(base, "dnconsole.exe"))
-    exe = next((p for p in candidates if os.path.exists(p)), None)
+    exe = next((path for path in candidates if os.path.exists(path)), None)
     if not exe:
         _log(f"[ldplayer] ldconsole.exe not found — tried: {candidates}")
+    return exe
+
+
+def _get_ldconsole_names() -> dict[int, str]:
+    """Map LDPlayer instance index → title via `ldconsole.exe list2`.
+
+    This is the AUTHORITATIVE index→name source. The old approach — dnplayer
+    window titles sorted by PID, indexed by (adb_port-5554)/2 — is wrong twice:
+    PID order is unrelated to instance index, and the title list is dense while
+    device indices are sparse (a stopped instance leaves a gap), so every name
+    after the first gap shifts. ldconsole's list2 keys the title by the real
+    instance index, and each instance's ADB port is 5554 + index*2.
+
+    list2 columns: index,title,topHwnd,bindHwnd,androidStarted,pid,vboxPid.
+    Windows only; returns {} on any failure (caller falls back to a generic name).
+    """
+    if sys.platform != "win32":
+        return {}
+    exe = _find_ldconsole()
+    if not exe:
         return {}
     _log(f"[ldplayer] using {exe}")
     try:
@@ -239,117 +229,6 @@ def get_screen_size(serial: str) -> tuple[int, int]:
     except Exception:
         pass
     return 1280, 720
-
-
-class AdbSession:
-    """Holds the screenrecord+ffmpeg pipeline for one ADB device."""
-
-    def __init__(self, serial: str, w: int, h: int, fps: int = 15, ldplayer_index: int = 0):
-        self.serial = serial
-        self.w = w
-        self.h = h
-        self.fps = fps
-        self.ldplayer_index = ldplayer_index
-        self._record_proc: subprocess.Popen | None = None
-        self._ffmpeg_proc: subprocess.Popen | None = None
-        self._lock = threading.Lock()
-        self._latest_frame: bytes | None = None
-        self._reader_thread: threading.Thread | None = None
-        self._running = False
-
-    def start(self) -> bool:
-        adb = _find_adb()
-        ffmpeg = _get_ffmpeg()
-        if not adb:
-            _log("[adb] adb.exe not found")
-            return False
-        if not ffmpeg:
-            _log("[adb] ffmpeg not found — install imageio-ffmpeg")
-            return False
-        try:
-            nw = _no_window_flags()
-            self._record_proc = subprocess.Popen(
-                [adb, "-s", self.serial, "exec-out",
-                 f"screenrecord --output-format=h264 --bit-rate=2000000 -"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                **nw,
-            )
-            self._ffmpeg_proc = subprocess.Popen(
-                [ffmpeg,
-                 "-loglevel", "quiet",
-                 "-hwaccel", "auto",      # GPU decode H.264; silent CPU fallback if unavailable
-                 "-fflags", "nobuffer",
-                 "-flags", "low_delay",
-                 "-probesize", "32",
-                 "-analyzeduration", "0",
-                 "-i", "pipe:0",
-                 "-vf", f"fps={self.fps}",
-                 "-vsync", "0",
-                 "-f", "image2pipe",
-                 "-vcodec", "mjpeg",
-                 "-q:v", "5",
-                 "pipe:1"],
-                stdin=self._record_proc.stdout,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                **nw,
-            )
-            self._record_proc.stdout.close()
-            self._running = True
-            self._reader_thread = threading.Thread(target=self._read_frames, daemon=True)
-            self._reader_thread.start()
-            _log(f"[adb] session started serial={self.serial} {self.w}x{self.h}@{self.fps}fps")
-            return True
-        except Exception:
-            _log(f"[adb] session start failed: {traceback.format_exc()[:400]}")
-            self.stop()
-            return False
-
-    def _read_frames(self):
-        """Parse JPEG frames from ffmpeg stdout (SOI=FFD8, EOI=FFD9)."""
-        buf = b""
-        ffmpeg = self._ffmpeg_proc
-        if ffmpeg is None:
-            return
-        try:
-            while self._running:
-                chunk = ffmpeg.stdout.read(65536)
-                if not chunk:
-                    break
-                buf += chunk
-                while True:
-                    start = buf.find(b"\xff\xd8")
-                    if start == -1:
-                        buf = b""
-                        break
-                    end = buf.find(b"\xff\xd9", start + 2)
-                    if end == -1:
-                        buf = buf[start:]
-                        break
-                    jpeg = buf[start:end + 2]
-                    buf = buf[end + 2:]
-                    with self._lock:
-                        self._latest_frame = jpeg
-        except Exception:
-            pass
-        _log(f"[adb] frame reader exited serial={self.serial}")
-
-    def get_latest_frame(self) -> bytes | None:
-        with self._lock:
-            return self._latest_frame
-
-    def stop(self):
-        self._running = False
-        for proc in [self._ffmpeg_proc, self._record_proc]:
-            if proc:
-                try:
-                    proc.kill()
-                except Exception:
-                    pass
-        self._ffmpeg_proc = None
-        self._record_proc = None
-        _log(f"[adb] session stopped serial={self.serial}")
 
 
 # ── Input ─────────────────────────────────────────────────────────────────────

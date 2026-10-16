@@ -1,135 +1,114 @@
-"""
-InstanceManager: auto-discovers LDPlayer ADB devices, manages one ScrcpySession
-per instance, and exposes the active session for input routing.
-
-Auto-restart: a watchdog thread checks all sessions every 10s and restarts
-any that have crashed.
-"""
+"""Discover LDPlayer devices and keep one mandatory engine runtime per device."""
 
 import threading
 import time
 import traceback
+from typing import TYPE_CHECKING
 
 from config import DEFAULT_TIER
 from server import adb_manager
-from server.scrcpy_session import ScrcpySession
-from server.mediamtx_manager import MediamtxManager
+from server.engine_runtime import EngineSelection
 from server.stun_server import StunServer
+
+if TYPE_CHECKING:
+    from server.engine_orchestrator import EngineOrchestrator
 
 
 def _log(msg: str):
     import os
-    for _p in [r"C:\ProgramData\WindowControl", r"C:\Windows\Temp"]:
+
+    for path in [r"C:\ProgramData\EmuCtrl", r"C:\Windows\Temp"]:
         try:
-            os.makedirs(_p, exist_ok=True)
-            with open(os.path.join(_p, "service_crash.log"), "a") as f:
-                f.write(msg + "\n")
+            os.makedirs(path, exist_ok=True)
+            with open(os.path.join(path, "service_crash.log"), "a") as log_file:
+                log_file.write(msg + "\n")
             return
         except Exception:
             continue
 
 
 def instance_name(serial: str) -> str:
-    """Stable mediamtx path name from an ADB serial, e.g. 'instance0'."""
+    """Return a stable engine instance name for an ADB serial."""
     import re
-    m = re.match(r"emulator-(\d+)", serial)
-    if m:
-        port = int(m.group(1))
-        idx = (port - 5554) // 2
-        return f"instance{idx}"
+
+    match = re.match(r"emulator-(\d+)", serial)
+    if match:
+        port = int(match.group(1))
+        index = (port - 5554) // 2
+        return f"instance{index}"
     return f"instance_{serial.replace(':', '_')}"
 
 
 class Instance:
-    def __init__(self, vm: dict, session: ScrcpySession, w: int, h: int):
-        self.id = vm["id"]               # "adb:SERIAL"
-        self.serial = vm["id"][4:]       # "SERIAL"
+    def __init__(self, vm: dict, width: int, height: int):
+        self.id = vm["id"]
+        self.serial = vm["id"][4:]
         self.title = vm["title"]
         self.ldplayer_index = vm["ldplayer_index"]
         self.name = instance_name(self.serial)
-        self.w = w
-        self.h = h
-        self.session = session
+        self.w = width
+        self.h = height
         self.tier = DEFAULT_TIER
 
 
 class InstanceManager:
-    def __init__(self, mediamtx: MediamtxManager):
-        self._mediamtx = mediamtx
-        self._instances: dict[str, Instance] = {}  # serial → Instance
+    def __init__(self, engine_orchestrator: "EngineOrchestrator"):
+        self._engine_orchestrator = engine_orchestrator
+        self._instances: dict[str, Instance] = {}
         self._active_serial: str | None = None
         self._stun: StunServer | None = None
-        self._stun_ip: str | None = None          # IP the STUN server is bound to
+        self._stun_ip: str | None = None
         self._lock = threading.Lock()
+        self._engine_refresh_lock = threading.Lock()
         self._watchdog_thread = threading.Thread(
             target=self._watchdog, daemon=True
         )
         self._watchdog_thread.start()
 
-    # ── Discovery ────────────────────────────────────────────────────────────
-
     def refresh(self):
-        """Discover connected LDPlayer instances and start scrcpy for new ones."""
+        """Reconcile discovered devices with mandatory engine runtimes."""
+        with self._engine_refresh_lock:
+            self._refresh_once()
+
+    def _refresh_once(self):
+        from server.tailscale import get_best_ip
+
         vms = adb_manager.list_vms()
         current_serials = {vm["id"][4:] for vm in vms}
 
+        # The browser needs an embedded STUN binding on the current best local
+        # interface before any newly published engine endpoint is selected.
+        self._ensure_stun(get_best_ip())
+
         with self._lock:
-            # Stop sessions for devices that disconnected
             gone = set(self._instances) - current_serials
-            gone_names = [instance_name(serial) for serial in gone]
-            for serial in gone:
-                _log(f"[instance] device gone: {serial}")
-                self._instances[serial].session.stop()
-                del self._instances[serial]
+            gone_instances = [self._instances.pop(serial) for serial in gone]
             if self._active_serial in gone:
                 self._active_serial = None
-            new_vms = [v for v in vms if v["id"][4:] not in self._instances]
-            # Build mediamtx paths from current tracked instances + new ones
-            existing_names = [inst.name for inst in self._instances.values()]
-            new_names = [instance_name(v["id"][4:]) for v in new_vms]
-            all_names = existing_names + new_names
+            new_vms = [vm for vm in vms if vm["id"][4:] not in self._instances]
 
-        if not new_vms and not gone:
-            return
+        for instance in gone_instances:
+            _log(f"[instance] device gone: {instance.serial}")
+            self._engine_orchestrator.remove_instance(instance.serial)
 
-        from server.tailscale import get_best_ip
-        _ip = get_best_ip()
-        self._ensure_stun(_ip)
-        # One always-live path per instance; the browser WHEPs directly to the
-        # selected instance's path. No shared 'active' mux to seed or repoint.
-        if not self._mediamtx.running:
-            _log(f"[mediamtx] booting mediamtx, advertising IP for ICE: {_ip}")
-            self._mediamtx.start(all_names, tailscale_ip=_ip)
-        else:
-            # Patch the running instance's path list via its config API instead
-            # of restarting the whole process — a restart tears down every
-            # other instance's live WHEP stream, not just the one that changed.
-            for name in gone_names:
-                self._mediamtx.remove_path(name)
-            for name in new_names:
-                self._mediamtx.add_path(name)
-
-        # Start scrcpy sessions for new devices
         for vm in new_vms:
             serial = vm["id"][4:]
-            w, h = adb_manager.get_screen_size(serial)
-            name = instance_name(serial)
-            rtsp_url = self._mediamtx.rtsp_url(name)
-            idx = vm["ldplayer_index"]
-            session = ScrcpySession(serial, idx, rtsp_url, w, h)
-            ok = session.start()
-            _log(f"[instance] started serial={serial} ok={ok}")
-            inst = Instance(vm, session, w, h)
+            width, height = adb_manager.get_screen_size(serial)
+            instance = Instance(vm, width, height)
+            self._engine_orchestrator.add_instance(
+                serial,
+                instance.name,
+                vm["ldplayer_index"],
+                instance.tier,
+            )
             with self._lock:
-                self._instances[serial] = inst
+                if serial in current_serials:
+                    self._instances[serial] = instance
+                    continue
+            self._engine_orchestrator.remove_instance(serial)
 
     def _ensure_stun(self, ip: str | None):
-        """Start (or rebind) the STUN server on the current Tailscale IP.
-
-        The STUN server must be bound to the Tailscale interface so the srflx
-        candidate it reports to the browser is the browser's *Tailscale* IP —
-        the only address mediamtx can reach. Rebind if the IP changed.
-        """
+        """Start or rebind embedded STUN when the advertised IP changes."""
         if not ip:
             return
         if self._stun is not None and self._stun_ip == ip:
@@ -137,84 +116,22 @@ class InstanceManager:
         if self._stun is not None:
             self._stun.stop()
         from config import STUN_PORT
+
         self._stun = StunServer(ip, STUN_PORT)
         self._stun.start()
         self._stun_ip = ip
 
-    # ── Active session ───────────────────────────────────────────────────────
-
-    def select(self, serial: str) -> bool:
-        """Mark an instance active for input routing.
-
-        The browser WHEPs directly to this instance's own mediamtx path, so
-        there is no mux to repoint — select() only records which instance the
-        input path targets. It still ensures the target's scrcpy is publishing
-        (starts a dead session) so the WHEP the client is about to make lands on
-        a live path.
-        """
-        with self._lock:
-            inst = self._instances.get(serial)
-            if inst is None:
-                return False
-        if not inst.session.alive:
-            _log(f"[instance] select {serial}: session not alive — starting")
-            inst.session.start()
-        if not inst.session.alive:
-            _log(f"[instance] select {serial}: session still not alive")
-            return False
-        # Copy-mux has no ffmpeg GOP — keyframes come from the ~2s IDR heartbeat.
-        # On a switch the browser WHEPs to this path and can't render until it
-        # sees an IDR, so force one now instead of making it wait for the next
-        # heartbeat tick (up to ~2s of black screen). Best-effort: control socket
-        # may not be connected yet on a just-started session; the heartbeat still
-        # covers that case.
-        try:
-            inst.session.control.request_idr()
-        except Exception:
-            pass
-        with self._lock:
-            self._active_serial = serial
-        return True
+    def select(self, serial: str, advertised_host: str) -> EngineSelection | None:
+        selection = self._engine_orchestrator.select(serial, advertised_host)
+        if selection is not None:
+            with self._lock:
+                if serial in self._instances:
+                    self._active_serial = serial
+        return selection
 
     def get(self, serial: str) -> Instance | None:
-        """Return the tracked Instance for a serial, or None."""
         with self._lock:
             return self._instances.get(serial)
-
-    def get_by_name(self, name: str) -> Instance | None:
-        """Look up a tracked Instance by its mediamtx path name (e.g.
-        'instance0'), not its ADB serial. mediamtx's runOnDemand/
-        runOnUnDemand hooks only know the path name (`$MTX_PATH`), so this
-        is the entry point the publish_hook.py script's HTTP calls resolve
-        through.
-        """
-        with self._lock:
-            for inst in self._instances.values():
-                if inst.name == name:
-                    return inst
-            return None
-
-    def start_video(self, name: str) -> bool:
-        """Start the on-demand video half for the instance at mediamtx path
-        `name`. Called by the internal /internal/instances/{name}/publish/start
-        endpoint, itself triggered by mediamtx's runOnDemand hook.
-        """
-        inst = self.get_by_name(name)
-        if inst is None:
-            return False
-        return inst.session.start_video()
-
-    def stop_video(self, name: str) -> None:
-        """Stop the on-demand video half for the instance at mediamtx path
-        `name`. Called by the internal /internal/instances/{name}/publish/stop
-        endpoint, itself triggered by mediamtx's runOnUnDemand hook. A no-op
-        for an unknown name -- the instance may have disconnected between
-        mediamtx firing the hook and the script's request landing.
-        """
-        inst = self.get_by_name(name)
-        if inst is None:
-            return
-        inst.session.stop_video()
 
     @property
     def active(self) -> Instance | None:
@@ -224,85 +141,49 @@ class InstanceManager:
             return None
 
     def set_tier(self, serial: str, tier: str) -> bool:
-        """Update quality tier for a specific instance.
-
-        Routes to the instance's session, which validates the tier and restarts
-        if running. Updates Instance.tier on success.
-
-        Args:
-            serial: Device serial (e.g., "emulator-5554").
-            tier: Quality tier name (must be in QUALITY_TIERS).
-
-        Returns:
-            True if tier was accepted/set, False if serial unknown or tier invalid.
-        """
         with self._lock:
-            inst = self._instances.get(serial)
-        if inst is None:
+            instance = self._instances.get(serial)
+        if instance is None:
             return False
-        ok = inst.session.set_tier(tier)
-        if ok:
-            inst.tier = tier
-        return ok
+        accepted = self._engine_orchestrator.set_tier(serial, tier)
+        if accepted:
+            instance.tier = tier
+        return accepted
 
-    # ── REST data ────────────────────────────────────────────────────────────
+    def request_keyframe(self, serial: str) -> None:
+        self._engine_orchestrator.request_keyframe(serial)
 
     def list_instances(self) -> list[dict]:
         with self._lock:
             return [
                 {
-                    "id": inst.id,
-                    "serial": inst.serial,
-                    "title": inst.title,
-                    "name": inst.name,
-                    "w": inst.w,
-                    "h": inst.h,
-                    "active": inst.serial == self._active_serial,
+                    "id": instance.id,
+                    "serial": instance.serial,
+                    "title": instance.title,
+                    "name": instance.name,
+                    "w": instance.w,
+                    "h": instance.h,
+                    "active": instance.serial == self._active_serial,
                 }
-                for inst in self._instances.values()
+                for instance in self._instances.values()
             ]
-
-    # ── Watchdog ─────────────────────────────────────────────────────────────
 
     def _watchdog(self):
         while True:
             time.sleep(10)
             try:
-                with self._lock:
-                    dead = [
-                        inst for inst in self._instances.values()
-                        if not inst.session.alive
-                    ]
-                # Restart each dead session in its own thread to avoid serializing
-                # the 1.5s scrcpy startup sleep across all instances
-                threads = []
-                for inst in dead:
-                    t = threading.Thread(
-                        target=self._restart_session, args=(inst,), daemon=True
-                    )
-                    t.start()
-                    threads.append(t)
-                for t in threads:
-                    t.join()
+                self.refresh()
+                self._engine_orchestrator.check_all()
             except Exception:
                 _log(f"[instance] watchdog error: {traceback.format_exc()[:300]}")
 
-    def _restart_session(self, inst: Instance):
-        # restart_if_dead re-checks aliveness under the session's restart lock,
-        # so a tier-change restart already in flight is not double-started (the
-        # race that corrupted the scrcpy handshake with a truncated read).
-        ok = inst.session.restart_if_dead()
-        _log(f"[instance] watchdog restart serial={inst.serial} ok={ok}")
-        # If device disconnected while we were restarting, stop the orphaned session
-        with self._lock:
-            if inst.serial not in self._instances:
-                _log(f"[instance] watchdog: {inst.serial} gone during restart — stopping orphan")
-                inst.session.stop()
-
     def stop_all(self):
-        with self._lock:
-            for inst in self._instances.values():
-                inst.session.stop()
-            self._instances.clear()
-            self._active_serial = None
-        self._mediamtx.stop()
+        with self._engine_refresh_lock:
+            with self._lock:
+                self._instances.clear()
+                self._active_serial = None
+            self._engine_orchestrator.stop_all()
+            if self._stun is not None:
+                self._stun.stop()
+                self._stun = None
+                self._stun_ip = None
