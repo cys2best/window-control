@@ -24,7 +24,8 @@ npm run bench -- --compare bench-results/<a>.json bench-results/<b>.json
 ```
 
 No Google Chrome installed (e.g. running on Windows)? Add `--channel msedge`
-to every command to drive Edge instead.
+to every command to drive Edge instead. Or point `--executable` at another Chromium-based
+browser, e.g. `--executable "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"`.
 
 Exit codes: 0 valid run, 2 run marked failed (see the reasons in the `.md`), 1 error.
 Keep the Chrome window visible during a run.

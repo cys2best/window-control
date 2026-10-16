@@ -23,6 +23,8 @@ const { values, positionals } = parseArgs({
     // Branded browser to drive: "chrome" or "msedge". Playwright's bundled
     // Chromium has no H.264 decoder, so it cannot play the stream.
     channel: { type: "string", default: "chrome" },
+    // Path to another Chromium-based browser (e.g. Brave); overrides --channel.
+    executable: { type: "string" },
   },
 });
 
@@ -33,7 +35,7 @@ function fail(message) {
 
 async function launch() {
   return chromium.launchPersistentContext(values.profile, {
-    channel: values.channel,
+    ...(values.executable ? { executablePath: values.executable } : { channel: values.channel }),
     headless: false, // a hidden tab throttles requestVideoFrameCallback
     viewport: { width: 1280, height: 800 },
   });
