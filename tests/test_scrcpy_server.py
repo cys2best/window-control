@@ -141,3 +141,13 @@ def test_every_argument_key_is_known_to_the_bundled_server():
         # A dex string is stored as <length><bytes>\0, which rules out a
         # match inside a longer name.
         assert bytes([len(key)]) + key.encode() + b"\x00" in dex, key
+
+
+def test_encoder_is_asked_for_realtime_low_latency_output():
+    from server.scrcpy_server import build_scrcpy_args
+
+    codec = next(a for a in build_scrcpy_args("360", 1) if a.startswith("video_codec_options="))
+    options = dict(kv.split("=", 1) for kv in codec.split("=", 1)[1].split(","))
+
+    assert options["priority"] == "0"  # MediaFormat.KEY_PRIORITY: 0 = realtime
+    assert options["latency"] == "1"   # MediaFormat.KEY_LATENCY: emit after 1 queued frame

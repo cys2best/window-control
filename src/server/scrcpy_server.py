@@ -90,7 +90,11 @@ def build_scrcpy_args(tier: str, scid: int) -> list[str]:
         # it isn't hard-enforced. 720p@30fps@4Mbps fits Level 3.1's ceiling
         # (MaxFS=3600 MB, MaxMBPS=108000 MB/s — both exactly met at 1280x720@30,
         # zero headroom but spec-compliant; MaxBR=14Mbps, well under 4Mbps).
-        "video_codec_options=i-frame-interval=2,profile=1,level=512,bitrate-mode=1",
+        #
+        # priority=0 (KEY_PRIORITY realtime) and latency=1 (KEY_LATENCY: emit
+        # a coded frame once one frame is queued) ask MediaCodec not to
+        # batch frames; an encoder that ignores them behaves as before.
+        "video_codec_options=i-frame-interval=2,profile=1,level=512,bitrate-mode=1,priority=0,latency=1",
         f"scid={scid:x}",
     ]
 
