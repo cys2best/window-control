@@ -17,8 +17,9 @@ Media: phone ⇄ PC direct; fallback ⇄ turn.cloudflare.com (credentials issued
 
 - AWS CLI v2 signed in as IAM user `nta` for account `077174987088` (`aws sts get-caller-identity`).
 - Terraform ≥ 1.10.
-- A Cloudflare API token with **Zone · DNS · Edit** and **Zone · SSL and Certificates · Edit** on `nendojo.com`,
-  exported for the shell that runs Terraform only:
+- A Cloudflare API token scoped to `nendojo.com` with **Zone · Zone · Read** (zone lookup), **Zone · DNS · Edit**
+  (the proxied record), **Zone · Zone Settings · Edit** (SSL mode) and **Zone · SSL and Certificates · Edit**
+  (Origin CA certificate), exported for the shell that runs Terraform only:
 
   ```sh
   export CLOUDFLARE_API_TOKEN=...   # never written to any file in this repo
@@ -44,6 +45,9 @@ terraform -chdir=infra/aws plan
 terraform -chdir=infra/aws apply
 terraform -chdir=infra/aws output
 ```
+
+SSL mode Full (strict) is a zone setting: it applies to the whole `nendojo.com` zone, so every other proxied hostname
+there must also present a certificate Cloudflare trusts.
 
 Creates the VPC, instance, Elastic IP, encrypted 1 GB data volume (`prevent_destroy`, daily snapshots kept 7 days),
 ECR repositories, instance and deploy roles, the US$25 budget, the proxied DNS record, SSL mode Full (strict), and the
@@ -93,7 +97,9 @@ broker and edge images tagged with the commit SHA, pushes them to ECR, then asks
 commit's tarball and run `infra/aws/files/shared-remote-deploy.sh`. The script writes the secret files (0600) from SSM,
 pulls the images, starts `compose.cloudflare.yml`, waits for preflight and checks that `/installations` answers 405.
 
-Until the first deploy the instance runs only its bootstrap (Docker, compose plugin, swap, data volume mount).
+Until the first deploy the instance runs only its bootstrap (Docker, compose plugin, swap, data volume mount). If a
+deploy reports that bootstrap is unfinished, open a session (step 7) and re-run it:
+`sudo bash /var/lib/cloud/instance/user-data.txt` (idempotent).
 
 ## 7. First license
 
@@ -142,7 +148,9 @@ the instance redeploys those images. ECR keeps the last 10 images per repository
 
 1. EC2 → Snapshots → pick the `shared-remote-data` snapshot (daily, 7 kept) → **Create volume** in the instance's AZ.
 2. Stop the stack (`sudo docker compose -p shared-remote down` from the release directory), detach the current data
-   volume, attach the restored one as `/dev/sdf`, `sudo mount /srv/shared-remote/data`.
+   volume, attach the restored one as `/dev/sdf`, `sudo mount /srv/shared-remote/data`. The fstab entry mounts by
+   filesystem UUID, which a volume restored from a snapshot keeps. Docker requires that mount, so containers do not start
+   on an empty directory if the volume is missing.
 3. Re-run **Remote deploy**. Then reconcile Terraform: `terraform state rm aws_ebs_volume.data aws_volume_attachment.data`
    and `terraform import aws_ebs_volume.data <new-volume-id>` (plus the attachment) so state matches.
 

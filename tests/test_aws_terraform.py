@@ -126,3 +126,22 @@ def test_terraform_validates(directory):
     fmt = subprocess.run([terraform, f'-chdir={directory}', 'fmt', '-check', '-recursive'],
                          capture_output=True, text=True, timeout=60)
     assert fmt.returncode == 0, fmt.stdout
+
+
+def test_bootstrap_survives_late_network_and_is_rerunnable():
+    user_data = tf('user-data.sh.tftpl')
+    assert 'retry dnf install -y docker' in user_data
+    assert re.search(r'retry curl -fsSL', user_data)
+    eip = re.sub(r'\s+', ' ', block(tf('instance.tf'), 'resource "aws_eip" "shared_remote"'))
+    assert 'depends_on = [aws_internet_gateway.shared_remote]' in eip
+    script = (AWS / 'files/shared-remote-deploy.sh').read_text()
+    assert '/var/lib/cloud/instance/user-data.txt' in script
+
+
+def test_data_mount_follows_filesystem_and_gates_docker():
+    user_data = tf('user-data.sh.tftpl')
+    fstab_lines = [line for line in user_data.splitlines() if '/etc/fstab' in line and 'shared-remote/data' in line]
+    assert fstab_lines and all('UUID=' in line and 'by-id' not in line for line in fstab_lines)
+    assert 'RequiresMountsFor=/srv/shared-remote/data' in user_data
+    readme = (AWS / 'README.md').read_text()
+    assert 'UUID' in readme

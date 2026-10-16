@@ -41,7 +41,8 @@ resource "aws_instance" "shared_remote" {
 }
 
 resource "aws_eip" "shared_remote" {
-  domain   = "vpc"
-  instance = aws_instance.shared_remote.id
-  tags     = { Name = "shared-remote" }
+  domain     = "vpc"
+  depends_on = [aws_internet_gateway.shared_remote]
+  instance   = aws_instance.shared_remote.id
+  tags       = { Name = "shared-remote" }
 }

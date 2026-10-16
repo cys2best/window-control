@@ -112,3 +112,21 @@ def test_runbook_covers_first_run_and_never_inlines_secrets():
         if 'put-parameter' in line:
             assert '--value "' not in line and "--value '" not in line, line
     assert 'infra/aws/README.md' in (ROOT / 'infra/shared-remote/README.md').read_text()
+
+
+def test_deploy_script_replaces_secret_files_atomically():
+    text = SCRIPT.read_text()
+    body = text[text.index('secret_to_file() {'):]
+    body = body[:body.index('\n}\n')]
+    fetch = next(line for line in body.splitlines() if '--with-decryption' in line)
+    assert '> "$2"' not in fetch, 'a failed fetch must not truncate the live file'
+    assert re.search(r'>\s*"\$tmp"', fetch)
+    assert re.search(r'mv -f "\$tmp" "\$2"', body)
+
+
+def test_runbook_cloudflare_token_covers_every_managed_resource():
+    text = (ROOT / 'infra/aws/README.md').read_text()
+    for permission in ('Zone · Zone · Read', 'Zone · DNS · Edit', 'Zone · Zone Settings · Edit',
+                       'Zone · SSL and Certificates · Edit'):
+        assert permission in text, permission
+    assert 'whole `nendojo.com` zone' in text

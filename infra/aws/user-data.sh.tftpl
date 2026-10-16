@@ -1,22 +1,42 @@
 #!/bin/bash
-# Idempotent host bootstrap. Holds no secrets: the deploy script fetches them from SSM at deploy time.
+# Idempotent host bootstrap; safe to re-run: sudo bash /var/lib/cloud/instance/user-data.txt
+# Holds no secrets: the deploy script fetches them from SSM at deploy time.
 set -euo pipefail
 
 COMPOSE_VERSION=v2.32.4
 COMPOSE_SHA256=0c4591cf3b1ed039adcd803dbbeddf757375fc08c11245b0154135f838495a2f
 DATA_DEVICE=/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_${data_volume_id}
 
-dnf install -y docker
-systemctl enable --now docker
+# Outbound access starts only once the Elastic IP is associated, possibly after this script starts.
+retry() {
+  local attempt
+  for attempt in $(seq 1 60); do
+    "$@" && return 0
+    echo "retry $attempt/60: $*" >&2
+    sleep 10
+  done
+  return 1
+}
 
-plugin=/usr/libexec/docker/cli-plugins/docker-compose
-if ! echo "$COMPOSE_SHA256  $plugin" | sha256sum -c --status 2>/dev/null; then
-  mkdir -p "$(dirname "$plugin")"
-  curl -fsSL -o /tmp/docker-compose "https://github.com/docker/compose/releases/download/$COMPOSE_VERSION/docker-compose-linux-aarch64"
-  echo "$COMPOSE_SHA256  /tmp/docker-compose" | sha256sum -c --status
-  install -m 0755 /tmp/docker-compose "$plugin"
-  rm -f /tmp/docker-compose
-fi
+# The data volume is attached after launch; wait for it, format only if blank.
+for _ in $(seq 1 60); do
+  [ -e "$DATA_DEVICE" ] && break
+  sleep 5
+done
+[ -e "$DATA_DEVICE" ]
+blkid "$DATA_DEVICE" >/dev/null || mkfs.xfs "$DATA_DEVICE"
+# Mount by filesystem UUID: a volume restored from a snapshot keeps it, unlike the volume ID.
+DATA_UUID=$(blkid -s UUID -o value "$DATA_DEVICE")
+mkdir -p /srv/shared-remote/data
+grep -q ' /srv/shared-remote/data ' /etc/fstab || echo "UUID=$DATA_UUID /srv/shared-remote/data xfs defaults,nofail 0 2" >> /etc/fstab
+mountpoint -q /srv/shared-remote/data || mount /srv/shared-remote/data
+
+# Containers must never start on the empty root-disk directory when the data volume is missing.
+mkdir -p /etc/systemd/system/docker.service.d
+cat > /etc/systemd/system/docker.service.d/shared-remote-data.conf <<'UNIT'
+[Unit]
+RequiresMountsFor=/srv/shared-remote/data
+UNIT
 
 if [ ! -f /swapfile ]; then
   dd if=/dev/zero of=/swapfile bs=1M count=1024
@@ -26,16 +46,18 @@ fi
 swapon --show | grep -q /swapfile || swapon /swapfile
 grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
 
-# The data volume is attached after launch; wait for it, format only if blank.
-for _ in $(seq 1 60); do
-  [ -e "$DATA_DEVICE" ] && break
-  sleep 5
-done
-[ -e "$DATA_DEVICE" ]
-blkid "$DATA_DEVICE" >/dev/null || mkfs.xfs "$DATA_DEVICE"
-mkdir -p /srv/shared-remote/data
-grep -q ' /srv/shared-remote/data ' /etc/fstab || echo "$DATA_DEVICE /srv/shared-remote/data xfs defaults,nofail 0 2" >> /etc/fstab
-mountpoint -q /srv/shared-remote/data || mount /srv/shared-remote/data
+retry dnf install -y docker
+systemctl daemon-reload
+systemctl enable --now docker
+
+plugin=/usr/libexec/docker/cli-plugins/docker-compose
+if ! echo "$COMPOSE_SHA256  $plugin" | sha256sum -c --status 2>/dev/null; then
+  mkdir -p "$(dirname "$plugin")"
+  retry curl -fsSL -o /tmp/docker-compose "https://github.com/docker/compose/releases/download/$COMPOSE_VERSION/docker-compose-linux-aarch64"
+  echo "$COMPOSE_SHA256  /tmp/docker-compose" | sha256sum -c --status
+  install -m 0755 /tmp/docker-compose "$plugin"
+  rm -f /tmp/docker-compose
+fi
 
 install -d -m 0755 /srv/shared-remote/releases
 install -d -m 0700 /srv/shared-remote/secrets

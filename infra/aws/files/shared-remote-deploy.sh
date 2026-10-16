@@ -28,9 +28,17 @@ imds() {
   curl -fsS -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" "http://169.254.169.254/latest/meta-data/$1"
 }
 
+# Replace atomically: a failed fetch must leave the previous value for the running stack and reboots.
 secret_to_file() {
-  aws ssm get-parameter --region "$REGION" --name "$1" --with-decryption --query Parameter.Value --output text > "$2"
-  chmod 0600 "$2"
+  local tmp
+  tmp=$(mktemp "$2.XXXXXX")
+  if ! aws ssm get-parameter --region "$REGION" --name "$1" --with-decryption --query Parameter.Value --output text > "$tmp" || [ ! -s "$tmp" ]; then
+    rm -f "$tmp"
+    echo "could not read SSM parameter $1" >&2
+    return 1
+  fi
+  chmod 0600 "$tmp"
+  mv -f "$tmp" "$2"
 }
 
 IMDS_TOKEN=$(curl -fsS -X PUT -H "X-aws-ec2-metadata-token-ttl-seconds: 300" http://169.254.169.254/latest/api/token)
@@ -41,7 +49,7 @@ MAX_STREAMS=$(imds tags/instance/max-active-streams)
 [[ "$DOMAIN" =~ ^[A-Za-z0-9.-]+$ ]] || { echo "unexpected remote-hostname tag" >&2; exit 1; }
 [[ "$MAX_STREAMS" =~ ^[1-9][0-9]*$ ]] || { echo "unexpected max-active-streams tag" >&2; exit 1; }
 for directory in "$DATA" "$RELEASES" "$SECRETS"; do
-  [ -d "$directory" ] || { echo "missing $directory; instance bootstrap has not finished" >&2; exit 1; }
+  [ -d "$directory" ] || { echo "missing $directory; bootstrap unfinished (re-run: sudo bash /var/lib/cloud/instance/user-data.txt)" >&2; exit 1; }
 done
 mountpoint -q "$DATA" || { echo "data volume is not mounted" >&2; exit 1; }
 
