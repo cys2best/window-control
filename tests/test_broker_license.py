@@ -147,3 +147,169 @@ def test_second_store_instance_sees_admin_changes(tmp_path):
     assert broker.is_licensed(A, now=1)
     admin.revoke(key)
     assert broker.is_licensed(A, now=2) is False
+
+
+# --- Broker HTTP endpoints and relay admission ---------------------------------
+
+import uuid
+
+from tests.test_broker import broker_env, wire, authenticate_host, approve_viewer  # noqa: F401
+
+
+def register(client):
+    return client.post("/installations").json()
+
+
+def activate(client, identity, key):
+    return client.post(f"/installations/{identity['installation_id']}/license",
+                       json={"credential": identity["credential"], "key": key})
+
+
+def select_bundle(host, viewer, generation=1):
+    viewer.send_text(wire("select", {"serial": "emulator-5554"}))
+    routed = host.receive_json()
+    session_id = str(uuid.uuid4())
+    host.send_text(wire("media_authorize", {"routing_id": routed["id"], "session_id": session_id,
+                                            "generation": generation}))
+    reply = host.receive_json()
+    assert reply["ok"], reply
+    host.send_json({"v": 1, "id": routed["id"], "ok": False,
+                    "error": {"code": "busy", "message": "test ends here"}})
+    viewer.receive_json()
+    assert host.receive_json()["op"] == "media_cancel"
+    return reply["result"]["viewer"]
+
+
+def turn_servers(bundle):
+    return [s for s in bundle["ice_servers"] if any(u.startswith(("turn:", "turns:")) for u in s["urls"])]
+
+
+def test_unlicensed_installation_gets_stun_only_and_licensed_gets_turn(broker_env):
+    client, _, _ = broker_env
+    identity = register(client)
+    with client.websocket_connect("/connect") as host, client.websocket_connect("/connect") as viewer:
+        authenticate_host(host, identity)
+        approve_viewer(host, viewer, identity)
+        bundle = select_bundle(host, viewer)
+        assert turn_servers(bundle) == [] and bundle["relay_available"] is False
+        key = client.app.state.licenses.issue(now=0)
+        response = activate(client, identity, key)
+        assert (response.status_code, response.json()) == (200, {"relay_licensed": True})
+        bundle = select_bundle(host, viewer, generation=2)
+        assert bundle["relay_available"] is True
+        assert identity["installation_id"] in turn_servers(bundle)[0]["username"]
+
+
+def test_license_endpoint_requires_installation_credential(broker_env):
+    client, _, _ = broker_env
+    identity = register(client)
+    key = client.app.state.licenses.issue(now=0)
+    response = activate(client, {**identity, "credential": "wrong"}, key)
+    assert (response.status_code, response.json()) == (401, {"detail": "Unauthorized"})
+    response = client.request("DELETE", f"/installations/{identity['installation_id']}/license",
+                              json={"credential": "wrong"})
+    assert response.status_code == 401
+    assert client.app.state.licenses.list()[0].installation_id is None
+
+
+def test_invalid_and_malformed_keys_return_same_403(broker_env):
+    client, _, _ = broker_env
+    identity = register(client)
+    for key in ("EMU-AAAAA", generate_key()):
+        response = activate(client, identity, key)
+        assert (response.status_code, response.json()) == (403, {"detail": "invalid_license"})
+
+
+def test_move_revokes_previous_installation_and_its_viewers(broker_env):
+    client, _, _ = broker_env
+    first, second = register(client), register(client)
+    store = client.app.state.licenses
+    key = store.issue(now=0)
+    with client.websocket_connect("/connect") as host, client.websocket_connect("/connect") as viewer:
+        authenticate_host(host, first)
+        approve_viewer(host, viewer, first)
+        assert activate(client, first, key).status_code == 200
+        response = activate(client, second, key)
+        assert (response.status_code, response.json()) == (200, {"relay_licensed": True})
+        assert client.app.state.registry.get_host(first["installation_id"]) is None
+        viewer.send_text(wire("instances"))
+        assert viewer.receive_json()["error"]["code"] == "not_paired"
+        host.send_text(wire("pairing_close", {"handle": "x" * 32}))
+        assert host.receive_json()["error"]["code"] == "stale_generation"
+    response = client.post("/installations/" + first["installation_id"] + "/license",
+                           json={"credential": first["credential"], "key": key})
+    assert response.status_code == 401
+    assert store.is_licensed(second["installation_id"], now=1)
+
+
+def test_move_within_cooldown_returns_retry_after(broker_env, monkeypatch):
+    client, _, _ = broker_env
+    now = [1000.0]
+    monkeypatch.setattr("broker.app.time.time", lambda: now[0])
+    first, second, third = register(client), register(client), register(client)
+    key = client.app.state.licenses.issue(now=now[0])
+    assert activate(client, first, key).status_code == 200
+    assert activate(client, second, key).status_code == 200
+    now[0] += 100
+    response = activate(client, third, key)
+    assert (response.status_code, response.json()) == (
+        409, {"detail": "license_in_use", "retry_after": MOVE_COOLDOWN_SECONDS - 100})
+    assert client.app.state.licenses.is_licensed(second["installation_id"], now=now[0])
+
+
+def test_deactivate_turns_relay_off(broker_env):
+    client, _, _ = broker_env
+    identity = register(client)
+    key = client.app.state.licenses.issue(now=0)
+    assert activate(client, identity, key).status_code == 200
+    response = client.request("DELETE", f"/installations/{identity['installation_id']}/license",
+                              json={"credential": identity["credential"]})
+    assert (response.status_code, response.json()) == (200, {"relay_licensed": False})
+    assert not client.app.state.licenses.is_licensed(identity["installation_id"], now=1)
+    with client.websocket_connect("/connect") as host, client.websocket_connect("/connect") as viewer:
+        authenticate_host(host, identity)
+        approve_viewer(host, viewer, identity)
+        assert select_bundle(host, viewer)["relay_available"] is False
+
+
+def test_host_auth_reports_license_status(broker_env):
+    client, _, _ = broker_env
+    identity = register(client)
+
+    def auth_result():
+        with client.websocket_connect("/connect") as host:
+            host.send_text(wire("host_auth", identity))
+            return host.receive_json()["result"]
+
+    assert auth_result()["relay_licensed"] is False
+    activate(client, identity, client.app.state.licenses.issue(now=0))
+    assert auth_result()["relay_licensed"] is True
+
+
+def test_revoked_license_stops_relay_on_next_admission(broker_env):
+    client, _, _ = broker_env
+    identity = register(client)
+    store = client.app.state.licenses
+    key = store.issue(now=0)
+    activate(client, identity, key)
+    with client.websocket_connect("/connect") as host, client.websocket_connect("/connect") as viewer:
+        authenticate_host(host, identity)
+        approve_viewer(host, viewer, identity)
+        assert select_bundle(host, viewer)["relay_available"] is True
+        store.revoke(key)
+        bundle = select_bundle(host, viewer, generation=2)
+        assert bundle["relay_available"] is False and turn_servers(bundle) == []
+
+
+def test_corrupt_license_file_returns_503_and_stun_only(broker_env):
+    client, settings, storage = broker_env
+    identity = register(client)
+    license_path = storage.with_name("licenses.json")
+    license_path.write_text("{bad")
+    response = activate(client, identity, generate_key())
+    assert (response.status_code, response.json()) == (503, {"detail": "License storage unavailable"})
+    with client.websocket_connect("/connect") as host, client.websocket_connect("/connect") as viewer:
+        authenticate_host(host, identity)
+        approve_viewer(host, viewer, identity)
+        assert select_bundle(host, viewer)["relay_available"] is False
+    assert license_path.read_text() == "{bad"

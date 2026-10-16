@@ -27,6 +27,7 @@ def settings_from_environment():
             stun_urls=json.loads(os.environ['REMOTE_STUN_URLS']),
             turn_urls=json.loads(os.environ['REMOTE_TURN_URLS']),
             relay_available=os.environ.get('REMOTE_RELAY_AVAILABLE', 'true') == 'true',
+            license_path=os.environ.get('REMOTE_LICENSE_PATH') or None,
         )
     except (KeyError, ValueError, OSError):
         raise RuntimeError('Invalid or missing broker deployment settings') from None

@@ -4,6 +4,7 @@ import uuid
 
 import pytest
 from broker.app import BrokerSettings
+from broker.license_store import LicenseStore
 from broker.limits import BrokerLimits
 from broker.registry import Registry
 from tests.test_broker import broker_env, wire, authenticate_host, approve_viewer
@@ -20,7 +21,9 @@ def admission(tmp_path):
     now = [1000.0]
     registry = Registry()
     settings = BrokerSettings(storage_path=str(tmp_path / "store"), allowed_origins=[], turn_shared_secret="backend-only", max_active_streams=2, stun_urls=["stun:example:3478"], turn_urls=["turn:example:3478?transport=udp"])
-    media = MediaAdmission(settings, BrokerLimits(lambda: now[0]), registry, lambda: now[0])
+    licenses = LicenseStore(tmp_path / "licenses.json")
+    licenses.activate(licenses.issue(now=0), "a", now=0, installation_exists=lambda _id: True)
+    media = MediaAdmission(settings, BrokerLimits(lambda: now[0]), registry, lambda: now[0], licenses)
     return media, registry, now, settings
 
 
@@ -451,7 +454,7 @@ async def test_broker_restart_drops_transient_admission_and_revision(admission):
     host, viewer = owner(registry)
     media.authorize(host, authorization(pending(registry, viewer).routing_id, 100))
     restarted_registry = Registry()
-    restarted = MediaAdmission(settings, BrokerLimits(lambda: now[0]), restarted_registry, lambda: now[0])
+    restarted = MediaAdmission(settings, BrokerLimits(lambda: now[0]), restarted_registry, lambda: now[0], media.licenses)
     assert not restarted.admissions
     current, fresh = owner(restarted_registry)
     restarted.authorize(current, authorization(pending(restarted_registry, fresh).routing_id, 1))

@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable
 import uuid
 
+from broker.license_store import LicenseStore
 from broker.limits import BrokerLimits
 from broker.registry import HostConnection, Registry
 from broker.turn_credentials import issue_turn_credentials
@@ -41,8 +42,9 @@ class Admission:
 
 class MediaAdmission:
     def __init__(self, settings: 'BrokerSettings', limits: BrokerLimits,
-                 registry: Registry, clock: Callable[[], float]):
+                 registry: Registry, clock: Callable[[], float], licenses: LicenseStore):
         self.settings = settings
+        self.licenses = licenses
         self.limits = limits
         self.registry = registry
         self.clock = clock
@@ -88,8 +90,10 @@ class MediaAdmission:
             raise MediaError('quota_exceeded')
         if not self.limits.check_credential_issuance(host.installation_id):
             raise MediaError('quota_exceeded')
+        relay = (self.settings.relay_available and bool(self.settings.turn_urls)
+                 and self.licenses.is_licensed(host.installation_id, now=now))
         bundles = MediaBundles(**{
-            endpoint: self._bundle(host.installation_id, session_id, endpoint, now)
+            endpoint: self._bundle(host.installation_id, session_id, endpoint, now, relay)
             for endpoint in ('host', 'viewer')
         })
         self.admissions[host.installation_id] = Admission(
@@ -103,11 +107,10 @@ class MediaAdmission:
         pending.media_authorized = True
         return bundles
 
-    def _bundle(self, installation_id, session_id, endpoint, now):
+    def _bundle(self, installation_id, session_id, endpoint, now, relay):
         servers = []
         if self.settings.stun_urls:
             servers.append({'urls': list(self.settings.stun_urls)})
-        relay = self.settings.relay_available and bool(self.settings.turn_urls)
         if relay:
             credentials = issue_turn_credentials(self.settings.turn_shared_secret, installation_id, session_id, endpoint, now)
             servers.append({'urls': list(self.settings.turn_urls), 'username': credentials.username,

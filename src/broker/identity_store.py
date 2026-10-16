@@ -95,6 +95,15 @@ class InstallationStore:
         with self._lock:
             return id in self._read_data()
 
+    def delete(self, installation_id: str) -> bool:
+        with self._lock:
+            data = self._read_data()
+            if installation_id not in data:
+                return False
+            del data[installation_id]
+            self._write_data(data)
+            return True
+
     def revoke(self, id: str, credential: str) -> bool:
         with self._lock:
             if not self.authenticate(id, credential):

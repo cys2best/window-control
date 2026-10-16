@@ -75,8 +75,7 @@ def _valid_record(digest, record) -> bool:
     return (isinstance(digest, str) and re.fullmatch(r"[0-9a-f]{64}", digest) is not None
             and isinstance(record, dict) and set(record) == _RECORD_KEYS
             and (record["installation_id"] is None
-                 or (isinstance(record["installation_id"], str)
-                     and re.fullmatch(r"[0-9a-f]{32}", record["installation_id"]) is not None))
+                 or (isinstance(record["installation_id"], str) and record["installation_id"]))
             and _is_time(record["issued_at"], optional=False)
             and _is_time(record["bound_at"], optional=True)
             and _is_time(record["moved_at"], optional=True)

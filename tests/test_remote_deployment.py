@@ -177,3 +177,20 @@ def test_association_requires_complete_operator_values_and_defaults_to_unconfigu
     config.validate_production(env)
     config.write_association(env, output)
     assert json.loads((output / 'apple-app-site-association').read_text())['applinks']['details'] == [{'appIDs': ['ABCDE12345.com.example.control'], 'components': [{'/': '/pair'}]}]
+
+
+def test_license_file_is_durable_and_reachable_through_edge(tmp_path):
+    compose = (INFRA / 'compose.production.yml').read_text()
+    assert 'REMOTE_LICENSE_PATH: /data/licenses.json' in compose
+    edge = (INFRA / 'edge.conf.template').read_text()
+    assert '"^/installations(/[a-f0-9]{32}(/license)?)?$"' in edge
+    env = {key: value for key, value in os.environ.items() if not key.startswith('REMOTE_')}
+    secret = tmp_path / 'secret'
+    secret.write_text('secret')
+    env.update(PYTHONPATH=str(ROOT / 'src'), REMOTE_ALLOWED_ORIGINS='["https://control.example.com"]',
+               REMOTE_STORE_PATH=str(tmp_path / 'store'), REMOTE_STUN_URLS='["stun:stun.example.com:3478"]',
+               REMOTE_TURN_URLS='["turns:turn.example.com:443?transport=tcp"]', REMOTE_TURN_SECRET_FILE=str(secret),
+               REMOTE_MAX_ACTIVE_STREAMS='2', REMOTE_LICENSE_PATH=str(tmp_path / 'keys.json'))
+    check = f'from broker.main import app; assert str(app.state.licenses.path) == {str(tmp_path / "keys.json")!r}'
+    result = subprocess.run([sys.executable, '-c', check], env=env, capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr

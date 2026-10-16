@@ -6,9 +6,11 @@ from contextlib import asynccontextmanager, suppress
 from typing import List
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request
 from fastapi.responses import JSONResponse
+from pathlib import Path
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from broker.identity_store import InstallationStore, InstallationStoreError
+from broker.license_store import LicenseStore, LicenseStoreError
 from broker.limits import BrokerLimits
 from broker.registry import Registry
 from broker.media import MediaAdmission, MediaError
@@ -28,6 +30,7 @@ class BrokerSettings(BaseModel):
     stun_urls: list[str] = Field(default_factory=list)
     turn_urls: list[str] = Field(default_factory=list)
     relay_available: bool = True
+    license_path: str | None = None
     model_config = ConfigDict(strict=True, extra="forbid", hide_input_in_errors=True)
 
     @field_validator("stun_urls", "turn_urls")
@@ -50,12 +53,17 @@ class BrokerSettings(BaseModel):
 class DeleteInstallationRequest(BaseModel):
     credential: str
 
+class ActivateLicenseRequest(BaseModel):
+    credential: str
+    key: str
+
 def create_broker_app(settings: BrokerSettings) -> FastAPI:
     store = InstallationStore(settings.storage_path)
+    licenses = LicenseStore(settings.license_path or Path(settings.storage_path).with_name("licenses.json"))
     limits = BrokerLimits()
     registry = Registry()
-    
-    media = MediaAdmission(settings, limits, registry, time.time)
+
+    media = MediaAdmission(settings, limits, registry, time.time, licenses)
 
     @asynccontextmanager
     async def lifespan(app):
@@ -77,7 +85,11 @@ def create_broker_app(settings: BrokerSettings) -> FastAPI:
     @app.exception_handler(InstallationStoreError)
     async def installation_storage_unavailable(request: Request, exc: InstallationStoreError):
         return JSONResponse(status_code=503, content={"detail": "Installation storage unavailable"})
-    
+
+    @app.exception_handler(LicenseStoreError)
+    async def license_storage_unavailable(request: Request, exc: LicenseStoreError):
+        return JSONResponse(status_code=503, content={"detail": "License storage unavailable"})
+
     @app.post("/installations")
     def register_installation(request: Request):
         ip = request.client.host if request.client else "127.0.0.1"
@@ -102,15 +114,42 @@ def create_broker_app(settings: BrokerSettings) -> FastAPI:
         success = store.revoke(installation_id, req.credential)
         if not success:
             raise HTTPException(status_code=404, detail="Not Found")
-            
+        await revoke_installation(installation_id)
+        return {"ok": True}
+
+    async def revoke_installation(installation_id):
         for viewer in list(registry.viewers.values()):
             if viewer.installation_id == installation_id:
                 media.cancel(viewer)
         await flush_cancellations()
         registry.invalidate_installation(installation_id)
-        return {"ok": True}
+
+    @app.post("/installations/{installation_id}/license")
+    async def activate_license(installation_id: str, req: ActivateLicenseRequest):
+        if not store.authenticate(installation_id, req.credential):
+            raise HTTPException(status_code=401, detail="Unauthorized")
+        activation = licenses.activate(req.key, installation_id, now=time.time(),
+                                       installation_exists=store.exists)
+        if activation.status == "invalid":
+            raise HTTPException(status_code=403, detail="invalid_license")
+        if activation.status == "in_use":
+            return JSONResponse(status_code=409, content={"detail": "license_in_use",
+                                                          "retry_after": activation.retry_after})
+        if activation.status == "moved":
+            # The license move is the authority to retire the previous PC.
+            store.delete(activation.previous_installation)
+            await revoke_installation(activation.previous_installation)
+        return {"relay_licensed": True}
+
+    @app.delete("/installations/{installation_id}/license")
+    def deactivate_license(installation_id: str, req: DeleteInstallationRequest):
+        if not store.authenticate(installation_id, req.credential):
+            raise HTTPException(status_code=401, detail="Unauthorized")
+        licenses.deactivate(installation_id)
+        return {"relay_licensed": False}
 
     app.state.registry = registry
+    app.state.licenses = licenses
     app.state.limits = limits
     app.state.media = media
 
@@ -266,7 +305,8 @@ def create_broker_app(settings: BrokerSettings) -> FastAPI:
                 if previous is not None:
                     media.host_disconnected(previous)
                 host = registry.register_host(installation_id, websocket)
-                await send(host, format_reply(Reply(v=1, id=command.id, ok=True, result={"authenticated": True, "host_epoch": host.epoch})))
+                await send(host, format_reply(Reply(v=1, id=command.id, ok=True, result={"authenticated": True, "host_epoch": host.epoch,
+                                                                                   "relay_licensed": licenses.is_licensed(installation_id, now=time.time())})))
                 if previous is not None:
                     await previous.websocket.close(code=1008)
             elif command.op in {"viewer_auth", "pair"}:
