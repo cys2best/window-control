@@ -66,6 +66,7 @@ export async function runBench({ select, serial, count, warmup, video, onStatus 
   const context = canvas.getContext("2d", { willReadFrequently: true })!;
   const frames: FrameMeta[] = [];
   let waiters: Array<(sample: FrameSample) => void> = [];
+  let lastSample: FrameSample | null = null;
   let stopped = false;
   const onFrame = (_now: number, meta: any) => {
     context.drawImage(video, 0, 0, SAMPLE_SIZE, SAMPLE_SIZE);
@@ -79,6 +80,7 @@ export async function runBench({ select, serial, count, warmup, video, onStatus 
     if (sample.rtpTimestamp !== null && sample.receiveTime !== null) {
       frames.push({ rtpTimestamp: sample.rtpTimestamp, receiveTime: sample.receiveTime, expectedDisplayTime: sample.expectedDisplayTime });
     }
+    lastSample = sample;
     const ready = waiters;
     waiters = [];
     ready.forEach((resolve) => resolve(sample));
@@ -104,6 +106,7 @@ export async function runBench({ select, serial, count, warmup, video, onStatus 
     const taps = await runTaps({
       sendClick: (seq) => session.input.send({ type: "click", x: 0.5, y: 0.5, bench_seq: seq }),
       nextFrame,
+      lastFrame: () => lastSample,
       now: () => performance.now(),
       sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
       random: Math.random,

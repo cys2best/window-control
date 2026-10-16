@@ -9,16 +9,19 @@ const OPTIONS = { count: 5, warmup: 2, missTimeoutMs: 2000, gapMinMs: 300, gapMa
 function fakeTarget({ latencyMs, dropSeq = -1, lum }: { latencyMs: number; dropSeq?: number; lum?: number }) {
   let now = 0;
   const flips: number[] = [];
+  let last: FrameSample | null = null;
   const colorAt = (t: number) => (flips.filter((f) => f + latencyMs <= t).length % 2 === 0 ? 0 : 255);
   const deps: TapDeps = {
     now: () => now,
     random: () => 0.5,
     sleep: async (ms) => { now += ms; },
     sendClick: (seq) => { if (seq !== dropSeq) flips.push(now); },
+    lastFrame: () => last,
     nextFrame: async (timeoutMs): Promise<FrameSample | null> => {
       if (FRAME_MS > timeoutMs) { now += timeoutMs; return null; }
       now += FRAME_MS;
-      return { lum: lum ?? colorAt(now), rtpTimestamp: now * 90, receiveTime: now - 5, expectedDisplayTime: now };
+      last = { lum: lum ?? colorAt(now), rtpTimestamp: now * 90, receiveTime: now - 5, expectedDisplayTime: now };
+      return last;
     },
   };
   return deps;
@@ -56,4 +59,35 @@ test("centre luminance ignores the border and classify applies thresholds", () =
   expect(classify(200)).toBe("white");
   expect(classify(40)).toBe("black");
   expect(classify(128)).toBeNull();
+});
+
+// Like the real stream: the encoder emits a frame only when the screen changes.
+function staticTarget(latencyMs: number) {
+  let now = 0;
+  let last: FrameSample = { lum: 0, rtpTimestamp: 0, receiveTime: 0, expectedDisplayTime: 0 };
+  const changes: number[] = [];
+  const deps: TapDeps = {
+    now: () => now,
+    random: () => 0.5,
+    sleep: async (ms) => { now += ms; },
+    sendClick: () => { changes.push(now + latencyMs); },
+    lastFrame: () => last,
+    nextFrame: async (timeoutMs) => {
+      const next = changes.find((t) => t > now);
+      if (next === undefined || next - now > timeoutMs) { now += timeoutMs; return null; }
+      now = next;
+      last = { lum: last.lum === 0 ? 255 : 0, rtpTimestamp: now * 90, receiveTime: now - 5, expectedDisplayTime: now };
+      return last;
+    },
+  };
+  return deps;
+}
+
+test("a still screen that sends no frames until tapped is still a stable target", async () => {
+  const records = await runTaps(staticTarget(60), OPTIONS);
+  expect(records).toHaveLength(5);
+  for (const r of records) {
+    expect(r.miss).toBe(false);
+    expect(r.t1! - r.t0).toBe(60);
+  }
 });
