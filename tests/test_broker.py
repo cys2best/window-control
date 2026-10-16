@@ -520,3 +520,10 @@ def test_viewer_auth_installation_budget_spans_ips():
     now[0] += 2
     assert limits.check_viewer_auth("10.0.2.1", "inst")
     assert not limits.check_viewer_auth("10.0.2.2", "inst")
+
+
+def test_refused_viewer_auth_creates_no_installation_buckets():
+    limits = BrokerLimits(lambda: 0.0)
+    assert all(limits.check_viewer_auth("10.0.0.1", f"id{i}") for i in range(10))
+    assert not any(limits.check_viewer_auth("10.0.0.1", f"spray{i}") for i in range(500))
+    assert len(limits.buckets) == 11

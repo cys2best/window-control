@@ -47,6 +47,8 @@ class BrokerLimits:
                 if now - bucket.last_fill >= bucket.capacity / bucket.fill_rate:
                     del self.buckets[old_key]
             buckets = []
+            # Check in order and stop at the first empty bucket, so a refused
+            # caller cannot create later (attacker-keyed) buckets.
             for key, capacity, fill_rate in specs:
                 if key not in self.buckets:
                     if len(self.buckets) >= MAX_RATE_LIMIT_KEYS:
@@ -54,9 +56,9 @@ class BrokerLimits:
                     self.buckets[key] = TokenBucket(capacity, fill_rate, self.clock)
                 bucket = self.buckets[key]
                 bucket.refill()
+                if bucket.tokens < 1:
+                    return False
                 buckets.append(bucket)
-            if any(bucket.tokens < 1 for bucket in buckets):
-                return False
             for bucket in buckets:
                 bucket.tokens -= 1
             return True
