@@ -26,9 +26,8 @@ export function SwapControl({ activeIndex, count, onOpen, onCycle, onWake, tick,
     backgroundColor: theme.color.glass, borderRightWidth: 1, borderTopWidth: 1, borderBottomWidth: 1,
     borderColor: "rgba(255,255,255,0.10)", alignItems: "center" }}>
     <Pressable accessibilityRole="button" accessibilityLabel="Switch instance" onPress={() => { onWake(); tick(); onOpen(); }}
-      style={{ width: 68, height: 116, alignItems: "center", justifyContent: "center", gap: 7 }}>
+      style={{ width: 68, height: 72, alignItems: "center", justifyContent: "center", gap: 6 }}>
       <Text style={{ color: theme.color.accent, fontSize: 24, lineHeight: 25 }}>⇅</Text>
-      <Text style={{ color: theme.color.text, fontFamily: theme.font.monoBold, fontSize: 9, letterSpacing: 1 }}>SWAP</Text>
       <Text style={{ color: theme.color.textDim, fontFamily: theme.font.mono, fontSize: 9 }}>{activeIndex + 1} / {count}</Text>
     </Pressable>
   </View></GestureDetector>

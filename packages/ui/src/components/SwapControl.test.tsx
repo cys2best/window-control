@@ -41,3 +41,11 @@ test("centres in the whole gutter by default and below the HUD when one is shown
   await view.rerender(<SwapControl {...props} topInset={204} />);
   expect(slot()).toEqual(expect.objectContaining({ top: 204, bottom: 0, justifyContent: "center" }));
 });
+
+test("shows only the icon and counter so it fits a short phone screen", async () => {
+  const { StyleSheet } = require("react-native");
+  const view = await render(<SwapControl activeIndex={0} count={5} onOpen={jest.fn()} onCycle={jest.fn()} onWake={jest.fn()} tick={jest.fn()} />);
+  expect(view.queryByText("SWAP")).toBeNull();
+  expect(view.getByText("1 / 5")).toBeTruthy();
+  expect(StyleSheet.flatten(view.getByLabelText("Switch instance").props.style).height).toBeLessThanOrEqual(72);
+});
