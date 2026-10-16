@@ -135,7 +135,7 @@ def test_entrypoint_uses_explicit_settings_and_fails_closed(tmp_path):
     assert result.returncode != 0, 'empty durable store path must prevent launch'
 
 
-@pytest.mark.parametrize('method,capacity,horizon', [('check_registration', 5, 3600), ('check_pairing', 10, 60), ('check_authenticated_command', 120, 60), ('check_preview', 2, 1), ('check_credential_issuance', 12, 3600)])
+@pytest.mark.parametrize('method,capacity,horizon', [('check_registration', 5, 3600), ('check_pairing', 10, 60), ('check_authenticated_command', 120, 60), ('check_preview', 2, 1), ('check_credential_issuance', 120, 3600)])
 def test_rate_limits_preserve_active_keys_and_natural_expiry(monkeypatch, method, capacity, horizon):
     from broker.limits import BrokerLimits
     monkeypatch.setattr('broker.limits.MAX_RATE_LIMIT_KEYS', 1)

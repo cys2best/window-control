@@ -4,6 +4,10 @@ from collections import deque
 from typing import Dict, Tuple, Callable
 
 MAX_RATE_LIMIT_KEYS = 4096
+# Stream admissions per PC per rolling hour. Opening, swapping instances,
+# changing quality, reconnecting and renewal each take one; this bounds
+# runaway TURN credential and Cloudflare API use, not normal play.
+CREDENTIAL_ISSUANCES_PER_HOUR = 120
 
 
 class TokenBucket:
@@ -92,7 +96,7 @@ class BrokerLimits:
                     return False
                 self.issuances[installation_id] = deque()
             entries = self.issuances[installation_id]
-            if len(entries) >= 12:
+            if len(entries) >= CREDENTIAL_ISSUANCES_PER_HOUR:
                 return False
             entries.append(now)
             return True

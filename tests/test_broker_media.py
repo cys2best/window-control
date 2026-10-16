@@ -92,15 +92,21 @@ async def test_separate_endpoint_credentials_capacity_and_revision_fences(admiss
 
 
 @pytest.mark.asyncio
-async def test_issuance_thirteenth_request_rejected_within_rolling_hour(admission):
+async def test_issuance_past_the_hourly_allowance_is_rejected_within_rolling_hour(admission):
+    from broker.limits import CREDENTIAL_ISSUANCES_PER_HOUR
     from broker.media import MediaError
     media, registry, now, _ = admission
     host, viewer = owner(registry)
-    for generation in range(1, 13):
-        media.authorize(host, authorization(pending(registry, viewer, received_at=now[0]).routing_id, generation))
-        now[0] += 30
+    # Opening, swapping instances, changing quality, reconnecting and renewal
+    # each take one: an evening of normal use must fit (12 did not).
+    assert CREDENTIAL_ISSUANCES_PER_HOUR >= 120
+    for generation in range(1, CREDENTIAL_ISSUANCES_PER_HOUR + 1):
+        request = pending(registry, viewer, received_at=now[0])
+        media.authorize(host, authorization(request.routing_id, generation))
+        registry.drop_pending(request)
+        now[0] += 1
     with pytest.raises(MediaError, match="quota_exceeded"):
-        media.authorize(host, authorization(pending(registry, viewer, received_at=now[0]).routing_id, 13))
+        media.authorize(host, authorization(pending(registry, viewer, received_at=now[0]).routing_id, CREDENTIAL_ISSUANCES_PER_HOUR + 1))
 
 
 @pytest.mark.asyncio
@@ -135,7 +141,8 @@ def test_registration_preserves_entire_issuance_allowance(broker_env):
     client, _, _ = broker_env
     identity = client.post("/installations").json()
     limits = client.app.state.limits
-    assert all(limits.check_credential_issuance(identity["installation_id"]) for _ in range(12))
+    from broker.limits import CREDENTIAL_ISSUANCES_PER_HOUR
+    assert all(limits.check_credential_issuance(identity["installation_id"]) for _ in range(CREDENTIAL_ISSUANCES_PER_HOUR))
     assert not limits.check_credential_issuance(identity["installation_id"])
 
 
@@ -283,7 +290,8 @@ def test_two_installations_quota_failure_preserves_other_stream(broker_env):
         approve_viewer(ha, va, a)
         approve_viewer(hb, vb, b)
         b_request, _ = select_socket(hb, vb)
-        for _ in range(12):
+        from broker.limits import CREDENTIAL_ISSUANCES_PER_HOUR
+        for _ in range(CREDENTIAL_ISSUANCES_PER_HOUR):
             assert client.app.state.limits.check_credential_issuance(a["installation_id"])
         va.send_text(wire("select", {"serial": "emulator-5554"}))
         routed = ha.receive_json()
