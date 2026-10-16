@@ -31,6 +31,14 @@ ENGINE_LOCAL_ICE_SERVERS = tuple(filter(None, os.environ.get(
     "ENGINE_LOCAL_ICE_SERVERS", ""
 ).split(",")))
 
+
+def bench_mode_from_env(environ) -> bool:
+    """Lab latency bench (scripts/bench); on only when EMUCTRL_BENCH is exactly "1"."""
+    return environ.get("EMUCTRL_BENCH") == "1"
+
+
+BENCH_MODE = bench_mode_from_env(os.environ)
+
 ADB_PATH = "adb"       # overridden at runtime by _find_adb()
 SCRCPY_PATH = os.path.join("assets", "scrcpy", "scrcpy.exe")
 

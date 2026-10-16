@@ -32,6 +32,8 @@ _PAIRING_EXEMPT_PATHS = {
     "/", "/pair", "/pair/status", "/stream",
     "/index.txt", "/pair.txt", "/stream.txt", "/instances.txt", "/account.txt",
     "/manifest.json", "/icon-192.png", "/icon-512.png", "/favicon.ico", "/404.html",
+    # Lab bench (registered only in bench mode): static shell and target page.
+    "/bench", "/bench.txt", "/bench/target.html",
 }
 
 # apps/web's static export emits one `<route>.txt` file per route. Only
@@ -317,7 +319,8 @@ class PairRequest(BaseModel):
 
 
 def create_app(instance_manager: InstanceManager,
-               pairing: PairingStore | None = None) -> FastAPI:
+               pairing: PairingStore | None = None,
+               bench: bool = False) -> FastAPI:
     import asyncio
     if pairing is None:
         pairing = PairingStore()
@@ -399,6 +402,20 @@ def create_app(instance_manager: InstanceManager,
     async def stream_page():
         return _serve_web_page("stream.html")
 
+    if bench:
+        bench_target = Path(__file__).parent / "bench" / "target.html"
+
+        @app.get("/bench")
+        async def bench_page():
+            return _serve_web_page("bench.html")
+
+        @app.get("/bench/target.html")
+        async def bench_target_page():
+            return HTMLResponse(
+                bench_target.read_text(encoding="utf-8"),
+                headers={"Cache-Control": "no-store"},
+            )
+
     @app.get("/account")
     async def account_page():
         return _serve_web_page("account.html")
@@ -443,6 +460,8 @@ def create_app(instance_manager: InstanceManager,
         chunk) and hard-navigates otherwise.
         """
         if not _RSC_PAYLOAD_NAME.fullmatch(page):
+            raise HTTPException(status_code=404, detail="Not found")
+        if page == "bench" and not bench:
             raise HTTPException(status_code=404, detail="Not found")
         # Fixed filenames whose contents change every build (unlike the
         # content-hashed /_next chunks), exactly like the HTML shells --

@@ -63,7 +63,7 @@ except Exception:
     raise
 
 try:
-    from config import PORT
+    from config import BENCH_MODE, PORT
     from server.app import create_app
     from server.instance_manager import InstanceManager
     from gui.launcher import LauncherWindow
@@ -191,7 +191,7 @@ def main():
     instance_manager = InstanceManager(engine_orchestrator)
 
     pairing = PairingStore(default_store_path())
-    fastapi_app = create_app(instance_manager, pairing=pairing)
+    fastapi_app = create_app(instance_manager, pairing=pairing, bench=BENCH_MODE)
 
     server = None
     _server_thread = None
