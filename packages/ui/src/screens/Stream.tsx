@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useCallback } from "react";
 import { View, TextInput, PanResponder } from "react-native";
 import * as ScreenOrientation from "expo-screen-orientation";
 import type { VideoViewComponent } from "../video/VideoView";
-import { useServer, connectEngineSession, EngineSession, normalizeCoords, makeAdaptive, makeStallWatchdog, makeTelemetrySampler, makeMeasurementRecorder, TIER_ORDER, DEFAULT_STREAM_PREFERENCES, type QualitySelection, type StreamTelemetry, type RemoteRunEvidence } from "@wc/core";
+import { useServer, connectEngineSession, EngineSession, normalizeCoords, diffTyped, makeAdaptive, makeStallWatchdog, makeTelemetrySampler, makeMeasurementRecorder, TIER_ORDER, DEFAULT_STREAM_PREFERENCES, type QualitySelection, type StreamTelemetry, type RemoteRunEvidence } from "@wc/core";
 import { theme } from "../theme/tokens";
 import { StreamRail, STREAM_RAIL_WIDTH } from "../components/StreamRail";
 import { SwapControl } from "../components/SwapControl";
@@ -464,6 +464,31 @@ export function Stream({
   // reliably-wrong ones; everything else passes through unchanged.
   const KEYMAP: Record<string, string> = { Enter: "Return", Backspace: "BackSpace" };
   const sendKey = (k: string) => session.current?.input.send({ type: "key", key: KEYMAP[k] ?? k });
+  // Characters arrive as text changes, not key presses: phone keyboards
+  // report "Unidentified" keys and rewrite text (autocorrect, Telex). Key
+  // presses carry only named keys, and Backspace only when the buffer is
+  // empty (otherwise the text change already holds it).
+  const [typed, setTyped] = useState("");
+  const typedRef = useRef("");
+  const onTypedKey = (key: string) => {
+    if (key === "Backspace") { if (!typedRef.current) sendKey(key); return; }
+    if (key.length > 1 && key !== "Unidentified" && key !== "Process" && key !== "Dead") sendKey(key);
+  };
+  const onTypedChange = (next: string) => {
+    const input = session.current?.input;
+    const { backspaces, text } = diffTyped(typedRef.current, next);
+    if (input) {
+      for (let i = 0; i < backspaces; i++) input.send({ type: "key", key: "BackSpace" });
+      // The engine takes at most 300 bytes per message; 64 characters fit.
+      const chars = Array.from(text);
+      for (let i = 0; i < chars.length; i += 64) input.send({ type: "text", text: chars.slice(i, i + 64).join("") });
+    }
+    // A long buffer only slows the diff; the game keeps what was typed.
+    const kept = next.length > 200 ? "" : next;
+    typedRef.current = kept;
+    setTyped(kept);
+  };
+  const clearTyped = () => { typedRef.current = ""; setTyped(""); };
 
   const exportMeasurement = async () => {
     if (!onExportMeasurement || exportState === "sharing") return;
@@ -509,12 +534,14 @@ export function Stream({
       {overlay === null ? <SwapControl topInset={hudShown ? hudHeight : 0} activeIndex={Math.max(0, instances.findIndex((x) => x.serial === serial))} count={instances.length}
         onOpen={() => setOverlay("drawer")} onCycle={cycleInstance} onWake={wakeRail} tick={tick} /> : null}
 
-      <TextInput ref={keyInput} testID="stream-key-input" onKeyPress={(e) => sendKey(e.nativeEvent.key)}
+      <TextInput ref={keyInput} testID="stream-key-input" value={typed}
+        onKeyPress={(e) => onTypedKey(e.nativeEvent.key)} onChangeText={onTypedChange}
+        autoCapitalize="none" autoCorrect={false}
         showSoftInputOnFocus
         onFocus={() => setKeyboardOn(true)}
-        onBlur={() => setKeyboardOn(false)}
+        onBlur={() => { setKeyboardOn(false); clearTyped(); }}
         returnKeyType="done"
-        onSubmitEditing={() => keyInput.current?.blur()}
+        onSubmitEditing={() => { clearTyped(); keyInput.current?.blur(); }}
         style={{ position: "absolute", opacity: 0, height: 1, width: 1 }} />
 
       {overlay === "drawer" ? (

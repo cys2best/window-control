@@ -229,6 +229,47 @@ TEST(InputRouter, MapsRecentAppsToAndroidAppSwitchKey) {
     EXPECT_EQ(ReadU32BE(control, 16), 187u);
 }
 
+TEST(InputRouter, TextTypesAsciiAndPastesOtherCharacters) {
+    NegotiatedInputPeer peer;
+    ASSERT_TRUE(peer.Connect("input-test-text"));
+
+    // Android key injection cannot type "ư"; it goes through the clipboard.
+    peer.Send(R"({"type":"text","text":"hi ư!"})");
+    // INJECT_TEXT "hi " (8) + SET_CLIPBOARD "ư" (16) + INJECT_TEXT "!" (6)
+    ASSERT_TRUE(PollUntil([&]() { return peer.fake.ControlBytesReceived() >= 30u; }));
+
+    const auto control = peer.fake.ControlDataReceived();
+    ASSERT_EQ(control.size(), 30u);
+    EXPECT_EQ(control[0], 0x01);
+    EXPECT_EQ(ReadU32BE(control, 1), 3u);
+    EXPECT_EQ(std::string(control.begin() + 5, control.begin() + 8), "hi ");
+    EXPECT_EQ(control[8], 0x09);
+    EXPECT_EQ(control[17], 0x01);
+    EXPECT_EQ(ReadU32BE(control, 18), 2u);
+    EXPECT_EQ(control[22], 0xC6);
+    EXPECT_EQ(control[23], 0xB0);
+    EXPECT_EQ(control[24], 0x01);
+    EXPECT_EQ(control[29], '!');
+}
+
+TEST(InputRouter, EmptyOrOversizedTextIsIgnored) {
+    FakeScrcpyServer fake;
+    fake.Serve();
+    PeerRegistry registry;
+    ScrcpySource source(registry);
+    source.ConnectInitial(fake.Port());
+    InputRouter router(source);
+
+    ASSERT_NO_THROW(router.HandleMessageForTest(R"({"type":"text","text":""})"));
+    ASSERT_NO_THROW(router.HandleMessageForTest(R"({"type":"text","text":42})"));
+    ASSERT_NO_THROW(router.HandleMessageForTest(
+        std::string(R"({"type":"text","text":")") + std::string(301, 'a') + R"("})"));
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    EXPECT_EQ(fake.ControlBytesReceived(), 0u);
+
+    fake.Stop();
+}
+
 TEST(InputRouter, RateLimitsRapidIdrRequests) {
     FakeScrcpyServer fake;
     fake.Serve();

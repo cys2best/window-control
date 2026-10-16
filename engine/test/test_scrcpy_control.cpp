@@ -183,6 +183,38 @@ TEST(ScrcpyControlClient, SendKeycodeProducesDownThenUp14ByteMessages) {
     EXPECT_EQ(received[15], 0x01);
 }
 
+TEST(ScrcpyControlClient, SendTextProducesInjectTextMessage) {
+    std::vector<uint8_t> received;
+    std::atomic<bool> done{false};
+    int port = StartCapturingServer(7, received, done); // type + u32 length + "ab"
+
+    ScrcpyControlClient client(port);
+    client.Connect();
+    client.SendText("ab");
+
+    for (int i = 0; i < 50 && !done; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    ASSERT_TRUE(done);
+    EXPECT_EQ(received, (std::vector<uint8_t>{0x01, 0, 0, 0, 2, 'a', 'b'}));
+}
+
+TEST(ScrcpyControlClient, PasteTextSetsClipboardWithPasteAndNoAck) {
+    std::vector<uint8_t> received;
+    std::atomic<bool> done{false};
+    // type + u64 sequence + u8 paste + u32 length + UTF-8 "ư" (2 bytes)
+    int port = StartCapturingServer(16, received, done);
+
+    ScrcpyControlClient client(port);
+    client.Connect();
+    client.PasteText("\xC6\xB0");
+
+    for (int i = 0; i < 50 && !done; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    ASSERT_TRUE(done);
+    EXPECT_EQ(received, (std::vector<uint8_t>{
+        0x09, 0, 0, 0, 0, 0, 0, 0, 0, // SET_CLIPBOARD, sequence 0 = no acknowledgement
+        0x01,                         // paste
+        0, 0, 0, 2, 0xC6, 0xB0}));
+}
+
 TEST(ScrcpyControlClient, ConnectFailureDoesNotReportConnected) {
     ScrcpyControlClient client(0);
 

@@ -154,6 +154,26 @@ void ScrcpyControlClient::SendKeycode(int32_t keycode) {
     }
 }
 
+void ScrcpyControlClient::SendText(const std::string& utf8) {
+    std::vector<uint8_t> msg;
+    msg.reserve(5 + utf8.size());
+    PushU8(msg, 0x01); // type: INJECT_TEXT
+    PushU32BE(msg, static_cast<uint32_t>(utf8.size()));
+    msg.insert(msg.end(), utf8.begin(), utf8.end());
+    impl_->Send(msg);
+}
+
+void ScrcpyControlClient::PasteText(const std::string& utf8) {
+    std::vector<uint8_t> msg;
+    msg.reserve(14 + utf8.size());
+    PushU8(msg, 0x09); // type: SET_CLIPBOARD
+    PushU64BE(msg, 0); // sequence 0: no acknowledgement, nothing to read back
+    PushU8(msg, 1);    // paste after setting
+    PushU32BE(msg, static_cast<uint32_t>(utf8.size()));
+    msg.insert(msg.end(), utf8.begin(), utf8.end());
+    impl_->Send(msg);
+}
+
 void ScrcpyControlClient::RequestIdr() {
     std::vector<uint8_t> msg;
     msg.reserve(1);

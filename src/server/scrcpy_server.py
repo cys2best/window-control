@@ -65,6 +65,9 @@ def build_scrcpy_args(tier: str, scid: int) -> list[str]:
         "send_device_meta=true",
         "send_frame_meta=true",
         "control=true",
+        # Typed text may be pasted via the device clipboard; never push
+        # clipboard changes back on the control socket, which nobody reads.
+        "clipboard_autosync=false",
         "audio=false",
         # Keyframe cadence + H264 profile/level hints for MediaCodec.
         #

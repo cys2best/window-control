@@ -19,6 +19,7 @@ export * from "./webrtc/telemetry";
 export * from "./webrtc/stallWatchdog";
 export * from "./input/inputChannel";
 export * from "./input/coords";
+export * from "./input/typing";
 export * from "./quality/tiers";
 export * from "./quality/adaptive";
 

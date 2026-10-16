@@ -14,6 +14,12 @@ def test_1080_arguments_allow_full_hd_without_lowering_bitrate_or_fps():
     assert "max_fps=60" in args
 
 
+def test_device_clipboard_is_never_pushed_to_the_unread_control_socket():
+    # Typed non-ASCII text is pasted through the device clipboard; the engine
+    # never reads the control socket, so the device must not answer on it.
+    assert "clipboard_autosync=false" in build_scrcpy_args("720", 1)
+
+
 def test_launch_starts_server_without_opening_media_sockets():
     calls = []
     launcher = ScrcpyServerLauncher(

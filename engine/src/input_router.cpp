@@ -16,6 +16,9 @@ namespace {
 
 // Copied verbatim from src/server/app.py's _JS_KEY_TO_KEYCODE so both
 // sides agree on every mapping.
+// scrcpy caps INJECT_TEXT at 300 bytes; one message never needs more.
+constexpr std::size_t kMaxTextBytes = 300;
+
 const std::unordered_map<std::string, std::int32_t>& KeyTable() {
     static const std::unordered_map<std::string, std::int32_t> table = {
         {"Return", 66}, {"BackSpace", 67}, {"Tab", 61}, {"Escape", 111},
@@ -209,6 +212,23 @@ void InputRouter::HandleMessage(PeerSession* peer, const std::string& jsonMessag
     } else if (type == "key") {
         std::int32_t keycode = KeycodeForKey(msg.value("key", ""));
         if (keycode != 0) control->SendKeycode(keycode);
+    } else if (type == "text") {
+        auto it = msg.find("text");
+        if (it == msg.end() || !it->is_string()) return;
+        const std::string text = it->get<std::string>();
+        if (text.empty() || text.size() > kMaxTextBytes) return;
+        // Android's key map types ASCII only; other characters (Vietnamese
+        // diacritics, emoji) go through the clipboard. Runs keep the order.
+        std::size_t start = 0;
+        while (start < text.size()) {
+            const bool ascii = static_cast<unsigned char>(text[start]) < 0x80;
+            std::size_t end = start;
+            while (end < text.size() && (static_cast<unsigned char>(text[end]) < 0x80) == ascii) ++end;
+            const std::string run = text.substr(start, end - start);
+            if (ascii) control->SendText(run);
+            else control->PasteText(run);
+            start = end;
+        }
     } else if (type == "idr") {
         auto now = std::chrono::steady_clock::now();
         {

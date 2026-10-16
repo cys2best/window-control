@@ -924,8 +924,39 @@ test("a portrait-rotated stream maps page coordinates to the same device point",
       : { nativeEvent: { locationX: 0, locationY: 0, pageX: 290, pageY: 118, touches: [{ pageX: 290, pageY: 118 }] } };
     await act(async () => { pan.onPanResponderGrant(event); });
     starts.push(session.input.dragStart.mock.calls[0]);
-    view.unmount();
     (Core.connectEngineSession as jest.Mock).mockClear();
   }
   expect(starts[1]).toEqual(starts[0]);
+});
+
+test("typed characters reach the game as text, edits as backspaces, and keys are not doubled", async () => {
+  const session = makeFakeSession();
+  (Core.connectEngineSession as jest.Mock).mockResolvedValue(session as any);
+  const client = { select: jest.fn().mockResolvedValue(selectResp()), instances: jest.fn().mockResolvedValue([]), setQuality: jest.fn(), keyframe: jest.fn() };
+  (SC.useServer as jest.Mock).mockReturnValue({ base: "http://h", client, setBase: jest.fn(), ready: true } as any);
+  let result: any;
+  await act(async () => {
+    result = await render(<Stream route={{ params: { serial: "A" } }} navigation={{ navigate: jest.fn(), setParams: jest.fn() }} RTCImpl={FakeRTCPeerConnection} VideoView={FakeVideoView} />);
+  });
+  await waitFor(() => expect(session.input).toBeDefined());
+  const input = () => result!.getByTestId("stream-key-input");
+  const sent = () => session.input.send.mock.calls.map(([m]: any[]) => m).filter((m: any) => m.type !== "idr");
+
+  // Phone keyboards report "Unidentified" keys; only the text change counts.
+  await act(async () => { input().props.onKeyPress({ nativeEvent: { key: "Unidentified" } }); });
+  await act(async () => { input().props.onChangeText("hi"); });
+  await act(async () => { input().props.onKeyPress({ nativeEvent: { key: "Backspace" } }); });
+  await act(async () => { input().props.onChangeText("h"); });
+  await act(async () => { input().props.onChangeText("hư"); });
+  expect(sent()).toEqual([
+    { type: "text", text: "hi" },
+    { type: "key", key: "BackSpace" },
+    { type: "text", text: "ư" },
+  ]);
+
+  // Backspace with nothing typed here still deletes in the game.
+  await act(async () => { input().props.onChangeText(""); });
+  session.input.send.mockClear();
+  await act(async () => { input().props.onKeyPress({ nativeEvent: { key: "Backspace" } }); });
+  expect(sent()).toEqual([{ type: "key", key: "BackSpace" }]);
 });
