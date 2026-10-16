@@ -1,6 +1,6 @@
 FROM python:3.12-slim
 WORKDIR /app
-RUN pip install --no-cache-dir fastapi==0.115.14 uvicorn[standard]==0.34.3
+RUN pip install --no-cache-dir fastapi==0.115.14 uvicorn[standard]==0.34.3 httpx==0.28.1
 COPY src/broker /app/broker
 COPY src/remote_protocol.py /app/remote_protocol.py
 ENV PYTHONUNBUFFERED=1
