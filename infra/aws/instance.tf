@@ -5,7 +5,7 @@ data "aws_ssm_parameter" "al2023_arm64" {
 resource "aws_instance" "shared_remote" {
   ami                    = data.aws_ssm_parameter.al2023_arm64.value
   instance_type          = var.instance_type
-  subnet_id              = aws_subnet.public.id
+  subnet_id              = data.aws_subnet.default.id
   vpc_security_group_ids = [aws_security_group.shared_remote.id]
   iam_instance_profile   = aws_iam_instance_profile.instance.name
   user_data = templatefile("${path.module}/user-data.sh.tftpl", {
@@ -41,8 +41,7 @@ resource "aws_instance" "shared_remote" {
 }
 
 resource "aws_eip" "shared_remote" {
-  domain     = "vpc"
-  depends_on = [aws_internet_gateway.shared_remote]
-  instance   = aws_instance.shared_remote.id
-  tags       = { Name = "shared-remote" }
+  domain   = "vpc"
+  instance = aws_instance.shared_remote.id
+  tags     = { Name = "shared-remote" }
 }

@@ -4,44 +4,22 @@ data "aws_availability_zones" "available" {
 
 data "cloudflare_ip_ranges" "cloudflare" {}
 
-resource "aws_vpc" "shared_remote" {
-  cidr_block           = "10.42.0.0/24"
-  enable_dns_support   = true
-  enable_dns_hostnames = true
-  tags                 = { Name = "shared-remote" }
+# Default VPC already has an internet gateway and a public default subnet per AZ.
+data "aws_vpc" "default" {
+  default = true
 }
 
-resource "aws_internet_gateway" "shared_remote" {
-  vpc_id = aws_vpc.shared_remote.id
-  tags   = { Name = "shared-remote" }
-}
-
-resource "aws_subnet" "public" {
-  vpc_id            = aws_vpc.shared_remote.id
-  cidr_block        = "10.42.0.0/26"
+data "aws_subnet" "default" {
+  vpc_id            = data.aws_vpc.default.id
   availability_zone = data.aws_availability_zones.available.names[0]
-  tags              = { Name = "shared-remote-public" }
-}
-
-resource "aws_route_table" "public" {
-  vpc_id = aws_vpc.shared_remote.id
-  route {
-    cidr_block = "0.0.0.0/0"
-    gateway_id = aws_internet_gateway.shared_remote.id
-  }
-  tags = { Name = "shared-remote-public" }
-}
-
-resource "aws_route_table_association" "public" {
-  subnet_id      = aws_subnet.public.id
-  route_table_id = aws_route_table.public.id
+  default_for_az    = true
 }
 
 # The origin answers only Cloudflare; nothing else is reachable inbound (no SSH: SSM only).
 resource "aws_security_group" "shared_remote" {
   name        = "shared-remote"
   description = "HTTPS from Cloudflare only"
-  vpc_id      = aws_vpc.shared_remote.id
+  vpc_id      = data.aws_vpc.default.id
 
   ingress {
     description = "HTTPS from Cloudflare proxy"

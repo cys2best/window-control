@@ -55,6 +55,16 @@ def test_only_https_from_cloudflare_is_open():
     assert not re.search(r'from_port\s*=\s*(22|80)\b', all_tf())
 
 
+def test_uses_default_vpc_and_its_subnet():
+    network = re.sub(r'\s+', ' ', tf('network.tf'))
+    assert 'data "aws_vpc" "default" { default = true }' in network
+    subnet = re.sub(r'\s+', ' ', block(tf('network.tf'), 'data "aws_subnet" "default"'))
+    assert 'default_for_az = true' in subnet and 'vpc_id = data.aws_vpc.default.id' in subnet
+    assert not re.search(r'resource "aws_(vpc|subnet|internet_gateway|route_table)', all_tf())
+    assert 'subnet_id = data.aws_subnet.default.id' in re.sub(r'\s+', ' ', tf('instance.tf'))
+    assert 'availability_zone = data.aws_subnet.default.availability_zone' in re.sub(r'\s+', ' ', tf('storage.tf'))
+
+
 def test_data_volume_is_protected_encrypted_and_snapshotted():
     storage = re.sub(r'\s+', ' ', tf('storage.tf'))
     volume = re.sub(r'\s+', ' ', block(tf('storage.tf'), 'resource "aws_ebs_volume" "data"'))
@@ -133,7 +143,7 @@ def test_bootstrap_survives_late_network_and_is_rerunnable():
     assert 'retry dnf install -y docker' in user_data
     assert re.search(r'retry curl -fsSL', user_data)
     eip = re.sub(r'\s+', ' ', block(tf('instance.tf'), 'resource "aws_eip" "shared_remote"'))
-    assert 'depends_on = [aws_internet_gateway.shared_remote]' in eip
+    assert 'instance = aws_instance.shared_remote.id' in eip
     script = (AWS / 'files/shared-remote-deploy.sh').read_text()
     assert '/var/lib/cloud/instance/user-data.txt' in script
 

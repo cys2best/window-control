@@ -95,7 +95,7 @@ Keeping ranges current (my call): the repo vendors Cloudflare's IPv4 list (used 
 ### AWS resources (Terraform, `infra/aws/`)
 
 - **State:** S3 bucket in ap-southeast-1 (versioned, encrypted, public access blocked) with native lockfile; created by a one-time `infra/aws/bootstrap/` module.
-- **Network:** dedicated small VPC, one public subnet, internet gateway; IPv4 only.
+- **Network:** account default VPC and its default subnet in the first AZ; IPv4 only.
 - **Instance:** `t4g.nano` (ARM, 0.5 GB) default, `t4g.micro` as a variable (my call: after the first deploy, the runbook checks memory and swap use with preflight, broker and nginx running; if the box swaps steadily, switch to `t4g.micro`, about $4/month more); Amazon Linux 2023 arm64; `cpu_credits = "standard"`; IMDSv2 required; encrypted root gp3 8 GB; 1 GB swap; no key pair; SSM Session Manager only. `user_data` changes ignored by lifecycle; bootstrap is idempotent and re-run by deploy.
 - **Public IP:** one Elastic IP.
 - **Security group:** inbound TCP 443 from Cloudflare IPv4 ranges only (fetched via the Cloudflare provider's IP-ranges data source); nothing else inbound. Outbound open.

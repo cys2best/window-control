@@ -1,6 +1,6 @@
 # Installation and license files live here; survives instance replacement and `terraform destroy`.
 resource "aws_ebs_volume" "data" {
-  availability_zone = aws_subnet.public.availability_zone
+  availability_zone = data.aws_subnet.default.availability_zone
   size              = 1
   type              = "gp3"
   encrypted         = true

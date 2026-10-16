@@ -49,7 +49,7 @@ terraform -chdir=infra/aws output
 SSL mode Full (strict) is a zone setting: it applies to the whole `nendojo.com` zone, so every other proxied hostname
 there must also present a certificate Cloudflare trusts.
 
-Creates the VPC, instance, Elastic IP, encrypted 1 GB data volume (`prevent_destroy`, daily snapshots kept 7 days),
+Uses the account's default VPC (and its default subnet in the first AZ) and creates the instance, Elastic IP, encrypted 1 GB data volume (`prevent_destroy`, daily snapshots kept 7 days),
 ECR repositories, instance and deploy roles, the US$25 budget, the proxied DNS record, SSL mode Full (strict), and the
 Cloudflare Origin CA certificate. The origin certificate and key go into SSM SecureString
 `/window-control/shared-remote/origin-cert` and `/origin-key`. The key is therefore in Terraform state, which is private,
