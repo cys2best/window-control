@@ -51,3 +51,6 @@ CLAUDE.local.md
 infra/**/.terraform/
 infra/**/*.tfstate*
 infra/**/node_modules/
+
+# Latency bench output (scripts/bench)
+bench-results/
