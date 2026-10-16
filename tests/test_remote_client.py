@@ -532,3 +532,63 @@ async def test_delivery_rejection_is_nonfatal_only_for_untracked_valid_id(error_
     finally:
         running.cancel()
         await asyncio.gather(running, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_host_auth_sets_relay_licensed(tmp_path):
+    async with local_broker(tmp_path) as (origin, http, app):
+        identity = InstallationIdentity(**(await http.post("/installations")).json())
+        app.state.licenses.activate(app.state.licenses.issue(now=0), identity.installation_id,
+                                    now=0, installation_exists=lambda _id: True)
+        module = importlib.import_module("server.remote_client")
+        from server.remote_dispatch import RemoteDispatcher
+        states = []
+        client = module.RemoteHostClient(origin, identity, RemoteDispatcher(Actions(), PairingStore()),
+                                         allow_insecure_localhost=True,
+                                         on_state=lambda *args: states.append(client.relay_licensed))
+        assert client.relay_licensed is None
+        stop = asyncio.Event()
+        task = asyncio.create_task(client.run(stop))
+        try:
+            await asyncio.wait_for(client.ready.wait(), 2)
+            assert client.relay_licensed is True and True in states
+        finally:
+            stop.set()
+            await asyncio.wait_for(task, 2)
+
+
+@pytest.mark.asyncio
+async def test_not_paired_host_auth_discards_identity_and_stops_reconnecting():
+    module = importlib.import_module("server.remote_client")
+    from server.remote_dispatch import RemoteDispatcher
+    connects, discarded, errors = [], [], []
+
+    class Connection:
+        def __init__(self):
+            self.sent = []
+
+        async def send(self, raw):
+            self.sent.append(json.loads(raw))
+
+        async def recv(self):
+            return json.dumps({"v": 1, "id": self.sent[0]["id"], "ok": False,
+                               "error": {"code": "not_paired", "message": "Authentication failed"}})
+
+        async def close(self):
+            pass
+
+    async def connector(url, **kwargs):
+        connects.append(url)
+        return Connection()
+
+    class IdentityStore:
+        def discard_identity(self):
+            discarded.append(True)
+
+    client = module.RemoteHostClient("https://service.example", InstallationIdentity(installation_id="test", credential="secret"),
+                                     RemoteDispatcher(Actions(), PairingStore()), connector=connector,
+                                     identity_store=IdentityStore(), on_state=lambda _pairing, error: errors.append(error))
+    await asyncio.wait_for(client.run(asyncio.Event()), 2)
+    assert len(connects) == 1 and discarded == [True]
+    # run() repeats the final state on exit; no other error (e.g. "unavailable") is reported.
+    assert set(errors) == {"This PC's relay license moved to another PC. Restart EmuCtrl to reconnect; remote phones must pair again."}

@@ -145,7 +145,8 @@ async def build_remote_client(service_url, actions, pairing, on_state, *, identi
         store = identity_store if identity_store is not None else RemoteIdentityStore()
         identity = await asyncio.to_thread(store.load_or_register, service_url)
         dispatcher = RemoteDispatcher(actions, pairing)
-        host = RemoteHostClient(service_url, identity, dispatcher=dispatcher, on_state=on_state)
+        host = RemoteHostClient(service_url, identity, dispatcher=dispatcher, on_state=on_state,
+                                identity_store=store)
         sessions = RemoteSessionCoordinator(identity.installation_id, actions, pairing,
                                             actions.manager._engine_orchestrator.remote_endpoint,
                                             EngineRemoteClient(), authority=host)

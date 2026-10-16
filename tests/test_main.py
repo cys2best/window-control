@@ -348,3 +348,21 @@ async def test_server_lifecycle_cancels_remote_and_disposes_manager():
             await asyncio.wait_for(entered.wait(), 1)
             entered.clear()
     assert stopped == [True, True]
+
+
+@pytest.mark.asyncio
+async def test_remote_client_receives_identity_store_for_license_moves():
+    from types import SimpleNamespace
+    import main as module
+    from broker.identity_store import InstallationIdentity
+    from server.pairing import PairingStore
+
+    class Store:
+        def load_or_register(self, url):
+            return InstallationIdentity(installation_id="a" * 32, credential="secret")
+
+    store = Store()
+    actions = SimpleNamespace(manager=SimpleNamespace(_engine_orchestrator=SimpleNamespace(remote_endpoint="http://127.0.0.1:1")))
+    client = await module.build_remote_client("https://service.example", actions, PairingStore(),
+                                              lambda *args: None, identity_store=store)
+    assert client.identity_store is store

@@ -10,13 +10,29 @@ import sys
 import tempfile
 import threading
 from urllib.parse import urlsplit
+from urllib.error import HTTPError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from broker.identity_store import InstallationIdentity
+from broker.license_store import normalize_key
 
 
 class RemoteIdentityError(RuntimeError):
     """Remote identity is unavailable; local device pairing remains usable."""
+
+
+class RemoteHTTPError(Exception):
+    def __init__(self, status: int, body: dict):
+        super().__init__(status)
+        self.status = status
+        self.body = body
+
+
+class LicenseError(RemoteIdentityError):
+    def __init__(self, code: str, retry_after: int | None = None):
+        super().__init__(code)
+        self.code = code
+        self.retry_after = retry_after
 
 
 def service_origin(url: str, *, allow_insecure_localhost: bool = False) -> str:
@@ -89,11 +105,22 @@ def _http_json(method: str, url: str, payload: dict, timeout: float) -> dict:
     request = Request(url, data=json.dumps(payload).encode("utf-8"), method=method,
                       headers={"Content-Type": "application/json", "Accept": "application/json"})
     # In particular, never forward a reset credential to a redirected origin.
-    with build_opener(_NoRedirect()).open(request, timeout=timeout) as response:
-        body = response.read(16385)
-        if len(body) > 16384:
-            raise RemoteIdentityError("Remote identity response is too large")
-        return json.loads(body)
+    try:
+        with build_opener(_NoRedirect()).open(request, timeout=timeout) as response:
+            return _bounded_json(response)
+    except HTTPError as error:
+        try:
+            body = _bounded_json(error)
+        except Exception:
+            body = {}
+        raise RemoteHTTPError(error.code, body if isinstance(body, dict) else {}) from None
+
+
+def _bounded_json(response):
+    body = response.read(16385)
+    if len(body) > 16384:
+        raise RemoteIdentityError("Remote identity response is too large")
+    return json.loads(body)
 
 
 class RemoteIdentityStore:
@@ -134,6 +161,49 @@ class RemoteIdentityStore:
             except OSError:
                 raise RemoteIdentityError("Could not remove revoked remote identity") from None
             return self._register(origin)
+
+    def activate_license(self, key: str) -> bool:
+        try:
+            normalized = normalize_key(key)
+        except ValueError:
+            raise LicenseError("invalid_license") from None
+        display = "EMU-" + "-".join(normalized[i:i + 5] for i in range(0, 20, 5))
+        return self._license("POST", {"key": display})
+
+    def deactivate_license(self) -> bool:
+        return self._license("DELETE", {})
+
+    def _license(self, method: str, payload: dict) -> bool:
+        with self._lock:
+            saved = self._load()
+        if saved is None:
+            raise LicenseError("unavailable")
+        identity, origin = saved
+        try:
+            result = self._request(method, f"{origin}/installations/{identity.installation_id}/license",
+                                   {"credential": identity.credential, **payload}, 10.0)
+            licensed = result["relay_licensed"]
+            if type(licensed) is not bool:
+                raise ValueError
+            return licensed
+        except RemoteHTTPError as error:
+            if error.status == 403 and error.body.get("detail") == "invalid_license":
+                raise LicenseError("invalid_license") from None
+            retry_after = error.body.get("retry_after")
+            if error.status == 409 and type(retry_after) is int and retry_after >= 0:
+                raise LicenseError("license_in_use", retry_after) from None
+            raise LicenseError("unavailable") from None
+        except Exception:
+            raise LicenseError("unavailable") from None
+
+    def discard_identity(self) -> None:
+        with self._lock:
+            try:
+                self._path.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError:
+                raise RemoteIdentityError("Could not remove remote identity") from None
 
     @staticmethod
     def _identity(data: dict) -> InstallationIdentity:

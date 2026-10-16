@@ -143,3 +143,78 @@ def test_failed_atomic_write_reports_error_and_cleans_temporary_file(tmp_path, m
         make_store(path).load_or_register("https://remote.example")
     assert not path.exists()
     assert list(tmp_path.iterdir()) == []
+
+
+class LicenseService(Service):
+    def __init__(self, failure=None):
+        super().__init__()
+        self.failure = failure
+
+    def __call__(self, method, url, payload, timeout):
+        if not url.endswith("/license"):
+            return super().__call__(method, url, payload, timeout)
+        self.calls.append((method, url, payload, timeout))
+        if self.failure is not None:
+            raise self.failure
+        return {"relay_licensed": method == "POST"}
+
+
+KEY = "EMU-ABCDE-FGHJK-MNPQR-STVWX"
+
+
+def test_activate_license_maps_403_409_and_network_errors(tmp_path):
+    from server.remote_identity import LicenseError, RemoteHTTPError
+    path = tmp_path / "identity.json"
+    service = LicenseService()
+    store = make_store(path, service)
+    identity = store.load_or_register("https://remote.example")
+    assert store.activate_license(" emu-abcde-fghjk-mnpqr-stvwx ") is True
+    method, url, payload, _ = service.calls[-1]
+    assert (method, url) == ("POST", f"https://remote.example/installations/{identity.installation_id}/license")
+    assert payload == {"credential": identity.credential, "key": KEY}
+    assert store.deactivate_license() is False
+    assert service.calls[-1][:3] == ("DELETE", url, {"credential": identity.credential})
+    cases = [(RemoteHTTPError(403, {"detail": "invalid_license"}), "invalid_license", None),
+             (RemoteHTTPError(409, {"detail": "license_in_use", "retry_after": 3600}), "license_in_use", 3600),
+             (RemoteHTTPError(503, {"detail": "License storage unavailable"}), "unavailable", None),
+             (OSError("offline"), "unavailable", None)]
+    for failure, code, retry_after in cases:
+        service.failure = failure
+        with pytest.raises(LicenseError) as raised:
+            store.activate_license(KEY)
+        assert (raised.value.code, raised.value.retry_after) == (code, retry_after)
+    with pytest.raises(LicenseError) as raised:
+        store.deactivate_license()
+    assert raised.value.code == "unavailable"
+
+
+def test_activate_rejects_malformed_key_without_request(tmp_path):
+    from server.remote_identity import LicenseError
+    service = LicenseService()
+    store = make_store(tmp_path / "identity.json", service)
+    store.load_or_register("https://remote.example")
+    calls = len(service.calls)
+    with pytest.raises(LicenseError) as raised:
+        store.activate_license("EMU-ABCDE")
+    assert raised.value.code == "invalid_license"
+    assert len(service.calls) == calls
+
+
+def test_activation_never_persists_key(tmp_path):
+    path = tmp_path / "identity.json"
+    store = make_store(path, LicenseService())
+    store.load_or_register("https://remote.example")
+    before = path.read_bytes()
+    store.activate_license(KEY)
+    assert path.read_bytes() == before
+
+
+def test_discard_identity_removes_file(tmp_path):
+    path = tmp_path / "identity.json"
+    service = LicenseService()
+    store = make_store(path, service)
+    store.load_or_register("https://remote.example")
+    calls = len(service.calls)
+    store.discard_identity()
+    assert not path.exists() and len(service.calls) == calls
+    store.discard_identity()

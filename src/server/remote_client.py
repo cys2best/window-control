@@ -18,6 +18,10 @@ from server.remote_identity import service_origin
 from server.remote_pairing import RemotePairing, RemotePairingError
 
 
+LICENSE_MOVED_MESSAGE = ("This PC's relay license moved to another PC. "
+                         "Restart EmuCtrl to reconnect; remote phones must pair again.")
+
+
 class _NoRedirectConnect(connect):
     def process_redirect(self, exc):
         # Never authenticate an installation to a redirect target.
@@ -26,10 +30,12 @@ class _NoRedirectConnect(connect):
 
 class RemoteHostClient:
     def __init__(self, service_url, identity, dispatcher, *, allow_insecure_localhost=False,
-                 connector=None, on_state=None, on_device_invalidated=None):
+                 connector=None, on_state=None, on_device_invalidated=None, identity_store=None):
         origin = service_origin(service_url, allow_insecure_localhost=allow_insecure_localhost)
         self.url = origin.replace("https://", "wss://").replace("http://", "ws://") + "/connect"
         self.identity = identity
+        self.identity_store = identity_store
+        self.relay_licensed = None
         self.dispatcher = dispatcher
         self.connector = connector or _NoRedirectConnect
         self.on_state = on_state
@@ -199,10 +205,17 @@ class RemoteHostClient:
                     command = Command(v=1, id=str(uuid.uuid4()), op="host_auth", payload={"installation_id": self.identity.installation_id, "credential": self.identity.credential})
                     await self.connection.send(command.model_dump_json())
                     reply = parse_reply(await asyncio.wait_for(self.connection.recv(), 10))
+                    if reply.id == command.id and not reply.ok and reply.error.code == ErrorCode.NOT_PAIRED.value:
+                        # The broker deleted this installation, e.g. its license moved.
+                        if self.identity_store is not None:
+                            self.identity_store.discard_identity()
+                        self._notify(LICENSE_MOVED_MESSAGE)
+                        return
                     epoch = (reply.result or {}).get("host_epoch")
                     if reply.id != command.id or not reply.ok or (reply.result or {}).get("authenticated") is not True or type(epoch) is not int or epoch < 1:
                         raise ValueError("host authentication failed")
                     self.host_epoch = epoch
+                    self.relay_licensed = (reply.result or {}).get("relay_licensed") is True
                     with self._lock:
                         self._accepting = True
                     self.remote_pairing.set_online(True)

@@ -1,4 +1,3 @@
-import fcntl
 import hashlib
 import json
 import math
@@ -11,6 +10,11 @@ from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Literal
+
+try:
+    import fcntl
+except ImportError:  # The Windows PC imports only normalize_key.
+    fcntl = None
 
 MOVE_COOLDOWN_SECONDS = 604800
 
