@@ -1,4 +1,4 @@
-import { connectPeer, PeerNegotiator, REMOTE_GATHERING_CAP_MS } from "./peer";
+import { connectPeer, PeerNegotiator, REMOTE_CANDIDATES_QUIET_MS, REMOTE_GATHERING_CAP_MS } from "./peer";
 import { fakePc, fireReady, flush } from "./peer.testUtils";
 
 function transport(): PeerNegotiator {
@@ -64,4 +64,19 @@ test("a TURN server that never finishes gathering still sends the offer after a 
   jest.advanceTimersByTime(REMOTE_GATHERING_CAP_MS); await flush();
   expect(negotiator.exchange).toHaveBeenCalledWith("OFFER", expect.any(Number), expect.anything());
   fireReady(pc); await expect(promise).resolves.toBeTruthy();
+});
+test("once a relay candidate is in and candidates go quiet, the offer goes without waiting for the cap", async () => {
+  jest.useFakeTimers(); const pc = fakePc(), negotiator = transport();
+  pc.iceGatheringState = "gathering";
+  void connectPeer({ iceServers: [], negotiator, RTCImpl: function () { return pc; }, deadline: performance.now()+30000 }).catch(() => {});
+  await flush();
+  pc._fire("icecandidate", { candidate: { candidate: "candidate:1 1 udp 1 192.168.1.5 5000 typ host" } });
+  jest.advanceTimersByTime(600); await flush();
+  expect(negotiator.exchange).not.toHaveBeenCalled(); // no relay yet: keep gathering
+  pc._fire("icecandidate", { candidate: { candidate: "candidate:2 1 udp 1 104.30.1.1 3478 typ relay raddr 0.0.0.0 rport 0" } });
+  jest.advanceTimersByTime(REMOTE_CANDIDATES_QUIET_MS - 100); await flush();
+  expect(negotiator.exchange).not.toHaveBeenCalled();
+  jest.advanceTimersByTime(200); await flush();
+  expect(negotiator.exchange).toHaveBeenCalledTimes(1);
+  expect(REMOTE_CANDIDATES_QUIET_MS).toBeLessThan(REMOTE_GATHERING_CAP_MS);
 });

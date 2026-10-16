@@ -16,6 +16,35 @@ export type ConnectPeerOpts = {
 // Non-trickle offers wait for gathering, but one unreachable TURN URL can keep
 // it open until the deadline. Candidates arrive well within this; send them.
 export const REMOTE_GATHERING_CAP_MS = 3000;
+// Gathered candidates arrive within a fraction of a second; once a relay
+// candidate is in and nothing new arrives for this long, send the offer.
+export const REMOTE_CANDIDATES_QUIET_MS = 500;
+
+function waitForUsableCandidates(pc: any, capMs: number, signal: AbortSignal, candidates: { lastAt: number | null; relay: boolean }): Promise<void> {
+  if (signal.aborted) return Promise.reject(peerError("canceled"));
+  if (pc.iceGatheringState === "complete") return Promise.resolve();
+  const started = performance.now();
+  return new Promise((resolve, reject) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (error?: Error) => {
+      clearTimeout(timer);
+      pc.removeEventListener("icegatheringstatechange", check);
+      signal.removeEventListener("abort", abort);
+      error ? reject(error) : resolve();
+    };
+    function check() {
+      clearTimeout(timer);
+      const now = performance.now();
+      if (pc.iceGatheringState === "complete" || now - started >= capMs
+        || (candidates.relay && candidates.lastAt !== null && now - candidates.lastAt >= REMOTE_CANDIDATES_QUIET_MS)) { finish(); return; }
+      timer = setTimeout(check, 50);
+    }
+    const abort = () => finish(peerError("canceled"));
+    pc.addEventListener("icegatheringstatechange", check);
+    signal.addEventListener("abort", abort, { once: true });
+    check();
+  });
+}
 
 export function peerError(code: string): Error {
   return Object.assign(new Error(code), { code });
@@ -47,6 +76,7 @@ export function connectPeer(opts: ConnectPeerOpts, legacyLocalGatheringCapMs?: n
   let pc: any, channel: any, input: InputSender;
   let closed = false, adopted = false, answerApplied = false, channelReady = false;
   let videoStream: any, resourceId: string | undefined;
+  const gathered: { lastAt: number | null; relay: boolean } = { lastAt: null, relay: false };
   let cleanup: Promise<void> | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let resolve!: (session: PeerSession) => void, reject!: (error: Error) => void;
@@ -109,6 +139,12 @@ export function connectPeer(opts: ConnectPeerOpts, legacyLocalGatheringCapMs?: n
       if (["failed", "closed"].includes(pc.iceConnectionState)) fail(peerError("ice-failed"));
       else checkReady();
     });
+    listen(pc, "icecandidate", event => {
+      const line = event?.candidate?.candidate;
+      if (typeof line !== "string") return;
+      gathered.lastAt = performance.now();
+      if (/ typ relay( |$)/.test(line)) gathered.relay = true;
+    });
     pc.addTransceiver("video", { direction: "recvonly" });
     channel = pc.createDataChannel("input", { ordered: true });
     input = createInputSender(channel);
@@ -127,11 +163,8 @@ export function connectPeer(opts: ConnectPeerOpts, legacyLocalGatheringCapMs?: n
         if (!checkActive()) return;
         await pc.setLocalDescription(offer);
         if (!checkActive()) return;
-        try {
-          await waitForIceGatheringComplete(pc, legacyLocalGatheringCapMs ?? Math.min(REMOTE_GATHERING_CAP_MS, opts.deadline - performance.now()), controller.signal);
-        } catch (error: any) {
-          if (legacyLocalGatheringCapMs !== undefined || error?.code !== "ice-gathering-timeout") throw error;
-        }
+        if (legacyLocalGatheringCapMs !== undefined) await waitForIceGatheringComplete(pc, legacyLocalGatheringCapMs, controller.signal);
+        else await waitForUsableCandidates(pc, Math.min(REMOTE_GATHERING_CAP_MS, opts.deadline - performance.now()), controller.signal, gathered);
         if (!checkActive()) return;
         const result = await opts.negotiator.exchange(pc.localDescription.sdp, opts.deadline, controller.signal);
         if (!checkActive()) { void invoke(() => opts.negotiator.close(result.resourceId)).catch(() => {}); return; }
