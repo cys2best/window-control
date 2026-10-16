@@ -593,4 +593,4 @@ async def test_not_paired_host_auth_discards_identity_and_stops_reconnecting():
     assert len(connects) == 1 and discarded == [True]
     assert client.relay_licensed is None
     # run() repeats the final state on exit; no other error (e.g. "unavailable") is reported.
-    assert set(errors) == {"This PC's relay license moved to another PC. Restart EmuCtrl to reconnect; remote phones must pair again."}
+    assert set(errors) == {"This PC is no longer registered with the remote service (its relay license may have moved to another PC). Restart EmuCtrl to register again; remote phones must pair again."}

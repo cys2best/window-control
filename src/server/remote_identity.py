@@ -197,9 +197,10 @@ class RemoteIdentityStore:
             raise LicenseError("unavailable") from None
 
     def discard_identity(self) -> None:
+        """Retire the identity, keeping it as .retired for operator recovery."""
         with self._lock:
             try:
-                self._path.unlink()
+                os.replace(self._path, self._path.with_name(self._path.name + ".retired"))
             except FileNotFoundError:
                 pass
             except OSError:

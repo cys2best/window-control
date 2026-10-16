@@ -18,8 +18,9 @@ from server.remote_identity import service_origin
 from server.remote_pairing import RemotePairing, RemotePairingError
 
 
-LICENSE_MOVED_MESSAGE = ("This PC's relay license moved to another PC. "
-                         "Restart EmuCtrl to reconnect; remote phones must pair again.")
+LICENSE_MOVED_MESSAGE = ("This PC is no longer registered with the remote service "
+                         "(its relay license may have moved to another PC). "
+                         "Restart EmuCtrl to register again; remote phones must pair again.")
 
 
 class _NoRedirectConnect(connect):

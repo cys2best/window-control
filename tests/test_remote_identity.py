@@ -209,12 +209,15 @@ def test_activation_never_persists_key(tmp_path):
     assert path.read_bytes() == before
 
 
-def test_discard_identity_removes_file(tmp_path):
+def test_discard_identity_keeps_recoverable_backup(tmp_path):
     path = tmp_path / "identity.json"
     service = LicenseService()
     store = make_store(path, service)
     store.load_or_register("https://remote.example")
+    saved = path.read_bytes()
     calls = len(service.calls)
     store.discard_identity()
+    # A broker that lost its data also answers not_paired; the operator can restore this.
     assert not path.exists() and len(service.calls) == calls
+    assert (tmp_path / "identity.json.retired").read_bytes() == saved
     store.discard_identity()
